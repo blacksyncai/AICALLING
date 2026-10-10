@@ -41,7 +41,10 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await load_signing_key(db)
         await bootstrap(db)
+    from app.routers.business_profile import start_refresh_loop
+    refresh_task = start_refresh_loop()
     yield
+    refresh_task.cancel()
     log.info("pounce_shutting_down")
 
 
