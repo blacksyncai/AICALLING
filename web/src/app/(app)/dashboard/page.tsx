@@ -1,181 +1,308 @@
 "use client";
 
-import { ArrowRight, Bot, CalendarCheck, CheckCircle2, Circle, Clock, Megaphone, PhoneCall, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CalendarCheck, CheckCircle2, Circle, Clock, Megaphone, PhoneCall, PhoneIncoming } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useState } from "react";
 import useSWR from "swr";
-import { OutcomeBadge } from "@/components/OutcomeBadge";
-import { Button, Card, CardHeader, EmptyState, PageHeader, Spinner } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
-import type { Agent, Call, Overview, SettingsStatus } from "@/lib/types";
-import { formatDuration, humanize, timeAgo } from "@/lib/utils";
+import type { Agent, Call, Campaign, Overview, SettingsStatus } from "@/lib/types";
+import { CAMPAIGN_TONE, OUTCOME_TONE, cn, formatDuration, timeAgo } from "@/lib/utils";
 
-function Stat({ label, value, icon: Icon, sub }: { label: string; value: string | number; icon: typeof PhoneCall; sub?: string }) {
+// Recharts measures the DOM, so render the chart on the client only.
+const CallVolumeChart = dynamic(() => import("@/components/dashboard/CallVolumeChart").then((m) => m.CallVolumeChart), {
+  ssr: false,
+  loading: () => <div className="h-64 animate-pulse rounded-lg bg-zinc-100" />,
+});
+
+const RANGES = [7, 30, 90] as const;
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+/** "+12% vs previous 30 days" — or a neutral note when there's nothing to compare. */
+function Trend({ now, before, days, invert = false, format = "pct" }: { now: number; before: number; days: number; invert?: boolean; format?: "pct" | "pts" }) {
+  if (!before && !now) return <span className="text-zinc-400">No activity yet</span>;
+  if (!before) return <span className="text-zinc-500">New this period</span>;
+  const delta = format === "pts" ? (now - before) * 100 : ((now - before) / before) * 100;
+  const rounded = Math.round(delta);
+  if (rounded === 0) return <span className="text-zinc-500">Flat vs previous {days}d</span>;
+  const good = invert ? rounded < 0 : rounded > 0;
+  const Icon = rounded > 0 ? ArrowUpRight : ArrowDownRight;
+  return (
+    <span className={cn("inline-flex items-center gap-0.5 font-medium", good ? "text-emerald-700" : "text-red-600")}>
+      <Icon className="h-3.5 w-3.5" />
+      {rounded > 0 ? "+" : ""}
+      {rounded}
+      {format === "pts" ? " pts" : "%"}
+      <span className="ml-1 font-normal text-zinc-500">vs previous {days}d</span>
+    </span>
+  );
+}
+
+function StatCard({ label, value, icon: Icon, children }: { label: string; value: string; icon: typeof PhoneCall; children: React.ReactNode }) {
   return (
     <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-500">{label}</span>
-        <Icon className="h-4 w-4 text-zinc-400" />
+      <div className="flex items-start justify-between">
+        <span className="text-sm font-medium text-zinc-600">{label}</span>
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+          <Icon className="h-4 w-4" />
+        </span>
       </div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-zinc-500">{sub}</div>}
+      <div className="mt-3 font-display text-3xl font-semibold tabular-nums tracking-tight">{value}</div>
+      <div className="mt-1 text-xs">{children}</div>
     </Card>
   );
 }
 
-function CallsChart({ data }: { data: { date: string; calls: number }[] }) {
-  const max = Math.max(1, ...data.map((d) => d.calls));
-  return (
-    <div className="flex h-40 items-end gap-1">
-      {data.map((d) => (
-        <div key={d.date} className="group relative flex h-full flex-1 items-end">
-          <div
-            className="w-full rounded-t bg-brand-500/80 transition-colors group-hover:bg-brand-600"
-            style={{ height: `${Math.max(d.calls ? 6 : 2, (d.calls / max) * 100)}%`, opacity: d.calls ? 1 : 0.25 }}
-          />
-          <div className="pointer-events-none absolute -top-8 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900 px-2 py-1 text-[11px] text-white group-hover:block">
-            {d.date.slice(5)} · {d.calls} calls
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+const ACTIVITY_VERB: Record<string, string> = {
+  meeting_booked: "booked a meeting",
+  qualified: "was qualified",
+  interested: "showed interest",
+  not_interested: "wasn't interested",
+  not_qualified: "wasn't a fit",
+  callback: "asked for a callback",
+  transferred: "was transferred to your team",
+  voicemail: "went to voicemail",
+  no_answer: "didn't pick up",
+  completed: "finished a call",
+  failed: "call failed",
+};
+
+const AVATAR_TONES = ["bg-orange-100 text-orange-800", "bg-amber-100 text-amber-800", "bg-stone-200 text-stone-700", "bg-rose-100 text-rose-800", "bg-emerald-100 text-emerald-800"];
+
+function initials(name: string) {
+  const parts = name.replace(/[^A-Za-z0-9 +]/g, " ").trim().split(/\s+/);
+  if (parts[0]?.startsWith("+")) return "#";
+  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
+function ContactAvatar({ name }: { name: string }) {
+  const tone = AVATAR_TONES[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR_TONES.length];
+  return <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold", tone)}>{initials(name)}</span>;
 }
 
 export default function DashboardPage() {
-  const { data: overview, error } = useSWR<Overview>("/api/calls/overview?days=30", fetcher, { refreshInterval: 15000 });
-  const { data: calls } = useSWR<{ items: Call[] }>("/api/calls/?page_size=8", fetcher, { refreshInterval: 15000 });
+  const [days, setDays] = useState<(typeof RANGES)[number]>(30);
+  const { data: overview, error } = useSWR<Overview>(`/api/calls/overview?days=${days}`, fetcher, { refreshInterval: 15000 });
+  const { data: calls } = useSWR<{ items: Call[] }>("/api/calls/?page_size=7", fetcher, { refreshInterval: 15000 });
+  const { data: campaigns } = useSWR<{ campaigns: Campaign[] }>("/api/campaigns/", fetcher, { refreshInterval: 15000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
 
   const steps = [
-    { done: !!status?.capabilities.chat_test, label: "Add your OpenAI key", desc: "Unlocks the chat playground and post-call analysis.", href: "/settings" },
-    { done: (agents?.length ?? 0) > 0, label: "Create an agent", desc: "Pick a template, write the prompt and knowledge base.", href: "/agents" },
-    { done: !!status?.capabilities.web_call, label: "Connect voice (LiveKit, Deepgram, Cartesia)", desc: "Talk to your agent right in the browser.", href: "/settings" },
-    { done: !!status?.capabilities.phone_call, label: "Connect a phone line (SIP trunk)", desc: "Let agents dial real numbers and run campaigns.", href: "/settings" },
+    { done: !!status?.capabilities.chat_test, label: "Connect OpenAI", href: "/settings" },
+    { done: (agents?.length ?? 0) > 0, label: "Create an agent", href: "/agents" },
+    { done: !!status?.capabilities.web_call, label: "Connect voice", href: "/settings" },
+    { done: !!status?.capabilities.phone_call, label: "Connect a phone line", href: "/settings" },
   ];
-  const allDone = steps.every((s) => s.done);
+  const setupLeft = steps.filter((s) => !s.done).length;
 
   if (error) {
     return (
       <Card>
-        <EmptyState
-          icon={<PhoneCall className="h-5 w-5" />}
-          title="Can't reach the backend"
-          description={`${error.message}. Start it with: cd backend && uvicorn main:app --port 8000`}
-        />
+        <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="Can't reach the backend" description={error.message} />
       </Card>
     );
   }
 
+  const prev = overview?.previous;
+  const activeCampaigns = (campaigns?.campaigns ?? []).filter((c) => c.status !== "cancelled").slice(0, 4);
+
   return (
-    <>
-      <PageHeader
-        title="Dashboard"
-        description="Last 30 days across all agents and campaigns."
-        action={
+    <div className="flex flex-col gap-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{greeting()}</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {overview ? `${overview.agents} agent${overview.agents === 1 ? "" : "s"} · ${overview.running_campaigns} campaign${overview.running_campaigns === 1 ? "" : "s"} running` : "Loading your workspace…"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-zinc-200 bg-white p-0.5" role="group" aria-label="Date range">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                onClick={() => setDays(r)}
+                className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", days === r ? "bg-zinc-900 text-white" : "text-zinc-600 hover:text-zinc-900")}
+                aria-pressed={days === r}
+              >
+                {r}d
+              </button>
+            ))}
+          </div>
           <Link href="/agents">
             <Button variant="primary">
-              <Bot className="h-4 w-4" /> Build an agent
+              <Bot className="h-4 w-4" /> New agent
             </Button>
           </Link>
-        }
-      />
+        </div>
+      </div>
 
-      {!allDone && status && (
-        <Card className="mb-6">
-          <CardHeader title="Get to your first call" description="Each step unlocks more of the platform. You can test with just step 1 + 2." />
-          <div className="grid gap-px bg-zinc-100 sm:grid-cols-2 lg:grid-cols-4">
-            {steps.map((s, i) => (
-              <Link key={s.label} href={s.href} className="flex gap-3 bg-white p-4 hover:bg-zinc-50">
-                {s.done ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" /> : <Circle className="h-5 w-5 shrink-0 text-zinc-300" />}
-                <div>
-                  <div className="text-sm font-medium">
-                    {i + 1}. {s.label}
-                  </div>
-                  <div className="mt-0.5 text-xs text-zinc-500">{s.desc}</div>
-                </div>
+      {/* Setup strip */}
+      {status && setupLeft > 0 && (
+        <Card className="flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-4">
+          <div className="text-sm font-medium">
+            Finish setup <span className="text-zinc-500">· {4 - setupLeft}/4 done</span>
+          </div>
+          <div className="flex flex-1 flex-wrap gap-x-5 gap-y-2">
+            {steps.map((s) => (
+              <Link key={s.label} href={s.href} className={cn("flex items-center gap-1.5 text-sm", s.done ? "text-zinc-500" : "text-zinc-900 hover:text-brand-700")}>
+                {s.done ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Circle className="h-4 w-4 text-zinc-300" />}
+                {s.label}
               </Link>
             ))}
           </div>
         </Card>
       )}
 
-      {!overview ? (
-        <div className="flex justify-center py-20">
+      {/* Stats */}
+      {!overview || !prev ? (
+        <div className="flex justify-center py-16">
           <Spinner />
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Stat label="Total calls" value={overview.total_calls} icon={PhoneCall} sub={`${overview.connected_calls} connected`} />
-            <Stat label="Talk time" value={`${overview.total_minutes} min`} icon={Clock} sub={`avg ${formatDuration(overview.avg_duration_seconds)}`} />
-            <Stat label="Meetings booked" value={overview.meetings_booked} icon={CalendarCheck} />
-            <Stat label="Success rate" value={`${Math.round(overview.success_rate * 100)}%`} icon={TrendingUp} sub="booked, qualified, interested" />
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Calls placed" value={overview.total_calls.toLocaleString()} icon={PhoneCall}>
+              <Trend now={overview.total_calls} before={prev.total_calls} days={days} />
+            </StatCard>
+            <StatCard label="Connect rate" value={`${Math.round(overview.connect_rate * 100)}%`} icon={PhoneIncoming}>
+              <Trend now={overview.connect_rate} before={prev.connect_rate} days={days} format="pts" />
+            </StatCard>
+            <StatCard label="Talk time" value={`${overview.total_minutes.toLocaleString()} min`} icon={Clock}>
+              <span className="text-zinc-500">avg {formatDuration(overview.avg_duration_seconds)} per connected call</span>
+            </StatCard>
+            <StatCard label="Meetings booked" value={overview.meetings_booked.toLocaleString()} icon={CalendarCheck}>
+              <Trend now={overview.meetings_booked} before={prev.meetings_booked} days={days} />
+            </StatCard>
           </div>
 
-          <div className="mt-6 grid gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-              <CardHeader title="Calls per day" />
-              <div className="p-5">
-                <CallsChart data={overview.calls_per_day} />
+          <Card>
+            <div className="flex flex-wrap items-start justify-between gap-2 px-5 pt-5">
+              <div>
+                <h3 className="font-semibold">Call volume</h3>
+                <p className="text-sm text-zinc-500">Dialed, connected and booked per day, last {days} days</p>
               </div>
-            </Card>
-            <Card>
-              <CardHeader title="Outcomes" />
-              <div className="space-y-3 p-5">
-                {Object.keys(overview.outcomes).length === 0 && <p className="text-sm text-zinc-500">No calls yet.</p>}
-                {Object.entries(overview.outcomes)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([k, v]) => (
-                    <div key={k}>
-                      <div className="mb-1 flex justify-between text-xs">
-                        <span className="text-zinc-600">{humanize(k)}</span>
-                        <span className="font-medium">{v}</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-zinc-100">
-                        <div className="h-1.5 rounded-full bg-brand-500" style={{ width: `${(v / Math.max(1, overview.total_calls)) * 100}%` }} />
-                      </div>
-                    </div>
-                  ))}
+              <div className="text-right text-xs text-zinc-500">
+                Success rate <span className="ml-1 font-display text-base font-semibold text-zinc-900">{Math.round(overview.success_rate * 100)}%</span>
               </div>
-            </Card>
-          </div>
+            </div>
+            <div className="p-5 pt-4">
+              <CallVolumeChart data={overview.calls_per_day} />
+            </div>
+          </Card>
         </>
       )}
 
-      <Card className="mt-6">
-        <CardHeader
-          title="Recent calls"
-          action={
-            <Link href="/calls" className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700">
-              View all <ArrowRight className="h-3 w-3" />
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Campaigns */}
+        <Card className="min-w-0">
+          <div className="flex items-start justify-between gap-2 px-5 pt-5">
+            <div>
+              <h3 className="font-semibold">Campaigns</h3>
+              <p className="text-sm text-zinc-500">Progress through each contact list</p>
+            </div>
+            <Link href="/campaigns" className="flex shrink-0 items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700">
+              All campaigns <ArrowRight className="h-3 w-3" />
             </Link>
-          }
-        />
-        {calls && calls.items.length === 0 ? (
-          <EmptyState
-            icon={<Megaphone className="h-5 w-5" />}
-            title="No calls yet"
-            description="Open an agent and hit Test to talk to it, or launch a campaign."
-          />
-        ) : (
-          <div className="divide-y divide-zinc-100">
-            {calls?.items.map((c) => (
-              <Link key={c.id} href={`/calls/${c.id}`} className="flex items-center gap-4 px-5 py-3 hover:bg-zinc-50">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{c.contact_name || c.to_phone || "Unknown"}</div>
-                  <div className="truncate text-xs text-zinc-500">
-                    {c.agent_name ?? "—"} {c.campaign_name ? `· ${c.campaign_name}` : ""}
-                  </div>
-                </div>
-                <OutcomeBadge outcome={c.outcome} status={c.status} />
-                <span className="hidden w-14 text-right text-xs text-zinc-500 sm:block">{formatDuration(c.duration_seconds)}</span>
-                <span className="w-16 text-right text-xs text-zinc-400">{timeAgo(c.started_at)}</span>
-              </Link>
-            ))}
           </div>
-        )}
-      </Card>
-    </>
+          <div className="flex flex-col gap-5 p-5">
+            {campaigns && activeCampaigns.length === 0 && (
+              <EmptyState
+                icon={<Megaphone className="h-5 w-5" />}
+                title="No campaigns yet"
+                description="Upload a contact list and let an agent call through it."
+                action={
+                  <Link href="/campaigns">
+                    <Button size="sm">Create a campaign</Button>
+                  </Link>
+                }
+              />
+            )}
+            {activeCampaigns.map((c) => {
+              const pct = c.total_targets ? Math.min(100, Math.round((c.total_dialed / c.total_targets) * 100)) : 0;
+              const agentName = agents?.find((a) => a.id === c.agent_id)?.name;
+              return (
+                <Link key={c.id} href={`/campaigns/${c.id}`} className="group flex min-w-0 flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium group-hover:text-brand-700">{c.name}</span>
+                    <Badge tone={CAMPAIGN_TONE[c.status]}>{c.status}</Badge>
+                  </div>
+                  <p className="truncate text-xs text-zinc-500">
+                    {agentName ?? "No agent"} · {c.total_targets} contacts
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-100" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${c.name} progress`}>
+                      <div className="h-full rounded-full brand-gradient transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="w-10 shrink-0 text-right text-xs tabular-nums text-zinc-500">{pct}%</span>
+                  </div>
+                  <div className="flex gap-4 text-xs text-zinc-500">
+                    <span>
+                      <span className="font-medium text-zinc-900 tabular-nums">{c.total_dialed}</span> dialed
+                    </span>
+                    <span>
+                      <span className="font-medium text-zinc-900 tabular-nums">{c.total_qualified}</span> qualified
+                    </span>
+                    <span>
+                      <span className="font-medium text-zinc-900 tabular-nums">{c.total_booked}</span> booked
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* Activity */}
+        <Card className="min-w-0">
+          <div className="flex items-start justify-between gap-2 px-5 pt-5">
+            <div>
+              <h3 className="font-semibold">Recent activity</h3>
+              <p className="text-sm text-zinc-500">What your agents just did</p>
+            </div>
+            <Link href="/calls" className="flex shrink-0 items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700">
+              Call logs <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+          <ol className="flex flex-col p-3">
+            {calls && calls.items.length === 0 && (
+              <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="No calls yet" description="Open an agent and test it, or start a campaign." />
+            )}
+            {calls?.items.map((c) => {
+              const who = c.contact_name || c.to_phone || "Unknown";
+              const live = !c.outcome && ["initiated", "ringing", "connected"].includes(c.status);
+              const verb = live ? "is on a call" : ACTIVITY_VERB[c.outcome ?? ""] ?? "finished a call";
+              return (
+                <li key={c.id}>
+                  <Link href={`/calls/${c.id}`} className="flex items-start gap-3 rounded-lg px-2 py-2.5 hover:bg-zinc-50">
+                    <ContactAvatar name={who} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm leading-snug">
+                        <span className="font-medium">{who}</span> <span className="text-zinc-500">{verb}</span>
+                      </p>
+                      <p className="truncate text-xs text-zinc-500">
+                        {c.agent_name ?? "Agent"}
+                        {c.campaign_name ? ` · ${c.campaign_name}` : ""} · {timeAgo(c.started_at)}
+                      </p>
+                    </div>
+                    {c.outcome ? (
+                      <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", { green: "bg-emerald-500", blue: "bg-blue-500", amber: "bg-amber-500", red: "bg-red-500", violet: "bg-violet-500", gray: "bg-zinc-300" }[OUTCOME_TONE[c.outcome] ?? "gray"])} />
+                    ) : (
+                      live && <span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-brand-500" />
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
+          </ol>
+        </Card>
+      </div>
+    </div>
   );
 }

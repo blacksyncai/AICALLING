@@ -17,6 +17,8 @@
     "next": "15.5.27",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-is": "19.2.8",
+    "recharts": "3.10.1",
     "swr": "2.3.6"
   },
   "devDependencies": {

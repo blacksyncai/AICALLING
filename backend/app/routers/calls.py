@@ -110,28 +110,49 @@ async def list_calls(
 
 @router.get("/overview")
 async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Query(default=30, ge=1, le=365)):
-    """Dashboard KPIs computed in Python so it works on SQLite and Postgres alike."""
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    calls = (await db.execute(
-        select(CallLog.started_at, CallLog.outcome, CallLog.duration_seconds, CallLog.call_type,
-               CallLog.agent_id, CallLog.sentiment)
-        .where(CallLog.started_at >= since)
+    """Dashboard KPIs for the window plus the previous window (for trends), computed in
+    Python so it works on SQLite and Postgres alike."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    prev_since = since - timedelta(days=days)
+    rows = (await db.execute(
+        select(CallLog.started_at, CallLog.outcome, CallLog.duration_seconds)
+        .where(CallLog.started_at >= prev_since)
     )).all()
 
-    outcomes = Counter(c.outcome or "in_progress" for c in calls)
-    connected = [c for c in calls if (c.duration_seconds or 0) > 0]
-    total_seconds = sum(c.duration_seconds or 0 for c in calls)
-    positive = {"meeting_booked", "qualified", "interested", "transferred"}
-    wins = sum(outcomes[o] for o in positive)
+    def _aware(d: datetime | None) -> datetime | None:
+        return d.replace(tzinfo=timezone.utc) if d is not None and d.tzinfo is None else d
 
-    per_day: dict[str, int] = {}
-    for i in range(min(days, 30) - 1, -1, -1):
-        per_day[(datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")] = 0
-    for c in calls:
-        if c.started_at:
-            key = c.started_at.strftime("%Y-%m-%d")
-            if key in per_day:
-                per_day[key] += 1
+    cur = [r for r in rows if r.started_at and _aware(r.started_at) >= since]
+    prev = [r for r in rows if r.started_at and _aware(r.started_at) < since]
+    positive = {"meeting_booked", "qualified", "interested", "transferred"}
+
+    def summarize(calls: list) -> dict:
+        connected = [c for c in calls if (c.duration_seconds or 0) > 0]
+        seconds = sum(c.duration_seconds or 0 for c in calls)
+        wins = sum(1 for c in calls if c.outcome in positive)
+        return {
+            "total_calls": len(calls),
+            "connected_calls": len(connected),
+            "total_minutes": round(seconds / 60, 1),
+            "avg_duration_seconds": round(seconds / len(connected)) if connected else 0,
+            "meetings_booked": sum(1 for c in calls if c.outcome == "meeting_booked"),
+            "success_rate": round(wins / len(connected), 4) if connected else 0,
+            "connect_rate": round(len(connected) / len(calls), 4) if calls else 0,
+        }
+
+    per_day: dict[str, dict] = {}
+    for i in range(min(days, 90) - 1, -1, -1):
+        key = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        per_day[key] = {"date": key, "calls": 0, "connected": 0, "booked": 0}
+    for c in cur:
+        key = _aware(c.started_at).strftime("%Y-%m-%d")
+        if key in per_day:
+            per_day[key]["calls"] += 1
+            if (c.duration_seconds or 0) > 0:
+                per_day[key]["connected"] += 1
+            if c.outcome == "meeting_booked":
+                per_day[key]["booked"] += 1
 
     agents_n = (await db.execute(select(func.count()).select_from(Agent))).scalar_one()
     campaigns_n = (await db.execute(
@@ -139,16 +160,13 @@ async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Que
     )).scalar_one()
 
     return {
-        "total_calls": len(calls),
-        "connected_calls": len(connected),
-        "total_minutes": round(total_seconds / 60, 1),
-        "avg_duration_seconds": round(total_seconds / len(connected)) if connected else 0,
-        "meetings_booked": outcomes.get("meeting_booked", 0),
-        "success_rate": round(wins / len(connected), 4) if connected else 0,
-        "outcomes": dict(outcomes),
-        "calls_per_day": [{"date": k, "calls": v} for k, v in per_day.items()],
+        **summarize(cur),
+        "previous": summarize(prev),
+        "outcomes": dict(Counter(c.outcome or "in_progress" for c in cur)),
+        "calls_per_day": list(per_day.values()),
         "agents": agents_n,
         "running_campaigns": campaigns_n,
+        "days": days,
     }
 
 

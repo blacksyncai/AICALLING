@@ -98,17 +98,23 @@ export interface Call {
   prospect_email?: string | null;
 }
 
-export interface Overview {
+export interface OverviewTotals {
   total_calls: number;
   connected_calls: number;
   total_minutes: number;
   avg_duration_seconds: number;
   meetings_booked: number;
   success_rate: number;
+  connect_rate: number;
+}
+
+export interface Overview extends OverviewTotals {
+  previous: OverviewTotals;
   outcomes: Record<string, number>;
-  calls_per_day: { date: string; calls: number }[];
+  calls_per_day: { date: string; calls: number; connected: number; booked: number }[];
   agents: number;
   running_campaigns: number;
+  days: number;
 }
 
 export interface SettingsStatus {
