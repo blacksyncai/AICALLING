@@ -63,6 +63,7 @@ def org_to_dict(o: Organization) -> dict:
         "credits_balance": o.credits_balance,
         "unlimited_credits": o.unlimited_credits,
         "timezone": o.timezone or DEFAULT_TIMEZONE,
+        "lead_finder_enabled": o.lead_finder_enabled is not False,
         "created_at": o.created_at.isoformat() if o.created_at else None,
     }
 

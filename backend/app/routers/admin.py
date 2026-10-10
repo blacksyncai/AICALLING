@@ -76,6 +76,9 @@ class OrgPatch(BaseModel):
     name: str | None = None
     status: str | None = None
     unlimited_credits: bool | None = None
+    # Lead Finder: daily lookups for this account (-1 = back to the platform default) and on/off.
+    lead_finder_daily_limit: int | None = Field(default=None, ge=-1, le=10000)
+    lead_finder_enabled: bool | None = None
 
 
 class CreditGrant(BaseModel):
@@ -255,6 +258,10 @@ async def update_org(org_id: uuid.UUID, body: OrgPatch, _: AdminDep, db: DbDep):
         org.status = body.status
     if body.unlimited_credits is not None:
         org.unlimited_credits = body.unlimited_credits
+    if body.lead_finder_daily_limit is not None:
+        org.lead_finder_daily_limit = None if body.lead_finder_daily_limit < 0 else body.lead_finder_daily_limit
+    if body.lead_finder_enabled is not None:
+        org.lead_finder_enabled = body.lead_finder_enabled
     await db.commit()
     return org_to_dict(org)
 
@@ -479,3 +486,38 @@ async def create_playbook(body: PlaybookCreate, admin: AdminDep, db: DbDep):
     await db.commit()
     log.info("playbook_created", playbook=pb.slug, by=str(admin.id))
     return await _playbook_payload(db, pb)
+
+
+
+# ── Lead Finder usage ─────────────────────────────────────────────────────────
+
+
+@router.get("/orgs/{org_id}/lead-finder")
+async def org_lead_finder(org_id: uuid.UUID, _: AdminDep, db: DbDep):
+    """Usage, matches, provider cost and recent errors for one account. No contact details."""
+    from app.models.lead_finder import PropertyLookup
+    from app.services import lead_finder as lf
+
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Account not found")
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+    rows = (await db.execute(select(PropertyLookup.status, PropertyLookup.found, PropertyLookup.charged,
+                                    PropertyLookup.lookup_date).where(
+        PropertyLookup.org_id == org.id, PropertyLookup.lookup_date >= since))).all()
+    done = [r for r in rows if r.status == "completed"]
+    errors = (await db.execute(select(PropertyLookup.error_code, PropertyLookup.error, PropertyLookup.created_at).where(
+        PropertyLookup.org_id == org.id, PropertyLookup.status == "failed",
+    ).order_by(PropertyLookup.created_at.desc()).limit(10))).all()
+    return {
+        "enabled": lf.enabled(org),
+        "daily_limit": lf.daily_limit(org),
+        "limit_is_default": org.lead_finder_daily_limit is None,
+        "default_limit": settings.lead_finder_daily_limit,
+        "used_today": await lf.used_today(db, org.id),
+        "last_30_days": {"lookups": len(done), "matches": sum(1 for r in done if r.found),
+                         "cost": round(sum(r.charged or 0 for r in done), 2),
+                         "failed": sum(1 for r in rows if r.status == "failed")},
+        "recent_errors": [{"code": e.error_code, "message": e.error,
+                           "at": e.created_at.isoformat() if e.created_at else None} for e in errors],
+    }

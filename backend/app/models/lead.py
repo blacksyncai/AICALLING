@@ -45,6 +45,9 @@ class Lead(Base):
     # Arbitrary extra CSV columns — usable as {{variables}} in agent prompts.
     custom_fields: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Provenance of enriched data, e.g. {"source": "dataskip", "lookup_id", "looked_up_at",
+    # "phones": [{"number", "type", "dnc"}], "emails": [...], "property": {...}, "mailing": {...}}.
+    enrichment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Dialing rules (NULL = default) ───────────────────────────────────────

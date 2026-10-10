@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     calcom_api_key: str = ""
     calcom_event_type_id: str = ""
 
+    # ── Lead Finder (DataSkip property-owner lookups) ────────────────────────
+    # Backend-only secret; never sent to the browser or logged.
+    skiptrace_api_key: str = ""
+    skiptrace_api_url: str = "https://app.dataskip.io"
+    # BlackSync's own allowance (not DataSkip's): new completed lookups per org per UTC day.
+    lead_finder_daily_limit: int = 5
+    # Lookup results (contact details) are scrubbed after this many days.
+    lead_finder_retention_days: int = 90
+
     # ── Orange Slice ──────────────────────────────────────────────────────────
     orange_slice_api_key: str = ""
 

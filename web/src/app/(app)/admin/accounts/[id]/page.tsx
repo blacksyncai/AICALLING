@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import { CreditsCard, LedgerCard, SettingsCard, TeamCard } from "@/components/admin/AccountCards";
+import { LeadFinderCard } from "@/components/admin/LeadFinderCard";
 import { AdminGuard, StatTile, fmt } from "@/components/admin/shared";
 import { Badge, Button, Card, EmptyState, Spinner } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -103,6 +104,7 @@ function AccountDetail() {
         </div>
         <div className="flex min-w-0 flex-col gap-6">
           <SettingsCard org={org} refresh={refresh} />
+          <LeadFinderCard orgId={org.id} />
           <TeamCard org={org} refresh={refresh} />
         </div>
       </div>

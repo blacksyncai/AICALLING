@@ -236,6 +236,7 @@ export interface Org {
   unlimited_credits: boolean;
   /** IANA time zone used for reports (days on the dashboard, the call-log day filter). */
   timezone?: string | null;
+  lead_finder_enabled?: boolean;
   created_at: string | null;
 }
 

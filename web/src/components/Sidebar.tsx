@@ -2,7 +2,7 @@
 
 import {
   BarChart3, BookOpen, Bot, CalendarCheck, ChevronsUpDown, Coins, Contact, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug,
-  UserRound, X,
+  UserRound, UserSearch, X,
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
@@ -18,6 +18,7 @@ const NAV = [
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/contacts", label: "Contacts", icon: Contact },
+  { href: "/lead-finder", label: "Lead Finder", icon: UserSearch },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/meetings", label: "Meetings", icon: CalendarCheck },
   { href: "/calls", label: "Call Logs", icon: PhoneCall },
