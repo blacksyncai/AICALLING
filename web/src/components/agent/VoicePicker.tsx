@@ -420,7 +420,7 @@ export function VoicePicker({
                         </div>
                       )}
                     </div>
-                    <span title={previewable ? undefined : "Previews need a Cartesia API key"}>
+                    <span title={previewable ? undefined : "Voice previews aren't available yet"}>
                       <button
                         type="button"
                         disabled={!previewable}
@@ -458,16 +458,16 @@ export function VoicePicker({
                   {error}
                 </p>
               )}
-              {(message || source === "fallback") && <p>{message ?? "Add CARTESIA_API_KEY to browse and preview the full voice library."}</p>}
+              {(message || source === "fallback") && <p>{message ?? "The full voice library isn't available right now — showing a short list."}</p>}
               {pasting ? (
                 <div className="flex items-center gap-2">
                   <Input
                     autoFocus
                     value={pasted}
                     onChange={(e) => setPasted(e.target.value)}
-                    placeholder="Cartesia voice ID"
+                    placeholder="BlackSync voice ID"
                     className="h-8 min-w-0 flex-1 font-mono text-xs"
-                    aria-label="Custom voice ID"
+                    aria-label="BlackSync voice ID"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -488,7 +488,7 @@ export function VoicePicker({
                   }}
                   className="font-medium text-brand-600 hover:text-brand-700"
                 >
-                  Paste a voice ID
+                  Paste a BlackSync voice ID
                 </button>
               )}
             </div>

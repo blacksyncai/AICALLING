@@ -203,16 +203,16 @@ async def integration_status():
 async def list_voices():
     """The Cartesia voice catalog, split into premium / standard categories."""
     if not settings.cartesia_api_key:
-        return _fallback_response("Add CARTESIA_API_KEY to browse and preview the full voice library.")
+        return _fallback_response("The full voice library isn't available right now — showing a short list.")
     fresh = _voice_cache["public"] is not None and time.time() - _voice_cache["at"] < _CACHE_TTL
     if not fresh:
         try:
             public, owned = await _fetch_cartesia_voices()
         except Exception as exc:
             log.warning("cartesia_voices_failed", error=str(exc))
-            return _fallback_response("Couldn't load the Cartesia voice library — showing a short fallback list.")
+            return _fallback_response("Couldn't load the full voice library — showing a short list.")
         if not public and not owned:
-            return _fallback_response("Cartesia returned no voices — showing a short fallback list.")
+            return _fallback_response("No voices came back from the voice library — showing a short list.")
         _voice_cache.update(at=time.time(), public=public, owned=owned)
     voices = build_catalog(_voice_cache["public"], _voice_cache["owned"], can_preview=True)
     return _voices_response("cartesia", voices)
@@ -250,7 +250,7 @@ async def _synthesize(payload: dict) -> bytes:
             json=payload,
         )
     if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Cartesia: {resp.text[:200]}")
+        raise HTTPException(status_code=502, detail="Couldn't generate a voice preview — try again.")
     return resp.content
 
 
@@ -258,7 +258,7 @@ async def _synthesize(payload: dict) -> bytes:
 async def preview_voice(body: VoicePreview):
     """Speak a short line in the chosen voice (WAV) so it can be auditioned in the editor."""
     if not settings.cartesia_api_key:
-        raise HTTPException(status_code=400, detail="Set CARTESIA_API_KEY to preview voices.")
+        raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
     voice_id = body.voice_id.strip()
     lang = body.language if body.language not in ("multi", "") else "en"
     key = (voice_id, round(body.speed, 2), lang, body.text)

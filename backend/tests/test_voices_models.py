@@ -141,7 +141,7 @@ def test_fallback_when_cartesia_errors(client, monkeypatch):
     settings_router._voice_cache.update(at=0.0, public=None, owned=None)
     body = client.get("/api/settings/voices").json()
     assert body["source"] == "fallback"
-    assert "fallback" in body["message"]
+    assert "short list" in body["message"]
 
 
 def test_preview_requires_key(client, monkeypatch):
