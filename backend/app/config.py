@@ -9,6 +9,7 @@ features light up as keys are added (see GET /api/settings/status):
 """
 
 from functools import lru_cache
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -71,6 +72,17 @@ class Settings(BaseSettings):
 
     # ── Deployment ────────────────────────────────────────────────────────────
     webhook_base_url: str = "http://localhost:8000"
+
+    @model_validator(mode="after")
+    def _clean_values(self):
+        """Pasted keys often carry stray spaces/quotes; a bare LiveKit host needs a scheme."""
+        for name, value in list(self.__dict__.items()):
+            if isinstance(value, str):
+                setattr(self, name, value.strip().strip("'\"").strip())
+        url = self.livekit_url
+        if url and "://" not in url:
+            self.livekit_url = f"wss://{url}"
+        return self
 
     @property
     def api_base_url(self) -> str:
