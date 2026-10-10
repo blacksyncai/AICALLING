@@ -2,11 +2,12 @@
 
 import { ArrowRight, Check, Pencil, RefreshCw, SendHorizontal, Sparkles } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Button, Input } from "@/components/ui";
+import { Button } from "@/components/ui";
 import type { AssistItem, AssistResponse, DraftGoal } from "@/lib/builder";
 import { cn } from "@/lib/utils";
 import { Chip } from "./parts";
 import { goalBasis, type GoalUpdater } from "./goal";
+import { VoiceInput } from "@/components/MicButton";
 
 /** Keep onboarding short: at most this many assist rounds per goal (the server caps questions too). */
 const MAX_ROUNDS = 2;
@@ -251,7 +252,7 @@ function QuestionCard({
         </div>
       )}
       <form onSubmit={submit} className="mt-2.5 flex gap-2">
-        <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Or type your own answer" aria-label={`Your answer: ${item.question}`} className="h-8 text-sm" />
+        <VoiceInput value={text} onValue={setText} placeholder="Type or say your own answer" aria-label={`Your answer: ${item.question}`} className="h-8 text-sm" />
         <Button size="sm" type="submit" disabled={!text.trim()} aria-label="Send answer">
           <SendHorizontal className="h-3.5 w-3.5" />
         </Button>

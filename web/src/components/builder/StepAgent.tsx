@@ -1,11 +1,12 @@
 "use client";
 
 import { Bot, PenLine, Users } from "lucide-react";
-import { Field, Input, Textarea } from "@/components/ui";
+import { Field, Input } from "@/components/ui";
 import type { BuilderCatalog } from "@/lib/builder";
 import { Chip, OptionCard, StepTitle } from "./parts";
 import { StepFineTune } from "./StepFineTune";
 import type { Behavior } from "./StepPersonality";
+import { VoiceTextarea } from "@/components/MicButton";
 
 const NAMES = ["Maya", "Jordan", "Ava", "Sam", "Olivia", "Ethan"];
 
@@ -68,13 +69,13 @@ export function StepAgent({
           ))}
         </div>
         {rep === "custom" && (
-          <Textarea
+          <VoiceTextarea
             className="mt-2"
             rows={2}
             maxLength={300}
             aria-label="Custom introduction"
             value={behavior.custom_intro ?? ""}
-            onChange={(e) => onChange({ custom_intro: e.target.value })}
+            onValue={(v) => onChange({ custom_intro: v.slice(0, 300) })}
             placeholder={`e.g. Hi, this is ${name || "Maya"}, the virtual assistant for ${company}.`}
           />
         )}

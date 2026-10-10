@@ -2,12 +2,13 @@
 
 import { Check, ChevronRight, RotateCcw, Sparkles, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Textarea } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { post } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { DiffView } from "./DiffView";
 import { countWords, type SectionOrder } from "./prompt";
+import { VoiceInput } from "@/components/MicButton";
 
 type RegenState = { asking: boolean; instruction: string; loading: boolean; proposal: string | null };
 const IDLE: RegenState = { asking: false, instruction: "", loading: false, proposal: null };
@@ -123,10 +124,10 @@ export function SectionsEditor({
                         regenerate(key);
                       }}
                     >
-                      <Input
+                      <VoiceInput
                         autoFocus
                         value={st.instruction}
-                        onChange={(e) => patchRegen(key, { instruction: e.target.value })}
+                        onValue={(v) => patchRegen(key, { instruction: v })}
                         placeholder="Optional: what should change? e.g. keep it shorter"
                         className="h-8 text-xs"
                         aria-label={`Instruction for regenerating ${label}`}

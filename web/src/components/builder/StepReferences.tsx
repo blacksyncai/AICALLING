@@ -4,10 +4,11 @@ import { FileText, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Button, Field, Input, Textarea } from "@/components/ui";
+import { Button, Field, Input } from "@/components/ui";
 import { del, fetcher, post } from "@/lib/api";
 import type { ReferenceDoc } from "@/lib/builder";
 import { StepTitle } from "./parts";
+import { VoiceTextarea } from "@/components/MicButton";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const KIND = { pdf: "PDF", docx: "Word", txt: "Text", paste: "Pasted" } as const;
@@ -118,7 +119,7 @@ export function StepReferences({ draftId }: { draftId: string }) {
             <Field label="Name (optional)">
               <Input value={pasteName} onChange={(e) => setPasteName(e.target.value)} placeholder="e.g. Our current cold-call script" maxLength={255} />
             </Field>
-            <Textarea rows={6} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder="Paste your script, talk track or notes…" aria-label="Pasted script" />
+            <VoiceTextarea rows={6} value={pasteText} onValue={setPasteText} placeholder="Paste your script, talk track or notes — or say it" aria-label="Pasted script" />
             <div className="flex justify-end">
               <Button size="sm" onClick={addPasted} disabled={pasteText.trim().length < 20} loading={busy}>
                 Add

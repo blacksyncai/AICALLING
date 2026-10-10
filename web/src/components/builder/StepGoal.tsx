@@ -2,12 +2,13 @@
 
 import { ChevronDown, PenLine } from "lucide-react";
 import { useId, useState } from "react";
-import { Input, Textarea } from "@/components/ui";
+import {  } from "@/components/ui";
 import { CUSTOM_USE_CASE, type AssistResponse, type BuilderCatalog, type DraftGoal } from "@/lib/builder";
 import { cn } from "@/lib/utils";
 import { AssistPanel } from "./AssistPanel";
 import { customDescription, goalReady, presetKeys, selectedKeys, useCasesFor, withKeys, type GoalUpdater } from "./goal";
 import { Chip, Segmented, StepTitle } from "./parts";
+import { VoiceInput, VoiceTextarea } from "@/components/MicButton";
 
 type Direction = NonNullable<DraftGoal["direction"]>;
 
@@ -136,11 +137,11 @@ export function StepGoal({
             <label htmlFor={`${ids}-desc`} className="block text-sm font-medium text-zinc-800">
               What would you like your AI agent to do?
             </label>
-            <Textarea
+            <VoiceTextarea
               id={`${ids}-desc`}
               rows={5}
               value={description}
-              onChange={(e) => setCustom({ description: e.target.value })}
+              onValue={(v) => setCustom({ description: v })}
               placeholder={CUSTOM_PLACEHOLDER}
               aria-invalid={tooShort}
               className={cn("min-h-28 resize-y", tooShort && "border-red-300")}
@@ -175,11 +176,11 @@ export function StepGoal({
             <label htmlFor={`${ids}-extra`} className="block text-sm font-medium text-zinc-800">
               Tell us anything specific you&apos;d like your agent to do differently. <span className="font-normal text-zinc-400">(optional)</span>
             </label>
-            <Textarea
+            <VoiceTextarea
               id={`${ids}-extra`}
               rows={3}
               value={goal.extra_instructions ?? ""}
-              onChange={(e) => setGoal((g) => ({ ...g, extra_instructions: e.target.value }))}
+              onValue={(v) => setGoal((g) => ({ ...g, extra_instructions: v }))}
               placeholder={EXTRA_PLACEHOLDER}
               className="resize-y"
             />
@@ -198,7 +199,7 @@ function SmallField({ id, label, placeholder, value, onChange }: { id: string; l
       <label htmlFor={id} className="mb-1 block text-xs text-zinc-600">
         {label}
       </label>
-      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+      <VoiceInput id={id} value={value} onValue={onChange} placeholder={placeholder} />
     </div>
   );
 }

@@ -3,12 +3,13 @@
 import { AlertCircle, Check, Globe, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/components/toast";
-import { Button, Field, Input, Notice, Textarea } from "@/components/ui";
+import { Button, Field, Input, Notice } from "@/components/ui";
 import { post } from "@/lib/api";
 import type { BuilderCatalog, BusinessProfile, DraftData } from "@/lib/builder";
 import { cn } from "@/lib/utils";
 import { KnowledgeReview } from "./KnowledgeReview";
 import { StepTitle, displayHost, industryIcon, normalizeUrl, put } from "./parts";
+import { VoiceTextarea } from "@/components/MicButton";
 
 type Business = NonNullable<DraftData["business"]>;
 
@@ -119,10 +120,10 @@ export function StepBusiness({
         </div>
 
         <Field label="Description (optional)" hint="A sentence or two about what you do and who you serve.">
-          <Textarea
+          <VoiceTextarea
             rows={2}
             value={business.description ?? ""}
-            onChange={(e) => onChange({ description: e.target.value })}
+            onValue={(v) => onChange({ description: v })}
             placeholder="e.g. We install and repair heating and cooling systems for homes in Austin."
           />
         </Field>

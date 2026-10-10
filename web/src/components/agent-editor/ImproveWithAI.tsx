@@ -3,12 +3,13 @@
 import { Sparkles, Wand2, X } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/components/toast";
-import { Button, Input, Modal } from "@/components/ui";
+import { Button, Modal } from "@/components/ui";
 import { patch, post } from "@/lib/api";
 import { sectionOrder } from "@/lib/builder";
 import type { Agent } from "@/lib/types";
 import { DiffView } from "./DiffView";
 import { assemblePrompt } from "./prompt";
+import { VoiceInput } from "@/components/MicButton";
 
 type Proposal = { summary: string; system_prompt: string; first_message: string; sections?: Record<string, string> | null };
 
@@ -119,10 +120,10 @@ export function ImproveWithAI({
               ask();
             }}
           >
-            <Input
+            <VoiceInput
               autoFocus
               value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
+              onValue={setInstruction}
               placeholder="Describe what you'd like to change…"
               aria-label="What should the AI change?"
               className="bg-white"
