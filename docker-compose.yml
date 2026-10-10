@@ -1,0 +1,41 @@
+# One-command local stack:  cp backend/.env.example backend/.env  (add keys)  →  docker compose up --build
+# Then open http://localhost:3000
+services:
+  api:
+    build: ./backend
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////data/closer.db
+      WEBHOOK_BASE_URL: http://api:8000
+    volumes:
+      - closer-data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # LiveKit voice worker — runs every browser and phone call.
+  worker:
+    build: ./backend
+    command: ["python", "agent_worker.py", "start"]
+    env_file: backend/.env
+    environment:
+      WEBHOOK_BASE_URL: http://api:8000
+    depends_on: [api]
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        BACKEND_ORIGIN: http://api:8000
+    environment:
+      AUTH_EMAIL: ${AUTH_EMAIL:-admin@example.com}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      AUTH_SECRET: ${AUTH_SECRET:-change-me}
+    ports:
+      - "3000:3000"
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  closer-data:

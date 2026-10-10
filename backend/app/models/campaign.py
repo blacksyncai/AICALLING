@@ -5,8 +5,7 @@ Campaign model — a batch of leads to dial with a shared ICP.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,9 +18,7 @@ def _now() -> datetime:
 class Campaign(Base):
     __tablename__ = "campaigns"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
     # ── Identity ──────────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -29,18 +26,16 @@ class Campaign(Base):
     icp_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     # ── Status ────────────────────────────────────────────────────────────────
-    status: Mapped[str] = mapped_column(
-        Enum(
-            "draft",
-            "running",
-            "paused",
-            "completed",
-            "cancelled",
-            name="campaign_status",
-        ),
-        nullable=False,
-        default="draft",
+    # draft | running | paused | completed | cancelled
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+
+    # ── Agent that places this campaign's calls ───────────────────────────────
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+    # Calls this campaign may have in flight at once.
+    max_concurrent_calls: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
 
     # ── Counters ──────────────────────────────────────────────────────────────
     total_targets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

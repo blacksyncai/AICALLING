@@ -5,13 +5,9 @@ name: Deploy backend to ECS
 #   - pounce-livekit-worker    (LiveKit voice agent)
 # Keyless auth via GitHub OIDC -> arn:aws:iam::869935092934:role/pounce-github-actions
 
+# Manual only: the role/account below belong to the original Pounce deployment.
+# Point AWS_ACCOUNT / the OIDC role at your own AWS account before running it.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - "deploy/**"
-      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:

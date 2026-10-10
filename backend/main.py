@@ -1,5 +1,5 @@
 """
-Pounce — FastAPI application entry point.
+Closer — AI voice-agent platform API (FastAPI).
 
 Start with:
     uvicorn main:app --reload --port 8000
@@ -18,7 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import create_all_tables
-from app.routers import agents, analytics, campaigns, leads, live, orange_slice, runs, twiml, webhook
+from app.routers import (
+    agents, analytics, calls, campaigns, leads, live, orange_slice, runs, settings as settings_router,
+    twiml, webhook,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -31,6 +34,9 @@ async def lifespan(app: FastAPI):
     log.info("pounce_starting", environment=settings.environment)
     await create_all_tables()
     log.info("database_tables_ready")
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        await agents.seed_default_agent(db)
     yield
     log.info("pounce_shutting_down")
 
@@ -38,8 +44,8 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Pounce API",
-    description="AI outbound SDR — finds leads via Orange Slice, calls them via LiveKit.",
+    title="Closer API",
+    description="Build, test and deploy AI voice agents that call your leads.",
     version="0.1.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -60,6 +66,8 @@ app.add_middleware(
 
 app.include_router(agents.router)
 app.include_router(analytics.router)
+app.include_router(calls.router)
+app.include_router(settings_router.router)
 app.include_router(campaigns.router)
 app.include_router(leads.router)
 app.include_router(live.router)
@@ -81,13 +89,14 @@ app.include_router(webhook.router)
 async def health():
     return {
         "status": "ok",
-        "service": "pounce-api",
+        "service": "closer-api",
         "environment": settings.environment,
         "demo_mode": settings.demo_mode,
-        "livekit_url": settings.livekit_url,
+        "voice_ready": settings.voice_ready,
+        "phone_ready": settings.phone_ready,
     }
 
 
 @app.get("/", tags=["infra"])
 async def root():
-    return {"message": "Pounce API — AI Outbound SDR", "docs": "/docs"}
+    return {"message": "Closer API — AI voice agents", "docs": "/docs"}

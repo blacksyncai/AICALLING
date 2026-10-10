@@ -32,7 +32,7 @@ class LeadIntentPayload(BaseModel):
 
 
 class CallOutcomePayload(BaseModel):
-    outcome: str  # qualified | not_qualified | meeting_booked | no_answer | failed
+    outcome: str  # see app.models.call_log.CALL_OUTCOMES
     qualification_score: int | None = None
     q_team_size: str = ""
     q_current_process: str = ""
@@ -110,6 +110,7 @@ async def push_live_event(call_log_id: str, body: dict):
 async def call_outcome(
     call_log_id: str,
     body: CallOutcomePayload,
+    background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -136,6 +137,8 @@ async def call_outcome(
         db=db,
     )
 
+    from app.services.outbound_call import analyze_and_store
+    background_tasks.add_task(analyze_and_store, call_log_id)
     return {"message": "Outcome recorded", "call_log_id": call_log_id}
 
 

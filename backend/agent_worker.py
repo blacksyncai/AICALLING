@@ -5,8 +5,9 @@ Run as a separate process from FastAPI:
     python agent_worker.py dev      # dev mode (auto-reconnect)
     python agent_worker.py start    # production
 
-This worker connects to the Claivon LiveKit cluster, listens for new rooms,
-and runs the Paul SDR agent inside each room.
+The worker joins every room it is dispatched to. Calls started from the
+dashboard carry an agent config (prompt, voice, tools) in the room metadata
+and run as a configurable agent; anything else runs the original Paul SDR.
 """
 
 from __future__ import annotations
@@ -623,6 +624,367 @@ async def _play_continuous_bg(room, control: dict) -> None:
         raise
 
 
+# ── Configurable agents (built in the dashboard) ──────────────────────────────
+#
+# When room metadata carries an "agent" config (every call started from the
+# dashboard), the worker builds the agent from that config: prompt, knowledge
+# base, voice, model and the enabled actions. Rooms without one fall back to
+# the original Paul SDR above.
+
+_END_OUTCOMES = (
+    "meeting_booked", "qualified", "not_qualified", "interested", "not_interested",
+    "callback", "transferred", "voicemail", "no_answer", "completed", "failed",
+)
+
+
+class _CallRun:
+    """Per-call mutable state for a configurable agent."""
+
+    def __init__(self, call_log_id: str, call_type: str) -> None:
+        self.call_log_id = call_log_id
+        self.call_type = call_type
+        self.transcript: list[dict] = []
+        self.outcome: str | None = None
+        self.outcome_posted = False
+        self.slots: list[dict] = []
+        self.meeting_link = ""
+        self.meeting_time = ""
+        self.email = ""
+        self.t0 = 0.0
+
+
+async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
+    if run.outcome_posted or not run.call_log_id:
+        return
+    run.outcome_posted = True
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"{settings.webhook_base_url}/api/webhook/calls/{run.call_log_id}/outcome",
+                json={
+                    "outcome": outcome,
+                    "agreed_meeting_time": run.meeting_time,
+                    "meeting_link": run.meeting_link or None,
+                    "prospect_email": run.email,
+                    "transcript": run.transcript,
+                },
+            )
+        log.info("call_outcome_posted", call_log_id=run.call_log_id, outcome=outcome)
+    except Exception as exc:
+        run.outcome_posted = False
+        log.warning("post_call_outcome_failed", error=str(exc), call_log_id=run.call_log_id)
+
+
+async def _fetch_agent_config(agent_id: str) -> dict | None:
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(f"{settings.webhook_base_url}/api/agents/{agent_id}/runtime")
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as exc:
+        log.warning("agent_config_fetch_failed", agent_id=agent_id, error=str(exc))
+        return None
+
+
+async def _delete_room(room_name: str) -> None:
+    from livekit import api as _lkapi
+    lk = _lkapi.LiveKitAPI(
+        url=settings.livekit_url, api_key=settings.livekit_api_key, api_secret=settings.livekit_api_secret,
+    )
+    try:
+        await lk.room.delete_room(_lkapi.DeleteRoomRequest(room=room_name))
+        log.info("call_hung_up", room=room_name)
+    except Exception as exc:
+        log.warning("hangup_failed", error=str(exc))
+    finally:
+        await lk.aclose()
+
+
+def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict) -> list:
+    """Function tools for a configurable agent, based on what it has enabled."""
+    import time as _t
+    from app.services import calendar as _cal
+
+    def _record(name: str, args: dict, output=None) -> None:
+        run.transcript.append({
+            "role": "tool", "tool": name, "args": args,
+            "result": {"output": output, "success": True},
+            "ts": round(_t.monotonic() - run.t0, 2) if run.t0 else 0.0,
+        })
+
+    def _hangup(delay: float) -> None:
+        async def _go() -> None:
+            await asyncio.sleep(delay)
+            await _delete_room(ctx.room.name)
+        asyncio.create_task(_go())
+
+    async def end_call(outcome: str) -> str:
+        """Hang up the call. Call this only AFTER you've said goodbye.
+
+        Args:
+            outcome: The result of the call. One of meeting_booked, qualified, not_qualified,
+                interested, not_interested, callback, transferred, voicemail, no_answer, completed.
+        """
+        outcome = outcome if outcome in _END_OUTCOMES else "completed"
+        run.outcome = outcome
+        _record("end_call", {"outcome": outcome})
+        asyncio.create_task(_post_run_outcome(run, outcome))
+        _hangup(4.0)
+        return "Call is ending. Do not say anything else."
+
+    tools = [function_tool(end_call)]
+
+    if cfg.get("enable_booking"):
+        async def check_availability(preferred_date: str = "") -> str:
+            """Look up open appointment slots. Only ever offer the slots this returns.
+
+            Args:
+                preferred_date: The day the contact prefers, as YYYY-MM-DD. Empty for the soonest.
+            """
+            session = session_ref.get("session")
+            if session:
+                session.say("One sec, let me check the calendar.", allow_interruptions=True)
+            run.slots = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"))
+            _record("check_availability", {"preferred_date": preferred_date},
+                    {"slots": [s["label"] for s in run.slots]})
+            if not run.slots:
+                return "Nothing is open around then. Offer to check another day."
+            return "Open slots: " + " or ".join(s["label"] for s in run.slots)
+
+        async def book_appointment(slot: str, email: str) -> str:
+            """Book one of the slots from check_availability. Confirm the email spelling first.
+
+            Args:
+                slot: Which slot they chose — 'first', 'second', or the spoken time.
+                email: The contact's email address for the calendar invite.
+            """
+            chosen = _cal.pick_slot(run.slots, slot)
+            if not chosen:
+                return "No slots offered yet. Call check_availability first."
+            if "@" not in (email or ""):
+                return "That email doesn't look complete. Ask them to spell it again."
+            link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"))
+            run.meeting_link, run.meeting_time, run.email = link, chosen["label"], email
+            _record("book_appointment", {"slot": slot, "email": email}, {"booked": chosen["label"], "link": link})
+            return f"Booked for {chosen['label']}. Confirm it with them, then wrap up."
+
+        tools += [function_tool(check_availability), function_tool(book_appointment)]
+
+    transfer_to = (cfg.get("transfer_number") or "").strip()
+    if transfer_to and run.call_type == "outbound":
+        async def transfer_call() -> str:
+            """Transfer the caller to a human teammate. Tell them you're connecting them first."""
+            from livekit import api as _lkapi
+            sip_identity = next(
+                (p.identity for p in ctx.room.remote_participants.values() if p.identity.startswith("sip_")),
+                None,
+            )
+            if not sip_identity:
+                return "Transfer isn't possible on this call. Offer to take a message instead."
+            _record("transfer_call", {"to": transfer_to})
+            run.outcome = "transferred"
+            lk = _lkapi.LiveKitAPI(
+                url=settings.livekit_url, api_key=settings.livekit_api_key,
+                api_secret=settings.livekit_api_secret,
+            )
+            try:
+                await asyncio.sleep(2.5)  # let the hand-off line finish
+                await lk.sip.transfer_sip_participant(_lkapi.TransferSIPParticipantRequest(
+                    participant_identity=sip_identity, room_name=ctx.room.name,
+                    transfer_to=f"tel:{transfer_to}", play_dialtone=True,
+                ))
+                asyncio.create_task(_post_run_outcome(run, "transferred"))
+                return "Transferred."
+            except Exception as exc:
+                log.warning("transfer_failed", error=str(exc))
+                run.outcome = None
+                return "The transfer failed. Apologize and offer to have someone call them back."
+            finally:
+                await lk.aclose()
+
+        tools.append(function_tool(transfer_call))
+
+    return tools
+
+
+async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
+    import time as _time
+    from app.agent.runtime import build_instructions, render_vars
+
+    cfg = metadata.get("agent") or {}
+    if metadata.get("fetch_config") and metadata.get("agent_id"):
+        cfg = await _fetch_agent_config(metadata["agent_id"]) or cfg
+    variables = metadata.get("variables") or {}
+    call_type = metadata.get("call_type", "outbound")
+    run = _CallRun(metadata.get("call_log_id", ""), call_type)
+
+    log.info("configurable_agent_started", room=ctx.room.name, agent=cfg.get("name"), call_type=call_type)
+
+    if call_type == "outbound":
+        await _wait_for_sip_answer(ctx)
+    else:
+        await ctx.wait_for_participant()
+
+    try:
+        from livekit.plugins.turn_detector.multilingual import MultilingualModel
+        turn_detector = MultilingualModel()
+    except Exception:
+        turn_detector = None
+
+    language = cfg.get("language") or "en"
+    session_kwargs = dict(
+        stt=deepgram.STT(
+            model="nova-3", language=language if language != "multi" else "multi",
+            api_key=settings.deepgram_api_key,
+        ),
+        llm=openai.LLM(
+            model=cfg.get("llm_model") or "gpt-4.1-mini",
+            temperature=float(cfg.get("temperature", 0.5)),
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+        ),
+        tts=cartesia.TTS(
+            model="sonic-3",
+            voice=cfg.get("voice_id") or _BLAKE_VOICE_ID,
+            language=None if language in ("en", "multi") else language,
+            speed=float(cfg.get("voice_speed") or 1.0),
+            api_key=settings.cartesia_api_key,
+        ),
+        vad=silero.VAD.load(),
+        turn_handling={
+            "interruption": {
+                "min_duration": 0.5,
+                "min_words": 2,
+                "false_interruption_timeout": 3.0,
+                "resume_false_interruption": True,
+            },
+        },
+    )
+    if turn_detector:
+        session_kwargs["turn_detection"] = turn_detector
+    if _lk_replace is not None:
+        session_kwargs["tts_text_transforms"] = ["filter_markdown", "filter_emoji"]
+
+    session = AgentSession(**session_kwargs)
+    session_ref: dict = {"session": session}
+    channel = "phone" if call_type == "outbound" else "web"
+    agent = Agent(
+        instructions=build_instructions(cfg, variables, channel=channel),
+        tools=_build_tools(cfg, run, ctx, session_ref),
+    )
+
+    run.t0 = _time.monotonic()
+
+    def _on_item(ev) -> None:
+        try:
+            item = getattr(ev, "item", None)
+            role = getattr(item, "role", None)
+            text = (getattr(item, "text_content", None) or "").strip()
+            if role not in ("user", "assistant") or not text:
+                return
+            run.transcript.append({"role": role, "text": text, "ts": round(_time.monotonic() - run.t0, 2)})
+            asyncio.create_task(_push_live_event(run.call_log_id, {
+                "type": "transcript_turn", "session_id": ctx.room.name,
+                "role": "agent" if role == "assistant" else "caller", "text": text, "ts": str(_time.time()),
+            }))
+        except Exception as exc:
+            log.debug("transcript_capture_failed", error=str(exc))
+
+    session.on("conversation_item_added", _on_item)
+    await session.start(agent, room=ctx.room)
+
+    asyncio.create_task(_push_live_event(run.call_log_id, {
+        "type": "call_started", "session_id": ctx.room.name, "agent_type": cfg.get("name", "agent"),
+        "direction": call_type, "caller_phone": variables.get("phone", ""),
+        "prospect_name": variables.get("full_name") or variables.get("name", ""),
+        "prospect_company": variables.get("company", ""), "ts": str(_time.time()),
+    }))
+
+    bg_state: dict = {"task": None, "track": None}
+    if cfg.get("background_audio") and call_type == "outbound":
+        bg_state["task"] = asyncio.create_task(_play_continuous_bg(ctx.room, bg_state))
+
+    # Hard cap on call length: ask the agent to wrap up, then hang up.
+    max_s = int(cfg.get("max_duration_seconds") or 600)
+
+    async def _enforce_max_duration() -> None:
+        await asyncio.sleep(max(30, max_s - 20))
+        try:
+            session.generate_reply(instructions="We're out of time. Politely wrap up and say goodbye now.")
+        except Exception:
+            pass
+        await asyncio.sleep(20)
+        await _delete_room(ctx.room.name)
+
+    timer = asyncio.create_task(_enforce_max_duration())
+
+    async def _shutdown() -> None:
+        timer.cancel()
+        task = bg_state.get("task")
+        if task:
+            task.cancel()
+        outcome = run.outcome or ("no_answer" if not run.transcript else "completed")
+        await _push_live_event(run.call_log_id, {
+            "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
+            "duration_sec": round(_time.monotonic() - run.t0), "ts": str(_time.time()),
+        })
+        await _post_run_outcome(run, outcome)
+
+    ctx.add_shutdown_callback(_shutdown)
+
+    # When the browser tester leaves, end the job so the outcome is saved promptly.
+    if call_type == "web":
+        def _on_left(_p) -> None:
+            if not ctx.room.remote_participants:
+                asyncio.create_task(_delete_room(ctx.room.name))
+        ctx.room.on("participant_disconnected", _on_left)
+
+    first = render_vars(cfg.get("first_message", ""), variables).strip()
+    if first:
+        session.say(first, allow_interruptions=True)
+    else:
+        session.generate_reply(instructions="Greet the contact and begin the conversation.")
+
+
+async def _wait_for_sip_answer(ctx: JobContext, timeout: float = 50.0) -> None:
+    """
+    LiveKit SIP outbound adds the callee as a participant while the call is
+    still ringing; its `sip.callStatus` attribute flips to "active" on answer.
+    Speaking before that loses the opening line. Falls through after a timeout
+    so a missing attribute never wedges the call.
+    """
+    def _answered() -> bool:
+        return any(
+            (p.attributes or {}).get("sip.callStatus") == "active"
+            for p in ctx.room.remote_participants.values()
+        )
+
+    if _answered():
+        return
+    answered_evt = asyncio.Event()
+
+    def _on_attrs_changed(_changed, participant) -> None:
+        if (participant.attributes or {}).get("sip.callStatus") == "active":
+            answered_evt.set()
+
+    def _on_connected(participant) -> None:
+        if (participant.attributes or {}).get("sip.callStatus") == "active":
+            answered_evt.set()
+
+    ctx.room.on("participant_attributes_changed", _on_attrs_changed)
+    ctx.room.on("participant_connected", _on_connected)
+    try:
+        await asyncio.wait_for(answered_evt.wait(), timeout=timeout)
+        log.info("sip_call_active", room=ctx.room.name)
+    except asyncio.TimeoutError:
+        log.warning("sip_answer_wait_timeout", room=ctx.room.name)
+    finally:
+        ctx.room.off("participant_attributes_changed", _on_attrs_changed)
+        ctx.room.off("participant_connected", _on_connected)
+
+
 # ── Worker entrypoint ─────────────────────────────────────────────────────────
 
 async def entrypoint(ctx: JobContext) -> None:
@@ -636,6 +998,11 @@ async def entrypoint(ctx: JobContext) -> None:
         log.error("agent_metadata_parse_error", raw=raw_metadata)
         metadata = {}
 
+    # Dashboard-built agents carry their config in the metadata.
+    if metadata.get("agent") or metadata.get("agent_id"):
+        await _run_configurable(ctx, metadata)
+        return
+
     state = CallState(
         lead_id=metadata.get("lead_id", "unknown"),
         name=metadata.get("name", "there"),
@@ -648,46 +1015,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     log.info("agent_started", room=ctx.room.name, lead_id=state.lead_id, name=state.name)
 
-    # ── Wait for the prospect to actually answer (SIP outbound) ───────────────
-    # LiveKit SIP outbound adds the prospect as a participant while the call is
-    # still ringing; its `sip.callStatus` attribute flips to "active" on answer.
-    # Speaking before that loses the opening line during ringing (hevox-prod
-    # waits the same way). Falls through after a timeout so a missing attribute
-    # never wedges the call.
-    async def _wait_for_answer(timeout: float = 50.0) -> None:
-        import asyncio
-
-        def _answered() -> bool:
-            for p in ctx.room.remote_participants.values():
-                status = (p.attributes or {}).get("sip.callStatus")
-                if status == "active":
-                    return True
-            return False
-
-        if _answered():
-            return
-        answered_evt = asyncio.Event()
-
-        def _on_attrs_changed(_changed, participant) -> None:
-            if (participant.attributes or {}).get("sip.callStatus") == "active":
-                answered_evt.set()
-
-        def _on_connected(participant) -> None:
-            if (participant.attributes or {}).get("sip.callStatus") == "active":
-                answered_evt.set()
-
-        ctx.room.on("participant_attributes_changed", _on_attrs_changed)
-        ctx.room.on("participant_connected", _on_connected)
-        try:
-            await asyncio.wait_for(answered_evt.wait(), timeout=timeout)
-            log.info("sip_call_active", room=ctx.room.name)
-        except asyncio.TimeoutError:
-            log.warning("sip_answer_wait_timeout", room=ctx.room.name)
-        finally:
-            ctx.room.off("participant_attributes_changed", _on_attrs_changed)
-            ctx.room.off("participant_connected", _on_connected)
-
-    await _wait_for_answer()
+    await _wait_for_sip_answer(ctx)
 
     try:
         from livekit.plugins.turn_detector.multilingual import MultilingualModel

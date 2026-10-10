@@ -1,216 +1,251 @@
 """
-Agents router — returns the single hardcoded Pounce SDR agent (Paul).
+Agents router — create/configure voice agents and test them
+(text playground, browser voice call, phone call).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import uuid
+from typing import Annotated
 
+import structlog
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agent.runtime import agent_to_runtime
+from app.agent.templates import TEMPLATES, get_template
+from app.database import get_db
+from app.models.agent import Agent
+from app.models.call_log import CallLog
+
+log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
-# ── Paul workflow — mirrors Carrier Sales II complexity ───────────────────────
-#
-# Phase 1 — Connect & Hook      (n1–n4)
-# Phase 2 — Discovery & Qual    (n5–n10)
-# Phase 3 — Pitch & Book        (n11–n15)
-# Outcome  — Extract & Classify (n16–n19)
+_EDITABLE = (
+    "name", "description", "status", "system_prompt", "first_message", "knowledge_base",
+    "language", "llm_model", "temperature", "voice_id", "voice_speed", "background_audio",
+    "enable_booking", "calcom_event_type_id", "transfer_number", "max_duration_seconds",
+    "extraction_fields", "success_criteria",
+)
 
-def n(id, type, label, x, y, config=None):
-    return {"id": id, "type": type, "position": {"x": x, "y": y},
-            "data": {"label": label, "config": config or {}}}
 
-def e(id, src, tgt, label=None):
-    d = {"id": id, "source": src, "target": tgt}
-    if label:
-        d["label"] = label
+# ── Schemas ───────────────────────────────────────────────────────────────────
+
+
+class ExtractionField(BaseModel):
+    name: str
+    description: str = ""
+
+
+class AgentCreate(BaseModel):
+    template: str = "blank"
+    name: str | None = None
+
+
+class AgentUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    status: str | None = None
+    system_prompt: str | None = None
+    first_message: str | None = None
+    knowledge_base: str | None = None
+    language: str | None = None
+    llm_model: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    voice_id: str | None = None
+    voice_speed: float | None = Field(default=None, ge=0.5, le=2)
+    background_audio: bool | None = None
+    enable_booking: bool | None = None
+    calcom_event_type_id: str | None = None
+    transfer_number: str | None = None
+    max_duration_seconds: int | None = Field(default=None, ge=30, le=3600)
+    extraction_fields: list[ExtractionField] | None = None
+    success_criteria: str | None = None
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = []
+    variables: dict = {}
+    state: dict = {}
+
+
+class WebCallRequest(BaseModel):
+    variables: dict = {}
+
+
+class PhoneCallRequest(BaseModel):
+    to_phone: str
+    name: str = ""
+
+
+def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
+    d = {
+        "id": str(a.id),
+        "template": a.template,
+        **{k: getattr(a, k) for k in _EDITABLE},
+        "extraction_fields": a.extraction_fields or [],
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+    }
+    if stats is not None:
+        d["stats"] = stats
     return d
 
 
-_WORKFLOW = {
-    "nodes": [
-        # ── Phase 1 — Connect & Hook ──────────────────────────────────────────
-        n("n1",  "trigger",         "Outbound Dial",               370, 0,    {"direction": "outbound"}),
-        n("n2",  "action",          "load_lead_context",           370, 110,  {"tool": "load_lead_context"}),
-        n("n3",  "ai_conversation", "Intro & Hook",                370, 220,  {"prompt": "Greet by first name. One punchy line on Hemut. Ask if they have 90 seconds."}),
-        n("n4",  "classify",        "Prospect Available?",         370, 350,  {"branches": ["connected", "voicemail", "busy", "wrong_person"]}),
+async def _get_agent(db: AsyncSession, agent_id: uuid.UUID) -> Agent:
+    agent = await db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
 
-        n("n5",  "action",          "end_call (no contact)",       720, 480,  {"tool": "end_call", "outcome": "no_answer"}),
 
-        # ── Phase 2 — Discovery & Qualification ───────────────────────────────
-        n("n6",  "ai_conversation", "Discovery",                   370, 480,  {"prompt": "Ask 3 questions: team size, current TMS/process, are they the decision-maker."}),
-        n("n7",  "action",          "log team_size",               80,  630,  {"tool": "log_qualification_answer", "question": "team_size"}),
-        n("n8",  "action",          "log current_process",         370, 630,  {"tool": "log_qualification_answer", "question": "current_process"}),
-        n("n9",  "action",          "log decision_maker",          660, 630,  {"tool": "log_qualification_answer", "question": "decision_maker"}),
-        n("n10", "action",          "qualify_lead",                370, 760,  {"tool": "qualify_lead", "description": "Score 0–10 using rubric"}),
-        n("n11", "classify",        "Qualified?",                  370, 890,  {"branches": ["qualified", "not_qualified"]}),
+def new_agent_from_template(key: str, name: str | None = None) -> Agent:
+    t = get_template(key)
+    return Agent(
+        id=uuid.uuid4(),
+        template=t["template"],
+        name=name or t["name"],
+        description=t["description"],
+        system_prompt=t["system_prompt"],
+        first_message=t["first_message"],
+        knowledge_base=t["knowledge_base"],
+        extraction_fields=t["extraction_fields"],
+        success_criteria=t["success_criteria"],
+        enable_booking=t["enable_booking"],
+    )
 
-        n("n12", "action",          "end_call (not qualified)",    720, 1020, {"tool": "end_call", "outcome": "not_qualified"}),
 
-        # ── Phase 3 — Pitch & Book ────────────────────────────────────────────
-        n("n13", "ai_conversation", "Pitch & Schedule",            370, 1020, {"prompt": "Pitch Hemut in 2 sentences. Ask for 30-min demo — call book_meeting() with their preferred time."}),
-        n("n14", "action",          "book_meeting",                370, 1130, {"tool": "book_meeting", "description": "Fetch Cal.com slots, offer 2 options"}),
-        n("n15", "classify",        "Meeting Status?",             370, 1260, {"branches": ["confirmed", "callback", "declined"]}),
+async def seed_default_agent(db: AsyncSession) -> None:
+    """First boot: create one ready-to-test agent so the dashboard isn't empty."""
+    count = (await db.execute(select(func.count()).select_from(Agent))).scalar_one()
+    if count == 0:
+        db.add(new_agent_from_template("sales_sdr"))
+        await db.commit()
+        log.info("seeded_default_agent")
 
-        n("n16", "action",          "log callback",                680, 1390, {"tool": "log_qualification_answer", "question": "callback_time"}),
 
-        # ── Outcome ───────────────────────────────────────────────────────────
-        n("n17", "extract",         "Extract Outcome Fields",      370, 1390, {"fields": ["name", "company", "email", "agreed_meeting_time", "outcome"]}),
-        n("n18", "classify",        "Final Outcome",               370, 1510, {"branches": ["meeting_booked", "callback", "not_qualified", "no_answer", "hung_up"]}),
-        n("n19", "action",          "end_call",                    370, 1630, {"tool": "end_call"}),
-    ],
-    "edges": [
-        # Phase 1
-        e("e1",  "n1",  "n2"),
-        e("e2",  "n2",  "n3"),
-        e("e3",  "n3",  "n4"),
-        e("e4",  "n4",  "n5",  "voicemail / busy / wrong"),
-        e("e5",  "n4",  "n6",  "connected"),
-        e("e6",  "n5",  "n17"),
-
-        # Phase 2
-        e("e7",  "n6",  "n7",  "team size"),
-        e("e8",  "n6",  "n8",  "current process"),
-        e("e9",  "n6",  "n9",  "decision maker"),
-        e("e10", "n7",  "n10"),
-        e("e11", "n8",  "n10"),
-        e("e12", "n9",  "n10"),
-        e("e13", "n10", "n11"),
-        e("e14", "n11", "n12", "not_qualified"),
-        e("e15", "n11", "n13", "qualified"),
-        e("e16", "n12", "n17"),
-
-        # Phase 3
-        e("e17", "n13", "n14"),
-        e("e18", "n14", "n15"),
-        e("e19", "n15", "n16", "callback"),
-        e("e20", "n15", "n17", "declined"),
-        e("e21", "n15", "n17", "confirmed"),
-        e("e22", "n16", "n17"),
-
-        # Outcome
-        e("e23", "n17", "n18"),
-        e("e24", "n18", "n19"),
-    ],
-}
-
-_PROMPT = """\
-You are Paul, a senior outbound SDR at Hemut — the AI-native TMS built for freight brokers. \
-You're calling freight broker prospects to qualify them and book a 30-minute product demo.
-
-Sound natural and freight-fluent. One or two sentences per turn — this is a phone call, not an email.
-
-## Workflow
-
-**Phase 1 — Connect & Hook**
-1. Call load_lead_context() immediately — this is always your first move.
-2. Greet by first name. Hook: "I'm calling because we just launched an AI-powered TMS built specifically \
-for freight brokers — helps dispatchers handle 40% more loads without extra headcount."
-3. Ask: "Do you have 90 seconds?"
-4. If voicemail / no answer → call end_call(outcome="no_answer")
-5. If wrong person → ask who manages TMS/operations, then end_call
-
-**Phase 2 — Discovery (3 questions)**
-After each answer, call log_qualification_answer() immediately:
-1. "How many brokers or dispatchers are on your team right now?" → log(question="team_size", answer=...)
-2. "What TMS or tools are you using today to manage loads and track carriers?" → log(question="current_process", answer=...)
-3. "Are you the one who'd evaluate a new TMS, or is there someone else I should loop in?" → log(question="decision_maker", answer=...)
-
-Then call qualify_lead(score=0-10, summary="one sentence on fit").
-
-**Phase 3 — Pitch & Book (score ≥ 5 only)**
-- Pitch (10 seconds): "Hemut automates check calls, carrier updates, and load tracking — brokers on our \
-platform close 30% more loads in the same headcount. Worth a quick look?"
-- Call book_meeting(preferred_time="their preference") → offer the two slots returned.
-- Get their email for the calendar invite.
-- Call end_call(outcome="meeting_booked")
-
-**If score < 5:**
-- "Totally get it — sounds like you've got a solid setup. Mind if I check back in a few months?"
-- Call end_call(outcome="not_qualified")
-
-## Qualification Rubric (for qualify_lead score 0–10)
-+2 pts  Team ≥ 5 dispatchers or brokers
-+2 pts  Using spreadsheets, manual process, or outdated TMS (McLeod, TMW, Tailwind)
-+3 pts  They ARE the decision-maker or strong influencer
-+2 pts  Actively evaluating or open to switching TMS
-+1 pt   Warm / curious tone, asked questions about Hemut
-
-## Voice Rules
-- Never narrate tool calls — pause naturally ("Let me check on that…"), then speak the result
-- Dollar amounts as words: "thirty percent more loads" not "30% more"
-- Affirmations: "Got it." "Absolutely." "Makes sense." "That's exactly what we built this for."
-- Lead with the pain, then Hemut: "Most brokers we talk to are still doing check calls manually — \
-that's the first thing Hemut eliminates."
-- Keep every turn under 2 sentences unless reading back a slot time
-"""
-
-_ALEX: dict = {
-    "id": "pounce-alex-001",
-    "name": "Paul — Pounce SDR",
-    "agent_type": "sdr",
-    "status": "active",
-    "phone_number": None,
-    "voice_id": "79a125e8-cd45-4c13-8a67-188112f4dd22",
-    "prompt_override": _PROMPT,
-    "workflow_json": _WORKFLOW,
-    "enabled_tools": [
-        "load_lead_context",
-        "log_qualification_answer",
-        "qualify_lead",
-        "book_meeting",
-        "end_call",
-    ],
-    "created_at": "2026-06-27T00:00:00Z",
-}
-
-_TEMPLATE: dict = {
-    "id": "tpl-pounce-sdr",
-    "agent_type": "sdr",
-    "name": "Pounce SDR",
-    "description": "Outbound SDR that qualifies freight broker leads and books demos for Hemut.",
-    "default_workflow_nodes": _WORKFLOW["nodes"],
-    "default_workflow_edges": _WORKFLOW["edges"],
-    "default_system_prompt": _PROMPT,
-    "node_count": len(_WORKFLOW["nodes"]),
-}
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 
 @router.get("/templates/list")
 async def list_templates():
-    return [_TEMPLATE]
+    return [{k: t[k] for k in ("template", "name", "description", "enable_booking")} for t in TEMPLATES]
 
 
 @router.get("/")
-async def list_agents():
-    return [_ALEX]
+async def list_agents(db: Annotated[AsyncSession, Depends(get_db)]):
+    agents = (await db.execute(select(Agent).order_by(Agent.created_at.desc()))).scalars().all()
+    rows = await db.execute(
+        select(CallLog.agent_id, func.count(), func.coalesce(func.sum(CallLog.duration_seconds), 0))
+        .where(CallLog.agent_id.isnot(None))
+        .group_by(CallLog.agent_id)
+    )
+    stats = {r[0]: {"calls": r[1], "seconds": int(r[2] or 0)} for r in rows}
+    return [agent_to_dict(a, stats.get(a.id, {"calls": 0, "seconds": 0})) for a in agents]
 
 
-@router.post("/")
-async def create_agent(body: dict):
-    return _ALEX
+@router.post("/", status_code=201)
+async def create_agent(body: AgentCreate, db: Annotated[AsyncSession, Depends(get_db)]):
+    agent = new_agent_from_template(body.template, body.name)
+    db.add(agent)
+    await db.commit()
+    log.info("agent_created", agent_id=str(agent.id), template=body.template)
+    return agent_to_dict(agent)
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str):
-    return _ALEX
+async def get_agent(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
+    return agent_to_dict(await _get_agent(db, agent_id))
+
+
+@router.get("/{agent_id}/runtime")
+async def get_agent_runtime(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Config consumed by the voice worker when it isn't inlined in room metadata."""
+    return agent_to_runtime(await _get_agent(db, agent_id))
 
 
 @router.patch("/{agent_id}")
-async def update_agent(agent_id: str, body: dict):
-    merged = {**_ALEX, **{k: v for k, v in body.items() if v is not None}}
-    return merged
+async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, db: Annotated[AsyncSession, Depends(get_db)]):
+    agent = await _get_agent(db, agent_id)
+    for key, value in body.model_dump(exclude_unset=True).items():
+        if value is None:
+            continue
+        setattr(agent, key, value)
+    await db.commit()
+    await db.refresh(agent)
+    return agent_to_dict(agent)
+
+
+@router.post("/{agent_id}/duplicate", status_code=201)
+async def duplicate_agent(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
+    src = await _get_agent(db, agent_id)
+    copy = Agent(id=uuid.uuid4(), template=src.template, **{k: getattr(src, k) for k in _EDITABLE})
+    copy.name = f"{src.name} (copy)"
+    db.add(copy)
+    await db.commit()
+    return agent_to_dict(copy)
 
 
 @router.delete("/{agent_id}", status_code=204)
-async def delete_agent(agent_id: str):
-    return None
+async def delete_agent(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
+    agent = await _get_agent(db, agent_id)
+    await db.delete(agent)
+    await db.commit()
 
 
-@router.post("/{agent_id}/test-call")
-async def test_call(agent_id: str, body: dict):
-    return {"mode": "demo", "call_sid": "demo-call-001", "session_id": "demo-session-001"}
+@router.post("/{agent_id}/chat")
+async def chat_with_agent(agent_id: uuid.UUID, body: ChatRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Text playground — same prompt, knowledge and tools as the voice agent."""
+    from app.services.llm import LLMNotConfigured, playground_reply
+
+    agent = await _get_agent(db, agent_id)
+    try:
+        return await playground_reply(
+            agent_to_runtime(agent),
+            {"name": "there", **body.variables},
+            [m.model_dump() for m in body.messages],
+            body.state,
+        )
+    except LLMNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        log.warning("playground_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
-@router.post("/{agent_id}/activate")
-async def activate_agent(agent_id: str, body: dict):
-    return {**_ALEX, "phone_number": body.get("phone_number")}
+@router.post("/{agent_id}/web-call")
+async def start_web_call(agent_id: uuid.UUID, body: WebCallRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Browser voice test — returns a LiveKit URL + token for livekit-client."""
+    from app.services.outbound_call import CallSetupError, call_service
+
+    agent = await _get_agent(db, agent_id)
+    try:
+        return await call_service.start_web_call(agent, db, body.variables)
+    except CallSetupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        log.error("web_call_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Could not start web call: {exc}")
+
+
+@router.post("/{agent_id}/phone-call")
+async def start_phone_call(agent_id: uuid.UUID, body: PhoneCallRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Have the agent call a phone number right now (e.g. your own mobile)."""
+    from app.services.outbound_call import CallSetupError, call_service
+
+    agent = await _get_agent(db, agent_id)
+    try:
+        call = await call_service.dispatch_call(None, db, agent=agent, to_phone=body.to_phone)
+    except (CallSetupError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        log.error("phone_call_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Could not place call: {exc}")
+    return {"call_id": str(call.id), "room": call.livekit_room_name, "status": call.status}

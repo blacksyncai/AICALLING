@@ -5,8 +5,7 @@ Lead model — a prospect sourced from Orange Slice or a webhook intent trigger.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,38 +18,26 @@ def _now() -> datetime:
 class Lead(Base):
     __tablename__ = "leads"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
     # ── Contact ───────────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    company: Mapped[str] = mapped_column(String(255), nullable=False)
+    company: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     phone: Mapped[str] = mapped_column(String(50), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     role: Mapped[str] = mapped_column(String(255), nullable=True)
 
     # ── Status ────────────────────────────────────────────────────────────────
-    status: Mapped[str] = mapped_column(
-        Enum(
-            "new",
-            "queued",
-            "calling",
-            "qualified",
-            "not_qualified",
-            "meeting_booked",
-            "no_answer",
-            "failed",
-            name="lead_status",
-        ),
-        nullable=False,
-        default="new",
-    )
+    # new | queued | calling | qualified | not_qualified | meeting_booked
+    # | interested | not_interested | callback | completed | no_answer | failed
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="new")
 
     # ── Qualification ─────────────────────────────────────────────────────────
     qualification_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pain_points: Mapped[list | None] = mapped_column(JSON, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Arbitrary extra CSV columns — usable as {{variables}} in agent prompts.
+    custom_fields: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # ── Source ────────────────────────────────────────────────────────────────
     intent_source: Mapped[str] = mapped_column(
@@ -60,7 +47,7 @@ class Lead(Base):
 
     # ── Campaign FK ───────────────────────────────────────────────────────────
     campaign_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         ForeignKey("campaigns.id", ondelete="SET NULL"),
         nullable=True,
         index=True,

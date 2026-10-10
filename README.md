@@ -1,138 +1,133 @@
-# Pounce
+# Closer
 
-**Your leads get a real phone call. You get a booked demo.**
+**Build AI calling agents, test them in your browser in seconds, then let them work through your lead list.**
 
-Most "AI outreach" tools send another email into an already-ignored inbox. Pounce picks up the phone — it calls your prospects, has a live two-way voice conversation, qualifies them on the spot, and books the meeting before the call ends. No human needed at any step.
+A self-hostable, CloserX-style AI voice-agent platform: create agents from templates, give them a prompt,
+knowledge base, voice and actions (book meetings, transfer to a human), talk to them right in the browser,
+then upload a CSV and run outbound calling campaigns with transcripts, AI summaries and extracted data for
+every call.
 
-Built by [Ashish Lathkar](https://github.com/Ashishlathkar77) · YC X25
+> Forked from [Pounce](https://github.com/Ashishlathkar77) (a single hard-coded SDR agent) and rebuilt into a
+> multi-agent platform. The original Paul/Hemut agent still runs for any call without an agent config.
 
----
+## What you get
 
-## The difference
-
-| Everyone else | Pounce |
+| | |
 |---|---|
-| Email sequences, LinkedIn DMs | Real outbound phone call |
-| Prospect reads (or ignores) a message | Prospect has a live conversation |
-| You follow up manually | Demo is already on the calendar |
-| Async, days-long back-and-forth | Qualified + booked in under 5 minutes |
+| **Agent builder** | Templates (Sales SDR, Appointment Setter, Real Estate, Support Receptionist, Blank) · system prompt with `{{variables}}` · first message · knowledge base (paste or upload) · voice, speed, language, model, temperature · max call length |
+| **Test instantly** | **Chat** playground (only needs an OpenAI key) · **Voice** call in the browser via your mic · **Phone** — the agent calls your mobile |
+| **Actions** | Appointment booking (Cal.com or realistic mock slots) · warm transfer to a human · `end_call` with outcomes |
+| **Campaigns** | CSV import (extra columns become prompt variables) · pick an agent · concurrency limit · start / pause / resume · call selected contacts |
+| **Call logs** | Full transcript with tool calls · AI summary · outcome · sentiment · your custom extracted fields · re-analyze |
+| **Dashboard** | Calls, talk time, meetings booked, success rate, calls per day, outcome breakdown, setup checklist |
 
-The entire funnel — **dial → qualify → pitch → book** — happens in a single call. No SDR. No BDR. No follow-up sequence.
+## Quickstart — test in ~5 minutes
 
-## Demo
+You need Python 3.11+ and Node 20+.
 
-Live at **[pounce.hemut.com](https://pounce.hemut.com)**
+```bash
+# 1) API  (SQLite by default — no database to set up)
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # put at least OPENAI_API_KEY in it
+uvicorn main:app --reload --port 8000
+
+# 2) Web app  (new terminal)
+cd web
+npm install
+npm run dev                   # → http://localhost:3000
+```
+
+Open **http://localhost:3000 → Agents → Outbound Sales SDR → Chat** and start talking to it.
+That's the whole loop with just an OpenAI key.
+
+### Unlock voice in the browser
+
+Add these to `backend/.env`, restart the API, and start the voice worker:
+
+| Key | Where |
+|---|---|
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Free project at [cloud.livekit.io](https://cloud.livekit.io) → Settings → Keys |
+| `DEEPGRAM_API_KEY` | [console.deepgram.com](https://console.deepgram.com) (free credit) |
+| `CARTESIA_API_KEY` | [play.cartesia.ai/keys](https://play.cartesia.ai/keys) — also unlocks the full voice picker |
+
+```bash
+cd backend
+python agent_worker.py download-files   # first time only (VAD + turn-detector models)
+python agent_worker.py dev              # keep running alongside the API
+```
+
+Now the **Voice** tab in the agent editor puts you on a live call with your agent.
+
+### Unlock real phone calls + campaigns
+
+Create a LiveKit **outbound SIP trunk** (e.g. Twilio Elastic SIP Trunking → LiveKit —
+[guide](https://docs.livekit.io/sip/quickstarts/configuring-twilio-trunk/)) and set
+`LIVEKIT_SIP_OUTBOUND_TRUNK_ID`. The **Phone** tab and campaigns start dialing.
+
+Optional: `CALCOM_API_KEY` + `CALCOM_EVENT_TYPE_ID` for real calendar bookings.
+
+The app's **Settings** page shows which of these are connected at any time.
+
+### Or: Docker
+
+```bash
+cp backend/.env.example backend/.env   # add keys
+docker compose up --build              # API :8000 · worker · web :3000
+```
+
+### Before putting it on the internet
+
+- Set `AUTH_PASSWORD` (and `AUTH_EMAIL`, `AUTH_SECRET`) for the web app — the login screen is off when it's empty.
+- Keep the API private (only the web app and worker need to reach it); it has no auth of its own.
+- Use Postgres: `DATABASE_URL=postgresql+asyncpg://…` (tables/columns are created on startup).
+- Set `WEBHOOK_BASE_URL` to an address the worker can reach the API on.
 
 ## How it works
 
 ```
-┌─────────────┐     SIP outbound      ┌──────────────────────┐
-│  Campaign   │ ──── LiveKit room ───▶ │  Paul (voice agent)  │
-│  dashboard  │                        │                      │
-│  (Next.js)  │◀── webhook / SSE ───── │  Deepgram  GPT-4.1  │
-└─────────────┘                        │  Cartesia  Cal.com  │
-       │                               └──────────┬───────────┘
-       │ REST                                     │
-       ▼                                          ▼
-┌─────────────┐                        ┌──────────────────────┐
-│  FastAPI    │                        │  Calendar invite     │
-│  + Postgres │                        │  sent automatically  │
-└─────────────┘                        └──────────────────────┘
+ Browser ──► web (Next.js) ──/api proxy──► API (FastAPI) ──► DB (SQLite/Postgres)
+    │                                        │   ▲
+    │ WebRTC (voice test)                     │   │ outcome + transcript webhook
+    ▼                                        ▼   │
+ LiveKit room ◄── dispatch(agent config) ── API  │
+    │  ▲                                          │
+    │  └── SIP outbound (phone/campaign calls)    │
+    ▼                                             │
+ Voice worker: Deepgram STT → OpenAI LLM (+tools) → Cartesia TTS ──┘
+                                     post-call: OpenAI summary / outcome / extraction
 ```
 
-1. You upload a list of leads and start a campaign
-2. Pounce dials each one via SIP outbound
-3. Paul (the voice agent) runs a live discovery conversation — team size, current tooling, decision-maker
-4. Qualifies the lead in real time using a scored rubric
-5. Delivers a personalized pitch based on what they just said
-6. Books a demo slot on Cal.com and sends the calendar invite
-7. Full transcript + outcome lands in your Runs dashboard instantly
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Voice agent | [LiveKit Agents 1.6](https://docs.livekit.io/agents/) |
-| STT | [Deepgram nova-3](https://deepgram.com/) — keyterm boosting, dynamic endpointing |
-| LLM | [OpenAI gpt-4.1](https://openai.com/) @ temperature 0.3 |
-| TTS | [Cartesia Sonic-3](https://cartesia.ai/) — Blake voice, speed 0.96 |
-| Frontend | [Next.js 15](https://nextjs.org/) App Router |
-| Backend API | [FastAPI](https://fastapi.tiangolo.com/) + SQLAlchemy + Postgres |
-| Scheduling | [Cal.com API v2](https://cal.com/docs/api-reference/v2) |
-| Infra | AWS ECS Fargate ARM64, Vercel (frontend), GitHub Actions OIDC |
+1. Every call (browser test, phone test, campaign) creates a LiveKit room whose metadata carries the
+   agent's config and the contact's variables.
+2. The worker (`agent_worker.py`) builds the agent from that config: prompt + knowledge base, voice,
+   model and only the tools that agent has enabled.
+3. When the call ends the worker posts the transcript + outcome; the API runs post-call analysis and the
+   result shows up in Call Logs.
 
 ## Repository layout
 
 ```
-pounce/
-├── backend/
-│   ├── agent_worker.py      # LiveKit agent — Paul (voice pipeline)
-│   ├── main.py              # FastAPI app (campaigns, leads, webhooks)
-│   ├── app/
-│   │   ├── agent/
-│   │   │   ├── prompt.py    # System prompt + 3 example call transcripts
-│   │   │   └── state.py     # Per-call state (qualification gates, transcript)
-│   │   ├── routers/         # API routes
-│   │   ├── models/          # SQLAlchemy models
-│   │   └── services/        # Outbound call dispatch, Cal.com, etc.
-│   └── requirements.txt
-├── frontend/
-│   └── src/
-│       ├── app/
-│       │   ├── (dashboard)/ # Agents, Runs, Campaigns, Analytics pages
-│       │   └── login/       # Auth (HMAC-SHA256 cookie, no external deps)
-│       └── lib/             # API client, types, auth helpers
-├── deploy/                  # ECS task definitions, Dockerfile targets
-├── research/                # Voice agent research papers + analysis
-└── .github/workflows/       # CI/CD: build → push ECR → deploy ECS
+backend/
+  main.py                    FastAPI app
+  agent_worker.py            LiveKit voice worker (configurable agents + original Paul SDR)
+  app/agent/templates.py     Starter agent templates
+  app/agent/runtime.py       Prompt assembly shared by chat + voice
+  app/routers/agents.py      Agent CRUD, chat playground, web/phone test calls
+  app/routers/campaigns.py   Campaigns, CSV import, dialer queue with concurrency
+  app/routers/calls.py       Call logs + dashboard overview
+  app/routers/settings.py    Integration status + Cartesia voice catalog
+  app/services/              Calls (LiveKit), LLM (playground + analysis), calendar (Cal.com)
+  tests/                     pytest suite  (pytest -q tests)
+web/                         The platform UI (Next.js 15, Tailwind 4, livekit-client)
+frontend/                    Original Pounce UI — needs a private @hemut2025 package, kept for reference
+research/                    Voice-agent research notes from the original project
 ```
 
-## Getting started
+---
 
-### Prerequisites
-
-- Python 3.11+, Node.js 20+
-- [LiveKit](https://livekit.io/) project (Cloud or self-hosted)
-- API keys: [Deepgram](https://deepgram.com/), [OpenAI](https://platform.openai.com/), [Cartesia](https://cartesia.ai/)
-- [Cal.com](https://cal.com/) account + event type ID
-- Postgres database
-
-### Backend
-
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env   # fill in your keys
-
-uvicorn main:app --reload --port 8000      # FastAPI
-python agent_worker.py dev                  # LiveKit voice agent
-```
-
-Key env vars:
-
-```
-LIVEKIT_URL=wss://your-project.livekit.cloud
-LIVEKIT_API_KEY=
-LIVEKIT_API_SECRET=
-DEEPGRAM_API_KEY=
-OPENAI_API_KEY=
-CARTESIA_API_KEY=
-CALCOM_API_KEY=
-CALCOM_EVENT_TYPE_ID=
-DATABASE_URL=postgresql+asyncpg://...
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev   # http://localhost:3000
-```
-
-Set `AUTH_EMAIL` / `AUTH_PASSWORD` in `frontend/.env.local` before deploying.
+*The sections below are from the original Pounce project and describe the research behind the voice pipeline.*
 
 ## The research behind it
 

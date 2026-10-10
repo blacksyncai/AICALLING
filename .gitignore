@@ -28,6 +28,10 @@ build/
 *.tsbuildinfo
 next-env.d.ts
 
+# ── Local SQLite databases ──
+*.db
+*.db-journal
+
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .convex/
 *.log

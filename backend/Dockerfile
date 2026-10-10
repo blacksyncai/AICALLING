@@ -1,4 +1,4 @@
-# Pounce backend image — runs BOTH the FastAPI API and the LiveKit agent worker.
+# Closer backend image — runs BOTH the FastAPI API and the LiveKit agent worker.
 # Default CMD starts the API (uvicorn). The worker ECS task overrides the command
 # to: python agent_worker.py start  (same image, mirrors Converse prod).
 FROM python:3.12-slim
@@ -19,6 +19,9 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
+
+# Pre-download the VAD / turn-detector model weights so calls start instantly.
+RUN python agent_worker.py download-files || echo "model download skipped"
 
 EXPOSE 8000
 
