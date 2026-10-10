@@ -7,7 +7,7 @@ import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Modal, Notic
 import { del, patch, post } from "@/lib/api";
 import type { Webhook, WebhookEvent } from "@/lib/types";
 import { cn, formatDateTime, timeAgo } from "@/lib/utils";
-import { ALL_EVENTS, ConfirmModal, CopyButton, EVENT_INFO, Switch } from "./shared";
+import { ALL_EVENTS, ConfirmModal, CopyButton, EVENT_INFO, EVENT_LABEL, Switch } from "./shared";
 
 type TestResult = { ok: boolean; status: number | null; error: string | null; event: string };
 
@@ -23,9 +23,7 @@ export function WebhooksCard({ webhooks, events, onChange }: { webhooks: Webhook
         title="Webhooks"
         description={
           <>
-            We POST a JSON event to your URL when something happens. Verify the{" "}
-            <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px] text-zinc-700">X-BlackSync-Signature</code> header (HMAC-SHA256 of the raw body
-            with your signing secret).
+            Send calls, booked meetings and new contacts to Zapier, Make, your CRM or any app that accepts webhooks.
           </>
         }
         action={
@@ -124,7 +122,7 @@ function WebhookRow({ webhook: w, onEdit, onDelete, onChange }: { webhook: Webho
     setTesting(true);
     try {
       const r = await post<TestResult>(`/api/integrations/webhooks/${w.id}/test`);
-      if (r.ok) toast(`Test ${r.event} delivered — HTTP ${r.status}`);
+      if (r.ok) toast("Test sent — check your app for the sample");
       else toast(`Test failed${r.status ? ` (HTTP ${r.status})` : ""}: ${r.error ?? "no response"}`, "error");
       onChange();
     } catch (e) {
@@ -151,8 +149,8 @@ function WebhookRow({ webhook: w, onEdit, onDelete, onChange }: { webhook: Webho
 
       <div className="mt-3 flex flex-wrap gap-1.5">
         {w.events.map((ev) => (
-          <code key={ev} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-700 ring-1 ring-inset ring-brand-600/15">
-            {ev}
+          <code key={ev} className="rounded-md bg-brand-50 px-1.5 py-0.5 font-sans text-[11px] font-medium text-brand-700 ring-1 ring-inset ring-brand-600/15">
+            {EVENT_LABEL[ev] ?? ev}
           </code>
         ))}
       </div>
@@ -181,7 +179,7 @@ function WebhookRow({ webhook: w, onEdit, onDelete, onChange }: { webhook: Webho
           )}
         </div>
         <div className="min-w-0">
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">Signing secret</div>
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">Security key</div>
           <div className="flex items-center gap-1">
             <code className="min-w-0 flex-1 truncate rounded-md bg-zinc-100 px-2 py-1 font-mono text-[11px] text-zinc-700">
               {reveal ? w.secret : `${w.secret.slice(0, 6)}${"•".repeat(18)}`}
@@ -264,7 +262,7 @@ function WebhookModal({
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Zapier — new meetings" autoFocus />
         </Field>
-        <Field label="Endpoint URL" hint="Must be publicly reachable. We send POST requests with a JSON body.">
+        <Field label="Webhook URL" hint="Paste the link from Zapier, Make or the app you're connecting.">
           <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://hooks.zapier.com/hooks/catch/…" inputMode="url" className="font-mono text-xs" />
         </Field>
         <div>
@@ -282,7 +280,7 @@ function WebhookModal({
                 >
                   <input type="checkbox" checked={on} onChange={() => toggleEvent(ev)} className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600" />
                   <span className="min-w-0">
-                    <code className="block font-mono text-xs font-medium text-zinc-900">{ev}</code>
+                    <span className="block text-sm font-medium text-zinc-900">{EVENT_LABEL[ev] ?? ev}</span>
                     <span className="mt-0.5 block text-xs text-zinc-500">{EVENT_INFO[ev] ?? ""}</span>
                   </span>
                 </label>

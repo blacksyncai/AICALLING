@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  Bot, ChevronsUpDown, Coins, Contact, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug, Settings,
-  ShieldCheck, UserRound, X,
+  Bot, ChevronsUpDown, Coins, Contact, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug,
+  UserRound, X,
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
@@ -92,16 +92,6 @@ function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
           <Link href="/profile" className={item} onClick={() => { setOpen(false); onNavigate(); }}>
             <UserRound className="h-4 w-4 text-zinc-400" /> Profile & team
           </Link>
-          {session.user.is_superadmin && (
-            <>
-              <Link href="/admin" className={item} onClick={() => { setOpen(false); onNavigate(); }}>
-                <ShieldCheck className="h-4 w-4 text-zinc-400" /> Admin portal
-              </Link>
-              <Link href="/settings" className={item} onClick={() => { setOpen(false); onNavigate(); }}>
-                <Settings className="h-4 w-4 text-zinc-400" /> Platform settings
-              </Link>
-            </>
-          )}
           {otherOrgs.length > 0 && (
             <>
               <div className="my-1 h-px bg-zinc-100" />
@@ -161,12 +151,6 @@ export function Sidebar() {
         {NAV.filter((n) => !n.managersOnly || manager).map((n) => (
           <NavLink key={n.href} {...n} onClick={close} />
         ))}
-        {session?.user.is_superadmin && (
-          <>
-            <div className="px-3 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Platform</div>
-            <NavLink href="/admin" label="Admin portal" icon={ShieldCheck} onClick={close} />
-          </>
-        )}
       </div>
       <div className="space-y-2 border-t border-white/10 p-3">
         <CreditsPill onClick={close} />

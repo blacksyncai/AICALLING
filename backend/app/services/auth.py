@@ -283,6 +283,56 @@ async def require_superadmin(user: Annotated[User, Depends(get_current_user)]) -
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 CtxDep = Annotated[Context, Depends(get_ctx)]
+
+
+# ── Admin portal lock ─────────────────────────────────────────────────────────
+# Platform admins also unlock the admin portal with ADMIN_PASSWORD; the unlock
+# lasts ADMIN_TTL_S on that browser.
+
+ADMIN_COOKIE = "bs_admin"
+ADMIN_TTL_S = 60 * 60 * 12
+_failed_unlocks: dict[uuid.UUID, list[float]] = {}
+
+
+def create_admin_token(user: User) -> str:
+    payload = f"admin:{user.id}:{int(time.time()) + ADMIN_TTL_S}"
+    sig = hmac.new(_key(), payload.encode(), hashlib.sha256).digest()
+    return f"{_b64(payload.encode())}.{_b64(sig)}"
+
+
+def admin_unlocked(request: Request, user: User) -> bool:
+    try:
+        p64, s64 = (request.cookies.get(ADMIN_COOKIE) or "").split(".")
+        payload = _unb64(p64)
+        if not hmac.compare_digest(hmac.new(_key(), payload, hashlib.sha256).digest(), _unb64(s64)):
+            return False
+        kind, uid, exp = payload.decode().split(":")
+        return kind == "admin" and uid == str(user.id) and int(exp) > time.time()
+    except Exception:
+        return False
+
+
+def check_admin_password(user: User, password: str) -> None:
+    """Raises unless the admin password matches; 5 wrong tries lock it for 15 minutes."""
+    now = time.time()
+    recent = [t for t in _failed_unlocks.get(user.id, []) if now - t < 900]
+    if len(recent) >= 5:
+        raise HTTPException(status_code=429, detail="Too many attempts — try again in 15 minutes.")
+    if not settings.admin_password:
+        raise HTTPException(status_code=503, detail="The admin password isn't set up on the server.")
+    if not hmac.compare_digest(password.encode(), settings.admin_password.encode()):
+        _failed_unlocks[user.id] = [*recent, now]
+        raise HTTPException(status_code=401, detail="Wrong admin password.")
+    _failed_unlocks.pop(user.id, None)
+
+
+async def require_admin(request: Request, user: Annotated[User, Depends(require_superadmin)]) -> User:
+    if not admin_unlocked(request, user):
+        raise HTTPException(status_code=423, detail="Admin portal is locked")
+    return user
+
+
+AdminDep = Annotated[User, Depends(require_admin)]
 ManagerDep = Annotated[Context, Depends(require_manager)]
 SuperadminDep = Annotated[User, Depends(require_superadmin)]
 

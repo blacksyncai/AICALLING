@@ -18,7 +18,7 @@ export function ApiKeysCard({ keys, onChange }: { keys: ApiKey[]; onChange: () =
     <Card>
       <CardHeader
         title="API keys"
-        description="Use a key to call the BlackSync API from Zapier, Make, n8n or your own code. Treat keys like passwords."
+        description="Lets other apps add contacts and start calls in your account. Keep keys private, like a password."
         action={
           keys.length > 0 && (
             <Button variant="primary" size="sm" onClick={() => setCreating(true)} className="shrink-0">

@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, LogIn, Plus, Search, ShieldCheck, Users } from "lucide-react";
+import { Building2, Lock, LogIn, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -9,7 +9,7 @@ import { NewAccountModal } from "@/components/admin/NewAccountModal";
 import { AdminGuard, Avatar, StatTile, fmt } from "@/components/admin/shared";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Spinner, Tabs } from "@/components/ui";
 import { useToast } from "@/components/toast";
-import { fetcher } from "@/lib/api";
+import { fetcher, post } from "@/lib/api";
 import { switchOrg } from "@/lib/session";
 import type { AdminOrg, PlatformOverview } from "@/lib/types";
 import { cn, timeAgo } from "@/lib/utils";
@@ -56,9 +56,24 @@ function AdminPortal() {
         title="Admin portal"
         description="Every BlackSync account, its usage and credits."
         action={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            <Plus className="h-4 w-4" /> New account
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/settings">
+              <Button>
+                <Settings className="h-4 w-4" /> Platform settings
+              </Button>
+            </Link>
+            <Button
+              onClick={async () => {
+                await post("/api/admin/lock");
+                window.location.href = "/dashboard";
+              }}
+            >
+              <Lock className="h-4 w-4" /> Lock
+            </Button>
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              <Plus className="h-4 w-4" /> New account
+            </Button>
+          </div>
         }
       />
 

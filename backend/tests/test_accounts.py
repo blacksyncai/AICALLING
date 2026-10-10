@@ -214,3 +214,20 @@ def test_admin_portal(client):
                                                    "send_invite": True}).json()
     assert invited["owner_status"] == "invited" and "/invite/" in invited["invite_url"]
     assert client.get("/api/admin/overview").json()["accounts"] >= 4
+
+
+def test_admin_portal_needs_its_password(client, make_client):
+    admin = make_client()
+    admin.post("/api/auth/login", json={"email": "admin@test.dev", "password": "admin-pass-123"})
+    assert admin.get("/api/admin/lock").json() == {"unlocked": False}
+    assert admin.get("/api/admin/orgs").status_code == 423
+    assert admin.post("/api/admin/unlock", json={"password": "nope"}).status_code == 401
+    assert admin.post("/api/admin/unlock", json={"password": "portal-pass-456"}).status_code == 200
+    assert admin.get("/api/admin/orgs").status_code == 200
+    admin.post("/api/admin/lock")
+    assert admin.get("/api/admin/orgs").status_code == 423
+
+    # Knowing the password isn't enough without a platform-admin login.
+    _, email = _new_account(client, name="Nosy Co")
+    owner = _login(make_client, email)
+    assert owner.post("/api/admin/unlock", json={"password": "portal-pass-456"}).status_code == 403

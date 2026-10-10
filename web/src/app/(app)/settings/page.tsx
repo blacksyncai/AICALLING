@@ -4,7 +4,7 @@ import { CheckCircle2, Circle, ExternalLink } from "lucide-react";
 import useSWR from "swr";
 import { Badge, Card, CardHeader, Notice, PageHeader, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
-import { useSession } from "@/lib/session";
+import { AdminGuard } from "@/components/admin/shared";
 import type { SettingsStatus } from "@/lib/types";
 
 const INTEGRATIONS: {
@@ -31,16 +31,11 @@ const CAPS: { key: keyof SettingsStatus["capabilities"]; label: string; needs: s
 ];
 
 export default function SettingsPage() {
-  const { session } = useSession();
-  if (session && !session.user.is_superadmin) {
-    return (
-      <>
-        <PageHeader title="Platform settings" />
-        <Notice tone="blue">Platform settings are managed by your BlackSync admin. Your own details live under Profile & team.</Notice>
-      </>
-    );
-  }
-  return <PlatformSettings />;
+  return (
+    <AdminGuard>
+      <PlatformSettings />
+    </AdminGuard>
+  );
 }
 
 function PlatformSettings() {

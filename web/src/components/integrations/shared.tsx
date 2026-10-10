@@ -7,10 +7,16 @@ import { useToast } from "@/components/toast";
 import { cn } from "@/lib/utils";
 import type { WebhookEvent } from "@/lib/types";
 
+export const EVENT_LABEL: Record<WebhookEvent, string> = {
+  "call.completed": "Call finished",
+  "meeting.booked": "Meeting booked",
+  "contact.created": "New contact",
+};
+
 export const EVENT_INFO: Record<WebhookEvent, string> = {
-  "call.completed": "A phone call finished — outcome, summary, transcript data",
-  "meeting.booked": "The agent booked a meeting",
-  "contact.created": "A contact was added (form, CSV, API)",
+  "call.completed": "Every finished call, with the outcome, summary and details the agent collected",
+  "meeting.booked": "When an agent books a meeting, with the time and the contact's details",
+  "contact.created": "When a contact is added, from a list import, a form or another app",
 };
 
 export const ALL_EVENTS = Object.keys(EVENT_INFO) as WebhookEvent[];

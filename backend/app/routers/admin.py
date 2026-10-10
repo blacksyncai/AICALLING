@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
@@ -24,10 +24,40 @@ from app.routers.auth import org_to_dict, user_to_dict
 from app.config import settings
 from app.services import clerk
 from app.services.accounts import adjust_credits, create_organization
-from app.services.auth import DbDep, SuperadminDep, generate_password, hash_password, normalize_email
+from app.services.auth import (
+    ADMIN_COOKIE, ADMIN_TTL_S, AdminDep, DbDep, SuperadminDep, admin_unlocked, check_admin_password,
+    create_admin_token, generate_password, hash_password, normalize_email,
+)
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+class UnlockBody(BaseModel):
+    password: str
+
+
+@router.get("/lock")
+async def lock_status(request: Request, user: SuperadminDep):
+    return {"unlocked": admin_unlocked(request, user)}
+
+
+@router.post("/unlock")
+async def unlock(body: UnlockBody, request: Request, response: Response, user: SuperadminDep):
+    """Platform admins enter the admin password to open the portal on this browser."""
+    check_admin_password(user, body.password)
+    https = (request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+             or request.headers.get("origin", "").startswith("https://"))
+    response.set_cookie(ADMIN_COOKIE, create_admin_token(user), max_age=ADMIN_TTL_S, httponly=True,
+                        samesite="strict", secure=https, path="/")
+    log.info("admin_unlocked", user_id=str(user.id))
+    return {"unlocked": True}
+
+
+@router.post("/lock")
+async def lock(response: Response):
+    response.delete_cookie(ADMIN_COOKIE, path="/")
+    return {"unlocked": False}
 
 
 class OrgCreate(BaseModel):
@@ -97,7 +127,7 @@ async def _counts(db, column) -> dict:
 
 
 @router.get("/overview")
-async def platform_overview(_: SuperadminDep, db: DbDep):
+async def platform_overview(_: AdminDep, db: DbDep):
     since = datetime.now(timezone.utc) - timedelta(days=30)
     orgs = (await db.execute(select(func.count()).select_from(Organization))).scalar_one()
     users = (await db.execute(select(func.count()).select_from(User))).scalar_one()
@@ -113,7 +143,7 @@ async def platform_overview(_: SuperadminDep, db: DbDep):
 
 
 @router.get("/orgs")
-async def list_orgs(_: SuperadminDep, db: DbDep, q: str = ""):
+async def list_orgs(_: AdminDep, db: DbDep, q: str = ""):
     stmt = select(Organization).order_by(Organization.created_at.desc())
     if q.strip():
         stmt = stmt.where(Organization.name.ilike(f"%{q.strip()}%"))
@@ -143,7 +173,7 @@ async def list_orgs(_: SuperadminDep, db: DbDep, q: str = ""):
 
 
 @router.post("/orgs", status_code=201)
-async def create_org(body: OrgCreate, request: Request, admin: SuperadminDep, db: DbDep):
+async def create_org(body: OrgCreate, request: Request, admin: AdminDep, db: DbDep):
     """New sub-account with its owner login. The owner either gets a password (generated
     if not given, returned once) or an invite link to set their own."""
     email = normalize_email(body.owner_email)
@@ -191,7 +221,7 @@ async def create_org(body: OrgCreate, request: Request, admin: SuperadminDep, db
 
 
 @router.get("/orgs/{org_id}")
-async def get_org(org_id: uuid.UUID, _: SuperadminDep, db: DbDep):
+async def get_org(org_id: uuid.UUID, _: AdminDep, db: DbDep):
     org = await _org_or_404(db, org_id)
     since = datetime.now(timezone.utc) - timedelta(days=30)
     usage = (await _usage_by_org(db, since)).get(org.id, {"calls": 0, "minutes": 0, "credits_used": 0})
@@ -215,7 +245,7 @@ async def get_org(org_id: uuid.UUID, _: SuperadminDep, db: DbDep):
 
 
 @router.patch("/orgs/{org_id}")
-async def update_org(org_id: uuid.UUID, body: OrgPatch, _: SuperadminDep, db: DbDep):
+async def update_org(org_id: uuid.UUID, body: OrgPatch, _: AdminDep, db: DbDep):
     org = await _org_or_404(db, org_id)
     if body.name is not None and body.name.strip():
         org.name = body.name.strip()[:255]
@@ -230,7 +260,7 @@ async def update_org(org_id: uuid.UUID, body: OrgPatch, _: SuperadminDep, db: Db
 
 
 @router.post("/orgs/{org_id}/credits")
-async def grant_credits(org_id: uuid.UUID, body: CreditGrant, admin: SuperadminDep, db: DbDep):
+async def grant_credits(org_id: uuid.UUID, body: CreditGrant, admin: AdminDep, db: DbDep):
     """Add (or with a negative amount, remove) calling credits."""
     if body.amount == 0:
         raise HTTPException(status_code=400, detail="Enter a non-zero amount.")
@@ -244,13 +274,13 @@ async def grant_credits(org_id: uuid.UUID, body: CreditGrant, admin: SuperadminD
 
 
 @router.post("/orgs/{org_id}/invites", status_code=201)
-async def invite_to_org(org_id: uuid.UUID, body: AdminInvite, request: Request, admin: SuperadminDep, db: DbDep):
+async def invite_to_org(org_id: uuid.UUID, body: AdminInvite, request: Request, admin: AdminDep, db: DbDep):
     org = await _org_or_404(db, org_id)
     return await create_invite(db, request, org, admin, body.email, body.role)
 
 
 @router.post("/users/{user_id}/reset-password")
-async def reset_password(user_id: uuid.UUID, admin: SuperadminDep, db: DbDep):
+async def reset_password(user_id: uuid.UUID, admin: AdminDep, db: DbDep):
     """Set a new random password (returned once) and sign the user out everywhere."""
     user = await db.get(User, user_id)
     if not user:
@@ -274,7 +304,7 @@ async def reset_password(user_id: uuid.UUID, admin: SuperadminDep, db: DbDep):
 
 
 @router.get("/users")
-async def list_users(_: SuperadminDep, db: DbDep):
+async def list_users(_: AdminDep, db: DbDep):
     rows = (await db.execute(
         select(User, Membership, Organization)
         .outerjoin(Membership, Membership.user_id == User.id)

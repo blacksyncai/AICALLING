@@ -1,17 +1,24 @@
 "use client";
 
-import { Check, Copy, ShieldAlert } from "lucide-react";
+import { Check, Copy, Lock } from "lucide-react";
+import useSWR from "swr";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { Card, Notice, Spinner } from "@/components/ui";
+import { Button, Card, Input, Notice, Spinner } from "@/components/ui";
+import { fetcher, post } from "@/lib/api";
 import { useToast } from "@/components/toast";
 import { initials, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
-/** Renders children only for platform super-admins. */
+/** Platform super-admins only, and only after entering the admin password. Everyone else
+ * sees a plain "not found" so the portal isn't advertised. */
 export function AdminGuard({ children }: { children: ReactNode }) {
   const { session, loading } = useSession();
-  if (loading || !session) {
+  const { data: lock, mutate } = useSWR<{ unlocked: boolean }>(
+    session?.user.is_superadmin ? "/api/admin/lock" : null,
+    fetcher,
+  );
+  if (loading || !session || (session.user.is_superadmin && !lock)) {
     return (
       <div className="flex justify-center py-16">
         <Spinner />
@@ -20,17 +27,54 @@ export function AdminGuard({ children }: { children: ReactNode }) {
   }
   if (!session.user.is_superadmin) {
     return (
-      <div className="mx-auto max-w-md py-10">
-        <Notice tone="red">
-          <span className="flex items-center gap-2 font-medium">
-            <ShieldAlert className="h-4 w-4" /> Admins only
-          </span>
-          <span className="mt-1 block">The admin portal is only available to BlackSync platform administrators.</span>
-        </Notice>
+      <div className="mx-auto max-w-md py-24 text-center">
+        <h1 className="text-lg font-semibold">Page not found</h1>
+        <p className="mt-1 text-sm text-zinc-500">This page doesn&apos;t exist or you don&apos;t have access to it.</p>
       </div>
     );
   }
+  if (!lock?.unlocked) return <AdminUnlock onUnlocked={() => mutate({ unlocked: true })} />;
   return <>{children}</>;
+}
+
+function AdminUnlock({ onUnlocked }: { onUnlocked: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await post("/api/admin/unlock", { password });
+      onUnlocked();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex justify-center py-16">
+      <Card className="w-full max-w-sm p-6">
+        <form onSubmit={submit} className="space-y-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-900 text-white">
+            <Lock className="h-4 w-4" />
+          </div>
+          <div>
+            <h1 className="text-lg font-semibold">Admin portal</h1>
+            <p className="mt-1 text-sm text-zinc-500">Enter the admin password to continue.</p>
+          </div>
+          {error && <Notice tone="red">{error}</Notice>}
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Admin password" autoFocus required aria-label="Admin password" />
+          <Button variant="primary" className="w-full" loading={busy}>
+            Unlock
+          </Button>
+        </form>
+      </Card>
+    </div>
+  );
 }
 
 export function StatTile({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: "amber" }) {

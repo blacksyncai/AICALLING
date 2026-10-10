@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     # When set, Clerk handles sign-in/sign-up and BlackSync links each Clerk user
     # to its own user record (accounts, roles and credits stay in BlackSync).
     clerk_secret_key: str = ""
+    # Second password for the admin portal (on top of being a platform super-admin).
+    admin_password: str = ""
     # Extra platform super-admins, by the email they sign in to Clerk with.
     superadmin_emails: str = ""
 
