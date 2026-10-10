@@ -268,6 +268,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 <VoicePicker
                   voices={voices?.voices ?? []}
                   featured={voices?.featured ?? []}
+                  loading={!voices}
                   source={voices?.source}
                   value={draft.voice_id}
                   speed={draft.voice_speed}

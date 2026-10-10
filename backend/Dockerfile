@@ -1,4 +1,4 @@
-# Closer backend image — runs BOTH the FastAPI API and the LiveKit agent worker.
+# BlackSync backend image — runs BOTH the FastAPI API and the LiveKit agent worker.
 # Default CMD starts the API (uvicorn). The worker ECS task overrides the command
 # to: python agent_worker.py start  (same image, mirrors Converse prod).
 FROM python:3.12-slim

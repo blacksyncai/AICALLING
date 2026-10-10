@@ -154,7 +154,7 @@ export function WebCallPanel({
           <div
             className={cn(
               "relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br text-white shadow-lg",
-              phase === "live" ? "from-brand-500 to-violet-500" : "from-zinc-400 to-zinc-500",
+              phase === "live" ? "brand-gradient" : "from-zinc-400 to-zinc-500",
             )}
           >
             <PhoneCall className="h-7 w-7" />

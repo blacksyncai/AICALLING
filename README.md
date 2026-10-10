@@ -1,8 +1,8 @@
-# Closer
+# BlackSync
 
 **Build AI calling agents, test them in your browser in seconds, then let them work through your lead list.**
 
-A self-hostable, CloserX-style AI voice-agent platform: create agents from templates, give them a prompt,
+BlackSync's AI voice-agent platform: create agents from templates, give them a prompt,
 knowledge base, voice and actions (book meetings, transfer to a human), talk to them right in the browser,
 then upload a CSV and run outbound calling campaigns with transcripts, AI summaries and extracted data for
 every call.

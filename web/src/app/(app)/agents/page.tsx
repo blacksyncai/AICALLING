@@ -81,7 +81,7 @@ function AgentCard({ agent, onChanged }: { agent: Agent; onChanged: () => void }
     <Card className="group relative flex flex-col p-5 transition hover:border-zinc-300 hover:shadow-sm">
       <Link href={`/agents/${agent.id}`} className="absolute inset-0 rounded-xl" aria-label={`Open ${agent.name}`} />
       <div className="flex items-start justify-between">
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-violet-500 text-white">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl brand-gradient text-white">
           <Bot className="h-5 w-5" />
         </span>
         <div className="relative z-10">

@@ -32,7 +32,7 @@ function LoginForm() {
       <Logo />
       <div>
         <h1 className="text-lg font-semibold">Sign in</h1>
-        <p className="text-sm text-zinc-500">Use the AUTH_EMAIL / AUTH_PASSWORD you configured.</p>
+        <p className="text-sm text-zinc-500">Sign in to your BlackSync workspace.</p>
       </div>
       {error && <Notice tone="red">{error}</Notice>}
       <Field label="Email">

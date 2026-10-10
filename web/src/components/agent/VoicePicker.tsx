@@ -11,6 +11,7 @@ const PREVIEW_LINE = "Hey there, this is a quick preview of how I'll sound on yo
 export function VoicePicker({
   voices,
   featured = [],
+  loading: listLoading = false,
   source,
   value,
   speed,
@@ -19,6 +20,7 @@ export function VoicePicker({
 }: {
   voices: Voice[];
   featured?: Voice[];
+  loading?: boolean;
   source: string | undefined;
   value: string;
   speed: number;
@@ -100,6 +102,14 @@ export function VoicePicker({
       {loading === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : playing === id ? <Square className="h-3 w-3" /> : <Play className="h-3.5 w-3.5" />}
     </button>
   );
+
+  if (listLoading) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-zinc-200 p-4 text-sm text-zinc-500">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading voices…
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">

@@ -1,5 +1,5 @@
 """
-Closer — AI voice-agent platform API (FastAPI).
+BlackSync — AI voice-agent platform API (FastAPI).
 
 Start with:
     uvicorn main:app --reload --port 8000
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Closer API",
+    title="BlackSync API",
     description="Build, test and deploy AI voice agents that call your leads.",
     version="0.1.0",
     lifespan=lifespan,
@@ -89,7 +89,7 @@ app.include_router(webhook.router)
 async def health():
     return {
         "status": "ok",
-        "service": "closer-api",
+        "service": "blacksync-api",
         "environment": settings.environment,
         "demo_mode": settings.demo_mode,
         "voice_ready": settings.voice_ready,
@@ -99,4 +99,4 @@ async def health():
 
 @app.get("/", tags=["infra"])
 async def root():
-    return {"message": "Closer API — AI voice agents", "docs": "/docs"}
+    return {"message": "BlackSync API — AI voice agents", "docs": "/docs"}
