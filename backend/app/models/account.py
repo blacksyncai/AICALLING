@@ -33,7 +33,7 @@ class Organization(Base):
     # IANA time zone used for reports ("which day did this call happen on?").
     # NULL means the default, America/New_York (see app.services.reporting).
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # Lead Finder: per-org daily lookup allowance (NULL = platform default) and on/off (NULL = on).
+    # Lead Finder on/off (NULL = on). lead_finder_daily_limit is unused (replaced by lookup credits); kept so old databases match.
     lead_finder_daily_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lead_finder_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Lead-lookup credits — separate from calling credits. 1 credit = 1 property owner found.

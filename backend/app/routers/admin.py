@@ -78,8 +78,7 @@ class OrgPatch(BaseModel):
     name: str | None = None
     status: str | None = None
     unlimited_credits: bool | None = None
-    # Lead Finder: daily lookups for this account (-1 = back to the platform default) and on/off.
-    lead_finder_daily_limit: int | None = Field(default=None, ge=-1, le=10000)
+    # Lead Finder on/off.
     lead_finder_enabled: bool | None = None
     lead_credits_unlimited: bool | None = None
 
@@ -270,8 +269,6 @@ async def update_org(org_id: uuid.UUID, body: OrgPatch, _: AdminDep, db: DbDep):
         org.status = body.status
     if body.unlimited_credits is not None:
         org.unlimited_credits = body.unlimited_credits
-    if body.lead_finder_daily_limit is not None:
-        org.lead_finder_daily_limit = None if body.lead_finder_daily_limit < 0 else body.lead_finder_daily_limit
     if body.lead_finder_enabled is not None:
         org.lead_finder_enabled = body.lead_finder_enabled
     if body.lead_credits_unlimited is not None:

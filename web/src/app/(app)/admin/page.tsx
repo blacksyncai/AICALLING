@@ -344,11 +344,11 @@ function LookupCreditsCell({ org, onChanged }: { org: AdminOrg; onChanged: () =>
       <button
         onClick={add}
         disabled={busy}
-        className="rounded-md border border-zinc-200 px-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+        className="inline-flex items-center gap-0.5 rounded-md bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         aria-label={`Add lookup credits to ${org.name}`}
         title="Add lookup credits"
       >
-        +
+        <Plus className="h-3 w-3" /> Add
       </button>
     </span>
   );

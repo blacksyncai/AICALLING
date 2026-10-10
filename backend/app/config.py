@@ -76,8 +76,6 @@ class Settings(BaseSettings):
     # Backend-only secret; never sent to the browser or logged.
     skiptrace_api_key: str = ""
     skiptrace_api_url: str = "https://app.dataskip.io"
-    # BlackSync's own allowance (not DataSkip's): new completed lookups per org per UTC day.
-    lead_finder_daily_limit: int = 5
     # Lookup results (contact details) are scrubbed after this many days.
     lead_finder_retention_days: int = 90
 
