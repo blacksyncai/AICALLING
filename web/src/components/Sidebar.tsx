@@ -10,6 +10,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { canManage, displayName, initials, signOut, switchOrg, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { SearchButton } from "./CommandPalette";
 import { Logo } from "./Logo";
 
 const NAV = [
@@ -146,6 +147,9 @@ export function Sidebar() {
         <Link href="/dashboard" onClick={close}>
           <Logo className="text-white" />
         </Link>
+      </div>
+      <div className="px-3 pb-2">
+        <SearchButton className="w-full" />
       </div>
       <div className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
         {NAV.filter((n) => !n.managersOnly || manager).map((n) => (

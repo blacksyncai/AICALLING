@@ -1,4 +1,5 @@
 import { AccountGate } from "@/components/AccountGate";
+import { CommandPalette } from "@/components/CommandPalette";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { Sidebar } from "@/components/Sidebar";
 import { SessionProvider } from "@/lib/session";
@@ -15,6 +16,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </main>
         </div>
       </AccountGate>
+      <CommandPalette />
     </SessionProvider>
   );
 }

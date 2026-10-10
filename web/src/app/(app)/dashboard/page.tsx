@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
+import { GettingStarted } from "@/components/dashboard/GettingStarted";
 import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -146,6 +147,9 @@ export default function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* Getting started (new accounts) */}
+      <GettingStarted />
 
       {/* Setup strip */}
       {isPlatformAdmin && status && setupLeft > 0 && (

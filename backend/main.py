@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_all_tables
 from app.routers import (
-    account, admin, agents, auth, calls, campaigns, contacts, integrations, internal, public_api,
+    account, admin, agents, auth, calls, campaigns, contacts, integrations, internal, public_api, search,
     settings as settings_router,
 )
 
@@ -67,7 +67,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-for r in (auth, account, admin, agents, calls, campaigns, contacts, integrations, public_api,
+for r in (auth, account, admin, agents, calls, campaigns, contacts, integrations, public_api, search,
           settings_router, internal):
     app.include_router(r.router)
 
