@@ -2,11 +2,9 @@ export interface LeadFinderUsage {
   enabled: boolean;
   /** False until the DataSkip key is set on the backend. */
   configured: boolean;
-  used: number;
-  limit: number;
-  remaining: number;
-  /** Next allowance reset (UTC midnight), ISO. */
-  resets_at: string;
+  /** Lead-lookup credits (separate from calling credits). 1 credit = 1 owner found. */
+  credits: number;
+  unlimited: boolean;
   retention_days: number;
 }
 
@@ -21,8 +19,8 @@ export interface LookupPhone {
   number: string;
   display: string;
   type: "mobile" | "landline" | "unknown";
-  /** Listed on a Do Not Call registry, per DataSkip. */
-  dnc: boolean;
+  /** DataSkip's DNC flag exactly as reported: true / false, or null when not reported. */
+  dnc: boolean | null;
 }
 
 export interface PlaceAddress {
@@ -53,6 +51,10 @@ export interface Lookup {
   lead_id: string | null;
   deleted: boolean;
   created_at: string | null;
+  batch_id?: string | null;
+  row?: number | null;
+  phones?: number;
+  error?: string | null;
   result?: LookupResult | null;
 }
 
@@ -64,4 +66,36 @@ export interface LookupResponse {
 
 export interface ParsedAddress extends LookupAddress {
   confident: boolean;
+}
+
+export interface LookupBatch {
+  id: string;
+  filename: string;
+  status: "draft" | "running" | "done" | "failed";
+  total_rows: number;
+  valid: number;
+  invalid: { row: number; reason: string }[];
+  processed: number;
+  matched: number;
+  no_match: number;
+  failed: number;
+  cached: number;
+  credits_used: number;
+  error: string | null;
+  created_at: string | null;
+  finished_at: string | null;
+}
+
+/** POST /api/lead-finder/batches — the parsed draft and what it will cost. */
+export interface BatchPreview extends LookupBatch {
+  cached_rows: number;
+  new_rows: number;
+  max_credits: number;
+  enough_credits: boolean;
+  usage: LeadFinderUsage;
+}
+
+export interface BatchDetail extends LookupBatch {
+  rows: Lookup[];
+  usage: LeadFinderUsage;
 }

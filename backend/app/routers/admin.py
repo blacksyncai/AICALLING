@@ -79,6 +79,12 @@ class OrgPatch(BaseModel):
     # Lead Finder: daily lookups for this account (-1 = back to the platform default) and on/off.
     lead_finder_daily_limit: int | None = Field(default=None, ge=-1, le=10000)
     lead_finder_enabled: bool | None = None
+    lead_credits_unlimited: bool | None = None
+
+
+class LeadCreditGrant(BaseModel):
+    amount: int = Field(ge=-1_000_000, le=1_000_000)
+    note: str = Field(default="", max_length=500)
 
 
 class CreditGrant(BaseModel):
@@ -262,6 +268,8 @@ async def update_org(org_id: uuid.UUID, body: OrgPatch, _: AdminDep, db: DbDep):
         org.lead_finder_daily_limit = None if body.lead_finder_daily_limit < 0 else body.lead_finder_daily_limit
     if body.lead_finder_enabled is not None:
         org.lead_finder_enabled = body.lead_finder_enabled
+    if body.lead_credits_unlimited is not None:
+        org.lead_credits_unlimited = body.lead_credits_unlimited
     await db.commit()
     return org_to_dict(org)
 
@@ -494,30 +502,49 @@ async def create_playbook(body: PlaybookCreate, admin: AdminDep, db: DbDep):
 
 @router.get("/orgs/{org_id}/lead-finder")
 async def org_lead_finder(org_id: uuid.UUID, _: AdminDep, db: DbDep):
-    """Usage, matches, provider cost and recent errors for one account. No contact details."""
-    from app.models.lead_finder import PropertyLookup
+    """Lookup credits, usage, provider cost and recent errors for one account. No contact details."""
+    from app.models.lead_finder import LeadCreditTransaction, LookupBatch, PropertyLookup
     from app.services import lead_finder as lf
 
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Account not found")
-    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+    since = datetime.now(timezone.utc) - timedelta(days=30)
     rows = (await db.execute(select(PropertyLookup.status, PropertyLookup.found, PropertyLookup.charged,
-                                    PropertyLookup.lookup_date).where(
-        PropertyLookup.org_id == org.id, PropertyLookup.lookup_date >= since))).all()
+                                    PropertyLookup.batch_id).where(
+        PropertyLookup.org_id == org.id, PropertyLookup.created_at >= since))).all()
     done = [r for r in rows if r.status == "completed"]
     errors = (await db.execute(select(PropertyLookup.error_code, PropertyLookup.error, PropertyLookup.created_at).where(
         PropertyLookup.org_id == org.id, PropertyLookup.status == "failed",
     ).order_by(PropertyLookup.created_at.desc()).limit(10))).all()
+    ledger = (await db.execute(select(LeadCreditTransaction).where(LeadCreditTransaction.org_id == org.id)
+                               .order_by(LeadCreditTransaction.created_at.desc()).limit(20))).scalars().all()
+    batches = (await db.execute(select(func.count()).select_from(LookupBatch).where(
+        LookupBatch.org_id == org.id, LookupBatch.status != "draft", LookupBatch.created_at >= since))).scalar_one()
     return {
         "enabled": lf.enabled(org),
-        "daily_limit": lf.daily_limit(org),
-        "limit_is_default": org.lead_finder_daily_limit is None,
-        "default_limit": settings.lead_finder_daily_limit,
-        "used_today": await lf.used_today(db, org.id),
+        "credits": lf.credits_of(org),
+        "unlimited": lf.unlimited(org),
         "last_30_days": {"lookups": len(done), "matches": sum(1 for r in done if r.found),
                          "cost": round(sum(r.charged or 0 for r in done), 2),
-                         "failed": sum(1 for r in rows if r.status == "failed")},
+                         "failed": sum(1 for r in rows if r.status == "failed"), "bulk_files": batches},
+        "ledger": [{"amount": t.amount, "balance_after": t.balance_after, "kind": t.kind, "note": t.note,
+                    "at": t.created_at.isoformat() if t.created_at else None} for t in ledger],
         "recent_errors": [{"code": e.error_code, "message": e.error,
                            "at": e.created_at.isoformat() if e.created_at else None} for e in errors],
     }
+
+
+@router.post("/orgs/{org_id}/lead-credits")
+async def grant_lead_credits(org_id: uuid.UUID, body: LeadCreditGrant, admin: AdminDep, db: DbDep):
+    """Add (or remove, with a negative amount) lead-lookup credits. Separate from calling credits."""
+    from app.services import lead_finder as lf
+
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if body.amount == 0:
+        raise HTTPException(status_code=400, detail="Enter a number of credits to add or remove.")
+    balance = await lf.grant_credits(db, org, body.amount, body.note.strip() or ("Added by admin" if body.amount > 0 else "Removed by admin"), admin.id)
+    log.info("lead_credits_granted", org_id=str(org.id), amount=body.amount, by=str(admin.id))
+    return {"credits": balance}

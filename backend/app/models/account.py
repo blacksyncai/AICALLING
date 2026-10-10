@@ -36,6 +36,9 @@ class Organization(Base):
     # Lead Finder: per-org daily lookup allowance (NULL = platform default) and on/off (NULL = on).
     lead_finder_daily_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lead_finder_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Lead-lookup credits — separate from calling credits. 1 credit = 1 property owner found.
+    lead_credits_balance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    lead_credits_unlimited: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 

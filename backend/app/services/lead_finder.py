@@ -30,7 +30,6 @@ from app.models.lead_finder import PropertyLookup
 
 log = structlog.get_logger(__name__)
 
-COUNTED = ("reserved", "completed")
 TIMEOUT_S = 30.0
 
 US_STATES = {
@@ -136,33 +135,26 @@ def parse_full_address(text: str) -> dict:
     return out
 
 
-# ── Allowance ─────────────────────────────────────────────────────────────────
+# ── Lead-lookup credits (separate from calling credits) ───────────────────────
 
 
 def today_utc(now: datetime | None = None) -> str:
     return (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
 
 
-def next_reset(now: datetime | None = None) -> datetime:
-    now = now or datetime.now(timezone.utc)
-    return datetime(now.year, now.month, now.day, tzinfo=timezone.utc) + timedelta(days=1)
-
-
-def daily_limit(org: Organization) -> int:
-    return org.lead_finder_daily_limit if org.lead_finder_daily_limit is not None else settings.lead_finder_daily_limit
-
-
 def enabled(org: Organization) -> bool:
     return org.lead_finder_enabled is not False
 
 
-async def used_today(db, org_id) -> int:
-    return (await db.execute(select(func.count()).select_from(PropertyLookup).where(
-        PropertyLookup.org_id == org_id, PropertyLookup.lookup_date == today_utc(),
-        PropertyLookup.status.in_(COUNTED)))).scalar_one()
+def credits_of(org: Organization) -> int:
+    return org.lead_credits_balance or 0
 
 
-# One lock per org serializes reservations inside this process; on Postgres the
+def unlimited(org: Organization) -> bool:
+    return org.lead_credits_unlimited is True
+
+
+# One lock per org serializes credit holds inside this process; on Postgres the
 # org row lock (SELECT … FOR UPDATE) does the same across processes.
 _locks: dict = {}
 
@@ -171,30 +163,100 @@ def _lock(org_id) -> asyncio.Lock:
     return _locks.setdefault(org_id, asyncio.Lock())
 
 
-async def reserve(db, org: Organization, user_id, addr: dict, key: str) -> PropertyLookup:
-    """Atomically take one unit of today's allowance. Raises LookupError_(429) when none is left."""
+class NotEnoughCredits(Exception):
+    def __init__(self, needed: int, available: int):
+        super().__init__(f"needed {needed}, have {available}")
+        self.needed, self.available = needed, available
+
+
+async def hold_credits(db, org: Organization, n: int) -> None:
+    """Atomically set aside n credits (worst case: every address matches). Commits.
+    Raises NotEnoughCredits. Matches turn holds into ledger usage; misses and failures give them back."""
+    if n <= 0 or unlimited(org):
+        return
     async with _lock(org.id):
-        await db.execute(select(Organization.id).where(Organization.id == org.id).with_for_update())
-        # A reservation older than this was stranded by a crash or redeploy: release it.
-        stale = datetime.now(timezone.utc) - timedelta(minutes=5)
-        await db.execute(update(PropertyLookup).where(
-            PropertyLookup.org_id == org.id, PropertyLookup.status == "reserved", PropertyLookup.created_at < stale,
-        ).values(status="failed", error_code="interrupted", error="Lookup interrupted before it finished"))
-        inflight = (await db.execute(select(PropertyLookup.id).where(
-            PropertyLookup.org_id == org.id, PropertyLookup.address_key == key,
-            PropertyLookup.status == "reserved"))).first()
-        if inflight:
-            await db.commit()  # releases the row lock; nothing was written
-            raise LookupError_(409, "in_progress", "This address is already being looked up. Give it a moment.")
-        if await used_today(db, org.id) >= daily_limit(org):
+        row = (await db.execute(select(Organization.lead_credits_balance).where(Organization.id == org.id)
+                                .with_for_update())).first()
+        have = (row[0] if row else 0) or 0
+        if have < n:
             await db.commit()
-            raise LookupError_(429, "quota", "You've used your property lookups for today. Your allowance resets tomorrow.")
-        row = PropertyLookup(org_id=org.id, user_id=user_id, lookup_date=today_utc(), address_key=key,
-                             street=addr["street"], city=addr["city"], state=addr["state"], zip=addr["zip"],
-                             status="reserved")
-        db.add(row)
+            raise NotEnoughCredits(n, have)
+        await db.execute(update(Organization).where(Organization.id == org.id)
+                         .values(lead_credits_balance=Organization.lead_credits_balance - n))
         await db.commit()
-        return row
+    await db.refresh(org, ["lead_credits_balance"])
+
+
+async def release_credits(db, org: Organization, n: int) -> None:
+    """Give back held credits that weren't used (no match / failure). Caller commits."""
+    if n <= 0 or unlimited(org):
+        return
+    await db.execute(update(Organization).where(Organization.id == org.id)
+                     .values(lead_credits_balance=func.coalesce(Organization.lead_credits_balance, 0) + n))
+
+
+async def record_usage(db, org: Organization, n: int, note: str, user_id=None, lookup_id=None, batch_id=None) -> None:
+    """Ledger entry for credits actually spent (the balance was already reduced by hold_credits). Caller commits."""
+    from app.models.lead_finder import LeadCreditTransaction
+
+    if n <= 0:
+        return
+    await db.flush()
+    bal = (await db.execute(select(Organization.lead_credits_balance).where(Organization.id == org.id))).scalar_one()
+    db.add(LeadCreditTransaction(org_id=org.id, amount=-n, balance_after=bal or 0, kind="usage", note=note,
+                                 lookup_id=lookup_id, batch_id=batch_id, created_by=user_id))
+
+
+async def grant_credits(db, org: Organization, amount: int, note: str, user_id=None) -> int:
+    """Admin grant (positive) or adjustment (negative, never below zero). Commits; returns the new balance."""
+    from app.models.lead_finder import LeadCreditTransaction
+
+    async with _lock(org.id):
+        cur = (await db.execute(select(Organization.lead_credits_balance).where(Organization.id == org.id)
+                                .with_for_update())).scalar_one() or 0
+        new = max(0, cur + amount)
+        await db.execute(update(Organization).where(Organization.id == org.id).values(lead_credits_balance=new))
+        db.add(LeadCreditTransaction(org_id=org.id, amount=new - cur, balance_after=new,
+                                     kind="grant" if amount > 0 else "adjustment", note=note[:500], created_by=user_id))
+        await db.commit()
+    await db.refresh(org, ["lead_credits_balance"])
+    return new
+
+
+STALE_AFTER = timedelta(minutes=5)
+
+
+async def release_stale(db, org: Organization) -> None:
+    """Single lookups stranded by a crash or redeploy: mark failed and give their held credit back."""
+    cutoff = datetime.now(timezone.utc) - STALE_AFTER
+    stale = (await db.execute(select(PropertyLookup).where(
+        PropertyLookup.org_id == org.id, PropertyLookup.status == "reserved", PropertyLookup.batch_id.is_(None),
+        PropertyLookup.created_at < cutoff))).scalars().all()
+    for r in stale:
+        r.status, r.error_code, r.error = "failed", "interrupted", "Lookup interrupted before it finished"
+    if stale:
+        await release_credits(db, org, len(stale))
+        await db.commit()
+
+
+async def start_lookup(db, org: Organization, user_id, addr: dict, key: str) -> PropertyLookup:
+    """Hold one credit and create the in-flight lookup row. Raises LookupError_(402/409)."""
+    await release_stale(db, org)
+    inflight = (await db.execute(select(PropertyLookup.id).where(
+        PropertyLookup.org_id == org.id, PropertyLookup.address_key == key,
+        PropertyLookup.status == "reserved", PropertyLookup.batch_id.is_(None)))).first()
+    if inflight:
+        raise LookupError_(409, "in_progress", "This address is already being looked up. Give it a moment.")
+    try:
+        await hold_credits(db, org, 1)
+    except NotEnoughCredits:
+        raise LookupError_(402, "no_credits", "You're out of lead lookup credits. Ask your BlackSync admin to add more.")
+    row = PropertyLookup(org_id=org.id, user_id=user_id, lookup_date=today_utc(), address_key=key,
+                         street=addr["street"], city=addr["city"], state=addr["state"], zip=addr["zip"],
+                         status="reserved", credits=0)
+    db.add(row)
+    await db.commit()
+    return row
 
 
 # ── Simple per-user request throttle (abuse protection, separate from the allowance) ──
@@ -229,6 +291,21 @@ def _s(v) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
+def _flag(v) -> bool | None:
+    """DataSkip's DNC flag: True/False only when the provider said so explicitly; None when missing or unclear."""
+    if v is True or v == 1:
+        return True
+    if v is False or v == 0:
+        return False
+    if isinstance(v, str):
+        t = v.strip().lower()
+        if t in ("true", "yes", "y", "1"):
+            return True
+        if t in ("false", "no", "n", "0"):
+            return False
+    return None
+
+
 def normalize_result(data: dict) -> dict:
     """The provider response reduced to what we show and store. Never invents values."""
     c = data.get("contact") if isinstance(data.get("contact"), dict) else {}
@@ -241,7 +318,7 @@ def normalize_result(data: dict) -> dict:
             continue
         seen.add(e164)
         ptype = p.get("type") if p.get("type") in ("mobile", "landline") else "unknown"
-        phones.append({"number": e164, "display": display, "type": ptype, "dnc": p.get("dnc") is not False})
+        phones.append({"number": e164, "display": display, "type": ptype, "dnc": _flag(p.get("dnc"))})
     emails = list(dict.fromkeys(e.strip().lower() for e in (data.get("emails") or [])
                                 if isinstance(e, str) and "@" in e))
     contact = {
@@ -298,14 +375,116 @@ async def call_dataskip(addr: dict) -> dict:
 
 
 def primary_phone(phones: list[dict]) -> dict | None:
-    """Best number for the lead record: a non-DNC mobile, then any non-DNC number. Never a DNC-listed one."""
+    """Best number for the lead record: an unflagged mobile, then any unflagged number, then the first number."""
     for want in ("mobile", None):
         for p in phones:
-            if not p["dnc"] and (want is None or p["type"] == want):
+            if p.get("dnc") is not True and (want is None or p["type"] == want):
                 return p
-    return None
+    return phones[0] if phones else None
 
 
 def one_line(a: dict) -> str:
     tail = " ".join(x for x in (a.get("state"), a.get("zip")) if x)
     return ", ".join(x for x in (a.get("address"), a.get("city"), tail) if x)
+
+
+# ── Bulk (CSV of addresses) ───────────────────────────────────────────────────
+
+MAX_BULK_ROWS = 1000
+BULK_CHUNK = 100          # DataSkip's per-request maximum
+MAX_CSV_BYTES = 2 * 1024 * 1024
+
+_STREET = ("street", "street_address", "address1", "address_1", "address_line_1", "property_address", "site_address",
+           "property_street", "address")
+_CITY = ("city", "property_city", "site_city", "town")
+_STATE = ("state", "st", "property_state", "site_state", "province")
+_ZIP = ("zip", "zipcode", "zip_code", "postal_code", "postal", "property_zip", "site_zip")
+_FULL_COLS = ("full_address", "full address", "address_full", "property_full_address", "address")
+
+
+def _col(fields: dict, names) -> str | None:
+    for n in names:
+        if n in fields:
+            return fields[n]
+    return None
+
+
+def parse_address_csv(text: str) -> tuple[list[dict], list[dict], int]:
+    """(valid rows, invalid rows, total data rows). Address columns only; anything else in the file is ignored.
+
+    Accepts separate street/city/state/zip columns, or one full-address column."""
+    import csv
+    import io
+
+    text = text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("That file has no header row. Add columns like Address, City, State, Zip.")
+    fields = {re.sub(r"[^a-z0-9 ]+", "_", (f or "").strip().lower()).replace(" ", "_").strip("_"): f
+              for f in reader.fieldnames}
+    fields.update({(f or "").strip().lower(): f for f in reader.fieldnames})
+    street_c, city_c, state_c, zip_c = (_col(fields, _STREET), _col(fields, _CITY), _col(fields, _STATE), _col(fields, _ZIP))
+    full_c = None if (city_c and state_c) else _col(fields, _FULL_COLS)
+    if not ((street_c and city_c and state_c) or full_c):
+        raise ValueError("We couldn't find address columns. Use Address, City, State and Zip columns, "
+                         "or one Full Address column like \"123 Main St, Erie, PA 16503\".")
+    valid, invalid, seen, total = [], [], set(), 0
+    for i, rec in enumerate(reader, start=2):  # row 1 is the header
+        if not any((v or "").strip() for v in rec.values() if isinstance(v, str)):
+            continue
+        total += 1
+        if total > MAX_BULK_ROWS:
+            raise ValueError(f"That file has more than {MAX_BULK_ROWS:,} addresses. Split it into smaller files.")
+        if full_c and not (city_c and state_c):
+            p = parse_full_address(rec.get(full_c) or "")
+            street, city, state, zip_code = p["street"], p["city"], p["state"], p["zip"]
+        else:
+            street, city = rec.get(street_c) or "", rec.get(city_c) or ""
+            state, zip_code = rec.get(state_c) or "", (rec.get(zip_c) or "") if zip_c else ""
+        try:
+            a = validate_address(street, city, state, zip_code)
+        except ValueError as exc:
+            invalid.append({"row": i, "reason": str(exc)})
+            continue
+        key = address_key(a["street"], a["city"], a["state"], a["zip"])
+        if key in seen:
+            invalid.append({"row": i, "reason": "Duplicate of an earlier row."})
+            continue
+        seen.add(key)
+        valid.append({"row": i, **a, "key": key})
+    return valid, invalid, total
+
+
+async def call_dataskip_bulk(addrs: list[dict]) -> list[dict]:
+    """Up to 100 addresses in one request. Results come back in the same order. Raises LookupError_."""
+    payload = {"addresses": [{k: v for k, v in {"address": a["street"], "city": a["city"], "state": a["state"],
+                                                 "zip": a["zip"]}.items() if v} for a in addrs]}
+    url = f"{settings.skiptrace_api_url.rstrip('/')}/api/v1/skip-trace-bulk"
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {settings.skiptrace_api_key}"})
+    except httpx.HTTPError:
+        raise LookupError_(502, "network", "We couldn't reach the property data service.")
+    s_ = resp.status_code
+    if s_ == 429:
+        try:
+            retry = max(1, min(300, int(float(resp.headers.get("Retry-After", "30")))))
+        except ValueError:
+            retry = 30
+        raise LookupError_(503, "rate_limited", "Rate limited", retry)
+    if s_ in (401, 403):
+        raise LookupError_(503, "auth", "Provider rejected the API key")
+    if s_ == 402:
+        raise LookupError_(503, "balance", "Provider balance too low")
+    if s_ == 400:
+        raise LookupError_(400, "invalid_request", "Provider rejected the request")
+    if s_ >= 400:
+        raise LookupError_(502, "provider_error", f"Provider error {s_}")
+    try:
+        data = resp.json()
+    except ValueError:
+        raise LookupError_(502, "provider_error", "Unreadable provider response")
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or len(results) != len(addrs):
+        raise LookupError_(502, "provider_error", "Provider returned an unexpected number of results")
+    return results

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card } from "@/components/ui";
-import type { Lookup, PlaceAddress } from "./types";
+import type { Lookup, LookupPhone, PlaceAddress } from "./types";
 
 function oneLine(a: PlaceAddress | undefined) {
   if (!a) return "";
@@ -148,24 +148,9 @@ export function ResultPanel({
                   <span className="font-mono text-sm tabular-nums text-zinc-900">{p.display}</span>
                   <CopyButton value={p.number} label={`phone ${p.display}`} />
                   <span className="text-xs capitalize text-zinc-500">{p.type === "unknown" ? "Type unknown" : p.type}</span>
-                  <span className="ml-auto">
-                    {p.dnc ? (
-                      <Badge tone="red">
-                        <ShieldAlert className="h-3 w-3" /> DNC-listed
-                      </Badge>
-                    ) : (
-                      <Badge tone="gray">Not on DNC list</Badge>
-                    )}
-                  </span>
                 </li>
               ))}
             </ul>
-          )}
-          {r.phones.length > 0 && (
-            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-              DNC-listed numbers are never dialed by campaigns. &quot;Not on DNC list&quot; isn&apos;t permission to call — check consent and
-              telemarketing rules before any outreach.
-            </p>
           )}
         </Section>
 
@@ -184,7 +169,39 @@ export function ResultPanel({
             </ul>
           )}
         </Section>
+        {r.phones.length > 0 && (
+          <Section title="Do Not Call (reported by DataSkip)">
+            <DncReport phones={r.phones} />
+          </Section>
+        )}
       </div>
     </Card>
+  );
+}
+
+/** Provider-reported DNC flags, kept apart from the contact details and never applied automatically. */
+function DncReport({ phones }: { phones: LookupPhone[] }) {
+  const flagged = phones.filter((p) => p.dnc === true);
+  const unknown = phones.filter((p) => p.dnc === null || p.dnc === undefined);
+  return (
+    <div className="rounded-lg border border-zinc-200 px-3 py-2.5 text-sm">
+      {flagged.length === 0 ? (
+        <p className="text-zinc-600">DataSkip didn&apos;t flag any of these numbers.</p>
+      ) : (
+        <ul className="space-y-1">
+          {flagged.map((p) => (
+            <li key={p.number} className="flex items-center gap-2">
+              <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />
+              <span className="font-mono tabular-nums">{p.display}</span>
+              <Badge tone="amber">Flagged</Badge>
+            </li>
+          ))}
+        </ul>
+      )}
+      {unknown.length > 0 && <p className="mt-1 text-xs text-zinc-500">{unknown.length} number{unknown.length === 1 ? "" : "s"} had no DNC status reported.</p>}
+      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+        Shown as reported by the provider — not verified. Run your own DNC scrub and check consent before calling.
+      </p>
+    </div>
   );
 }

@@ -1,27 +1,20 @@
 "use client";
 
-import { ClipboardPaste, Eye, Search, UserPlus, UserSearch } from "lucide-react";
+import { ClipboardPaste, Eye, FileSpreadsheet, Search, UserPlus, UserSearch } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
 import useSWR from "swr";
+import { BulkLookup } from "@/components/lead-finder/BulkLookup";
+import { CreditsCard } from "@/components/lead-finder/CreditsCard";
 import { ResultPanel } from "@/components/lead-finder/ResultPanel";
 import type { LeadFinderUsage, Lookup, LookupAddress, LookupResponse, ParsedAddress } from "@/components/lead-finder/types";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, EmptyState, Field, Input, Notice, Spinner } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, Notice, Spinner, Tabs } from "@/components/ui";
 import { ApiError, api, del, fetcher, post } from "@/lib/api";
-import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 const EMPTY: LookupAddress = { street: "", city: "", state: "", zip: "" };
 
-function resetText(iso: string | undefined, tz: string | undefined) {
-  if (!iso) return "";
-  const opts: Intl.DateTimeFormatOptions = { weekday: "short", hour: "numeric", minute: "2-digit", timeZoneName: "short" };
-  try {
-    return new Date(iso).toLocaleString(undefined, { ...opts, timeZone: tz || undefined });
-  } catch {
-    return new Date(iso).toLocaleString(undefined, opts);
-  }
-}
+type Mode = "single" | "bulk";
 
 function fmtDate(iso: string | null) {
   return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
@@ -29,11 +22,10 @@ function fmtDate(iso: string | null) {
 
 export default function LeadFinderPage() {
   const toast = useToast();
-  const { session } = useSession();
-  const tz = session?.org?.timezone ?? undefined;
   const { data: usage, mutate: refreshUsage } = useSWR<LeadFinderUsage>("/api/lead-finder/usage", fetcher);
   const { data: history, mutate: refreshHistory } = useSWR<{ items: Lookup[] }>("/api/lead-finder/lookups", fetcher);
 
+  const [mode, setMode] = useState<Mode>("single");
   const [form, setForm] = useState<LookupAddress>(EMPTY);
   const [paste, setPaste] = useState("");
   const [verify, setVerify] = useState(false);
@@ -44,7 +36,7 @@ export default function LeadFinderPage() {
   const [opening, setOpening] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
-  const limitReached = !!usage && usage.remaining <= 0;
+  const limitReached = !!usage && !usage.unlimited && usage.credits <= 0;
   const unavailable = !!usage && (!usage.enabled || !usage.configured);
   const missing = !form.street.trim() || !form.city.trim() || !form.state.trim();
 
@@ -126,7 +118,6 @@ export default function LeadFinderPage() {
     }
   }
 
-  const pct = usage ? Math.min(100, (usage.used / Math.max(1, usage.limit)) * 100) : 0;
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -137,11 +128,26 @@ export default function LeadFinderPage() {
         </div>
         {usage && usage.enabled && (
           <span className={cn("text-sm font-medium tabular-nums", limitReached ? "text-amber-700" : "text-zinc-700")}>
-            {usage.remaining} {usage.remaining === 1 ? "lookup" : "lookups"} remaining today
+            {usage.unlimited ? "Unlimited lookup credits" : `${usage.credits.toLocaleString()} lookup ${usage.credits === 1 ? "credit" : "credits"}`}
           </span>
         )}
       </div>
 
+      <div className="mb-4 w-full sm:w-72">
+        <Tabs<Mode>
+          value={mode}
+          onChange={setMode}
+          tabs={[
+            { value: "single", label: "Single address", icon: <Search className="h-3.5 w-3.5" /> },
+            { value: "bulk", label: "Bulk CSV", icon: <FileSpreadsheet className="h-3.5 w-3.5" /> },
+          ]}
+        />
+      </div>
+
+      {mode === "bulk" ? (
+        <BulkLookup usage={usage} onUsage={() => refreshUsage()} />
+      ) : (
+      <>
       <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
         <Card className="p-5">
           {usage && !usage.enabled ? (
@@ -188,13 +194,11 @@ export default function LeadFinderPage() {
                 <Notice tone="amber">Property lookup is temporarily unavailable. Please try again later.</Notice>
               )}
               {limitReached && (
-                <Notice tone="amber">
-                  You&apos;ve used your {usage!.limit} property lookups for today. Your allowance resets tomorrow ({resetText(usage!.resets_at, tz)}).
-                </Notice>
+                <Notice tone="amber">You&apos;re out of lead lookup credits. Ask your BlackSync admin to add more — saved results stay free to open.</Notice>
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-zinc-500">Each new address uses one lookup. Opening a saved result is free.</p>
+                <p className="text-xs text-zinc-500">1 credit per owner found. No match costs nothing, and saved results are free to reopen.</p>
                 <Button type="submit" variant="primary" loading={busy} disabled={busy || missing || limitReached || unavailable}>
                   {!busy && <Search className="h-4 w-4" />} {busy ? "Looking up…" : "Find Property Owner"}
                 </Button>
@@ -203,18 +207,8 @@ export default function LeadFinderPage() {
           )}
         </Card>
 
-        <Card className="h-fit p-4">
-          <div className="text-xs font-medium text-zinc-500">Daily Lookups</div>
-          <div className="mt-1 font-display text-xl font-semibold tabular-nums text-zinc-900">
-            {usage ? `${usage.used} / ${usage.limit}` : "—"} <span className="text-sm font-normal text-zinc-500">used</span>
-          </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-100">
-            <div className={cn("h-full rounded-full transition-all", limitReached ? "bg-amber-500" : "bg-brand-600")} style={{ width: `${pct}%` }} />
-          </div>
-          {usage && <p className="mt-2 text-xs text-zinc-500">Resets {resetText(usage.resets_at, tz)}</p>}
-        </Card>
+        <CreditsCard usage={usage} />
       </div>
-
       <div ref={resultRef} className="mt-4 scroll-mt-4">
         {busy ? (
           <Card className="flex items-center gap-3 p-5 text-sm text-zinc-600">
@@ -288,6 +282,8 @@ export default function LeadFinderPage() {
         )}
       </Card>
       {usage && <p className="mt-2 text-xs text-zinc-400">Results are kept for {usage.retention_days} days, then their contact details are removed.</p>}
+      </>
+      )}
     </div>
   );
 }
