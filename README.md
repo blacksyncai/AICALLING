@@ -77,6 +77,18 @@ cp backend/.env.example backend/.env   # add keys
 docker compose up --build              # API :8000 · worker · web :3000
 ```
 
+### Deploy to Render (gets you a URL)
+
+`render.yaml` sets up the web app, API, voice worker and a Postgres database in one go:
+
+1. [render.com](https://render.com) → **New → Blueprint** → pick this repo/branch.
+2. Paste your keys when prompted (OpenAI, LiveKit, Deepgram, Cartesia; the SIP trunk is optional),
+   plus an `AUTH_EMAIL` / `AUTH_PASSWORD` for the site login.
+3. When it's live, open the `closer-web` service URL.
+
+All services default to Render's small paid plans (the voice worker must stay running); downgrade
+the web app in the dashboard if you like.
+
 ### Before putting it on the internet
 
 - Set `AUTH_PASSWORD` (and `AUTH_EMAIL`, `AUTH_SECRET`) for the web app — the login screen is off when it's empty.

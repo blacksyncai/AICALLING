@@ -119,6 +119,7 @@ def new_agent_from_template(key: str, name: str | None = None) -> Agent:
         extraction_fields=t["extraction_fields"],
         success_criteria=t["success_criteria"],
         enable_booking=t["enable_booking"],
+        llm_model=t.get("llm_model", "gpt-4.1-mini"),
     )
 
 

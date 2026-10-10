@@ -168,7 +168,7 @@ class PounceAgent(Agent):
             try:
                 async with _httpx.AsyncClient(timeout=5.0) as client:
                     await client.patch(
-                        f"{settings.webhook_base_url}/api/leads/{self._state.lead_id}",
+                        f"{settings.api_base_url}/api/leads/{self._state.lead_id}",
                         json={"question": question, "answer": answer},
                     )
             except Exception as exc:
@@ -352,7 +352,7 @@ async def _push_live_event(call_log_id: str, event: dict) -> None:
     try:
         async with _httpx.AsyncClient(timeout=2.0) as client:
             await client.post(
-                f"{settings.webhook_base_url}/api/webhook/calls/{call_log_id}/live-event",
+                f"{settings.api_base_url}/api/webhook/calls/{call_log_id}/live-event",
                 json=event,
             )
     except Exception as exc:
@@ -373,7 +373,7 @@ async def _post_call_outcome(state, outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{settings.webhook_base_url}/api/webhook/calls/{state.call_log_id}/outcome",
+                f"{settings.api_base_url}/api/webhook/calls/{state.call_log_id}/outcome",
                 json={
                     "outcome": outcome,
                     "qualification_score": state.qualification_score,
@@ -661,7 +661,7 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{settings.webhook_base_url}/api/webhook/calls/{run.call_log_id}/outcome",
+                f"{settings.api_base_url}/api/webhook/calls/{run.call_log_id}/outcome",
                 json={
                     "outcome": outcome,
                     "agreed_meeting_time": run.meeting_time,
@@ -680,7 +680,7 @@ async def _fetch_agent_config(agent_id: str) -> dict | None:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(f"{settings.webhook_base_url}/api/agents/{agent_id}/runtime")
+            resp = await client.get(f"{settings.api_base_url}/api/agents/{agent_id}/runtime")
             resp.raise_for_status()
             return resp.json()
     except Exception as exc:
@@ -702,7 +702,8 @@ async def _delete_room(room_name: str) -> None:
         await lk.aclose()
 
 
-def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict) -> list:
+def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
+                 cfg_vars: dict | None = None) -> list:
     """Function tools for a configurable agent, based on what it has enabled."""
     import time as _t
     from app.services import calendar as _cal
@@ -728,6 +729,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict) -
                 interested, not_interested, callback, transferred, voicemail, no_answer, completed.
         """
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
+        if outcome == "meeting_booked" and not run.meeting_time:
+            return "Not ended: no meeting is booked yet. Finish booking first, or pick another outcome."
         run.outcome = outcome
         _record("end_call", {"outcome": outcome})
         asyncio.create_task(_post_run_outcome(run, outcome))
@@ -746,29 +749,37 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict) -
             session = session_ref.get("session")
             if session:
                 session.say("One sec, let me check the calendar.", allow_interruptions=True)
-            run.slots = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"))
+            found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"))
+            run.slots = _cal.remember_slots(run.slots, found)
             _record("check_availability", {"preferred_date": preferred_date},
-                    {"slots": [s["label"] for s in run.slots]})
-            if not run.slots:
+                    {"slots": [s["label"] for s in found]})
+            if not found:
                 return "Nothing is open around then. Offer to check another day."
-            return "Open slots: " + " or ".join(s["label"] for s in run.slots)
+            return "Open slots: " + " or ".join(s["label"] for s in found)
 
         async def book_appointment(slot: str, email: str) -> str:
             """Book one of the slots from check_availability. Confirm the email spelling first.
 
             Args:
-                slot: Which slot they chose — 'first', 'second', or the spoken time.
-                email: The contact's email address for the calendar invite.
+                slot: The exact label of the slot they chose, as returned by check_availability.
+                email: The contact's email exactly as they said it. Never guess it.
             """
+            if not run.slots:
+                return "No slots offered yet. Call check_availability first."
             chosen = _cal.pick_slot(run.slots, slot)
             if not chosen:
-                return "No slots offered yet. Call check_availability first."
-            if "@" not in (email or ""):
-                return "That email doesn't look complete. Ask them to spell it again."
+                return ("Which slot? Offered: " + "; ".join(s["label"] for s in run.slots)
+                        + ". Ask the contact to pick one, then pass its exact label.")
+            from app.agent.runtime import email_was_given, normalize_email
+            email = normalize_email(email)
+            user_turns = [t.get("text", "") for t in run.transcript if t.get("role") == "user"]
+            if not email_was_given(email, user_turns, (cfg_vars or {}).get("email", "")):
+                return ("Not booked: the contact hasn't given that email. Ask for their email "
+                        "and have them spell it — never guess it.")
             link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"))
             run.meeting_link, run.meeting_time, run.email = link, chosen["label"], email
             _record("book_appointment", {"slot": slot, "email": email}, {"booked": chosen["label"], "link": link})
-            return f"Booked for {chosen['label']}. Confirm it with them, then wrap up."
+            return f"Booked for {chosen['label']}. Confirm exactly this time with them, then wrap up."
 
         tools += [function_tool(check_availability), function_tool(book_appointment)]
 
@@ -872,7 +883,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     channel = "phone" if call_type == "outbound" else "web"
     agent = Agent(
         instructions=build_instructions(cfg, variables, channel=channel),
-        tools=_build_tools(cfg, run, ctx, session_ref),
+        tools=_build_tools(cfg, run, ctx, session_ref, variables),
     )
 
     run.t0 = _time.monotonic()

@@ -8,7 +8,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 # Rewrites are resolved at build time, so the backend origin is a build arg.
 ARG BACKEND_ORIGIN=http://api:8000
-ENV BACKEND_ORIGIN=$BACKEND_ORIGIN
+ENV BACKEND_ORIGIN=$BACKEND_ORIGIN NEXT_STANDALONE=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

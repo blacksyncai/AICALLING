@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     webhook_base_url: str = "http://localhost:8000"
 
     @property
+    def api_base_url(self) -> str:
+        """WEBHOOK_BASE_URL with a scheme (hosts give a bare host:port on private networks)."""
+        url = self.webhook_base_url.strip().rstrip("/")
+        return url if "://" in url else f"http://{url}"
+
+    @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 

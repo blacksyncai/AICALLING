@@ -26,4 +26,4 @@ RUN python agent_worker.py download-files || echo "model download skipped"
 EXPOSE 8000
 
 # API by default; worker task definition overrides this command.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

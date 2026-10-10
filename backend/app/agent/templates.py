@@ -51,6 +51,8 @@ Qualify the prospect and book a 30-minute demo.
         ],
         "success_criteria": "Successful if a demo was booked or the prospect explicitly agreed to a follow-up meeting.",
         "enable_booking": True,
+        # Booking flows need reliable tool use; the mini model sometimes narrates instead of booking.
+        "llm_model": "gpt-4.1",
     },
     {
         "template": "appointment_setter",
@@ -78,6 +80,7 @@ Book the caller an appointment.
         ],
         "success_criteria": "Successful if an appointment time was agreed.",
         "enable_booking": True,
+        "llm_model": "gpt-4.1",
     },
     {
         "template": "real_estate",

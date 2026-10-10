@@ -10,7 +10,9 @@ import json
 import httpx
 import structlog
 
-from app.agent.runtime import build_instructions, render_vars
+from app.agent.runtime import (
+    build_instructions, email_was_given, normalize_email, render_vars, strip_tool_mentions,
+)
 from app.config import settings
 from app.models.call_log import CALL_OUTCOMES
 from app.services import calendar
@@ -71,7 +73,7 @@ def _tool_specs(cfg: dict) -> list[dict]:
                         "type": "object",
                         "properties": {
                             "slot": {"type": "string", "description": "'first', 'second', or the slot label"},
-                            "email": {"type": "string"},
+                            "email": {"type": "string", "description": "Exactly as the contact said it. Never guess."},
                         },
                         "required": ["slot", "email"],
                     },
@@ -108,10 +110,13 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
         msg = data["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
         if not calls:
-            return {"reply": msg.get("content") or "", "tool_events": tool_events,
+            return {"reply": strip_tool_mentions(msg.get("content") or ""), "tool_events": tool_events,
                     "ended": ended, "outcome": outcome, "state": state}
 
+        msg_index = len(messages)
         messages.append(msg)
+        spoken = strip_tool_mentions(msg.get("content") or "")
+        failed = False
         for call in calls:
             name = call["function"]["name"]
             try:
@@ -119,26 +124,44 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
             except json.JSONDecodeError:
                 args = {}
             if name == "end_call":
-                ended, outcome = True, args.get("outcome", "completed")
-                result = "Call ended."
+                if args.get("outcome") == "meeting_booked" and not state.get("booked"):
+                    result = "Not ended: no meeting is booked yet. Finish booking first, or pick another outcome."
+                else:
+                    ended, outcome = True, args.get("outcome", "completed")
+                    result = "Call ended."
             elif name == "check_availability":
                 slots = await calendar.fetch_slots(args.get("preferred_date", ""), cfg.get("calcom_event_type_id"))
-                state["slots"] = slots
+                state["slots"] = calendar.remember_slots(state.get("slots") or [], slots)
                 result = "Open slots: " + "; ".join(s["label"] for s in slots)
             elif name == "book_appointment":
                 slot = calendar.pick_slot(state.get("slots") or [], args.get("slot", ""))
-                if not slot:
+                user_turns = [m["content"] for m in history if m.get("role") == "user"]
+                if not state.get("slots"):
                     result = "No slots offered yet — call check_availability first."
+                elif not slot:
+                    result = ("Which slot? Offered: " + "; ".join(x["label"] for x in state["slots"])
+                              + ". Ask the contact to pick one, then pass its exact label.")
+                elif not email_was_given(args.get("email", ""), user_turns, variables.get("email", "")):
+                    result = ("Not booked: the contact hasn't given their email yet. "
+                              "Ask for it and have them confirm the spelling — never guess it.")
                 else:
-                    link = await calendar.create_booking(slot["start"], args.get("email", ""),
+                    state["booked"] = slot["label"]
+                    link = await calendar.create_booking(slot["start"], normalize_email(args.get("email", "")),
                                                          variables.get("full_name") or variables.get("name", ""),
                                                          cfg.get("calcom_event_type_id"))
-                    result = f"Booked {slot['label']}." + (f" Link: {link}" if link else "")
+                    result = f"Booked {slot['label']}. Confirm exactly this time with the contact." + (f" Link: {link}" if link else "")
             else:
                 result = "Unknown tool."
+            failed = failed or result.startswith(("Not ", "Which slot", "No slots", "Unknown"))
             tool_events.append({"tool": name, "args": args, "result": result})
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
-        # Loop again so the model can speak after the tool result (e.g. its goodbye).
+        # Text written alongside a failed tool call may claim success; let the model
+        # answer the real result instead.
+        if failed:
+            messages[msg_index] = {**msg, "content": None}
+        elif ended:
+            return {"reply": spoken, "tool_events": tool_events, "ended": True, "outcome": outcome, "state": state}
+        # Loop again so the model can speak after the tool result.
 
     return {"reply": "", "tool_events": tool_events, "ended": ended, "outcome": outcome, "state": state}
 

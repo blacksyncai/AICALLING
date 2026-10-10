@@ -134,3 +134,34 @@ def test_settings_status(client):
     assert s["capabilities"]["chat_test"] is True
     assert s["capabilities"]["web_call"] is False
     assert client.get("/api/settings/voices").json()["source"] == "fallback"
+
+
+def test_slot_matching_never_guesses():
+    from app.services import calendar
+    slots = calendar.remember_slots(calendar.mock_slots("2030-01-08"), calendar.mock_slots("2030-01-09"))  # Tue + Wed
+    label = lambda q: (calendar.pick_slot(slots, q) or {}).get("label")
+    assert label("Tuesday, January 8 at 6 in the evening") == "Tuesday, January 8 at 6:00 PM UTC"
+    assert label("wednesday at 3") == "Wednesday, January 9 at 3:00 PM UTC"
+    assert label("second") == slots[1]["label"]
+    assert label("tuesday") is None   # two Tuesday slots: ask, don't guess
+    assert label("6 pm") is None      # Tuesday or Wednesday?
+
+
+def test_email_and_tool_name_guards():
+    from app.agent.runtime import email_was_given, normalize_email, strip_tool_mentions
+    assert normalize_email("Jamie at Globex dot com") == "jamie@globex.com"
+    assert email_was_given("jamie@globex.com", ["it's jamie at globex dot com"])
+    assert not email_was_given("jamie@globex.com", ["tuesday works"])  # never invented
+    assert strip_tool_mentions("Have a great day! end_call") == "Have a great day!"
+
+
+def test_cannot_end_as_booked_without_booking(client, agent_id, monkeypatch):
+    replies = iter([_tool_call("end_call", {"outcome": "meeting_booked"}), _text("Let me grab a time first.")])
+
+    async def fake_chat(payload, timeout=45.0):
+        return next(replies)
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    body = client.post(f"/api/agents/{agent_id}/chat", json={"messages": [{"role": "user", "content": "ok"}]}).json()
+    assert body["ended"] is False
+    assert "no meeting is booked" in body["tool_events"][0]["result"]
