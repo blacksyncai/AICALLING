@@ -1,12 +1,24 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-// Pages need a Clerk session. The API (proxied to the backend) verifies the session
-// itself, and sign-in, sign-up and invite links must open while signed out.
+// Pages need a session. The API (proxied to the backend) verifies the session itself,
+// and sign-in, sign-up and invite links must open while signed out.
 const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/login", "/invite(.*)", "/api/(.*)"]);
 
-export default clerkMiddleware(async (auth, req) => {
+const withClerk = clerkMiddleware(async (auth, req) => {
   if (!isPublic(req)) await auth.protect();
 });
+
+// Until CLERK_SECRET_KEY is set, fall back to the built-in session cookie.
+function withPasswordLogin(req: NextRequest) {
+  if (isPublic(req) || req.cookies.get("bs_session")?.value) return NextResponse.next();
+  const url = req.nextUrl.clone();
+  url.pathname = "/login";
+  url.search = "";
+  return NextResponse.redirect(url);
+}
+
+export default process.env.CLERK_SECRET_KEY ? withClerk : withPasswordLogin;
 
 export const config = {
   matcher: [

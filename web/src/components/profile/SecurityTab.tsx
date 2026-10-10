@@ -4,10 +4,17 @@ import { UserProfile } from "@clerk/nextjs";
 import { LogOut } from "lucide-react";
 import { useState } from "react";
 import { Button, Card, CardHeader } from "@/components/ui";
-import { signOut } from "@/lib/session";
+import { PasswordSecurity } from "@/components/profile/PasswordSecurity";
+import { signOut, useSession } from "@/lib/session";
 
 /** Sign-in email, password, connected logins, 2-step verification and devices — all handled by Clerk. */
 export function SecurityTab() {
+  const { session } = useSession();
+  if (session?.auth_provider === "password") return <PasswordSecurity />;
+  return <ClerkSecurity />;
+}
+
+function ClerkSecurity() {
   const [signingOut, setSigningOut] = useState(false);
   return (
     <div className="space-y-6">

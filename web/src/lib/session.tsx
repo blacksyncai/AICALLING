@@ -35,8 +35,10 @@ export async function switchOrg(orgId: string | null, goTo = "/dashboard") {
 }
 
 export async function signOut() {
+  // Clear the built-in session too, for setups not (yet) using Clerk.
+  await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
   const clerk = clerkInstance();
-  if (clerk) await clerk.signOut({ redirectUrl: "/sign-in" });
+  if (clerk?.session) await clerk.signOut({ redirectUrl: "/sign-in" });
   else window.location.href = "/sign-in";
 }
 
