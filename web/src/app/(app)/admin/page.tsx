@@ -147,7 +147,7 @@ function AccountsTable({ orgs }: { orgs: AdminOrg[] }) {
   };
 
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-[860px] text-sm">
         <thead className="border-b border-zinc-100 text-left text-xs text-zinc-500">
           <tr>
@@ -227,7 +227,7 @@ function UsersTable() {
       ) : data.users.length === 0 ? (
         <EmptyState icon={<Users className="h-5 w-5" />} title="No users yet" description="Users appear here once accounts are created." />
       ) : (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead className="border-b border-zinc-100 text-left text-xs text-zinc-500">
               <tr>
