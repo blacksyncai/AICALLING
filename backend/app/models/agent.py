@@ -61,6 +61,13 @@ class Agent(Base):
     # Outcome labels the analyzer picks from, e.g. ["interested", "not_interested"].
     success_criteria: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # ── Built with AI ─────────────────────────────────────────────────────────
+    # {"industry", "use_case", "direction", "style", "draft_id",
+    #  "sections": {"identity": str, "reason": str, ...}} — see app/agent/builder docs.
+    builder: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Whether the agent says it's an AI assistant when asked / at the start of calls.
+    ai_disclosure: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+
     # ── Timestamps ────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(
