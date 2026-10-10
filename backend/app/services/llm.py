@@ -19,6 +19,14 @@ from app.services import calendar
 
 log = structlog.get_logger(__name__)
 
+STANDARD_EXTRACTION_FIELDS = (
+    {"name": "lead_intent", "description": "What the contact wants or intends (e.g. buy, sell, book, just browsing)"},
+    {"name": "timeline", "description": "When the contact plans to act, in their words"},
+    {"name": "key_objections", "description": "Main concerns or objections the contact raised"},
+    {"name": "next_action", "description": "The agreed or recommended next step"},
+)
+
+
 class LLMNotConfigured(RuntimeError):
     pass
 
@@ -188,7 +196,13 @@ async def analyze_call(transcript: list[dict], extraction_fields: list[dict] | N
     if not text.strip():
         return None
 
-    fields = extraction_fields or []
+    # Every call yields these standard fields, plus whatever the agent asks for.
+    fields = list(STANDARD_EXTRACTION_FIELDS)
+    seen = {f["name"] for f in fields}
+    for f in extraction_fields or []:
+        if f.get("name") and f["name"] not in seen:
+            fields.append(f)
+            seen.add(f["name"])
     field_spec = "\n".join(f'- "{f.get("name")}": {f.get("description", "")}' for f in fields if f.get("name"))
     prompt = f"""Analyze this phone call transcript between an AI agent and a contact.
 

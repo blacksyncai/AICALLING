@@ -333,6 +333,8 @@ class CallService:
                 lead_values["qualification_score"] = qualification_score
             if meeting_link:
                 lead_values["notes"] = f"Meeting: {meeting_link}"
+            if outcome == "do_not_call":
+                lead_values["do_not_call"] = True  # the contact asked not to be called again
             await db.execute(update(Lead).where(Lead.id == call_log.lead_id).values(**lead_values))
 
         if call_log.campaign_id:
@@ -384,6 +386,11 @@ async def _analyze(call_log_id: str) -> None:
         if call_log.outcome in (None, "completed", "failed") and result.get("outcome"):
             if call_log.duration_seconds or call_log.outcome != "failed":
                 call_log.outcome = result["outcome"]
+        # Someone who asked not to be called again goes on the Do-Not-Call list.
+        if call_log.outcome == "do_not_call" and call_log.lead_id:
+            lead = await db.get(Lead, call_log.lead_id)
+            if lead:
+                lead.do_not_call = True
         await db.commit()
         log.info("call_analyzed", call_log_id=call_log_id, outcome=call_log.outcome)
 

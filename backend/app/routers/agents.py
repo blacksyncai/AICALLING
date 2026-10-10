@@ -26,7 +26,7 @@ _EDITABLE = (
     "name", "description", "status", "system_prompt", "first_message", "knowledge_base",
     "language", "llm_model", "temperature", "voice_id", "voice_speed", "background_audio",
     "enable_booking", "calcom_event_type_id", "transfer_number", "max_duration_seconds",
-    "extraction_fields", "success_criteria",
+    "extraction_fields", "success_criteria", "builder", "ai_disclosure",
 )
 
 
@@ -62,6 +62,8 @@ class AgentUpdate(BaseModel):
     max_duration_seconds: int | None = Field(default=None, ge=30, le=3600)
     extraction_fields: list[ExtractionField] | None = None
     success_criteria: str | None = None
+    builder: dict | None = None
+    ai_disclosure: bool | None = None
 
 
 class ChatMessage(BaseModel):
@@ -90,6 +92,7 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         "template": a.template,
         **{k: getattr(a, k) for k in _EDITABLE},
         "extraction_fields": a.extraction_fields or [],
+        "ai_disclosure": a.ai_disclosure is not False,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
     }

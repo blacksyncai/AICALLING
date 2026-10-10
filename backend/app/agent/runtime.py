@@ -44,6 +44,8 @@ def agent_to_runtime(agent) -> dict:
         "calcom_event_type_id": agent.calcom_event_type_id or "",
         "transfer_number": agent.transfer_number or "",
         "max_duration_seconds": agent.max_duration_seconds or 600,
+        "ai_disclosure": getattr(agent, "ai_disclosure", None) is not False,
+        "business_name": (getattr(agent, "builder", None) or {}).get("business_name") or "",
     }
 
 
@@ -56,6 +58,13 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
         parts.append(
             "# KNOWLEDGE BASE\nUse this as your source of truth. Do not invent facts beyond it.\n"
             + render_vars(kb, variables)
+        )
+
+    if cfg.get("ai_disclosure"):
+        company = cfg.get("business_name") or "the business you represent"
+        parts.append(
+            "# AI DISCLOSURE\nIf asked whether you're an AI or a real person, say honestly that "
+            f"you're an AI assistant for {company}. Never claim to be human."
         )
 
     ctx_lines = [f"- {k}: {v}" for k, v in (variables or {}).items() if v not in (None, "")]
@@ -103,7 +112,7 @@ def lead_variables(lead) -> dict:
 
 
 _TOOL_NAMES = ("end_call", "check_availability", "book_appointment", "transfer_call")
-_OUTCOME_TOKENS = ("meeting_booked", "not_qualified", "not_interested", "no_answer")
+_OUTCOME_TOKENS = ("meeting_booked", "not_qualified", "not_interested", "no_answer", "do_not_call", "wrong_number")
 
 
 def strip_tool_mentions(text: str) -> str:

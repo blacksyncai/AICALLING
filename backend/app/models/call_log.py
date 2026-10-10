@@ -19,9 +19,11 @@ def _now() -> datetime:
 # status:  initiated | ringing | connected | completed | failed | no_answer
 # outcome: meeting_booked | qualified | not_qualified | interested | not_interested
 #          | callback | transferred | voicemail | no_answer | completed | failed
+#          | wrong_number | do_not_call
 CALL_OUTCOMES = (
     "meeting_booked", "qualified", "not_qualified", "interested", "not_interested",
     "callback", "transferred", "voicemail", "no_answer", "completed", "failed",
+    "wrong_number", "do_not_call",
 )
 
 

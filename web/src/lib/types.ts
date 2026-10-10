@@ -1,3 +1,5 @@
+import type { BuilderInfo } from "@/lib/builder";
+
 export interface ExtractionField {
   name: string;
   description: string;
@@ -27,6 +29,8 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   stats?: { calls: number; seconds: number };
+  builder?: BuilderInfo | null;
+  ai_disclosure?: boolean;
 }
 
 export interface AgentTemplate {

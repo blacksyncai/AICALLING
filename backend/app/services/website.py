@@ -56,6 +56,8 @@ _BOT_WALL = re.compile(r"just a moment|attention required|checking your browser|
 # Plain-language failure messages.
 MSG_BLOCKED = "This website blocks automated visits, so we couldn't read it. You can add your details by hand or upload a document instead."
 MSG_NOT_FOUND = "We couldn't find that website. Check the address and try again."
+MSG_BAD_CERT = ("That website's security certificate isn't valid, so we couldn't read it safely. "
+                "You can add your business details by hand or upload a file instead.")
 MSG_TIMEOUT = "The website took too long to respond. Try again in a few minutes."
 MSG_NOT_PUBLIC = "That address isn't a public website."
 MSG_LIMITED = "We found very little readable text (the site may be built with JavaScript only). Review what we found and add anything missing."
@@ -269,7 +271,9 @@ async def fetch_page(client: httpx.AsyncClient, url: str) -> tuple[str, str]:
             raise
         except httpx.TimeoutException:
             raise CrawlError(MSG_TIMEOUT, "timeout")
-        except httpx.ConnectError:
+        except httpx.ConnectError as exc:
+            if "CERTIFICATE" in str(exc).upper():
+                raise CrawlError(MSG_BAD_CERT, "certificate")
             raise CrawlError(MSG_NOT_FOUND, "not_found")
         except httpx.HTTPError:
             raise CrawlError(MSG_UNREADABLE)

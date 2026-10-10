@@ -71,6 +71,8 @@ export interface BuilderCatalog {
     category: string;
     status: "available" | "needs_setup" | "coming_soon";
     detail: string;
+    /** Industries where this tool is popular (shown first). */
+    industries?: string[];
   }[];
 }
 
@@ -100,19 +102,21 @@ export interface AgentDraft {
   agent_id: string | null;
 }
 
+// Keys and headings must match SECTION_TITLES in backend/app/agent/generator.py —
+// the system prompt is assembled as "## {heading}" blocks in this order.
 export const PROMPT_SECTIONS = [
-  ["identity", "Identity & introduction"],
-  ["reason", "Reason for calling"],
-  ["flow", "Conversation flow"],
+  ["identity", "Identity and Style"],
+  ["reason", "Purpose of the Call"],
+  ["flow", "Conversation Flow"],
   ["qualification", "Qualification"],
-  ["objections", "Objection handling"],
-  ["knowledge", "Using business knowledge"],
-  ["booking", "Appointment scheduling"],
-  ["transfer", "Warm transfers"],
+  ["objections", "Handling Objections"],
+  ["knowledge", "Using Business Knowledge"],
+  ["booking", "Booking"],
+  ["transfer", "Transferring to a Person"],
   ["voicemail", "Voicemail"],
-  ["callback", "Callbacks & follow-up"],
-  ["closing", "Wrapping up"],
-  ["compliance", "Disclosure & compliance"],
+  ["callback", "Callbacks"],
+  ["closing", "Closing the Call"],
+  ["compliance", "Honesty and Compliance"],
 ] as const;
 
 export interface BuilderInfo {

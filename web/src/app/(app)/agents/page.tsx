@@ -1,77 +1,15 @@
 "use client";
 
-import { Bot, CalendarCheck, Copy, FileText, Headphones, Home, MoreHorizontal, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Bot, Copy, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, EmptyState, Modal, PageHeader, Spinner } from "@/components/ui";
+import { NewAgentChooser } from "@/components/builder/NewAgentChooser";
+import { Badge, Button, Card, EmptyState, PageHeader, Spinner } from "@/components/ui";
 import { del, fetcher, post } from "@/lib/api";
-import type { Agent, AgentTemplate } from "@/lib/types";
-import { cn, timeAgo } from "@/lib/utils";
-
-const TEMPLATE_ICON: Record<string, typeof Bot> = {
-  sales_sdr: Sparkles,
-  appointment_setter: CalendarCheck,
-  real_estate: Home,
-  receptionist: Headphones,
-  blank: FileText,
-};
-
-function NewAgentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter();
-  const toast = useToast();
-  const { data: templates } = useSWR<AgentTemplate[]>(open ? "/api/agents/templates/list" : null, fetcher);
-  const [creating, setCreating] = useState<string | null>(null);
-
-  async function create(template: string) {
-    setCreating(template);
-    try {
-      const agent = await post<Agent>("/api/agents/", { template });
-      router.push(`/agents/${agent.id}`);
-    } catch (e) {
-      toast((e as Error).message, "error");
-      setCreating(null);
-    }
-  }
-
-  return (
-    <Modal open={open} onClose={onClose} title="Create an agent" wide>
-      <p className="mb-4 text-sm text-zinc-500">Start from a template — you can change everything afterwards.</p>
-      {!templates ? (
-        <div className="flex justify-center py-10">
-          <Spinner />
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {templates.map((t) => {
-            const Icon = TEMPLATE_ICON[t.template] ?? Bot;
-            return (
-              <button
-                key={t.template}
-                onClick={() => create(t.template)}
-                disabled={!!creating}
-                className={cn(
-                  "flex gap-3 rounded-xl border border-zinc-200 p-4 text-left transition hover:border-brand-500 hover:bg-brand-50/40 disabled:opacity-60",
-                  creating === t.template && "border-brand-500 bg-brand-50/40",
-                )}
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
-                  {creating === t.template ? <Spinner className="h-4 w-4 text-brand-600" /> : <Icon className="h-4 w-4" />}
-                </span>
-                <span>
-                  <span className="block text-sm font-semibold">{t.name}</span>
-                  <span className="mt-0.5 block text-xs text-zinc-500">{t.description}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </Modal>
-  );
-}
+import type { Agent } from "@/lib/types";
+import { timeAgo } from "@/lib/utils";
 
 function AgentCard({ agent, onChanged }: { agent: Agent; onChanged: () => void }) {
   const toast = useToast();
@@ -157,7 +95,7 @@ export default function AgentsPage() {
           <EmptyState
             icon={<Bot className="h-5 w-5" />}
             title="No agents yet"
-            description="Create your first AI calling agent from a template."
+            description="Tell us about your business and we'll build your first AI calling agent."
             action={
               <Button variant="primary" onClick={() => setOpen(true)}>
                 <Plus className="h-4 w-4" /> New agent
@@ -172,7 +110,7 @@ export default function AgentsPage() {
           ))}
         </div>
       )}
-      <NewAgentModal open={open} onClose={() => setOpen(false)} />
+      <NewAgentChooser open={open} onClose={() => setOpen(false)} />
     </>
   );
 }
