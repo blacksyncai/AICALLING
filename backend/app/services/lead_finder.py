@@ -120,19 +120,59 @@ _FULL = re.compile(
 )
 
 
+_STREET_END = re.compile(
+    r"^(?P<street>\d[\w\s.'#-]*?\b(?:st|street|ave|avenue|rd|road|dr|drive|ln|lane|blvd|boulevard|ct|court|pl|place|"
+    r"way|ter|terrace|cir|circle|hwy|highway|pkwy|parkway|trl|trail|loop|sq|square|pike|row|run|path|xing)\.?"
+    r"(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west))?"
+    r"(?:\s+(?:apt|unit|ste|suite|#)\s*[\w-]+)?)\s+(?P<city>[a-z][a-z .'-]*?)$",
+    re.I,
+)
+_TAIL = re.compile(r"^(?P<head>.+)[\s,]+(?P<state>[A-Za-z]{2})\.?[\s,]*(?P<zip>\d{5}(?:-?\d{4})?)?\s*$")
+_ZIP_END = re.compile(r"[\s,]*(?P<zip>\d{5}(?:-?\d{4})?)\s*$")
+
+
+def _split_tail(text: str):
+    """(head, state, zip) when the text ends in a state (abbreviation or full name) and optional ZIP."""
+    t = _TAIL.match(text)
+    if t and clean_state(t.group("state")):
+        return t.group("head"), clean_state(t.group("state")), clean_zip(t.group("zip") or "")
+    z = _ZIP_END.search(text)
+    body, zip_code = (text[: z.start()], clean_zip(z.group("zip"))) if z else (text, "")
+    low = body.lower().rstrip(" ,.")
+    for name in sorted(STATE_NAMES, key=len, reverse=True):
+        if low.endswith(" " + name) or low.endswith("," + name):
+            return body.rstrip(" ,.")[: -len(name)], STATE_NAMES[name], zip_code
+    return None
+
+
 def parse_full_address(text: str) -> dict:
-    """Split '123 Main St, Erie, PA 16503' into parts. `confident` is False when the user should check them."""
-    text = re.sub(r"\s+", " ", (text or "").strip())
+    """Split '123 Main St, Erie, PA 16503' (commas optional) into parts.
+    `confident` is False when the user should check the fields."""
+    text = re.sub(r"\s+", " ", (text or "").replace("\n", ", ").strip())
+    text = re.sub(r",?\s*(?:USA|US|United States)\.?$", "", text, flags=re.I).strip(" ,")
     m = _FULL.match(text)
-    if not m:
-        parts = [p.strip() for p in text.split(",") if p.strip()]
-        return {"street": parts[0] if parts else text, "city": parts[1] if len(parts) > 1 else "",
-                "state": "", "zip": "", "confident": False}
-    state = clean_state(m.group("state"))
-    out = {"street": m.group("street").strip(), "city": m.group("city").strip(), "state": state,
-           "zip": clean_zip(m.group("zip") or "")}
-    out["confident"] = bool(state and out["zip"] and re.match(r"^\d", out["street"]))
-    return out
+    if m and clean_state(m.group("state")):
+        state = clean_state(m.group("state"))
+        out = {"street": m.group("street").strip(), "city": m.group("city").strip(), "state": state,
+               "zip": clean_zip(m.group("zip") or "")}
+        out["confident"] = bool(out["zip"] and re.match(r"^\d", out["street"]))
+        return out
+    # No commas (or only some): peel "STATE ZIP" off the end, then split street/city at the street suffix.
+    tail = _split_tail(text)
+    if tail:
+        head, state, zip_code = tail
+        head = head.strip(" ,")
+        sm = None
+        if "," in head:
+            street, city = [x.strip() for x in head.rsplit(",", 1)]
+        else:
+            sm = _STREET_END.match(head)
+            street, city = (sm.group("street").strip(), sm.group("city").strip()) if sm else (head, "")
+        confident = bool(city and zip_code and re.match(r"^\d", street) and ("," in head or sm))
+        return {"street": street, "city": city, "state": state, "zip": zip_code, "confident": confident}
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    return {"street": parts[0] if parts else text, "city": parts[1] if len(parts) > 1 else "",
+            "state": "", "zip": "", "confident": False}
 
 
 # ── Lead-lookup credits (separate from calling credits) ───────────────────────

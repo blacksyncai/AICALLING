@@ -7,7 +7,9 @@ import { useToast } from "@/components/toast";
 import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
 import { api, del, fetcher, post } from "@/lib/api";
 import { sessionToken } from "@/lib/clerk";
+import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { AddCredits } from "./CreditsCard";
 import { ResultPanel } from "./ResultPanel";
 import type { BatchDetail, BatchPreview, LeadFinderUsage, Lookup, LookupBatch } from "./types";
 
@@ -42,6 +44,20 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
   const [openId, setOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showSkipped, setShowSkipped] = useState(false);
+  const { session } = useSession();
+  const isAdmin = !!session?.user.is_superadmin;
+
+  /** After credits are added, refresh the balance and whether the draft can start. */
+  async function recheck() {
+    onUsage();
+    if (!preview) return;
+    try {
+      const u = await api<LeadFinderUsage>("/api/lead-finder/usage");
+      setPreview({ ...preview, usage: u, enough_credits: u.unlimited || u.credits >= preview.max_credits });
+    } catch {
+      /* the balance refreshes on its own */
+    }
+  }
   const fileRef = useRef<HTMLInputElement>(null);
   const { data: batches, mutate: refreshBatches } = useSWR<{ items: LookupBatch[] }>("/api/lead-finder/batches", fetcher, {
     refreshInterval: (d) => (d?.items.some((b) => b.status === "running") ? 3000 : 0),
@@ -133,7 +149,7 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
             <Stat label="Ready to look up" value={preview.new_rows} />
             <Stat label="Already looked up (free)" value={preview.cached_rows} />
             <Stat label="Skipped" value={preview.invalid.length} />
-            <Stat label="Credits (max)" value={preview.max_credits} hint={usage?.unlimited ? "Unlimited" : `You have ${usage?.credits.toLocaleString() ?? 0}`} />
+            <Stat label="Credits (max)" value={preview.max_credits} hint={(preview.usage ?? usage)?.unlimited ? "Unlimited" : `You have ${((preview.usage ?? usage)?.credits ?? 0).toLocaleString()}`} />
           </dl>
           <p className="mt-3 text-xs text-zinc-500">
             Credits are only used for owners found — misses and errors are returned to your balance when the run finishes.
@@ -155,10 +171,16 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
             </div>
           )}
           {!preview.enough_credits && (
-            <div className="mt-3">
+            <div className="mt-3 space-y-2">
               <Notice tone="amber">
-                This file needs up to {preview.max_credits.toLocaleString()} credits. Ask your BlackSync admin for more, or upload fewer addresses.
+                This file needs up to {preview.max_credits.toLocaleString()} credits and you have {usage?.credits.toLocaleString() ?? 0}.{" "}
+                {isAdmin ? "Add credits, then start." : "Ask your BlackSync admin for more, or upload fewer addresses."}
               </Notice>
+              {isAdmin && session?.org && (
+                <div className="max-w-xs">
+                  <AddCredits orgId={session.org.id} compact onAdded={recheck} />
+                </div>
+              )}
             </div>
           )}
           <div className="mt-4 flex flex-wrap justify-end gap-2">

@@ -1,7 +1,7 @@
 "use client";
 
 import { ClipboardPaste, Eye, FileSpreadsheet, Search, UserPlus, UserSearch } from "lucide-react";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { BulkLookup } from "@/components/lead-finder/BulkLookup";
 import { CreditsCard } from "@/components/lead-finder/CreditsCard";
@@ -10,11 +10,18 @@ import type { LeadFinderUsage, Lookup, LookupAddress, LookupResponse, ParsedAddr
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, EmptyState, Field, Input, Notice, Spinner, Tabs } from "@/components/ui";
 import { ApiError, api, del, fetcher, post } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 const EMPTY: LookupAddress = { street: "", city: "", state: "", zip: "" };
 
 type Mode = "single" | "bulk";
+
+/** A full address: house number, then something that looks like a state and/or ZIP at the end. */
+function looksComplete(text: string) {
+  const t = text.trim();
+  return /^\d/.test(t) && (/\b\d{5}(-?\d{4})?\s*$/.test(t) || (t.includes(",") && /,\s*[^,]+[ ,][A-Za-z]{2}\.?\s*$/.test(t)));
+}
 
 function fmtDate(iso: string | null) {
   return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
@@ -25,10 +32,13 @@ export default function LeadFinderPage() {
   const { data: usage, mutate: refreshUsage } = useSWR<LeadFinderUsage>("/api/lead-finder/usage", fetcher);
   const { data: history, mutate: refreshHistory } = useSWR<{ items: Lookup[] }>("/api/lead-finder/lookups", fetcher);
 
+  const { session } = useSession();
+  const isAdmin = !!session?.user.is_superadmin;
   const [mode, setMode] = useState<Mode>("single");
   const [form, setForm] = useState<LookupAddress>(EMPTY);
   const [paste, setPaste] = useState("");
   const [verify, setVerify] = useState(false);
+  const [filled, setFilled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [current, setCurrent] = useState<{ lookup: Lookup; cached: boolean } | null>(null);
@@ -45,17 +55,34 @@ export default function LeadFinderPage() {
     setVerify(false);
   };
 
-  async function splitPasted() {
-    if (!paste.trim()) return;
+  /** Split a full address into the four fields (free — never a lookup). Returns whether it filled anything. */
+  async function fillFrom(text: string): Promise<boolean> {
+    const t = text.trim();
+    if (!t) return false;
     try {
-      const p = await post<ParsedAddress>("/api/lead-finder/parse", { text: paste });
+      const p = await post<ParsedAddress>("/api/lead-finder/parse", { text: t });
+      if (!p.city && !p.state && !p.zip) return false;
       setForm({ street: p.street, city: p.city, state: p.state, zip: p.zip });
       setVerify(!p.confident);
       setPaste("");
+      setFilled(true);
+      setTimeout(() => setFilled(false), 1800);
+      return true;
     } catch (e) {
       toast((e as Error).message, "error");
+      return false;
     }
   }
+
+  const splitPasted = () => fillFrom(paste);
+
+  // Typing (not pasting) a full address into the paste box: fill the fields once it looks complete.
+  useEffect(() => {
+    if (!looksComplete(paste)) return;
+    const t = setTimeout(() => void fillFrom(paste), 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paste]);
 
   function show(lookup: Lookup, cached: boolean) {
     setCurrent({ lookup, cached });
@@ -158,13 +185,20 @@ export default function LeadFinderPage() {
                 <Input
                   value={paste}
                   onChange={(e) => setPaste(e.target.value)}
+                  onPaste={(e) => {
+                    const text = e.clipboardData.getData("text");
+                    if (!text.trim()) return;
+                    e.preventDefault();
+                    setPaste(text);
+                    void fillFrom(text);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
                       void splitPasted();
                     }
                   }}
-                  placeholder="Paste a full address, e.g. 1252 E 21st St, Erie, PA 16503"
+                  placeholder="Paste a full address — the fields fill in automatically"
                   aria-label="Paste a full address"
                   className="min-w-0 flex-1"
                 />
@@ -175,7 +209,19 @@ export default function LeadFinderPage() {
 
               <div className="grid gap-3 sm:grid-cols-6">
                 <Field label="Street Address" className="sm:col-span-6">
-                  <Input value={form.street} onChange={(e) => set("street", e.target.value)} placeholder="1252 E 21st St" autoComplete="off" />
+                  <Input
+                    value={form.street}
+                    onChange={(e) => set("street", e.target.value)}
+                    onPaste={(e) => {
+                      // A whole address pasted into Street: split it across the fields instead.
+                      const text = e.clipboardData.getData("text");
+                      if (!looksComplete(text)) return;
+                      e.preventDefault();
+                      void fillFrom(text).then((ok) => ok || set("street", text));
+                    }}
+                    placeholder="1252 E 21st St"
+                    autoComplete="off"
+                  />
                 </Field>
                 <Field label="City" className="sm:col-span-3">
                   <Input value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Erie" autoComplete="off" />
@@ -188,13 +234,18 @@ export default function LeadFinderPage() {
                 </Field>
               </div>
 
-              {verify && <Notice tone="amber">We weren&apos;t sure how to split that address. Check each field before searching.</Notice>}
+              {filled && !verify && <p className="text-xs font-medium text-emerald-700">Address filled in — check it, then search.</p>}
+              {verify && <Notice tone="amber">We filled in the fields but weren&apos;t completely sure. Check each one before searching.</Notice>}
               {error && <Notice tone="red">{error}</Notice>}
               {usage && !usage.configured && usage.enabled && (
                 <Notice tone="amber">Property lookup is temporarily unavailable. Please try again later.</Notice>
               )}
               {limitReached && (
-                <Notice tone="amber">You&apos;re out of lead lookup credits. Ask your BlackSync admin to add more — saved results stay free to open.</Notice>
+                <Notice tone="amber">
+                  {isAdmin
+                    ? "You're out of lead lookup credits. Add more with \u201cAdd credits\u201d — saved results stay free to open."
+                    : "You're out of lead lookup credits. Ask your BlackSync admin to add more — saved results stay free to open."}
+                </Notice>
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -207,7 +258,7 @@ export default function LeadFinderPage() {
           )}
         </Card>
 
-        <CreditsCard usage={usage} />
+        <CreditsCard usage={usage} onChanged={() => refreshUsage()} />
       </div>
       <div ref={resultRef} className="mt-4 scroll-mt-4">
         {busy ? (

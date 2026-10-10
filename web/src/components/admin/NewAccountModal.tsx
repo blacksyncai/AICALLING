@@ -12,7 +12,7 @@ import { CopyField } from "./shared";
 
 type Mode = "password" | "invite";
 
-const EMPTY = { name: "", first: "", last: "", email: "", phone: "", credits: "0", password: "" };
+const EMPTY = { name: "", first: "", last: "", email: "", phone: "", credits: "0", leadCredits: "0", password: "" };
 
 export function NewAccountModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const toast = useToast();
@@ -48,6 +48,7 @@ export function NewAccountModal({ open, onClose, onCreated }: { open: boolean; o
         password: mode === "password" ? form.password : "",
         send_invite: mode === "invite",
         credits: Math.max(0, Number(form.credits) || 0),
+        lead_credits: Math.max(0, Number(form.leadCredits) || 0),
       });
       setResult(created);
       onCreated();
@@ -136,10 +137,13 @@ export function NewAccountModal({ open, onClose, onCreated }: { open: boolean; o
             <Field label="Owner phone">
               <Input type="tel" value={form.phone} onChange={set("phone")} placeholder="+1 555 000 0000" autoComplete="off" />
             </Field>
-            <Field label="Starting credits" hint="1 credit = 1 minute of calling">
+            <Field label="Starting calling credits" hint="1 credit = 1 minute of calling">
               <Input type="number" min={0} step={1} value={form.credits} onChange={set("credits")} />
             </Field>
           </div>
+          <Field label="Starting lookup credits" hint="Lead Finder — 1 credit per property owner found">
+            <Input type="number" min={0} step={1} value={form.leadCredits} onChange={set("leadCredits")} />
+          </Field>
 
           <div>
             <div className="mb-1.5 text-xs font-medium text-zinc-700">Owner access</div>

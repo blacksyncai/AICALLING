@@ -132,7 +132,7 @@ function AdminPortal() {
               }
             />
           ) : (
-            <AccountsTable orgs={orgs.orgs} />
+            <AccountsTable orgs={orgs.orgs} onChanged={() => void mutateOrgs()} />
           )}
         </Card>
       ) : tab === "users" ? (
@@ -153,7 +153,7 @@ function AdminPortal() {
   );
 }
 
-function AccountsTable({ orgs }: { orgs: AdminOrg[] }) {
+function AccountsTable({ orgs, onChanged }: { orgs: AdminOrg[]; onChanged: () => void }) {
   const router = useRouter();
   const toast = useToast();
   const [opening, setOpening] = useState<string | null>(null);
@@ -170,12 +170,13 @@ function AccountsTable({ orgs }: { orgs: AdminOrg[] }) {
 
   return (
     <div className="relative overflow-x-auto">
-      <table className="w-full min-w-[860px] text-sm">
+      <table className="w-full min-w-[960px] text-sm">
         <thead className="border-b border-zinc-100 text-left text-xs text-zinc-500">
           <tr>
             <th className="px-5 py-3 font-medium">Account</th>
             <th className="px-3 py-3 font-medium">Status</th>
-            <th className="px-3 py-3 text-right font-medium">Credits</th>
+            <th className="px-3 py-3 text-right font-medium">Calling credits</th>
+            <th className="px-3 py-3 text-right font-medium">Lookup credits</th>
             <th className="px-3 py-3 text-right font-medium">Calls 30d</th>
             <th className="px-3 py-3 text-right font-medium">Minutes 30d</th>
             <th className="px-3 py-3 text-right font-medium">Members</th>
@@ -209,6 +210,9 @@ function AccountsTable({ orgs }: { orgs: AdminOrg[] }) {
                   ) : (
                     <span className={cn("font-medium", low ? "text-amber-700" : "text-zinc-900")}>{fmt(o.credits_balance)}</span>
                   )}
+                </td>
+                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
+                  <LookupCreditsCell org={o} onChanged={onChanged} />
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{fmt(o.usage_30d.calls)}</td>
                 <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{fmt(o.usage_30d.minutes)}</td>
@@ -308,5 +312,44 @@ function UsersTable() {
         </div>
       )}
     </Card>
+  );
+}
+
+
+/** Lookup-credit balance with a quick "+" to add more (separate from calling credits). */
+function LookupCreditsCell({ org, onChanged }: { org: AdminOrg; onChanged: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  if (org.lead_credits_unlimited) return <Badge tone="violet">Unlimited</Badge>;
+  const credits = org.lead_credits ?? 0;
+  async function add() {
+    const raw = window.prompt(`Add lookup credits to ${org.name}`, "100");
+    const n = Number(raw);
+    if (!raw) return;
+    if (!Number.isInteger(n) || n <= 0) return toast("Enter a whole number of credits.", "error");
+    setBusy(true);
+    try {
+      const r = await post<{ credits: number }>(`/api/admin/orgs/${org.id}/lead-credits`, { amount: n, note: "Added from accounts list" });
+      toast(`${org.name}: ${r.credits.toLocaleString()} lookup credits`);
+      onChanged();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={cn("font-medium", credits <= 0 ? "text-amber-700" : "text-zinc-900")}>{fmt(credits)}</span>
+      <button
+        onClick={add}
+        disabled={busy}
+        className="rounded-md border border-zinc-200 px-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+        aria-label={`Add lookup credits to ${org.name}`}
+        title="Add lookup credits"
+      >
+        +
+      </button>
+    </span>
   );
 }

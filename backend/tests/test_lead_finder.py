@@ -344,3 +344,26 @@ def test_lead_finder_requires_login(make_client):
     assert c.get("/api/lead-finder/usage").status_code == 401
     assert c.post("/api/lead-finder/lookups", json=_addr(1)).status_code == 401
     assert c.post("/api/lead-finder/batches", json={"text": CSV}).status_code == 401
+
+
+def test_new_account_with_lookup_credits(client):
+    r = client.post("/api/admin/orgs", json={"name": "Starter Co", "owner_email": "starter@acme.dev",
+                                             "password": "owner-pass-123", "lead_credits": 50})
+    assert r.status_code == 201, r.text
+    org_id = r.json()["org"]["id"] if "org" in r.json() else r.json()["id"]
+    assert client.get(f"/api/admin/orgs/{org_id}/lead-finder").json()["credits"] == 50
+    listed = next(o for o in client.get("/api/admin/orgs").json()["orgs"] if o["id"] == org_id)
+    assert listed["lead_credits"] == 50
+
+
+def test_parse_without_commas_and_full_state_names():
+    p = lf.parse_full_address("1252 E 21st St Erie PA 16503")
+    assert (p["street"], p["city"], p["state"], p["zip"], p["confident"]) == ("1252 E 21st St", "Erie", "PA", "16503", True)
+    p = lf.parse_full_address("77 Ocean Dr Apt 4 Miami Beach FL 33139")
+    assert (p["street"], p["city"], p["state"]) == ("77 Ocean Dr Apt 4", "Miami Beach", "FL")
+    p = lf.parse_full_address("45 W Lake Blvd Salt Lake City Utah 84101")
+    assert (p["street"], p["city"], p["state"], p["zip"]) == ("45 W Lake Blvd", "Salt Lake City", "UT", "84101")
+    p = lf.parse_full_address("12 Elm Way\nAustin TX 78701")
+    assert (p["street"], p["city"], p["state"]) == ("12 Elm Way", "Austin", "TX")
+    p = lf.parse_full_address("9 Oak Ave, Erie, PA")
+    assert (p["street"], p["city"], p["state"], p["zip"], p["confident"]) == ("9 Oak Ave", "Erie", "PA", "", False)

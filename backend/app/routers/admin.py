@@ -70,6 +70,8 @@ class OrgCreate(BaseModel):
     password: str = ""
     send_invite: bool = False
     credits: int = Field(default=0, ge=0, le=1_000_000)
+    # Lead-lookup credits (separate from calling credits).
+    lead_credits: int = Field(default=0, ge=0, le=1_000_000)
 
 
 class OrgPatch(BaseModel):
@@ -193,6 +195,10 @@ async def create_org(body: OrgCreate, request: Request, admin: AdminDep, db: DbD
     if body.password and len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
     org = await create_organization(db, body.name, credits=body.credits, created_by=admin.id)
+    if body.lead_credits:
+        from app.services import lead_finder as lf
+
+        await lf.grant_credits(db, org, body.lead_credits, "Starting lookup credits", admin.id)
     result: dict = {}
     existing = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if existing:
