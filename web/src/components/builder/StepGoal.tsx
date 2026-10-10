@@ -1,192 +1,204 @@
 "use client";
 
-import { ListChecks, PhoneIncoming, PhoneOutgoing } from "lucide-react";
-import { Badge, Input, Select, Toggle } from "@/components/ui";
-import type { BuilderCatalog, DraftData, Followup, UseCase } from "@/lib/builder";
-import { Collapsible, OptionCard, Segmented, StepTitle } from "./parts";
+import { ChevronDown, PenLine } from "lucide-react";
+import { useId, useState } from "react";
+import { Input, Textarea } from "@/components/ui";
+import { CUSTOM_USE_CASE, type AssistResponse, type BuilderCatalog, type DraftGoal } from "@/lib/builder";
+import { cn } from "@/lib/utils";
+import { AssistPanel } from "./AssistPanel";
+import { customDescription, goalReady, presetKeys, selectedKeys, useCasesFor, withKeys, type GoalUpdater } from "./goal";
+import { Chip, Segmented, StepTitle } from "./parts";
 
-type Goal = NonNullable<DraftData["goal"]>;
-type Direction = NonNullable<Goal["direction"]>;
+type Direction = NonNullable<DraftGoal["direction"]>;
 
-export function useCasesFor(catalog: BuilderCatalog | undefined, industry: string | undefined): UseCase[] {
-  if (!catalog) return [];
-  return catalog.use_cases[industry ?? ""] ?? catalog.use_cases.other ?? [];
-}
-
-export function defaultAnswers(uc: UseCase): Record<string, string | boolean> {
-  const out: Record<string, string | boolean> = {};
-  for (const f of uc.followups ?? []) {
-    if (f.default !== undefined) out[f.key] = f.default;
-    else if (f.type === "boolean") out[f.key] = false;
-    else if (f.type === "choice") out[f.key] = f.options?.[0] ?? "";
-    else out[f.key] = "";
-  }
-  return out;
-}
+const CUSTOM_PLACEHOLDER =
+  "Build an outbound agent that calls homeowners who previously requested a property valuation, checks if they're considering selling, and transfers interested homeowners to my team.";
+const EXTRA_PLACEHOLDER =
+  "I want the agent to be casual, avoid sounding like a typical salesperson, and ask homeowners if they're open to discussing additional exposure for their listing.";
 
 export function StepGoal({
   goal,
-  onChange,
+  setGoal,
   catalog,
   industry,
   showErrors,
+  runAssist,
 }: {
-  goal: Goal;
-  onChange: (next: Goal) => void;
+  goal: DraftGoal;
+  setGoal: GoalUpdater;
   catalog: BuilderCatalog | undefined;
   industry: string | undefined;
   showErrors: boolean;
+  runAssist: (goal: DraftGoal) => Promise<AssistResponse>;
 }) {
+  const ids = useId();
   const all = useCasesFor(catalog, industry);
-  const direction = goal.direction;
-  const visible = direction ? all.filter((u) => direction === "both" || u.direction === direction) : [];
-  const selected = all.find((u) => u.key === goal.use_case);
-  const answers = goal.answers ?? {};
+  const direction: Direction = goal.direction ?? "outbound";
+  const presets = all.filter((u) => u.key !== CUSTOM_USE_CASE && (direction === "both" || u.direction === direction));
+  const keys = selectedKeys(goal);
+  const chosen = presetKeys(goal);
+  const customOn = keys.includes(CUSTOM_USE_CASE);
+  const showCustom = customOn || chosen.length === 0;
+  const description = customDescription(goal);
+  const c = goal.custom ?? {};
+  const hasDetails = !!(c.audience || c.tone || c.outcome);
+  const [detailsOpen, setDetailsOpen] = useState(hasDetails);
+  const labelOf = (k: string) => all.find((u) => u.key === k)?.label ?? k;
 
   function setDirection(d: Direction) {
-    const keep = selected && (d === "both" || selected.direction === d);
-    onChange({ ...goal, direction: d, ...(keep ? {} : { use_case: undefined, answers: {} }) });
+    setGoal((g) => {
+      const keep = selectedKeys(g).filter((k) => {
+        if (k === CUSTOM_USE_CASE || d === "both") return true;
+        return all.find((u) => u.key === k)?.direction === d;
+      });
+      return withKeys({ ...g, direction: d }, keep);
+    });
   }
 
-  function pick(uc: UseCase) {
-    if (uc.key === goal.use_case) return;
-    onChange({ ...goal, use_case: uc.key, answers: defaultAnswers(uc) });
+  function toggle(key: string) {
+    setGoal((g) => {
+      const cur = selectedKeys(g);
+      return withKeys(g, cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]);
+    });
   }
+
+  function setCustom(patch: Partial<NonNullable<DraftGoal["custom"]>>) {
+    setGoal((g) => {
+      const next: DraftGoal = { ...g, custom: { description: customDescription(g), ...g.custom, ...patch } };
+      // Typing your own goal selects "Create your own".
+      const cur = selectedKeys(g);
+      return patch.description?.trim() && !cur.includes(CUSTOM_USE_CASE) ? withKeys(next, [...cur, CUSTOM_USE_CASE]) : next;
+    });
+  }
+
+  const tooShort = showErrors && !goalReady(goal);
 
   return (
     <div>
-      <StepTitle title="What should your agent do?" description="Pick the job that matters most. You can fine-tune everything later." />
+      <StepTitle title="What should your agent do?" description="Pick any that fit, combine a few, or describe it in your own words." />
 
-      <div className="space-y-6">
+      <div className="space-y-5">
+        <Segmented<Direction>
+          label="Call direction"
+          value={direction}
+          onChange={setDirection}
+          options={[
+            { value: "outbound", label: "Calls out" },
+            { value: "inbound", label: "Answers calls" },
+            { value: "both", label: "Both" },
+          ]}
+        />
+
         <div>
-          <span className="mb-1.5 block text-xs font-medium text-zinc-700">Calls your agent will handle</span>
-          <Segmented<Direction>
-            label="Call direction"
-            value={direction}
-            onChange={setDirection}
-            options={[
-              { value: "outbound", label: "Calls out" },
-              { value: "inbound", label: "Answers calls" },
-              { value: "both", label: "Both" },
-            ]}
-          />
-          <p className="mt-1.5 text-xs text-zinc-500">
-            {direction === "outbound"
-              ? "Your agent reaches out to leads and customers."
-              : direction === "inbound"
-                ? "Your agent picks up when people call your business."
-                : direction === "both"
-                  ? "Your agent makes calls and answers them."
-                  : "Choose one to see what your agent can do."}
-          </p>
-          {showErrors && !direction && <span className="mt-1 block text-xs text-red-600">Please choose one.</span>}
+          {!catalog ? (
+            <div className="flex flex-wrap gap-2" aria-hidden>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="h-8 w-32 animate-pulse rounded-full bg-zinc-100" />
+              ))}
+            </div>
+          ) : (
+            <div role="group" aria-label="Goals (choose any)" className="flex flex-wrap gap-2">
+              <Chip
+                selected={customOn}
+                onClick={() => toggle(CUSTOM_USE_CASE)}
+                icon={<PenLine className="h-3 w-3 shrink-0 text-brand-600" />}
+                className={cn(!customOn && "border-brand-300 bg-brand-50/40 text-brand-800 hover:border-brand-400 hover:bg-brand-50")}
+              >
+                Create your own
+              </Chip>
+              {presets.map((uc) => {
+                const on = chosen.includes(uc.key);
+                const primary = on && chosen[0] === uc.key && chosen.length > 1;
+                return (
+                  <Chip key={uc.key} selected={on} onClick={() => toggle(uc.key)} title={uc.description}>
+                    {uc.label}
+                    {primary && <span className="ml-1.5 rounded bg-brand-600 px-1 py-px text-[10px] font-semibold text-white">Primary</span>}
+                  </Chip>
+                );
+              })}
+            </div>
+          )}
+          {chosen.length > 0 && (
+            <p className="mt-2 text-xs text-zinc-500">
+              {chosen.length > 1 ? (
+                <>
+                  Focused on <span className="font-medium text-zinc-700">{labelOf(chosen[0])}</span>, plus {chosen.length - 1} more.
+                </>
+              ) : (
+                all.find((u) => u.key === chosen[0])?.description
+              )}
+            </p>
+          )}
         </div>
 
-        {direction && (
-          <div>
-            <span className="mb-1.5 block text-xs font-medium text-zinc-700">Main goal</span>
-            {!catalog ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-16 animate-pulse rounded-xl bg-zinc-100" />
-                ))}
-              </div>
-            ) : visible.length === 0 ? (
-              <p className="text-sm text-zinc-500">No ready-made goals for this yet — go back and pick &quot;Other&quot; as your industry.</p>
-            ) : (
-              <div role="radiogroup" aria-label="Main goal" className="space-y-2">
-                {visible.map((uc) => (
-                  <OptionCard
-                    key={uc.key}
-                    selected={goal.use_case === uc.key}
-                    onClick={() => pick(uc)}
-                    icon={uc.direction === "inbound" ? <PhoneIncoming className="h-4 w-4" /> : <PhoneOutgoing className="h-4 w-4" />}
-                    title={uc.label}
-                    badge={direction === "both" ? <Badge tone="gray">{uc.direction === "inbound" ? "Answers" : "Calls out"}</Badge> : undefined}
-                    description={uc.description}
-                  />
-                ))}
-              </div>
-            )}
-            {showErrors && !goal.use_case && <span className="mt-1 block text-xs text-red-600">Please pick a goal.</span>}
-          </div>
-        )}
-
-        {selected && (
-          <div key={selected.key} className="space-y-4 transition duration-300 starting:translate-y-1 starting:opacity-0">
-            {(selected.followups ?? []).length > 0 && (
-              <div className="space-y-3">
-                <span className="block text-xs font-medium text-zinc-700">A few details</span>
-                {selected.followups.map((f) => (
-                  <FollowupInput key={f.key} f={f} value={answers[f.key]} onChange={(v) => onChange({ ...goal, answers: { ...answers, [f.key]: v } })} />
-                ))}
-              </div>
+        {showCustom && (
+          <div className="space-y-2">
+            <label htmlFor={`${ids}-desc`} className="block text-sm font-medium text-zinc-800">
+              What would you like your AI agent to do?
+            </label>
+            <Textarea
+              id={`${ids}-desc`}
+              rows={5}
+              value={description}
+              onChange={(e) => setCustom({ description: e.target.value })}
+              placeholder={CUSTOM_PLACEHOLDER}
+              aria-invalid={tooShort}
+              className={cn("min-h-28 resize-y", tooShort && "border-red-300")}
+            />
+            {tooShort && (
+              <span className="block text-xs text-red-600" role="alert">
+                {description.trim() ? "Add a little more detail — a sentence or two is perfect." : "Pick a goal above or describe what your agent should do."}
+              </span>
             )}
 
-            <Collapsible
-              title={
-                <>
-                  <ListChecks className="h-4 w-4 text-zinc-400" /> What the agent will cover
-                </>
-              }
+            <button
+              type="button"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-md text-xs font-medium text-zinc-500 hover:text-zinc-800 focus-visible:outline-2 focus-visible:outline-brand-500"
             >
-              <div className="grid gap-4 sm:grid-cols-2">
-                <PreviewList title="Goals on each call" items={selected.objectives} />
-                <PreviewList title="Questions it will ask" items={selected.qualification_questions} />
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", detailsOpen && "rotate-180")} />
+              Add details (optional)
+            </button>
+            {detailsOpen && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <SmallField id={`${ids}-aud`} label="Who will the agent be speaking with?" placeholder="Homeowners, past clients, buyers…" value={c.audience ?? ""} onChange={(v) => setCustom({ audience: v })} />
+                <SmallField id={`${ids}-tone`} label="How should it represent your business?" placeholder="Friendly and conversational…" value={c.tone ?? ""} onChange={(v) => setCustom({ tone: v })} />
+                <SmallField id={`${ids}-out`} label="What should the ideal outcome be?" placeholder="Book an appointment, warm transfer…" value={c.outcome ?? ""} onChange={(v) => setCustom({ outcome: v })} />
               </div>
-            </Collapsible>
+            )}
           </div>
         )}
+
+        {chosen.length > 0 && !customOn && (
+          <div className="space-y-1.5">
+            <label htmlFor={`${ids}-extra`} className="block text-sm font-medium text-zinc-800">
+              Tell us anything specific you&apos;d like your agent to do differently. <span className="font-normal text-zinc-400">(optional)</span>
+            </label>
+            <Textarea
+              id={`${ids}-extra`}
+              rows={3}
+              value={goal.extra_instructions ?? ""}
+              onChange={(e) => setGoal((g) => ({ ...g, extra_instructions: e.target.value }))}
+              placeholder={EXTRA_PLACEHOLDER}
+              className="resize-y"
+            />
+          </div>
+        )}
+
+        <AssistPanel goal={goal} setGoal={setGoal} canAsk={goalReady(goal)} runAssist={runAssist} />
       </div>
     </div>
   );
 }
 
-function PreviewList({ title, items }: { title: string; items: string[] }) {
-  if (!items?.length) return null;
+function SmallField({ id, label, placeholder, value, onChange }: { id: string; label: string; placeholder: string; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">{title}</h4>
-      <ul className="space-y-1">
-        {items.map((t) => (
-          <li key={t} className="flex gap-2 text-sm text-zinc-700">
-            <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-brand-500" />
-            {t}
-          </li>
-        ))}
-      </ul>
+      <label htmlFor={id} className="mb-1 block text-xs text-zinc-600">
+        {label}
+      </label>
+      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
     </div>
-  );
-}
-
-function FollowupInput({ f, value, onChange }: { f: Followup; value: string | boolean | undefined; onChange: (v: string | boolean) => void }) {
-  if (f.type === "boolean") {
-    return <Toggle label={f.label} checked={value === true} onChange={onChange} />;
-  }
-  if (f.type === "choice") {
-    const options = f.options ?? [];
-    const short = options.length <= 3 && options.every((o) => o.length <= 22);
-    return (
-      <div>
-        <span className="mb-1.5 block text-sm text-zinc-800">{f.label}</span>
-        {short ? (
-          <Segmented<string> label={f.label} value={typeof value === "string" ? value : undefined} onChange={onChange} options={options.map((o) => ({ value: o, label: o }))} />
-        ) : (
-          <Select aria-label={f.label} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)}>
-            {options.map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </Select>
-        )}
-      </div>
-    );
-  }
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-sm text-zinc-800">{f.label}</span>
-      <Input value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />
-    </label>
   );
 }

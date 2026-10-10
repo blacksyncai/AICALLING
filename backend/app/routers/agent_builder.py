@@ -41,6 +41,10 @@ class GenerateRequest(BaseModel):
     draft_id: uuid.UUID
 
 
+class AssistRequest(BaseModel):
+    draft_id: uuid.UUID
+
+
 class ImproveRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
 
@@ -151,6 +155,18 @@ async def delete_draft(draft_id: uuid.UUID, ctx: CtxDep, db: DbDep):
 # ── Generate ──────────────────────────────────────────────────────────────────
 
 
+@router.post("/assist")
+async def assist(body: AssistRequest, ctx: CtxDep, db: DbDep):
+    """Reads the saved draft's goal (presets, own words, extra instructions, Q&A so far) and returns a short
+    "Got it…" summary plus 0–3 follow-up questions. Read-only: the client stores the conversation in the draft."""
+    draft = await _get_draft(db, ctx, body.draft_id)
+    try:
+        generator.draft_brief(draft.data or {}, require_business=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return await _run_llm(generator.assist(draft.data or {}))
+
+
 @router.post("/generate")
 async def generate(body: GenerateRequest, ctx: CtxDep, db: DbDep):
     draft = await _get_draft(db, ctx, body.draft_id)
@@ -163,14 +179,23 @@ async def generate(body: GenerateRequest, ctx: CtxDep, db: DbDep):
     knowledge = await generator.knowledge_for(db, ctx.org.id)
     spec = await _run_llm(generator.generate_agent_spec(data, knowledge))
 
-    flags, use_case, business = spec["flags"], spec["use_case"], spec["business"]
+    flags, use_case, business, brief = spec["flags"], spec["use_case"], spec["business"], spec["brief"]
     business_name = business["name"].strip()
+    use_case_keys = [u["key"] for u in spec["use_cases"]] + ([catalog.CUSTOM_KEY] if spec["custom_mode"] else [])
+    plan = {
+        **spec["plan"],
+        "use_cases": use_case_keys,
+        "request": {**brief["custom"], "extra_instructions": brief["extra"]},
+        "assistant": [{"question": it["question"], "answer": it["answer"], "delegated": it["delegated"]}
+                      for it in brief["assistant"] if it["answer"] or it["delegated"]],
+        "recommended_settings": flags["recommended"],
+    }
     agent = Agent(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
         template="ai_builder",
-        name=f"{spec['agent_name']} – {use_case['label']}"[:255],
-        description=f"{use_case['label']} for {business_name}",
+        name=f"{spec['agent_name']} – {spec['label']}"[:255],
+        description=f"{spec['label']} for {business_name}"[:500],
         system_prompt=generator.assemble_prompt(spec["sections"]),
         first_message=spec["first_message"],
         knowledge_base=knowledge,
@@ -186,23 +211,26 @@ async def generate(body: GenerateRequest, ctx: CtxDep, db: DbDep):
         builder={
             "industry": spec["industry"],
             "use_case": use_case["key"],
+            "use_cases": use_case_keys,
             "direction": spec["direction"],
             "style": spec["style"],
             "draft_id": str(draft.id),
             "business_name": business_name,
             "persona": spec["agent_name"],
             "transfer_enabled": flags["transfer"],
+            "transfer_requested": generator.transfer_requested(data) and not flags["transfer"],
             "transfer_when": flags["transfer_when"],
             "callback": flags["callback"],
             "integrations": list(((data.get("integrations") or {}).get("selected")) or []),
             "sections": spec["sections"],
+            "plan": plan,
         },
     )
     db.add(agent)
     await db.flush()
     draft.agent_id = agent.id
     await db.commit()
-    log.info("agent_generated", agent_id=str(agent.id), industry=spec["industry"], use_case=use_case["key"])
+    log.info("agent_generated", agent_id=str(agent.id), industry=spec["industry"], use_cases=use_case_keys)
     return {"agent_id": str(agent.id)}
 
 

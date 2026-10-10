@@ -23,7 +23,22 @@ import { cn } from "@/lib/utils";
 
 export const put = <T,>(path: string, body: unknown) => api<T>(path, { method: "PUT", body: JSON.stringify(body) });
 
-export const STEPS = ["Business", "Goal", "Personality", "Tools", "Review", "Done"] as const;
+export const STEPS = ["Business", "Goal", "Fine-tune", "Review", "Done"] as const;
+
+/** Draft data version written by this wizard (see DraftData.v). */
+export const DRAFT_VERSION = 2;
+/** Last interactive step; the step after it ("Done") is the redirect to the new agent. */
+export const LAST_STEP = 4;
+
+// Older drafts (no `v`) used: 1 Business, 2 Goal, 3 Personality, 4 Tools, 5 Review, 6 Done.
+const OLD_STEPS: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4: 3, 5: 4, 6: 4 };
+
+/** Where to resume a saved draft, remapping step numbers from older drafts. */
+export function resumeStep(step: number | undefined, data: { v?: number } | undefined): number {
+  const s = step || 1;
+  const n = data?.v === DRAFT_VERSION ? s : (OLD_STEPS[s] ?? 1);
+  return Math.min(Math.max(n, 1), LAST_STEP);
+}
 
 /** Icon for an industry. The catalog sends a lucide-style icon name; fall back to the industry key. */
 const ICONS: Record<string, LucideIcon> = {
@@ -184,6 +199,44 @@ export function OptionCard({
       >
         {selected && <Check className="h-3 w-3" strokeWidth={3} />}
       </span>
+    </button>
+  );
+}
+
+/** Compact pill. With `selected` it's a toggle (checkbox/radio); without, a plain action button. */
+export function Chip({
+  selected,
+  onClick,
+  children,
+  icon,
+  role,
+  className,
+  title,
+}: {
+  selected?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+  icon?: ReactNode;
+  role?: "checkbox" | "radio";
+  className?: string;
+  title?: string;
+}) {
+  const toggle = selected !== undefined;
+  return (
+    <button
+      type="button"
+      role={toggle ? (role ?? "checkbox") : undefined}
+      aria-checked={toggle ? selected : undefined}
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-left text-xs font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500",
+        selected ? "border-brand-500 bg-brand-50 text-brand-800 ring-1 ring-brand-500" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50",
+        className,
+      )}
+    >
+      {selected ? <Check className="h-3 w-3 shrink-0" strokeWidth={3} /> : icon}
+      <span className="min-w-0 truncate">{children}</span>
     </button>
   );
 }

@@ -11,7 +11,7 @@ import { fetcher, post } from "@/lib/api";
 import type { AgentDraft } from "@/lib/builder";
 import type { Agent } from "@/lib/types";
 import { cn, timeAgo } from "@/lib/utils";
-import { STEPS } from "./parts";
+import { LAST_STEP, resumeStep } from "./parts";
 
 export function NewAgentChooser({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
@@ -66,7 +66,7 @@ export function NewAgentChooser({ open, onClose }: { open: boolean; onClose: () 
           <h3 className="mb-1.5 text-xs font-medium text-zinc-500">Continue where you left off</h3>
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200">
             {drafts.map((d) => {
-              const step = Math.min(Math.max(d.step || 1, 1), STEPS.length);
+              const step = resumeStep(d.step, d.data); // older drafts used six steps
               return (
                 <li key={d.id}>
                   <Link
@@ -78,7 +78,7 @@ export function NewAgentChooser({ open, onClose }: { open: boolean; onClose: () 
                       <span className="font-medium text-zinc-900">{d.data?.business?.name?.trim() || "Untitled business"}</span>
                       <span className="text-zinc-500">
                         {" "}
-                        · Step {step} of {STEPS.length}
+                        · Step {step} of {LAST_STEP}
                         {d.updated_at && ` · ${timeAgo(d.updated_at)}`}
                       </span>
                     </span>

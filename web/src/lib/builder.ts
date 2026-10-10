@@ -53,7 +53,7 @@ export interface Followup {
 export interface UseCase {
   key: string;
   label: string;
-  direction: "outbound" | "inbound";
+  direction: "outbound" | "inbound" | "both";
   description: string;
   objectives: string[];
   qualification_questions: string[];
@@ -64,6 +64,8 @@ export interface UseCase {
 export interface BuilderCatalog {
   industries: { key: string; label: string; icon: string }[];
   use_cases: Record<string, UseCase[]>;
+  /** Alternate keys accepted in drafts and saved agents. */
+  use_case_aliases?: Record<string, string>;
   styles: { key: string; label: string; description: string }[];
   integrations: {
     key: string;
@@ -76,14 +78,79 @@ export interface BuilderCatalog {
   }[];
 }
 
+/** Key of the "Create your own" option in every industry's use cases. */
+export const CUSTOM_USE_CASE = "custom";
+
+/** One follow-up from the AI assistant and the user's reply. */
+export interface AssistItem {
+  id: string;
+  question: string;
+  /** null while unanswered; "You decide" when the user let the AI choose. */
+  answer: string | null;
+  skipped: boolean;
+  delegated?: boolean;
+  suggestions?: string[];
+  reason?: string;
+}
+
+export interface AssistQuestion {
+  id: string;
+  question: string;
+  suggestions: string[];
+  reason?: string;
+}
+
+/** POST /api/agent-builder/assist */
+export interface AssistResponse {
+  understanding: string;
+  questions: AssistQuestion[];
+  ready: boolean;
+  recommendation: string | null;
+  /** Previously answered question ids that no longer apply to the goal. */
+  irrelevant: string[];
+  rounds_left: number;
+}
+
+export interface CustomGoal {
+  description?: string;
+  audience?: string;
+  tone?: string;
+  outcome?: string;
+}
+
+export interface DraftGoal {
+  direction?: "outbound" | "inbound" | "both";
+  /** Primary use case (first of use_cases) — kept for older drafts and agents. */
+  use_case?: string;
+  /** Selected presets in order; may include "custom" (Create your own). */
+  use_cases?: string[];
+  /** Older drafts: answers to per-use-case followups. */
+  answers?: Record<string, string | boolean>;
+  custom?: CustomGoal;
+  extra_instructions?: string;
+  assistant?: AssistItem[];
+  understanding?: string;
+  recommendation?: string | null;
+  ready?: boolean;
+  /** Completed assist rounds for the current goal (capped server-side). */
+  assist_rounds?: number;
+  /** Fingerprint of the goal the assistant last reviewed. */
+  assist_basis?: string;
+}
+
 export interface DraftData {
+  /** 2 = Business · Goal · Fine-tune · Review. Older drafts (no v) used six steps. */
+  v?: number;
   business?: { name?: string; industry?: string; website?: string; description?: string };
-  goal?: { direction?: "outbound" | "inbound" | "both"; use_case?: string; answers?: Record<string, string | boolean> };
+  goal?: DraftGoal;
   behavior?: {
+    /** "I'll decide later": recommended defaults for everything below. */
+    decide_later?: boolean;
     agent_name?: string;
     voice_id?: string;
     language?: string;
     style?: string;
+    custom_style?: string;
     qualification_depth?: "light" | "standard" | "thorough";
     booking?: boolean;
     transfer_number?: string;
@@ -119,9 +186,24 @@ export const PROMPT_SECTIONS = [
   ["compliance", "Honesty and Compliance"],
 ] as const;
 
+export interface BuilderPlan {
+  title?: string;
+  primary_objective?: string;
+  target_audience?: string;
+  qualification_questions?: string[];
+  desired_outcomes?: string[];
+  transfer_rules?: string;
+  booking_rules?: string;
+  follow_up_logic?: string;
+  use_cases?: string[];
+  recommended_settings?: boolean;
+}
+
 export interface BuilderInfo {
   industry?: string;
   use_case?: string;
+  use_cases?: string[];
+  plan?: BuilderPlan;
   direction?: string;
   style?: string;
   draft_id?: string;

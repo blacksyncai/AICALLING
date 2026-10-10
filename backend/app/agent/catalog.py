@@ -2,9 +2,11 @@
 Agent-builder catalog — industries, use cases, conversation styles and
 integrations shown in the "Build with AI" wizard (see docs/agent-builder.md).
 
-Use cases are plain data: what the call is for (objectives), what the agent asks
-(qualification_questions), what it may do (actions), and a few wizard questions
-(followups) whose answers shape the generated prompt.
+Use cases are plain data ("presets"): what the call is for (objectives), what the agent
+asks (qualification_questions), what it may do (actions), and typical setup questions
+(followups). The wizard lets users combine several presets and/or describe their own goal
+("custom"); followups are hints for the AI assistant, and answers in older drafts still
+shape the generated prompt.
 """
 
 from __future__ import annotations
@@ -57,8 +59,8 @@ def _uc(key: str, label: str, direction: str, description: str, objectives: list
 
 def _custom(industry_label: str) -> dict:
     return _uc(
-        "custom", "Custom Use Case", "both",
-        f"Describe your own {industry_label.lower()} call and we'll build the agent around it.",
+        "custom", "Create Your Own", "both",
+        f"Describe your own {industry_label.lower()} call in plain words and we'll build the agent around it.",
         ["Accomplish the goal you describe", "Capture the contact's details and needs",
          "Agree on a clear next step"],
         ["What are you hoping to get help with?", "What's your timeline?",
@@ -84,19 +86,6 @@ _OLD_LEAD_AGE = _choice("lead_age", "How old are these leads, roughly?",
 
 USE_CASES: dict[str, list[dict]] = {
     "real_estate": [
-        _uc("speed_to_lead", "Speed-to-Lead (First Touch)", "outbound",
-            "Calls brand-new online leads within minutes to start the conversation while interest is hot.",
-            ["Reach the lead while they're still browsing", "Find out if they're buying, selling or both",
-             "Set an appointment with an agent"],
-            ["Are you looking to buy, sell, or both?", "What area are you focused on?",
-             "What's your timeline for making a move?", "Are you working with an agent already?",
-             "Have you spoken with a lender yet?"],
-            ["book_appointment", "transfer", "callback"],
-            [_choice("lead_source", "Where do these leads come from?",
-                     ["Website / IDX", "Zillow or Realtor.com", "Facebook or Instagram ads", "Open houses", "Mixed"],
-                     "Website / IDX"),
-             _bool("mention_property", "Mention the property they viewed if we have it?", True),
-             _bool("ask_agent", "Ask whether they already have an agent?", True)]),
         _uc("buyer_follow_up", "Buyer Lead Follow-Up", "outbound",
             "Follows up with buyer leads to learn what they want and get them in front of an agent.",
             ["Find out if they're still actively looking", "Learn budget, area and must-haves",
@@ -122,39 +111,19 @@ USE_CASES: dict[str, list[dict]] = {
             [_LEAD_AGE,
              _bool("offer_valuation", "Offer a free home valuation?", True),
              _bool("ask_price", "Ask what price they have in mind?", True)]),
-        _uc("lead_reactivation", "Old Lead Reactivation", "outbound",
-            "Re-engages cold or aged leads in your database to find the ones ready to move now.",
-            ["Find out if their plans have changed", "Spot leads who are ready in the next six months",
-             "Re-start the relationship with an appointment or callback"],
-            ["Are you still thinking about buying or selling?", "Has your timeline changed since we last spoke?",
-             "What area are you looking at now?", "Did you end up working with another agent?",
-             "Would it help to get updated listings or a market update?"],
-            ["book_appointment", "transfer", "callback", "send_info"],
-            [_OLD_LEAD_AGE,
-             _bool("offer_market_update", "Offer a free market update?", True),
-             _bool("skip_if_bought", "Politely close out leads who already bought or sold?", True)]),
-        _uc("circle_prospecting", "Circle Prospecting", "outbound",
-            "Calls homeowners near a recent listing or sale to share news and uncover sellers.",
-            ["Share news about a nearby listing or sale", "Ask if they've thought about selling",
-             "Find people who know someone looking to move"],
-            ["Did you hear about the home that just sold nearby?", "Have you thought about what your home might be worth?",
-             "Any plans to move in the next year or two?", "Do you know anyone who'd like to live in the neighborhood?"],
-            ["book_appointment", "callback", "send_info"],
-            [_text("nearby_property", "Which listing or sale are you calling about?",
-                   placeholder="e.g. 412 Oak Street, sold in 6 days"),
-             _choice("event", "What happened there?", ["Just listed", "Just sold", "Open house coming up"], "Just sold"),
-             _bool("offer_valuation", "Offer a free home valuation?", True)]),
-        _uc("expired_listings", "Expired Listings", "outbound",
-            "Calls owners whose listing expired to understand what went wrong and win the listing.",
-            ["Find out if they still want to sell", "Learn why they think it didn't sell",
-             "Book a listing appointment"],
-            ["Are you still hoping to sell the home?", "Why do you think it didn't sell?",
-             "Where are you planning to move, and by when?", "What would you want done differently this time?",
-             "Are you open to meeting to go over a new plan?"],
-            ["book_appointment", "callback", "send_info"],
-            [_bool("mention_expired", "Mention that their listing recently expired?", True),
-             _text("value_prop", "What do you do differently that sells homes? (optional)",
-                   placeholder="e.g. Professional video, pre-listing inspection, 400+ buyer database")]),
+        _uc("speed_to_lead", "Speed to Lead", "outbound",
+            "Calls brand-new online leads within minutes to start the conversation while interest is hot.",
+            ["Reach the lead while they're still browsing", "Find out if they're buying, selling or both",
+             "Set an appointment with an agent"],
+            ["Are you looking to buy, sell, or both?", "What area are you focused on?",
+             "What's your timeline for making a move?", "Are you working with an agent already?",
+             "Have you spoken with a lender yet?"],
+            ["book_appointment", "transfer", "callback"],
+            [_choice("lead_source", "Where do these leads come from?",
+                     ["Website / IDX", "Zillow or Realtor.com", "Facebook or Instagram ads", "Open houses", "Mixed"],
+                     "Website / IDX"),
+             _bool("mention_property", "Mention the property they viewed if we have it?", True),
+             _bool("ask_agent", "Ask whether they already have an agent?", True)]),
         _uc("fsbo_prospecting", "FSBO Prospecting", "outbound",
             "Calls For Sale By Owner sellers to offer help and earn a listing appointment.",
             ["Build rapport without pressure", "Understand why they're selling on their own",
@@ -167,7 +136,50 @@ USE_CASES: dict[str, list[dict]] = {
             [_bool("ask_buyer_agents", "Ask if they'll work with buyers' agents?", True),
              _choice("approach", "How should the agent approach them?",
                      ["Helpful and low pressure", "Direct about listing"], "Helpful and low pressure")]),
-        _uc("cold_prospecting", "General Cold Prospecting", "outbound",
+        _uc("expired_listings", "Expired Listings", "outbound",
+            "Calls owners whose listing expired to understand what went wrong and win the listing.",
+            ["Find out if they still want to sell", "Learn why they think it didn't sell",
+             "Book a listing appointment"],
+            ["Are you still hoping to sell the home?", "Why do you think it didn't sell?",
+             "Where are you planning to move, and by when?", "What would you want done differently this time?",
+             "Are you open to meeting to go over a new plan?"],
+            ["book_appointment", "callback", "send_info"],
+            [_bool("mention_expired", "Mention that their listing recently expired?", True),
+             _text("value_prop", "What do you do differently that sells homes? (optional)",
+                   placeholder="e.g. Professional video, pre-listing inspection, 400+ buyer database")]),
+        _uc("circle_prospecting", "Circle Prospecting", "outbound",
+            "Calls homeowners near a recent listing or sale to share news and uncover sellers.",
+            ["Share news about a nearby listing or sale", "Ask if they've thought about selling",
+             "Find people who know someone looking to move"],
+            ["Did you hear about the home that just sold nearby?", "Have you thought about what your home might be worth?",
+             "Any plans to move in the next year or two?", "Do you know anyone who'd like to live in the neighborhood?"],
+            ["book_appointment", "callback", "send_info"],
+            [_text("nearby_property", "Which listing or sale are you calling about?",
+                   placeholder="e.g. 412 Oak Street, sold in 6 days"),
+             _choice("event", "What happened there?", ["Just listed", "Just sold", "Open house coming up"], "Just sold"),
+             _bool("offer_valuation", "Offer a free home valuation?", True)]),
+        _uc("lead_reactivation", "Lead Reactivation", "outbound",
+            "Re-engages cold or aged leads in your database to find the ones ready to move now.",
+            ["Find out if their plans have changed", "Spot leads who are ready in the next six months",
+             "Re-start the relationship with an appointment or callback"],
+            ["Are you still thinking about buying or selling?", "Has your timeline changed since we last spoke?",
+             "What area are you looking at now?", "Did you end up working with another agent?",
+             "Would it help to get updated listings or a market update?"],
+            ["book_appointment", "transfer", "callback", "send_info"],
+            [_OLD_LEAD_AGE,
+             _bool("offer_market_update", "Offer a free market update?", True),
+             _bool("skip_if_bought", "Politely close out leads who already bought or sold?", True)]),
+        _uc("appointment_setting", "Appointment Setting", "outbound",
+            "Calls interested leads to book a showing, buyer consultation or listing appointment.",
+            ["Confirm they're still interested", "Find out what they want to meet about",
+             "Book a time with an agent"],
+            ["Are you still thinking about making a move?", "Is this about buying, selling, or both?",
+             "What area or property are you interested in?", "What days and times usually work for you?"],
+            ["book_appointment", "transfer", "callback"],
+            [_choice("appointment_type", "What should the agent book?",
+                     ["Showing", "Buyer consultation", "Listing appointment", "Whatever fits"], "Whatever fits"),
+             _bool("confirm_details", "Confirm the address and attendees before booking?", True)]),
+        _uc("cold_prospecting", "General Prospecting", "outbound",
             "Calls homeowners and renters from a list to find anyone thinking of buying or selling.",
             ["Introduce the agent or team briefly", "Find anyone planning a move",
              "Earn permission for a follow-up"],
@@ -853,14 +865,32 @@ def integrations() -> list[dict]:
 
 
 def catalog() -> dict:
-    return {"industries": INDUSTRIES, "use_cases": USE_CASES, "styles": STYLES, "integrations": integrations()}
+    return {"industries": INDUSTRIES, "use_cases": USE_CASES, "use_case_aliases": USE_CASE_ALIASES,
+            "styles": STYLES, "integrations": integrations()}
 
 
 def industry_label(key: str) -> str | None:
     return next((i["label"] for i in INDUSTRIES if i["key"] == key), None)
 
 
+# Alternate keys accepted in drafts and saved agents (renames never break old data).
+USE_CASE_ALIASES: dict[str, str] = {
+    "general_prospecting": "cold_prospecting",
+    "old_lead_reactivation": "lead_reactivation",
+    "speed_to_lead_first_touch": "speed_to_lead",
+    "create_your_own": "custom",
+    "custom_use_case": "custom",
+}
+
+CUSTOM_KEY = "custom"
+
+
+def resolve_use_case_key(key: str) -> str:
+    return USE_CASE_ALIASES.get(key, key)
+
+
 def get_use_case(industry: str, key: str) -> dict | None:
+    key = resolve_use_case_key(key or "")
     return next((u for u in USE_CASES.get(industry, []) if u["key"] == key), None)
 
 

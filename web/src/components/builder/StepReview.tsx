@@ -3,10 +3,11 @@
 import { AlertCircle, RotateCcw, Sparkles } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Notice } from "@/components/ui";
-import type { BuilderCatalog, BusinessProfile, DraftData } from "@/lib/builder";
+import { CUSTOM_USE_CASE, type BuilderCatalog, type BusinessProfile, type DraftData } from "@/lib/builder";
 import { cn } from "@/lib/utils";
-import { useCasesFor } from "./StepGoal";
-import { LANGUAGES, type VoicesResponse } from "./StepPersonality";
+import { customDescription, presetKeys, selectedKeys, useCasesFor } from "./goal";
+import { decidesLater, recommendedRows } from "./StepFineTune";
+import { LANGUAGES, RECOMMENDED_MODEL, type VoicesResponse } from "./StepPersonality";
 import { StepTitle, displayHost } from "./parts";
 
 const DIRECTION = { outbound: "Calls out", inbound: "Answers calls", both: "Calls out and answers calls" } as const;
@@ -17,22 +18,29 @@ export function StepReview({
   profile,
   voices,
   onEdit,
+  bookingLikely,
 }: {
   data: DraftData;
   catalog: BuilderCatalog | undefined;
   profile: BusinessProfile | null;
   voices: VoicesResponse | undefined;
   onEdit: (step: number) => void;
+  bookingLikely: boolean;
 }) {
   const b = data.business ?? {};
   const g = data.goal ?? {};
   const be = data.behavior ?? {};
   const industry = catalog?.industries.find((i) => i.key === b.industry)?.label ?? b.industry;
-  const useCase = useCasesFor(catalog, b.industry).find((u) => u.key === g.use_case)?.label ?? g.use_case;
+  const ucs = useCasesFor(catalog, b.industry);
+  const keys = selectedKeys(g);
+  const goals = presetKeys(g).map((k) => ucs.find((u) => u.key === k)?.label ?? k);
+  const own = keys.includes(CUSTOM_USE_CASE) || goals.length === 0 ? customDescription(g).trim() : "";
+  const answered = (g.assistant ?? []).filter((i) => i.answer || i.delegated).length;
+  const later = decidesLater(be);
   const allVoices = [...(voices?.featured ?? []), ...(voices?.voices ?? [])];
-  const voice = allVoices.find((v) => v.id === be.voice_id)?.name ?? (be.voice_id ? "Selected voice" : "Default voice");
+  const voice = allVoices.find((v) => v.id === be.voice_id)?.name ?? (be.voice_id ? "Selected voice" : "Recommended voice");
   const language = LANGUAGES.find(([k]) => k === (be.language ?? "en"))?.[1];
-  const style = catalog?.styles.find((s) => s.key === be.style)?.label;
+  const style = be.style ? catalog?.styles.find((s) => s.key === be.style)?.label : "Matches your goal";
   const tools = (data.integrations?.selected ?? []).map((k) => catalog?.integrations.find((i) => i.key === k)?.label ?? k);
 
   const knowledge =
@@ -59,17 +67,32 @@ export function StepReview({
           <Row label="Knowledge" value={knowledge} />
         </Group>
         <Group title="Goal" onEdit={() => onEdit(2)}>
-          <Row label="Calls" value={g.direction ? DIRECTION[g.direction] : undefined} />
-          <Row label="Main goal" value={useCase} />
+          <Row label="Calls" value={DIRECTION[g.direction ?? "outbound"]} />
+          {goals.length > 0 && <Row label={goals.length > 1 ? "Goals" : "Main goal"} value={goals.join(" · ")} />}
+          {own && <Row label="Your words" value={<span className="line-clamp-3">{own}</span>} />}
+          {g.extra_instructions?.trim() && !own && <Row label="Specifics" value={<span className="line-clamp-2">{g.extra_instructions.trim()}</span>} />}
+          {answered > 0 && <Row label="AI follow-ups" value={`${answered} answered`} />}
         </Group>
-        <Group title="Personality" onEdit={() => onEdit(3)}>
-          <Row label="Agent name" value={be.agent_name} />
-          <Row label="Voice" value={`${voice}${language ? ` · ${language}` : ""}`} />
-          {style && <Row label="Style" value={style} />}
-          <Row label="On the call" value={actions.join(" · ") || "Conversation only"} />
-        </Group>
-        <Group title="Tools" onEdit={() => onEdit(4)}>
-          <Row label="Connected" value={tools.length ? tools.join(", ") : "None for now"} />
+        <Group title="Fine-tune" onEdit={() => onEdit(3)}>
+          {later ? (
+            <>
+              <Row label="Settings" value="Recommended — change anytime in the agent editor" />
+              {recommendedRows(catalog, bookingLikely)
+                .slice(0, 3)
+                .map(([k, v]) => (
+                  <Row key={k} label={k} value={v} />
+                ))}
+            </>
+          ) : (
+            <>
+              <Row label="Agent name" value={be.agent_name?.trim() || "AI will pick one"} />
+              <Row label="Voice" value={`${voice}${language ? ` · ${language}` : ""}`} />
+              <Row label="AI model" value={`${RECOMMENDED_MODEL} (recommended)`} />
+              {style && <Row label="Style" value={style} />}
+              <Row label="On the call" value={actions.join(" · ") || "Conversation only"} />
+              <Row label="Tools" value={tools.length ? tools.join(", ") : "None for now"} />
+            </>
+          )}
         </Group>
       </div>
     </div>

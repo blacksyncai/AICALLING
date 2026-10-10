@@ -69,6 +69,7 @@ section) is exported for agent generation.
 | GET | `/drafts` | – | `{drafts: [{id, step, data, updated_at, agent_id}]}` (unfinished first) |
 | POST | `/drafts` | `{data?, step?}` | Draft |
 | GET/PATCH/DELETE | `/drafts/{id}` | PATCH `{step?, data?}` (data replaces) | Draft |
+| POST | `/assist` | `{draft_id}` | Assist response (below) — reads the saved draft, never writes it |
 | POST | `/generate` | `{draft_id}` | `{agent_id}` — creates a real `Agent` in the org |
 
 Catalog:
@@ -88,28 +89,99 @@ Catalog:
 ```
 Industries: real_estate, mortgage, home_services, healthcare, insurance, financial_services,
 recruiting, logistics, automotive, professional_services, other. Every industry has inbound
-and outbound use cases plus a `custom` one. Integration statuses must be truthful: only
+and outbound use cases ("presets") plus a `custom` one labelled **Create Your Own**.
+Real estate outbound presets, in display order: Buyer Lead Follow-Up (`buyer_follow_up`), Seller
+Lead Follow-Up (`seller_follow_up`), Speed to Lead (`speed_to_lead`), FSBO Prospecting, Expired
+Listings, Circle Prospecting, Lead Reactivation (`lead_reactivation`), Appointment Setting
+(`appointment_setting`), General Prospecting (`cold_prospecting`), then Past Client Check-Ins and
+Appointment Confirmation. Keys never change; renames are handled with `use_case_aliases`
+(e.g. `general_prospecting` → `cold_prospecting`, `create_your_own` → `custom`), which the catalog
+also returns and `catalog.get_use_case()` resolves. Followups are now hints for the assistant;
+the wizard no longer shows them as a form (answers in older drafts are still honored). Integration statuses must be truthful: only
 things that work in this app today are `available` (Cal.com booking when configured,
 warm transfer, webhooks/Zapier, CSV import); named CRMs are `coming_soon`.
 
 Draft `data` (all optional while in progress):
 ```json
-{"business": {"name", "industry", "website", "description"},
- "goal": {"direction": "outbound|inbound|both", "use_case": "buyer_follow_up", "answers": {"lead_age": "New leads"}},
- "behavior": {"agent_name", "voice_id", "language": "en", "style": "friendly",
-              "qualification_depth": "light|standard|thorough",
+{"v": 2,
+ "business": {"name", "industry", "website", "description"},
+ "goal": {"direction": "outbound|inbound|both",
+          "use_cases": ["seller_follow_up", "expired_listings", "custom"],
+          "use_case": "seller_follow_up",
+          "custom": {"description": "Call homeowners who requested a valuation…", "audience": "Homeowners",
+                     "tone": "Friendly and conversational", "outcome": "Warm transfer"},
+          "extra_instructions": "Be casual, avoid sounding like a salesperson…",
+          "assistant": [{"id": "lead_source", "question": "Where do these leads come from?", "answer": "Zillow",
+                         "skipped": false, "delegated": false, "suggestions": ["Website", "Zillow"], "reason": "…"}],
+          "understanding": "Got it. I'll build an agent focused on …", "recommendation": null, "ready": true,
+          "assist_rounds": 1, "assist_basis": "<client fingerprint of the goal last reviewed>",
+          "answers": {"lead_age": "New leads"}},
+ "behavior": {"decide_later": true, "agent_name", "voice_id", "language": "en", "style": "friendly",
+              "custom_style", "qualification_depth": "light|standard|thorough",
               "booking": true, "transfer_number": "", "transfer_when": "",
               "callback": true, "ai_disclosure": true},
  "integrations": {"selected": ["calcom", "webhooks"]}}
 ```
+- `use_cases` is the ordered multi-select (first preset = primary); `custom` in it means "Create your
+  own". `use_case` is kept = the primary for older readers. Older drafts with only `use_case` (+
+  `answers`, where `custom_goal` / `custom_questions` / `contact_type` held the custom goal) still work.
+- A custom description counts only while `custom` is selected or no preset is (leftover text from a
+  deselected "Create your own" is ignored).
+- `assistant` items: `answer: null` + `skipped: false` = still pending; `delegated: true` (answer
+  "You decide") = the user lets the AI pick the best practice.
+- `behavior.decide_later: true` ("I'll decide later"), or no behavior chosen at all, means
+  recommended defaults: default voice, `gpt-4.1`, booking on only if the presets allow it **and**
+  Cal.com is configured, no transfer, callbacks + AI disclosure on, standard depth, style from the
+  user's tone (else friendly), agent name picked by the AI.
+- Wizard steps (`draft.step`): v2 = 1 Business, 2 Goal (+ AI assistant), 3 Fine-tune (optional), 4 Review,
+  5 Done. Drafts without `v` used 1 Business, 2 Goal, 3 Personality, 4 Tools, 5 Review, 6 Done and are
+  remapped on resume (3,4 → 3; 5,6 → 4). The API still accepts steps 1–6.
+
+Validation for `/generate` (400, plain message): business name, a listed industry, and at least one
+listed preset **or** a custom description of 15+ characters ("other" industry + custom only is fine).
+
+### Assist — `POST /api/agent-builder/assist`
+
+Reads the saved draft (the client saves first), so it sees business info, presets, custom fields,
+extra instructions and the Q&A so far. Same goal validation as generate, but business name/industry
+are optional. Response:
+```json
+{"understanding": "Got it. I'll build an agent focused on …",
+ "questions": [{"id": "lead_source", "question": "Where do these leads come from?",
+                "suggestions": ["Website", "Zillow", "Mailers"], "reason": "Shapes the opener."}],
+ "ready": false, "recommendation": "optional tip or null",
+ "irrelevant": ["ids of earlier answers that no longer fit the goal"], "rounds_left": 1}
+```
+The LLM output is validated strictly (understanding required, `ready` boolean, 2–4 suggestions per
+question), retried once, else 502; no OpenAI key → 400. The server then drops questions whose topic
+was already answered/skipped (by id or wording) or filled in the custom fields (audience, tone,
+outcome), and caps them: ≤ 3 per round, ≤ 5 asked in total, and none once `goal.assist_rounds ≥ 2`.
+No questions left ⇒ `ready: true`. The client stores the conversation in `goal` (above), resets
+`assist_rounds` and drops pending questions when the goal changes, and lets the user generate at any
+time ("We'll use smart defaults for the rest").
+
+The generation prompt receives every selected preset (primary first, with objectives, questions,
+actions), the custom description/audience/tone/outcome, extra instructions, the answered Q&A
+("You decide" → choose the best practice; skipped → sensible default) and the behavior settings.
+The model returns `agent_name`, `title`, `primary_objective`, `target_audience`,
+`qualification_questions[]`, `desired_outcomes[]`, `transfer_rules`, `booking_rules`,
+`follow_up_logic`, `first_message`, the 12 `sections`, `extraction_fields`, `success_criteria`
+(validated strictly, retried once).
 
 Generation writes `Agent.system_prompt` (sections joined with headings), `first_message`,
 `knowledge_base` (from `knowledge_text`), `extraction_fields` (lead_intent, timeline,
 key_objections, next_action + use-case fields), `success_criteria`, `enable_booking`,
 `transfer_number`, `voice_id`, `language`, `llm_model` ("gpt-4.1"), `ai_disclosure`, and
-`builder = {industry, use_case, direction, style, draft_id, sections: {identity, reason,
-flow, qualification, objections, knowledge, booking, transfer, voicemail, callback,
-closing, compliance}}`. Requires OPENAI_API_KEY (400 with a plain message otherwise).
+`builder = {industry, use_case (primary, or "custom"), use_cases, direction, style, draft_id,
+business_name, persona, transfer_enabled, transfer_when, callback, integrations,
+sections: {identity, reason, flow, qualification, objections, knowledge, booking, transfer,
+voicemail, callback, closing, compliance},
+plan: {title, primary_objective, target_audience, qualification_questions, desired_outcomes,
+transfer_rules, booking_rules, follow_up_logic, use_cases, request: {description, audience, tone,
+outcome, extra_instructions}, assistant: [{question, answer, delegated}], recommended_settings}}`.
+When booking/transfer are off, `plan.booking_rules` / `plan.transfer_rules` say so deterministically.
+Agent name: `"{persona} – {label}"`, where label is the preset label (`"… (customized)"` with own words), `"{primary} + N more"`, or the
+AI's `title` for custom-only agents. Requires OPENAI_API_KEY (400 with a plain message otherwise).
 
 ## Agent editor helpers (same router file, prefix `/api/agent-builder`)
 

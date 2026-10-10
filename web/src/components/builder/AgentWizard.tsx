@@ -1,23 +1,24 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Check, CloudOff, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CloudOff, Loader2, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Spinner } from "@/components/ui";
 import { ApiError, api, fetcher, patch, post } from "@/lib/api";
-import type { AgentDraft, BuilderCatalog, BusinessProfile, DraftData } from "@/lib/builder";
+import type { AgentDraft, AssistResponse, BuilderCatalog, BusinessProfile, DraftData, DraftGoal } from "@/lib/builder";
+import { goalReady, presetKeys, useCasesFor } from "./goal";
 import { StepBusiness } from "./StepBusiness";
+import { decidesLater, StepFineTune } from "./StepFineTune";
 import { StepGoal } from "./StepGoal";
-import { StepPersonality, bookingStatus, type VoicesResponse } from "./StepPersonality";
+import type { VoicesResponse } from "./StepPersonality";
 import { GenerateError, Generating, StepReview } from "./StepReview";
-import { StepTools } from "./StepTools";
-import { StepProgress, STEPS, put } from "./parts";
+import { DRAFT_VERSION, LAST_STEP, StepProgress, STEPS, put, resumeStep } from "./parts";
 
 const AUTOSAVE_MS = 800;
 const POLL_MS = 1500;
-const LAST_STEP = 5; // step 6 ("Done") is the redirect to the new agent
+const DONE_STEP = LAST_STEP + 1; // "Done" is the redirect to the new agent
 
 type SaveState = "idle" | "pending" | "saving" | "saved" | "error";
 
@@ -59,6 +60,7 @@ export function AgentWizard() {
   const hydrated = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const chain = useRef<Promise<void>>(Promise.resolve());
+  const lastSaveOk = useRef(true);
 
   // ---- Load (or create) the draft + business profile once -------------------------------
   const started = useRef(false);
@@ -89,8 +91,9 @@ export function AgentWizard() {
           };
         }
         setProfile(prof);
-        setData(d);
-        setStep(Math.min(Math.max(draft.step || 1, 1), LAST_STEP));
+        const resume = resumeStep(draft.step, draft.data); // older drafts used six steps
+        setData({ ...d, v: DRAFT_VERSION });
+        setStep(resume);
         setTransferOnState(!!d.behavior?.transfer_number);
         setDraftId(draft.id);
         draftRef.current = draft.id;
@@ -112,9 +115,11 @@ export function AgentWizard() {
       setSaveState("saving");
       try {
         await patch<AgentDraft>(`/api/agent-builder/drafts/${id}`, latest.current);
+        lastSaveOk.current = true;
         setSaveState(dirty.current ? "pending" : "saved");
       } catch {
         dirty.current = true;
+        lastSaveOk.current = false;
         setSaveState("error");
       }
     });
@@ -157,30 +162,27 @@ export function AgentWizard() {
     return () => clearInterval(t);
   }, [analyzing]);
 
-  // ---- Sensible defaults for the personality step ----------------------------------------
-  useEffect(() => {
-    if (step !== 3 || !catalog) return;
-    setData((d) => {
-      if (d.behavior?.language) return d;
-      const booking = bookingStatus(catalog);
-      return {
-        ...d,
-        behavior: {
-          language: "en",
-          style: catalog.styles[0]?.key,
-          qualification_depth: "standard",
-          booking: booking === "available",
-          callback: true,
-          ai_disclosure: true,
-          ...d.behavior,
-        },
-      };
-    });
-  }, [step, catalog]);
-
   // ---- Helpers -----------------------------------------------------------------------------
   const business = data.business ?? {};
   const behavior = data.behavior ?? {};
+  const goal = data.goal ?? {};
+  const presets = useCasesFor(catalog, business.industry).filter((u) => presetKeys(goal).includes(u.key));
+  // Custom-only goals can book; presets decide for themselves.
+  const bookingLikely = presets.length === 0 || presets.some((u) => u.actions.includes("book_appointment"));
+
+  const setGoal = useCallback((fn: (g: DraftGoal) => DraftGoal) => setData((d) => ({ ...d, goal: fn(d.goal ?? {}) })), []);
+
+  /** Save the goal now, then ask the AI assistant to review it (it reads the saved draft). */
+  const runAssist = useCallback(
+    async (g: DraftGoal) => {
+      latest.current = { ...latest.current, data: { ...latest.current.data, goal: g } };
+      dirty.current = true;
+      await flush();
+      if (!lastSaveOk.current) throw new Error("We couldn't save your goal. Check your connection and try again.");
+      return post<AssistResponse>("/api/agent-builder/assist", { draft_id: draftRef.current });
+    },
+    [flush],
+  );
 
   function setTransferOn(v: boolean) {
     setTransferOnState(v);
@@ -189,13 +191,14 @@ export function AgentWizard() {
 
   function invalid(n: number): boolean {
     if (n === 1) return !business.name?.trim() || !business.industry;
-    if (n === 2) return !data.goal?.direction || !data.goal?.use_case;
-    if (n === 3) return !behavior.agent_name?.trim() || (transferOn && !behavior.transfer_number?.trim());
+    if (n === 2) return !goalReady(goal);
+    if (n === 3) return !decidesLater(behavior) && transferOn && !behavior.transfer_number?.trim();
     return false;
   }
 
   function go(n: number) {
     setShowErrors(false);
+    setGenError("");
     setStep(n);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -238,7 +241,7 @@ export function AgentWizard() {
     try {
       await flush();
       const res = await post<{ agent_id: string }>("/api/agent-builder/generate", { draft_id: draftRef.current });
-      setStep(6);
+      setStep(DONE_STEP);
       router.push(`/agents/${res.agent_id}?created=1`);
     } catch (e) {
       setGenError((e as Error).message);
@@ -288,8 +291,8 @@ export function AgentWizard() {
       ? hasKnowledge
         ? "Looks good, continue"
         : "Continue"
-      : step === 4 && !(data.integrations?.selected ?? []).length
-        ? "Skip for now"
+      : step === 3 && decidesLater(behavior)
+        ? "Use recommended settings"
         : "Continue";
 
   return (
@@ -332,16 +335,10 @@ export function AgentWizard() {
               />
             )}
             {step === 2 && (
-              <StepGoal
-                goal={data.goal ?? {}}
-                onChange={(goal) => setData((d) => ({ ...d, goal }))}
-                catalog={catalog}
-                industry={business.industry}
-                showErrors={showErrors}
-              />
+              <StepGoal goal={goal} setGoal={setGoal} catalog={catalog} industry={business.industry} showErrors={showErrors} runAssist={runAssist} />
             )}
             {step === 3 && (
-              <StepPersonality
+              <StepFineTune
                 behavior={behavior}
                 onChange={(p) => setData((d) => ({ ...d, behavior: { ...d.behavior, ...p } }))}
                 catalog={catalog}
@@ -349,18 +346,14 @@ export function AgentWizard() {
                 transferOn={transferOn}
                 setTransferOn={setTransferOn}
                 showErrors={showErrors}
-              />
-            )}
-            {step === 4 && (
-              <StepTools
-                selected={data.integrations?.selected ?? []}
-                onChange={(selected) => setData((d) => ({ ...d, integrations: { ...d.integrations, selected } }))}
-                catalog={catalog}
+                tools={data.integrations?.selected ?? []}
+                onToolsChange={(selected) => setData((d) => ({ ...d, integrations: { ...d.integrations, selected } }))}
                 industry={business.industry}
+                bookingLikely={bookingLikely}
               />
             )}
-            {step === 5 && <StepReview data={data} catalog={catalog} profile={profile} voices={voices} onEdit={go} />}
-            {step === 5 && genError && <GenerateError message={genError} onRetry={generate} />}
+            {step === LAST_STEP && <StepReview data={data} catalog={catalog} profile={profile} voices={voices} onEdit={go} bookingLikely={bookingLikely} />}
+            {genError && <GenerateError message={genError} onRetry={generate} />}
           </div>
         )}
       </Card>
@@ -375,13 +368,25 @@ export function AgentWizard() {
           ) : (
             <span />
           )}
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3">
             {step === 1 && analyzing && (
               <button type="button" onClick={next} className="text-xs font-medium text-zinc-500 hover:text-zinc-800">
                 Continue without waiting
               </button>
             )}
-            {step === LAST_STEP ? (
+            {step === 2 ? (
+              <>
+                <Button variant="secondary" onClick={next} className="hidden sm:inline-flex">
+                  <SlidersHorizontal className="h-4 w-4" /> Fine-tune first
+                </Button>
+                <Button variant="secondary" onClick={next} className="sm:hidden" aria-label="Fine-tune first">
+                  <SlidersHorizontal className="h-4 w-4" />
+                </Button>
+                <Button variant="primary" onClick={generate}>
+                  <Sparkles className="h-4 w-4" /> Generate agent
+                </Button>
+              </>
+            ) : step === LAST_STEP ? (
               <Button variant="primary" onClick={generate}>
                 <Sparkles className="h-4 w-4" /> Generate my agent
               </Button>
@@ -395,9 +400,12 @@ export function AgentWizard() {
           </div>
         </div>
       )}
+      {step === 2 && !generating && goalReady(goal) && !goal.ready && (
+        <p className="mt-2 text-right text-xs text-zinc-500">You can generate any time — we&apos;ll use smart defaults for the rest.</p>
+      )}
       {showErrors && invalid(step) && (
         <p className="mt-2 text-right text-xs text-red-600" role="alert">
-          Please fill in the highlighted fields to continue to {STEPS[step]}.
+          {step < LAST_STEP ? `Please fill in the highlighted fields to continue to ${STEPS[step]}.` : "Please fill in the highlighted fields."}
         </p>
       )}
     </div>
