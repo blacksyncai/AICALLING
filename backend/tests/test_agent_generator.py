@@ -314,3 +314,18 @@ def test_playbook_retrieval_prefers_relevant_patterns():
     assert 1 <= len(re_) <= 3 and re_[0]["slug"] in ("expired_listing_followup", "real_estate_sdr")
     assert fin[0]["slug"] == "corporate_sales_equipment_finance"
     assert all("original_text" not in p for p in re_ + fin)
+
+
+def test_identity_check_passes_when_model_words_company_differently(client, monkeypatch):
+    """Regression: the model paraphrasing the business name (or AI disclosure being off) used to fail the gate."""
+    data = copy.deepcopy(DRAFT)
+    data["business"]["name"] = "Blacksync AI LLC"
+    data["behavior"]["ai_disclosure"] = False
+    strategy = copy.deepcopy(STRATEGY)
+    strategy["identity"]["company_context"] = "A solar installer in Tucson offering free assessments."
+    strategy["identity"]["role"] = "an assistant who follows up on solar quotes."
+    _route_chat(monkeypatch, strategy=strategy)
+    _, status = _generate(client, data)
+    assert status["status"] == "done", status
+    agent = client.get(f"/api/agents/{status['agent_id']}").json()
+    assert "You represent Blacksync AI LLC." in agent["builder"]["sections"]["identity"]

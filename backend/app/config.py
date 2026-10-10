@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     voice_premium_label: str = "Premium Human Voices"
     voice_standard_label: str = "Standard AI Voices"
     premium_voice_ids: str = ""
+    # Extra Cartesia voice ids for the Standard tab (comma-separated), beyond the house voices.
+    standard_voice_ids: str = ""
 
     # ── Database ──────────────────────────────────────────────────────────────
     # Defaults to a local SQLite file so the app runs with no Postgres.

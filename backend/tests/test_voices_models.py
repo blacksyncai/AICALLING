@@ -48,26 +48,29 @@ def _by_id(body):
     return {v["id"]: v for v in body["voices"]}
 
 
-def test_categories_and_premium_assignment(client, cartesia):
+HOUSE_CLONES = [f["id"] for f in FEATURED_VOICES if f.get("clone")]
+HOUSE_STOCK = [f["id"] for f in FEATURED_VOICES if not f.get("clone")]
+
+
+def test_categories_premium_is_clones_standard_is_curated(client, cartesia):
     body = client.get("/api/settings/voices").json()
     assert body["source"] == "cartesia"
     voices = _by_id(body)
-    # Featured + owned are premium; everything else standard.
-    for f in FEATURED_VOICES:
-        assert voices[f["id"]]["category"] == "premium"
-    assert voices["own-1"]["category"] == "premium"
-    for vid in ("pub-1", "pub-2", "pub-3"):
+    # Premium = cloned voices (house clones + the account's own clones).
+    for vid in HOUSE_CLONES + ["own-1"]:
+        assert voices[vid]["category"] == "premium"
+    # Standard = the curated house voices only — not Cartesia's whole public library.
+    for vid in HOUSE_STOCK:
         assert voices[vid]["category"] == "standard"
+    for vid in ("pub-1", "pub-2", "pub-3"):
+        assert vid not in voices
     cats = {c["key"]: c for c in body["categories"]}
     assert cats["premium"]["label"] == "Premium Human Voices"
     assert cats["standard"]["label"] == "Standard AI Voices"
-    assert cats["premium"]["count"] == len(FEATURED_VOICES) + 1
-    assert cats["standard"]["count"] == 3
-    # Premium first, featured order preserved; no duplicates.
+    assert cats["premium"]["count"] == len(HOUSE_CLONES) + 1
+    assert cats["standard"]["count"] == len(HOUSE_STOCK)
     ids = [v["id"] for v in body["voices"]]
-    assert ids[: len(FEATURED_VOICES)] == [f["id"] for f in FEATURED_VOICES]
-    assert len(ids) == len(set(ids))
-    # Back-compat fields.
+    assert len(ids) == len(set(ids)) and ids[0] in HOUSE_CLONES
     assert [f["id"] for f in body["featured"]] == [f["id"] for f in FEATURED_VOICES]
 
 
@@ -75,24 +78,28 @@ def test_category_config_override(client, cartesia, monkeypatch):
     monkeypatch.setattr(settings, "voice_premium_label", "Signature")
     monkeypatch.setattr(settings, "voice_standard_label", "Library")
     monkeypatch.setattr(settings, "premium_voice_ids", " pub-2 , ")
+    monkeypatch.setattr(settings, "standard_voice_ids", "pub-1")
     body = client.get("/api/settings/voices").json()
     cats = {c["key"]: c["label"] for c in body["categories"]}
     assert cats == {"premium": "Signature", "standard": "Library"}
     voices = _by_id(body)
-    assert voices["pub-2"]["category"] == "premium"
-    assert voices["pub-2"]["is_clone"] is False
+    assert voices["pub-2"]["category"] == "premium" and voices["pub-2"]["is_clone"] is False
+    assert voices["pub-1"]["category"] == "standard"
+    assert "pub-3" not in voices
 
 
-def test_is_clone_only_for_owned(client, cartesia):
+def test_is_clone_only_for_real_clones(client, cartesia):
     voices = _by_id(client.get("/api/settings/voices").json())
     assert voices["own-1"]["is_clone"] is True
     assert voices["own-1"]["name"] == "My Clone"  # owned metadata wins
-    for vid, v in voices.items():
-        if vid != "own-1":
-            assert v["is_clone"] is False, vid  # premium != clone
+    for vid in HOUSE_CLONES:
+        assert voices[vid]["is_clone"] is True
+    for vid in HOUSE_STOCK:
+        assert voices[vid]["is_clone"] is False
 
 
-def test_voice_metadata_fields(client, cartesia):
+def test_voice_metadata_fields(client, cartesia, monkeypatch):
+    monkeypatch.setattr(settings, "standard_voice_ids", "pub-1,pub-2,pub-3")
     voices = _by_id(client.get("/api/settings/voices").json())
     for v in voices.values():
         assert {"id", "name", "provider", "category", "language", "accent", "gender", "description",
@@ -126,10 +133,9 @@ def test_fallback_without_key(client, monkeypatch):
     assert body["message"]
     assert body["voices"]
     assert all(v["preview"] is False for v in body["voices"])
-    assert all(v["is_clone"] is False for v in body["voices"])
     cats = {c["key"]: c["count"] for c in body["categories"]}
-    assert cats["premium"] == len(FEATURED_VOICES)
-    assert cats["standard"] >= 1
+    assert cats["premium"] == len(HOUSE_CLONES)
+    assert cats["standard"] == len(HOUSE_STOCK)
 
 
 def test_fallback_when_cartesia_errors(client, monkeypatch):

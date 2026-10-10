@@ -86,7 +86,8 @@ def compose(spec: dict, ctx: dict) -> dict:
                   "Never claim or imply that you are human. If someone sincerely asks whether you're an AI, say yes.")
     s["identity"] = "\n\n".join([
         f"You are {name}, {ident['role']}",
-        f"Company: {ident['company_context']}",
+        # Always the exact business name from the wizard, whatever wording the model chose.
+        f"You represent {company}. About {company}: {ident['company_context']}",
         f"Who you speak with: {st['audience']}",
         f"Why these calls happen: {ident['calling_context']}",
         f'How you introduce yourself: "{ident["self_intro"]}"',

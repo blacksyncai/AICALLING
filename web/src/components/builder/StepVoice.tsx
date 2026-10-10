@@ -50,6 +50,7 @@ export function StepVoice({
           speed={1}
           language={language}
           onChange={(id) => onChange({ voice_id: id })}
+          inline
         />
       )}
 

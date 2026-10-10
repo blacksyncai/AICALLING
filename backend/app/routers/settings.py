@@ -86,9 +86,20 @@ async def _fetch_cartesia_voices() -> tuple[list[dict], list[dict]]:
     return public, owned
 
 
+def _ids(raw: str) -> list[str]:
+    return [i.strip() for i in (raw or "").split(",") if i.strip()]
+
+
 def _premium_ids(owned_ids: set[str]) -> list[str]:
-    extra = [i.strip() for i in (settings.premium_voice_ids or "").split(",") if i.strip()]
-    return list(dict.fromkeys([v["id"] for v in FEATURED_VOICES] + sorted(owned_ids) + extra))
+    """Cloned voices: house clones, the account's own voices, PREMIUM_VOICE_IDS."""
+    clones = [v["id"] for v in FEATURED_VOICES if v.get("clone")]
+    return list(dict.fromkeys(clones + sorted(owned_ids) + _ids(settings.premium_voice_ids)))
+
+
+def _standard_ids(premium: set[str]) -> list[str]:
+    """The curated stock voices: house voices that aren't clones, plus STANDARD_VOICE_IDS."""
+    house = [v["id"] for v in FEATURED_VOICES if not v.get("clone")]
+    return [i for i in dict.fromkeys(house + _ids(settings.standard_voice_ids)) if i not in premium]
 
 
 def _accent(raw: dict) -> str | None:
@@ -123,14 +134,16 @@ def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> d
 
 
 def build_catalog(public: list[dict], owned: list[dict], *, can_preview: bool) -> list[dict]:
-    """Merge featured + owned + public voices into one categorized, de-duplicated list.
+    """Premium (cloned voices) + Standard (curated house voices) as one de-duplicated list.
 
-    Order: premium (featured, then owned, then PREMIUM_VOICE_IDS), then standard.
-    Catalog metadata wins over the featured list's; featured descriptions fill gaps.
+    Only listed voices are included — not Cartesia's whole public library. Catalog metadata
+    wins over the featured list's; featured descriptions fill gaps.
     """
     owned_ids = {v.get("id") for v in owned if v.get("id")}
     premium = _premium_ids(owned_ids)
     premium_set = set(premium)
+    standard = _standard_ids(premium_set)
+    listed = premium_set | set(standard)
     by_id: dict[str, dict] = {}
     for raw in [*owned, *public]:
         if raw.get("id") and raw["id"] not in by_id:
@@ -143,10 +156,14 @@ def build_catalog(public: list[dict], owned: list[dict], *, can_preview: bool) -
         by_id[f["id"]] = merged
     voices = [
         _normalize(raw, owned=vid in owned_ids, premium=vid in premium_set, can_preview=can_preview)
-        for vid, raw in by_id.items()
+        for vid, raw in by_id.items() if vid in listed
     ]
-    rank = {vid: i for i, vid in enumerate(premium)}
-    voices.sort(key=lambda v: (v["category"] != "premium", rank.get(v["id"], 0)))
+    house_clones = {f["id"] for f in FEATURED_VOICES if f.get("clone")}
+    for v in voices:
+        if v["id"] in house_clones:
+            v["is_clone"] = True
+    rank = {vid: i for i, vid in enumerate(premium + standard)}
+    voices.sort(key=lambda v: (v["category"] != "premium", rank.get(v["id"], len(rank))))
     return voices
 
 

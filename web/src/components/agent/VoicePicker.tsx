@@ -35,6 +35,7 @@ export function VoicePicker({
   agentLanguage,
   categories,
   message,
+  inline = false,
 }: {
   voices: Voice[];
   featured?: Voice[];
@@ -50,6 +51,8 @@ export function VoicePicker({
   categories?: VoiceCategory[];
   /** Catalog notice from the API (e.g. why the fallback list is shown). */
   message?: string | null;
+  /** Open the list in the page flow instead of floating — for containers that clip overflow (the wizard card). */
+  inline?: boolean;
 }) {
   const uid = useId();
   const { open, setOpen, close, rootRef, triggerRef } = usePopover<HTMLButtonElement>();
@@ -288,16 +291,17 @@ export function VoicePicker({
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40 bg-zinc-900/30 sm:hidden" aria-hidden onClick={() => close(false)} />
+          {!inline && <div className="fixed inset-0 z-40 bg-zinc-900/30 sm:hidden" aria-hidden onClick={() => close(false)} />}
           <div
             role="dialog"
             aria-label="Choose a voice"
             className={cn(
-              "fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl",
-              "sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 sm:max-h-[min(32rem,70vh)] sm:rounded-xl",
+              inline
+                ? "relative mt-2 flex max-h-[min(26rem,65vh)] flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
+                : "fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 sm:max-h-[min(32rem,70vh)] sm:rounded-xl",
             )}
           >
-            <div className="flex items-center justify-between px-3 pt-3 sm:hidden">
+            <div className={cn("flex items-center justify-between px-3 pt-3", inline ? "hidden" : "sm:hidden")}>
               <span className="text-sm font-semibold">Choose a voice</span>
               <button type="button" onClick={() => close()} className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-100" aria-label="Close">
                 <X className="h-4 w-4" />
