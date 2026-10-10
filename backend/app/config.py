@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     livekit_api_secret: str = ""
     livekit_sip_outbound_trunk_id: str = ""
     livekit_agent_name: str = "pounce"
+    # Small hosts (e.g. a 512 MB free instance): no pre-warmed job processes,
+    # no turn-detector model (VAD-only end-of-turn), never report as "busy".
+    low_resource_mode: bool = False
 
     # ── STT / TTS ─────────────────────────────────────────────────────────────
     deepgram_api_key: str = ""

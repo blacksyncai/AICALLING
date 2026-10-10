@@ -838,11 +838,13 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     else:
         await ctx.wait_for_participant()
 
-    try:
-        from livekit.plugins.turn_detector.multilingual import MultilingualModel
-        turn_detector = MultilingualModel()
-    except Exception:
-        turn_detector = None
+    turn_detector = None
+    if not settings.low_resource_mode:
+        try:
+            from livekit.plugins.turn_detector.multilingual import MultilingualModel
+            turn_detector = MultilingualModel()
+        except Exception:
+            turn_detector = None
 
     language = cfg.get("language") or "en"
     session_kwargs = dict(
@@ -1028,11 +1030,13 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await _wait_for_sip_answer(ctx)
 
-    try:
-        from livekit.plugins.turn_detector.multilingual import MultilingualModel
-        turn_detector = MultilingualModel()
-    except Exception:
-        turn_detector = None
+    turn_detector = None
+    if not settings.low_resource_mode:
+        try:
+            from livekit.plugins.turn_detector.multilingual import MultilingualModel
+            turn_detector = MultilingualModel()
+        except Exception:
+            turn_detector = None
 
     # Agent pipeline mirrors hevox-prod's inbound carrier sales II agent:
     #   STT  = Deepgram nova-3 (en) with freight keyterm boosting
@@ -1222,9 +1226,21 @@ if __name__ == "__main__":
     # agent_name="pounce" and only runs in rooms it was explicitly dispatched to
     # via agent_dispatch.create_dispatch (see OutboundCallService.dispatch_call).
     # This pairs with LiveKit SIP outbound — no auto-dispatch, no Twilio bridge.
+    extra: dict = {}
+    if settings.low_resource_mode:
+        from livekit.agents import JobExecutorType
+        # Run calls as threads in this process: a separate job process would load
+        # every plugin a second time and blow a 512 MB memory limit.
+        extra = dict(
+            job_executor_type=JobExecutorType.THREAD,
+            num_idle_processes=0,
+            load_fnc=lambda *_: 0.0,
+            initialize_process_timeout=60.0,
+        )
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             agent_name=settings.livekit_agent_name or "pounce",
+            **extra,
         )
     )

@@ -77,17 +77,20 @@ cp backend/.env.example backend/.env   # add keys
 docker compose up --build              # API :8000 · worker · web :3000
 ```
 
-### Deploy to Render (gets you a URL)
+### Deploy to Render (gets you a URL) — free tier
 
-`render.yaml` sets up the web app, API, voice worker and a Postgres database in one go:
+`render.yaml` deploys the whole app as **one free web service** (web UI + API + voice worker in a
+single container, see the root `Dockerfile`) plus a free Postgres database:
 
-1. [render.com](https://render.com) → **New → Blueprint** → pick this repo/branch.
-2. Paste your keys when prompted (OpenAI, LiveKit, Deepgram, Cartesia; the SIP trunk is optional),
-   plus an `AUTH_EMAIL` / `AUTH_PASSWORD` for the site login.
-3. When it's live, open the `closer-web` service URL.
+1. [render.com](https://dashboard.render.com) → **New → Blueprint** → pick this repo and branch.
+2. Paste your keys when prompted (OpenAI, LiveKit, Deepgram, Cartesia) and an `AUTH_EMAIL` /
+   `AUTH_PASSWORD` for the site login → **Apply**.
+3. Open the `closer` service's URL (`https://closer-….onrender.com`).
 
-All services default to Render's small paid plans (the voice worker must stay running); downgrade
-the web app in the dashboard if you like.
+Free instances sleep after ~15 idle minutes and take about a minute to wake on the next visit; the
+voice worker sleeps with them. It runs in a low-memory mode (calls run as threads, VAD-only turn
+detection) to fit 512 MB. For always-on calling and campaigns, upgrade the instance and set
+`LOW_RESOURCE_MODE=false`, or run the services separately with `docker-compose.yml`.
 
 ### Before putting it on the internet
 
