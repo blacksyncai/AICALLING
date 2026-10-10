@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.account import Invite, Membership, Organization, User
+from app.services.reporting import DEFAULT_TIMEZONE
 from app.services.auth import (
     check_password_strength, clear_session_cookie, get_current_user, hash_password, normalize_email,
     resolve_org, set_session_cookie, sha256, verify_password,
@@ -61,6 +62,7 @@ def org_to_dict(o: Organization) -> dict:
         "status": o.status,
         "credits_balance": o.credits_balance,
         "unlimited_credits": o.unlimited_credits,
+        "timezone": o.timezone or DEFAULT_TIMEZONE,
         "created_at": o.created_at.isoformat() if o.created_at else None,
     }
 

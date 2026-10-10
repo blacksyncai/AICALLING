@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date as Date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import func, select
 
@@ -16,6 +16,7 @@ from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.services.auth import CtxDep, DbDep
+from app.services.reporting import local_day_bounds, org_zone
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
 
@@ -78,6 +79,8 @@ async def list_calls(
     campaign_id: uuid.UUID | None = None,
     outcome: str | None = None,
     call_type: str | None = None,
+    # A calendar day (YYYY-MM-DD) in the organization's reporting time zone.
+    day: Date | None = Query(default=None, alias="date"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
@@ -92,6 +95,9 @@ async def list_calls(
         filters.append(CallLog.outcome == outcome)
     if call_type:
         filters.append(CallLog.call_type == call_type)
+    if day:
+        start, end = local_day_bounds(day, org_zone(ctx.org))
+        filters += [CallLog.started_at >= start, CallLog.started_at < end]
     for f in filters:
         stmt = stmt.where(f)
         count_stmt = count_stmt.where(f)

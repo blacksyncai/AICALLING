@@ -30,6 +30,9 @@ class Organization(Base):
     credits_balance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # House accounts skip the credit check entirely.
     unlimited_credits: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # IANA time zone used for reports ("which day did this call happen on?").
+    # NULL means the default, America/New_York (see app.services.reporting).
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 

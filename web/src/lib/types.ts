@@ -188,6 +188,8 @@ export interface Org {
   status: "active" | "suspended";
   credits_balance: number;
   unlimited_credits: boolean;
+  /** IANA time zone used for reports (days on the dashboard, the call-log day filter). */
+  timezone?: string | null;
   created_at: string | null;
 }
 
@@ -370,4 +372,38 @@ export interface CreatedOrg extends Org {
   temporary_password?: string | null;
   invite_url?: string;
   emailed?: boolean;
+}
+
+// ── Dashboard activity heat map (GET /api/activity/daily) ─────────────────────
+
+export type ActivityMetric = "calls" | "connected" | "appointments" | "transfers" | "credits";
+export type ActivityRange = "30d" | "90d" | "12m";
+
+export interface ActivityDay {
+  date: string;
+  /** The selected metric for this day. */
+  value: number;
+  calls: number;
+  connected: number;
+  appointments: number;
+  transfers: number;
+  credits: number;
+  /** Top agents for the selected metric that day (agent id is null for a removed agent). */
+  agents: { id: string | null; name: string; value: number }[];
+}
+
+export interface ActivityResponse {
+  metric: ActivityMetric;
+  range: ActivityRange;
+  timezone: string;
+  start: string;
+  end: string;
+  agent: { id: string; name: string } | null;
+  /** Only days with any activity. */
+  days: ActivityDay[];
+  totals: Record<ActivityMetric | "value" | "active_days", number>;
+  metric_available: boolean;
+  /** False for unlimited-calling accounts, where no credits are deducted. */
+  credits_tracked: boolean;
+  note: string | null;
 }

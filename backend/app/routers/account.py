@@ -21,6 +21,7 @@ from app.services.auth import (
     CtxDep, DbDep, ManagerDep, check_password_strength, hash_password, normalize_email, set_session_cookie, sha256,
     verify_password,
 )
+from app.services.reporting import is_valid_timezone
 from app.services.email import email_enabled, send_invite_email
 
 log = structlog.get_logger(__name__)
@@ -42,7 +43,9 @@ class PasswordChange(BaseModel):
 
 
 class OrgUpdate(BaseModel):
-    name: str
+    name: str | None = None
+    # IANA time zone for reports, e.g. "America/Chicago".
+    timezone: str | None = None
 
 
 class InviteCreate(BaseModel):
@@ -172,11 +175,17 @@ async def get_org(ctx: CtxDep, db: DbDep):
 
 @router.patch("/org")
 async def rename_org(body: OrgUpdate, ctx: ManagerDep, db: DbDep):
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Company name can't be empty.")
     org = ctx.org
-    org.name = name[:255]
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Company name can't be empty.")
+        org.name = name[:255]
+    if body.timezone is not None:
+        tz = body.timezone.strip()
+        if not is_valid_timezone(tz):
+            raise HTTPException(status_code=400, detail="Pick a time zone from the list (e.g. America/New_York).")
+        org.timezone = tz
     await db.commit()
     return org_to_dict(org)
 

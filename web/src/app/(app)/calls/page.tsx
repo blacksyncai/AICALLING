@@ -1,36 +1,81 @@
 "use client";
 
-import { Globe, PhoneCall, PhoneOutgoing } from "lucide-react";
+import { Globe, PhoneCall, PhoneOutgoing, X } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { Button, Card, EmptyState, PageHeader, Select, Spinner } from "@/components/ui";
+import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model";
 import { fetcher } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import type { Agent, Call } from "@/lib/types";
-import { formatDateTime, formatDuration } from "@/lib/utils";
+import { formatDateTime, formatDuration, humanize } from "@/lib/utils";
 
 const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "no_answer", "completed", "failed"];
+const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
+const TYPE_CHIP: Record<string, string> = { outbound: "Phone calls", web: "Browser tests" };
 const PAGE = 25;
 
 export default function CallsPage() {
-  const [agentId, setAgentId] = useState("");
-  const [outcome, setOutcome] = useState("");
-  const [type, setType] = useState("");
+  // useSearchParams needs a Suspense boundary in the App Router.
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center py-16">
+          <Spinner />
+        </div>
+      }
+    >
+      <CallLogs />
+    </Suspense>
+  );
+}
+
+function CallLogs() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const { session } = useSession();
+  // Filters live in the URL, so a dashboard day link (or a shared link) opens pre-filtered.
+  const rawDate = params.get("date") ?? "";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : "";
+  const agentId = params.get("agent_id") ?? "";
+  const outcome = params.get("outcome") ?? "";
+  const type = params.get("call_type") ?? "";
   const [page, setPage] = useState(1);
+
+  function setFilter(key: string, value: string) {
+    const next = new URLSearchParams(params.toString());
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setPage(1);
+    const q = next.toString();
+    router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+  }
+
   const qs = new URLSearchParams({ page: String(page), page_size: String(PAGE) });
   if (agentId) qs.set("agent_id", agentId);
   if (outcome) qs.set("outcome", outcome);
   if (type) qs.set("call_type", type);
+  if (date) qs.set("date", date);
   const { data, error } = useSWR<{ items: Call[]; total: number }>(`/api/calls/?${qs}`, fetcher, { refreshInterval: 10000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1;
+  const tz = session?.org?.timezone;
+
+  const chips: { key: string; label: string; title?: string }[] = [];
+  if (date) chips.push({ key: "date", label: formatDay(date), title: tz ? `Calls started on this day, ${timeZoneLabel(tz)}` : undefined });
+  if (agentId) chips.push({ key: "agent_id", label: `Agent ${agents?.find((a) => a.id === agentId)?.name ?? "…"}` });
+  if (outcome) chips.push({ key: "outcome", label: OUTCOME_CHIP[outcome] ?? humanize(outcome) });
+  if (type) chips.push({ key: "call_type", label: TYPE_CHIP[type] ?? humanize(type) });
 
   return (
     <>
       <PageHeader title="Call Logs" description="Every call with its transcript, AI summary and extracted data." />
       <div className="mb-4 flex flex-wrap gap-2">
-        <Select className="w-auto" value={agentId} onChange={(e) => (setAgentId(e.target.value), setPage(1))}>
+        <Select className="sm:w-56" value={agentId} onChange={(e) => setFilter("agent_id", e.target.value)} aria-label="Agent">
           <option value="">All agents</option>
           {agents?.map((a) => (
             <option key={a.id} value={a.id}>
@@ -38,7 +83,7 @@ export default function CallsPage() {
             </option>
           ))}
         </Select>
-        <Select className="w-auto" value={outcome} onChange={(e) => (setOutcome(e.target.value), setPage(1))}>
+        <Select className="sm:w-56" value={outcome} onChange={(e) => setFilter("outcome", e.target.value)} aria-label="Outcome">
           <option value="">All outcomes</option>
           {OUTCOMES.map((o) => (
             <option key={o} value={o}>
@@ -46,12 +91,40 @@ export default function CallsPage() {
             </option>
           ))}
         </Select>
-        <Select className="w-auto" value={type} onChange={(e) => (setType(e.target.value), setPage(1))}>
+        <Select className="sm:w-56" value={type} onChange={(e) => setFilter("call_type", e.target.value)} aria-label="Call type">
           <option value="">Phone + browser</option>
           <option value="outbound">Phone calls</option>
           <option value="web">Browser tests</option>
         </Select>
       </div>
+      {chips.length > 0 && (
+        <div className="-mt-1 mb-4 flex flex-wrap items-center gap-2" aria-label="Active filters">
+          {chips.map((c, i) => (
+            <span key={c.key} className="contents">
+              {i > 0 && <span className="text-xs text-zinc-300" aria-hidden="true">·</span>}
+              <span
+                title={c.title}
+                className="inline-flex max-w-full items-center gap-1 rounded-full border border-brand-200 bg-brand-50 py-0.5 pr-1 pl-2.5 text-xs font-medium text-brand-700"
+              >
+                <span className="truncate">{c.label}</span>
+                <button
+                  type="button"
+                  onClick={() => setFilter(c.key, "")}
+                  aria-label={`Remove filter: ${c.label}`}
+                  className="rounded-full p-0.5 hover:bg-brand-100 focus-visible:outline-2 focus-visible:outline-brand-500"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            </span>
+          ))}
+          {chips.length > 1 && (
+            <button type="button" onClick={() => router.replace(pathname, { scroll: false })} className="text-xs text-zinc-500 underline hover:text-zinc-800">
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
       <Card>
         {error ? (
           <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="Couldn't load calls" description={error.message} />
@@ -60,7 +133,11 @@ export default function CallsPage() {
             <Spinner />
           </div>
         ) : data.items.length === 0 ? (
-          <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="No calls found" description="Test an agent or start a campaign — calls show up here." />
+          chips.length ? (
+            <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="No calls match these filters" description="Remove a filter above to see more calls." />
+          ) : (
+            <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="No calls found" description="Test an agent or start a campaign — calls show up here." />
+          )
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

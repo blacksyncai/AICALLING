@@ -6,7 +6,7 @@ voice test calls, and text playground sessions alike.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, Uuid
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -29,6 +29,8 @@ CALL_OUTCOMES = (
 
 class CallLog(Base):
     __tablename__ = "call_logs"
+    # Dashboard reports read an org's calls by date range.
+    __table_args__ = (Index("ix_call_logs_org_started", "org_id", "started_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 

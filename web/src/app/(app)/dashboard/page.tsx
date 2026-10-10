@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
+import { ActivityHeatmap } from "@/components/dashboard/ActivityHeatmap";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
 import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
@@ -218,6 +219,8 @@ export default function DashboardPage() {
               <span className="text-zinc-500">avg {formatDuration(overview.avg_duration_seconds)} per connected call</span>
             </StatCard>
           </div>
+
+          <ActivityHeatmap />
 
           <Card>
             <div className="flex flex-wrap items-start justify-between gap-2 px-5 pt-5">

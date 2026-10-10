@@ -75,6 +75,13 @@ def _add_missing_columns(sync_conn) -> None:
             col_type = col.type.compile(dialect=sync_conn.dialect)
             sync_conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {col_type}'))
 
+    # create_all() only builds indexes together with brand-new tables, so add
+    # report indexes to existing tables here (idempotent on SQLite and Postgres).
+    if "call_logs" in existing_tables:
+        sync_conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_call_logs_org_started ON call_logs (org_id, started_at)"
+        ))
+
     # Pre-agent Postgres schemas used native enums + a required lead_id; relax
     # them so web/test calls (no lead) and the new outcome values fit.
     if sync_conn.dialect.name == "postgresql" and "call_logs" in existing_tables:
