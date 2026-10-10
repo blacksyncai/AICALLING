@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import "@fontsource-variable/space-grotesk";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
+import { ClerkProvider } from "@clerk/nextjs";
 import { ToastProvider } from "@/components/toast";
+import { clerkAppearance } from "@/lib/clerk";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,7 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="min-h-screen font-sans">
-        <ToastProvider>{children}</ToastProvider>
+        <ClerkProvider appearance={clerkAppearance} signInUrl="/sign-in" signUpUrl="/sign-up" afterSignOutUrl="/sign-in">
+          <ToastProvider>{children}</ToastProvider>
+        </ClerkProvider>
       </body>
     </html>
   );

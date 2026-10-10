@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.account import Invite, Membership, Organization, User
 from app.services.auth import (
@@ -76,6 +77,7 @@ async def session_payload(db: AsyncSession, user: User) -> dict:
         "role": role,
         "impersonating": role == "superadmin",
         "memberships": [{"org_id": str(o.id), "org_name": o.name, "role": m.role} for m, o in rows],
+        "auth_provider": "clerk" if settings.clerk_enabled else "password",
     }
 
 
@@ -95,6 +97,8 @@ async def _find_invite(db: AsyncSession, token: str) -> Invite:
 @router.post("/login")
 async def login(body: LoginBody, request: Request, response: Response,
                 db: Annotated[AsyncSession, Depends(get_db)]):
+    if settings.clerk_enabled:
+        raise HTTPException(status_code=400, detail="Sign in with Clerk on the sign-in page.")
     user = (await db.execute(select(User).where(User.email == normalize_email(body.email)))).scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Wrong email or password")
@@ -173,4 +177,20 @@ async def accept_invite(token: str, body: AcceptInviteBody, request: Request, re
     await db.commit()
     set_session_cookie(response, request, user)
     log.info("invite_accepted", user_id=str(user.id), org_id=str(invite.org_id))
+    return await session_payload(db, user)
+
+
+@router.post("/invites/{token}/join")
+async def join_invite(token: str, user: Annotated[User, Depends(get_current_user)],
+                      db: Annotated[AsyncSession, Depends(get_db)]):
+    """Signed-in users (e.g. via Clerk) join the invite's account with their current login."""
+    invite = await _find_invite(db, token)
+    already = (await db.execute(select(Membership).where(
+        Membership.user_id == user.id, Membership.org_id == invite.org_id))).scalar_one_or_none()
+    if not already:
+        db.add(Membership(user_id=user.id, org_id=invite.org_id, role=invite.role))
+    user.active_org_id = invite.org_id
+    invite.accepted_at = datetime.now(timezone.utc)
+    await db.commit()
+    log.info("invite_joined", user_id=str(user.id), org_id=str(invite.org_id))
     return await session_payload(db, user)

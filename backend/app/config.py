@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     auth_password: str = ""
     house_org_name: str = "BlackSync"
 
+    # ── Clerk (sign-in) ───────────────────────────────────────────────────────
+    # When set, Clerk handles sign-in/sign-up and BlackSync links each Clerk user
+    # to its own user record (accounts, roles and credits stay in BlackSync).
+    clerk_secret_key: str = ""
+    # Extra platform super-admins, by the email they sign in to Clerk with.
+    superadmin_emails: str = ""
+
     # ── Email (team invites) ──────────────────────────────────────────────────
     # Without a Resend key, invites still work — the UI shows a link to share.
     resend_api_key: str = ""
@@ -102,6 +109,17 @@ class Settings(BaseSettings):
         """WEBHOOK_BASE_URL with a scheme (hosts give a bare host:port on private networks)."""
         url = self.webhook_base_url.strip().rstrip("/")
         return url if "://" in url else f"http://{url}"
+
+    @property
+    def clerk_enabled(self) -> bool:
+        return bool(self.clerk_secret_key)
+
+    @property
+    def superadmin_email_set(self) -> set[str]:
+        emails = {e.strip().lower() for e in self.superadmin_emails.split(",") if e.strip()}
+        if self.auth_email:
+            emails.add(self.auth_email.strip().lower())
+        return emails
 
     @property
     def cors_origins_list(self) -> list[str]:

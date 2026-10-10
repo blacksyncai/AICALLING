@@ -7,6 +7,10 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
+# Clerk's publishable key is baked into the browser bundle at build time.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=""
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY \
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 ENV NEXT_TELEMETRY_DISABLED=1 NEXT_STANDALONE=1 BACKEND_ORIGIN=http://127.0.0.1:8000
 RUN npm run build
 

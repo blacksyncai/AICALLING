@@ -4,6 +4,7 @@ import {
   Bot, ChevronsUpDown, Coins, Contact, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug, Settings,
   ShieldCheck, UserRound, X,
 } from "lucide-react";
+import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -121,20 +122,24 @@ function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
           </button>
         </div>
       )}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-white/5"
-        aria-expanded={open}
-      >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full brand-gradient text-xs font-semibold text-white">
-          {initials(name)}
+      <div className="flex items-center gap-1">
+        {/* Clerk's account menu: profile photo, sign-in methods, security, sign out. */}
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center">
+          <UserButton appearance={{ elements: { avatarBox: "h-8 w-8" } }} />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-white">{name}</span>
-          <span className="block truncate text-xs text-zinc-400">{session.org?.name ?? "No account"}</span>
-        </span>
-        <ChevronsUpDown className="h-4 w-4 shrink-0 text-zinc-500" />
-      </button>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-white/5"
+          aria-expanded={open}
+          aria-label="Account menu"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-white">{name}</span>
+            <span className="block truncate text-xs text-zinc-400">{session.org?.name ?? "No account"}</span>
+          </span>
+          <ChevronsUpDown className="h-4 w-4 shrink-0 text-zinc-500" />
+        </button>
+      </div>
     </div>
   );
 }

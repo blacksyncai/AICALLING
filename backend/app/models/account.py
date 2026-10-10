@@ -42,7 +42,9 @@ class User(Base):
     first_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     last_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     phone: Mapped[str] = mapped_column(String(50), nullable=False, default="")
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Empty for users who sign in through Clerk.
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    clerk_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     # Platform admin: sees the admin portal and can open every organization.
     is_superadmin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # The organization the user is currently working in.

@@ -21,6 +21,8 @@ from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.routers.account import create_invite, credit_tx_to_dict, team_payload
 from app.routers.auth import org_to_dict, user_to_dict
+from app.config import settings
+from app.services import clerk
 from app.services.accounts import adjust_credits, create_organization
 from app.services.auth import DbDep, SuperadminDep, generate_password, hash_password, normalize_email
 
@@ -54,6 +56,22 @@ class CreditGrant(BaseModel):
 class AdminInvite(BaseModel):
     email: str
     role: str = "member"
+
+
+async def _clerk_login(email: str, password: str, first: str, last: str,
+                       reset_existing: bool = False) -> tuple[str, bool]:
+    """A Clerk login for this email: created with the password, or the existing one (whose
+    password is only replaced when resetting). Returns (clerk user id, created)."""
+    try:
+        existing = await clerk.find_user_by_email(email)
+        if existing:
+            if reset_existing:
+                await clerk.set_password(existing["id"], password)
+            return existing["id"], reset_existing
+        created = await clerk.create_user(email, password, first, last)
+        return created["id"], True
+    except clerk.ClerkError as exc:
+        raise HTTPException(status_code=502, detail=f"Clerk: {exc}")
 
 
 async def _org_or_404(db, org_id: uuid.UUID) -> Organization:
@@ -148,16 +166,25 @@ async def create_org(body: OrgCreate, request: Request, admin: SuperadminDep, db
         result.update(owner_status="invited", invite_url=invite["invite_url"], emailed=invite["emailed"])
     else:
         password = body.password or generate_password()
+        clerk_id, clerk_created = None, True
+        if settings.clerk_enabled:
+            # The owner signs in through Clerk, so their login (and password) lives there.
+            clerk_id, clerk_created = await _clerk_login(email, password, body.owner_first_name.strip(),
+                                                         body.owner_last_name.strip())
         owner = User(
             id=uuid.uuid4(), email=email, first_name=body.owner_first_name.strip(),
             last_name=body.owner_last_name.strip(), phone=body.owner_phone.strip(),
-            password_hash=hash_password(password), active_org_id=org.id,
+            password_hash="" if settings.clerk_enabled else hash_password(password),
+            clerk_user_id=clerk_id, active_org_id=org.id,
         )
         db.add(owner)
         await db.flush()
         db.add(Membership(user_id=owner.id, org_id=org.id, role="owner"))
         await db.commit()
-        result.update(owner_status="created", temporary_password=None if body.password else password)
+        if clerk_created:
+            result.update(owner_status="created", temporary_password=None if body.password else password)
+        else:
+            result["owner_status"] = "existing_user_added"
     log.info("admin_created_org", org_id=str(org.id), by=str(admin.id))
     await db.refresh(org)
     return {**org_to_dict(org), **result, "login_email": email}
@@ -229,7 +256,17 @@ async def reset_password(user_id: uuid.UUID, admin: SuperadminDep, db: DbDep):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     password = generate_password()
-    user.password_hash = hash_password(password)
+    if settings.clerk_enabled:
+        if user.clerk_user_id:
+            try:
+                await clerk.set_password(user.clerk_user_id, password)
+            except clerk.ClerkError as exc:
+                raise HTTPException(status_code=502, detail=f"Clerk: {exc}")
+        else:
+            user.clerk_user_id, _ = await _clerk_login(user.email, password, user.first_name, user.last_name,
+                                                       reset_existing=True)
+    else:
+        user.password_hash = hash_password(password)
     user.session_version += 1
     await db.commit()
     log.info("admin_reset_password", user_id=str(user.id), by=str(admin.id))

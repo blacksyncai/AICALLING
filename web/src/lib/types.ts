@@ -184,6 +184,7 @@ export interface Session {
   role: Role | "superadmin";
   impersonating: boolean;
   memberships: { org_id: string; org_name: string; role: Role }[];
+  auth_provider: "clerk" | "password";
 }
 
 export interface Member extends User {

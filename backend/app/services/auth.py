@@ -25,6 +25,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -160,6 +161,8 @@ class Context:
 
 
 async def get_current_user(request: Request, db: Annotated[AsyncSession, Depends(get_db)]) -> User:
+    if settings.clerk_enabled:
+        return await _clerk_user(request, db)
     token = request.cookies.get(COOKIE_NAME)
     parsed = parse_session_token(token) if token else None
     if not parsed:
@@ -167,6 +170,70 @@ async def get_current_user(request: Request, db: Annotated[AsyncSession, Depends
     user = await db.get(User, parsed[0])
     if not user or user.session_version != parsed[1]:
         raise HTTPException(status_code=401, detail="Session expired — sign in again")
+    return user
+
+
+async def _clerk_user(request: Request, db: AsyncSession) -> User:
+    """The BlackSync user behind a Clerk session token, linked (or created) on first sign-in."""
+    from app.services import clerk
+
+    auth = request.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else request.cookies.get("__session", "")
+    clerk_id = await clerk.verify_session_token(token) if token else None
+    if not clerk_id:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    user = (await db.execute(select(User).where(User.clerk_user_id == clerk_id))).scalar_one_or_none()
+    if user:
+        return user
+    try:
+        profile = await clerk.get_user(clerk_id)
+    except clerk.ClerkError as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't reach Clerk: {exc}")
+    try:
+        return await link_clerk_user(db, clerk_id, profile)
+    except IntegrityError:
+        # Two first requests raced to link the same login; the other one won.
+        await db.rollback()
+        user = (await db.execute(select(User).where(User.clerk_user_id == clerk_id))).scalar_one_or_none()
+        if not user:
+            raise
+        return user
+
+
+async def link_clerk_user(db: AsyncSession, clerk_id: str, profile: dict) -> User:
+    """First sign-in: attach the Clerk user to the BlackSync user with the same email (or
+    create one), make listed emails platform admins, and accept any invites waiting for them."""
+    from app.models.account import Invite
+    from app.services import clerk
+
+    email = clerk.primary_email(profile)
+    if not email:
+        raise HTTPException(status_code=403, detail="Your Clerk account needs an email address.")
+    user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if user is None:
+        user = User(id=uuid.uuid4(), email=email, password_hash="")
+        db.add(user)
+    user.clerk_user_id = clerk_id
+    user.first_name = user.first_name if user.first_name not in ("", "Admin") else (profile.get("first_name") or "")
+    user.last_name = user.last_name or (profile.get("last_name") or "")
+    if email in settings.superadmin_email_set:
+        user.is_superadmin = True
+    await db.flush()
+
+    now = datetime.now(timezone.utc)
+    invites = (await db.execute(select(Invite).where(Invite.email == email, Invite.accepted_at.is_(None)))).scalars()
+    for invite in invites:
+        expires = invite.expires_at if invite.expires_at.tzinfo else invite.expires_at.replace(tzinfo=timezone.utc)
+        if expires < now:
+            continue
+        member = (await db.execute(select(Membership).where(
+            Membership.user_id == user.id, Membership.org_id == invite.org_id))).scalar_one_or_none()
+        if not member:
+            db.add(Membership(user_id=user.id, org_id=invite.org_id, role=invite.role))
+        invite.accepted_at = now
+        user.active_org_id = invite.org_id
+    user.last_login_at = now
+    await db.commit()
     return user
 
 

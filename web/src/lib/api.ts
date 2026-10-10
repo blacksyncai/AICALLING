@@ -1,3 +1,5 @@
+import { sessionToken } from "@/lib/clerk";
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -5,14 +7,20 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Clerk session tokens are short-lived; send a fresh one with every request.
+  const token = await sessionToken();
   const res = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init.headers ?? {}),
+    },
   });
   if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/")) {
-    // Session ended (signed out elsewhere, password changed, expired) — back to sign in.
+    // Session ended (signed out elsewhere or expired) — back to sign in.
     const next = window.location.pathname + window.location.search;
-    window.location.href = `/login?next=${encodeURIComponent(next)}`;
+    window.location.href = `/sign-in?redirect_url=${encodeURIComponent(next)}`;
   }
   if (!res.ok) {
     let message = `Request failed (${res.status})`;

@@ -3,6 +3,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import useSWR, { type KeyedMutator } from "swr";
 import { fetcher, post } from "@/lib/api";
+import { clerkInstance } from "@/lib/clerk";
 import type { Session } from "@/lib/types";
 
 type SessionCtx = {
@@ -34,8 +35,9 @@ export async function switchOrg(orgId: string | null, goTo = "/dashboard") {
 }
 
 export async function signOut() {
-  await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-  window.location.href = "/login";
+  const clerk = clerkInstance();
+  if (clerk) await clerk.signOut({ redirectUrl: "/sign-in" });
+  else window.location.href = "/sign-in";
 }
 
 export function displayName(u: { first_name: string; last_name: string; email: string }): string {

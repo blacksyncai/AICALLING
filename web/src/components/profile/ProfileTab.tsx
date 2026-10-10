@@ -81,8 +81,8 @@ export function ProfileTab() {
             <Field label="Last name">
               <Input value={form.last_name} onChange={set("last_name")} autoComplete="family-name" />
             </Field>
-            <Field label="Email" hint="You sign in with this address.">
-              <Input type="email" value={form.email} onChange={set("email")} autoComplete="email" required />
+            <Field label="Email" hint="Your sign-in email — change it under Security.">
+              <Input type="email" value={form.email} readOnly disabled />
             </Field>
             <Field label="Phone">
               <Input type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" placeholder="+1 555 123 4567" />

@@ -1,19 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// Pages need a session cookie; the API (proxied to the backend) checks the session itself.
-const SESSION_COOKIE = "bs_session";
-const PUBLIC = ["/login", "/invite/"];
+// Pages need a Clerk session. The API (proxied to the backend) verifies the session
+// itself, and sign-in, sign-up and invite links must open while signed out.
+const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/login", "/invite(.*)", "/api/(.*)"]);
 
-export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-  if (PUBLIC.some((p) => pathname.startsWith(p))) return NextResponse.next();
-  if (req.cookies.get(SESSION_COOKIE)?.value) return NextResponse.next();
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
-  url.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
-  return NextResponse.redirect(url);
-}
+export default clerkMiddleware(async (auth, req) => {
+  if (!isPublic(req)) await auth.protect();
+});
 
 export const config = {
-  matcher: ["/((?!api/|_next/static|_next/image|favicon).*)"],
+  matcher: [
+    // Skip Next.js internals and all static files, unless found in search params
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api|trpc)(.*)",
+    // Always run for Clerk's auto-proxy path
+    "/__clerk/:path*",
+  ],
 };
