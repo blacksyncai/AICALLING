@@ -8,8 +8,11 @@ import time
 
 import httpx
 import structlog
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
+from app.agent.voices import FEATURED_VOICES
 from app.config import settings
 
 log = structlog.get_logger(__name__)
@@ -52,14 +55,14 @@ async def integration_status():
 @router.get("/voices")
 async def list_voices():
     if not settings.cartesia_api_key:
-        return {"source": "fallback", "voices": _FALLBACK_VOICES}
+        return {"source": "fallback", "voices": _FALLBACK_VOICES, "featured": FEATURED_VOICES}
     if _voice_cache["voices"] and time.time() - _voice_cache["at"] < 3600:
-        return {"source": "cartesia", "voices": _voice_cache["voices"]}
+        return {"source": "cartesia", "voices": _voice_cache["voices"], "featured": FEATURED_VOICES}
     try:
         voices: list[dict] = []
         params: dict = {"limit": 100}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for _ in range(5):  # paginate a little; the public library is large
+            for _ in range(10):  # the public library is large; cap at ~1000 voices
                 resp = await client.get(
                     "https://api.cartesia.ai/voices",
                     headers={
@@ -83,11 +86,62 @@ async def list_voices():
                 if not (isinstance(body, dict) and body.get("has_more") and items):
                     break
                 params["starting_after"] = items[-1].get("id")
+        # Voices you cloned in Cartesia go first, marked as yours.
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.cartesia.ai/voices",
+                    headers={"Authorization": f"Bearer {settings.cartesia_api_key}",
+                             "Cartesia-Version": "2025-04-16"},
+                    params={"limit": 100, "is_owner": "true"},
+                )
+                resp.raise_for_status()
+                body = resp.json()
+                owned = body.get("data", []) if isinstance(body, dict) else body
+            owned_ids = {v.get("id") for v in owned}
+            mine = [{"id": v.get("id"), "name": v.get("name"), "gender": v.get("gender") or "",
+                     "language": v.get("language") or "", "description": (v.get("description") or "")[:140],
+                     "mine": True} for v in owned]
+            voices = mine + [v for v in voices if v["id"] not in owned_ids]
+        except Exception as exc:
+            log.debug("cartesia_owned_voices_failed", error=str(exc))
         voices = [v for v in voices if v["id"]]
         if not voices:
-            return {"source": "fallback", "voices": _FALLBACK_VOICES}
+            return {"source": "fallback", "voices": _FALLBACK_VOICES, "featured": FEATURED_VOICES}
         _voice_cache.update(at=time.time(), voices=voices)
-        return {"source": "cartesia", "voices": voices}
+        return {"source": "cartesia", "voices": voices, "featured": FEATURED_VOICES}
     except Exception as exc:
         log.warning("cartesia_voices_failed", error=str(exc))
-        return {"source": "fallback", "voices": _FALLBACK_VOICES}
+        return {"source": "fallback", "voices": _FALLBACK_VOICES, "featured": FEATURED_VOICES}
+
+
+class VoicePreview(BaseModel):
+    voice_id: str
+    text: str = Field(default="Hi, this is your AI agent. How does this voice sound?", max_length=300)
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    language: str = "en"
+
+
+@router.post("/voices/preview")
+async def preview_voice(body: VoicePreview):
+    """Speak a short line in the chosen voice (WAV) so it can be auditioned in the editor."""
+    if not settings.cartesia_api_key:
+        raise HTTPException(status_code=400, detail="Set CARTESIA_API_KEY to preview voices.")
+    lang = body.language if body.language not in ("multi", "") else "en"
+    payload = {
+        "model_id": "sonic-3",
+        "transcript": body.text,
+        "voice": {"mode": "id", "id": body.voice_id.strip()},
+        "output_format": {"container": "wav", "encoding": "pcm_s16le", "sample_rate": 24000},
+        "language": lang,
+        "generation_config": {"speed": body.speed},
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            "https://api.cartesia.ai/tts/bytes",
+            headers={"Authorization": f"Bearer {settings.cartesia_api_key}", "Cartesia-Version": "2025-04-16"},
+            json=payload,
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Cartesia: {resp.text[:200]}")
+    return Response(content=resp.content, media_type="audio/wav")

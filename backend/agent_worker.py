@@ -33,6 +33,7 @@ from livekit.agents import (
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from app.agent.prompt import build_system_prompt
+from app.agent.voices import DEFAULT_VOICE_ID
 from app.agent.state import CallState
 from app.config import settings
 
@@ -651,6 +652,20 @@ class _CallRun:
         self.meeting_time = ""
         self.email = ""
         self.t0 = 0.0
+        self.lat: dict[str, list[float]] = {"eou": [], "llm": [], "tts": []}
+
+    def latency_summary(self) -> dict | None:
+        avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
+        eou, llm, tts = avg(self.lat["eou"]), avg(self.lat["llm"]), avg(self.lat["tts"])
+        if eou is None and llm is None:
+            return None
+        return {
+            "turns": len(self.lat["llm"]),
+            "avg_eou": eou,
+            "avg_llm_ttft": llm,
+            "avg_tts_ttfb": tts,
+            "avg_response": round(sum(v for v in (eou, llm, tts) if v), 3),
+        }
 
 
 async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
@@ -668,6 +683,7 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
                     "meeting_link": run.meeting_link or None,
                     "prospect_email": run.email,
                     "transcript": run.transcript,
+                    "metrics": run.latency_summary(),
                 },
             )
         log.info("call_outcome_posted", call_log_id=run.call_log_id, outcome=outcome)
@@ -860,7 +876,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         ),
         tts=cartesia.TTS(
             model="sonic-3",
-            voice=cfg.get("voice_id") or _BLAKE_VOICE_ID,
+            voice=cfg.get("voice_id") or DEFAULT_VOICE_ID,
             language=None if language in ("en", "multi") else language,
             speed=float(cfg.get("voice_speed") or 1.0),
             api_key=settings.cartesia_api_key,
@@ -873,6 +889,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 "false_interruption_timeout": 3.0,
                 "resume_false_interruption": True,
             },
+            # Latency: answer ~350 ms after the caller stops (adapts per caller),
+            # and start drafting the reply — including audio — before the turn is final.
+            "endpointing": {"mode": "dynamic", "min_delay": 0.35, "max_delay": 2.5},
+            "preemptive_generation": {"enabled": True, "preemptive_tts": True},
         },
     )
     if turn_detector:
@@ -882,6 +902,22 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     session = AgentSession(**session_kwargs)
     session_ref: dict = {"session": session}
+
+    # Per-turn latency: end-of-turn delay + LLM first token + TTS first audio.
+    def _on_metrics(ev) -> None:
+        m = getattr(ev, "metrics", None)
+        kind = getattr(m, "type", "")
+        try:
+            if kind == "eou_metrics":
+                run.lat["eou"].append(float(m.end_of_utterance_delay))
+            elif kind == "llm_metrics" and m.ttft > 0:
+                run.lat["llm"].append(float(m.ttft))
+            elif kind == "tts_metrics" and m.ttfb > 0:
+                run.lat["tts"].append(float(m.ttfb))
+        except Exception:
+            pass
+
+    session.on("metrics_collected", _on_metrics)
     channel = "phone" if call_type == "outbound" else "web"
     agent = Agent(
         instructions=build_instructions(cfg, variables, channel=channel),

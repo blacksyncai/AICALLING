@@ -6,6 +6,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { ChatPanel } from "@/components/agent/ChatPanel";
 import { PhonePanel } from "@/components/agent/PhonePanel";
+import { VoicePicker } from "@/components/agent/VoicePicker";
 import { WebCallPanel } from "@/components/agent/WebCallPanel";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, Field, Input, Notice, Select, Spinner, Tabs, Textarea, Toggle } from "@/components/ui";
@@ -54,7 +55,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
   const toast = useToast();
   const { data: saved, mutate, error } = useSWR<Agent>(`/api/agents/${id}`, fetcher, { revalidateOnFocus: false });
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
-  const { data: voices } = useSWR<{ source: string; voices: Voice[] }>("/api/settings/voices", fetcher, { revalidateOnFocus: false });
+  const { data: voices } = useSWR<{ source: string; voices: Voice[]; featured?: Voice[] }>("/api/settings/voices", fetcher, { revalidateOnFocus: false });
 
   const [draft, setDraft] = useState<Agent | null>(null);
   const [section, setSection] = useState<Section>("prompt");
@@ -142,7 +143,6 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
     toast(`Added ${file.name} to knowledge`);
   }
 
-  const voiceKnown = voices?.voices.some((v) => v.id === draft.voice_id);
   const caps = status?.capabilities;
 
   return (
@@ -263,25 +263,18 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
 
           {section === "voice" && (
             <div className="grid gap-5 sm:grid-cols-2">
-              <Field
-                label="Voice"
-                className="sm:col-span-2"
-                hint={voices?.source === "fallback" ? "Add CARTESIA_API_KEY to browse the full Cartesia voice library." : `${voices?.voices.length ?? 0} Cartesia voices`}
-              >
-                <Select value={voiceKnown ? draft.voice_id : "__custom"} onChange={(e) => e.target.value !== "__custom" && set("voice_id", e.target.value)}>
-                  {voices?.voices.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}
-                      {v.gender ? ` · ${v.gender}` : ""}
-                      {v.language ? ` · ${v.language}` : ""}
-                    </option>
-                  ))}
-                  <option value="__custom">Custom voice ID…</option>
-                </Select>
-              </Field>
-              <Field label="Cartesia voice ID" className="sm:col-span-2">
-                <Input value={draft.voice_id} onChange={(e) => set("voice_id", e.target.value.trim())} className="font-mono text-xs" />
-              </Field>
+              <div className="sm:col-span-2">
+                <div className="mb-1.5 text-xs font-medium text-zinc-700">Voice</div>
+                <VoicePicker
+                  voices={voices?.voices ?? []}
+                  featured={voices?.featured ?? []}
+                  source={voices?.source}
+                  value={draft.voice_id}
+                  speed={draft.voice_speed}
+                  language={draft.language}
+                  onChange={(id) => set("voice_id", id)}
+                />
+              </div>
               <Field label={`Speaking speed · ${draft.voice_speed.toFixed(2)}x`}>
                 <input
                   type="range"

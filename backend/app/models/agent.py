@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.agent.voices import DEFAULT_VOICE_ID
 from app.database import Base
 
 
@@ -37,9 +38,7 @@ class Agent(Base):
     # ── Model / voice ─────────────────────────────────────────────────────────
     llm_model: Mapped[str] = mapped_column(String(64), nullable=False, default="gpt-4.1-mini")
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
-    voice_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, default="a167e0f3-df7e-4d52-a9c3-f949145efdab"
-    )
+    voice_id: Mapped[str] = mapped_column(String(128), nullable=False, default=DEFAULT_VOICE_ID)
     voice_speed: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     background_audio: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

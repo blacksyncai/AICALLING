@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runtime import agent_to_runtime
 from app.agent.templates import TEMPLATES, get_template
+from app.agent.voices import DEFAULT_VOICE_ID
 from app.database import get_db
 from app.models.agent import Agent
 from app.models.call_log import CallLog
@@ -120,6 +121,7 @@ def new_agent_from_template(key: str, name: str | None = None) -> Agent:
         success_criteria=t["success_criteria"],
         enable_booking=t["enable_booking"],
         llm_model=t.get("llm_model", "gpt-4.1-mini"),
+        voice_id=DEFAULT_VOICE_ID,
     )
 
 

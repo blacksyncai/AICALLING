@@ -67,6 +67,8 @@ class CallLog(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     sentiment: Mapped[str | None] = mapped_column(String(16), nullable=True)
     extracted_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Voice latency: {"turns": n, "avg_response": s, "avg_eou": s, "avg_llm_ttft": s, "avg_tts_ttfb": s}
+    metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # ── Timestamps ────────────────────────────────────────────────────────────
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)

@@ -220,6 +220,7 @@ class CallService:
         db: AsyncSession,
         agreed_meeting_time: str | None = None,
         prospect_email: str | None = None,
+        metrics: dict | None = None,
     ) -> CallLog | None:
         call_log = (await db.execute(
             select(CallLog).where(CallLog.id == uuid.UUID(call_log_id))
@@ -244,6 +245,7 @@ class CallService:
             prospect_email=prospect_email or None,
             duration_seconds=duration,
             ended_at=now,
+            **({"metrics": metrics} if metrics else {}),
         ))
 
         if call_log.lead_id:

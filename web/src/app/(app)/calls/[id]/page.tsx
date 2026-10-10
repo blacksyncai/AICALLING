@@ -126,6 +126,26 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
               )}
             </div>
           </Card>
+          {call.metrics && (
+            <Card>
+              <CardHeader title="Response time" description={`Average over ${call.metrics.turns} agent turns`} />
+              <div className="p-5">
+                <div className="text-2xl font-semibold tabular-nums">{call.metrics.avg_response.toFixed(2)}s</div>
+                <dl className="mt-3 space-y-1.5 text-xs">
+                  {[
+                    ["Waiting for caller to finish", call.metrics.avg_eou],
+                    ["AI first word (LLM)", call.metrics.avg_llm_ttft],
+                    ["Voice first audio (TTS)", call.metrics.avg_tts_ttfb],
+                  ].map(([label, v]) => (
+                    <div key={label as string} className="flex justify-between gap-3">
+                      <dt className="text-zinc-500">{label}</dt>
+                      <dd className="tabular-nums text-zinc-800">{v == null ? "—" : `${Number(v).toFixed(2)}s`}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </Card>
+          )}
           <Card>
             <CardHeader title="Extracted data" />
             <dl className="divide-y divide-zinc-100">

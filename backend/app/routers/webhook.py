@@ -41,6 +41,7 @@ class CallOutcomePayload(BaseModel):
     meeting_link: str | None = None
     prospect_email: str = ""
     transcript: list[dict] | None = None
+    metrics: dict | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -134,6 +135,7 @@ async def call_outcome(
         qualification_score=body.qualification_score,
         agreed_meeting_time=body.agreed_meeting_time or None,
         prospect_email=body.prospect_email or None,
+        metrics=body.metrics,
         db=db,
     )
 

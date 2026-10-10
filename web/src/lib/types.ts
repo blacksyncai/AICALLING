@@ -94,6 +94,7 @@ export interface Call {
   ended_at: string | null;
   transcript?: TranscriptTurn[];
   extracted_data?: Record<string, unknown>;
+  metrics?: { turns: number; avg_response: number; avg_eou: number | null; avg_llm_ttft: number | null; avg_tts_ttfb: number | null } | null;
   prospect_email?: string | null;
 }
 
@@ -124,6 +125,7 @@ export interface Voice {
   gender?: string;
   language?: string;
   description?: string;
+  mine?: boolean;
 }
 
 export interface ChatTurn {

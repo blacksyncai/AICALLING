@@ -56,6 +56,7 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
     if full:
         d["transcript"] = c.transcript or []
         d["extracted_data"] = c.extracted_data or {}
+        d["metrics"] = c.metrics or None
         d["prospect_email"] = c.prospect_email
         d["livekit_room_name"] = c.livekit_room_name
         d["lead_id"] = str(c.lead_id) if c.lead_id else None
