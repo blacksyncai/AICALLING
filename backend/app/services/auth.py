@@ -128,7 +128,9 @@ def parse_session_token(token: str) -> tuple[uuid.UUID, int] | None:
 
 
 def set_session_cookie(response: Response, request: Request, user: User) -> None:
-    https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    # Behind the web app's proxy the hop to us is plain HTTP, so also trust the browser's Origin.
+    https = (request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+             or request.headers.get("origin", "").startswith("https://"))
     response.set_cookie(
         COOKIE_NAME, create_session_token(user), max_age=SESSION_TTL_S,
         httponly=True, samesite="lax", secure=https, path="/",
