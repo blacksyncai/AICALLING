@@ -7,7 +7,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { ChatPanel } from "@/components/agent/ChatPanel";
 import { PhonePanel } from "@/components/agent/PhonePanel";
-import { VoicePicker } from "@/components/agent/VoicePicker";
+import { VoiceModelSettings } from "@/components/agent/VoiceModelSettings";
 import { WebCallPanel } from "@/components/agent/WebCallPanel";
 import { CreatedBanner } from "@/components/agent-editor/CreatedBanner";
 import { ImproveWithAI } from "@/components/agent-editor/ImproveWithAI";
@@ -15,7 +15,7 @@ import { assemblePrompt, humanizeKey } from "@/components/agent-editor/prompt";
 import { CheckList, ReadinessCard, type Readiness } from "@/components/agent-editor/ReadinessCard";
 import { SectionsEditor } from "@/components/agent-editor/SectionsEditor";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, Field, Input, Modal, Notice, Select, Spinner, Tabs, Textarea, Toggle } from "@/components/ui";
+import { Badge, Button, Card, Field, Input, Modal, Notice, Spinner, Tabs, Textarea, Toggle } from "@/components/ui";
 import { fetcher, patch } from "@/lib/api";
 import type { Agent, SettingsStatus, Voice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -31,19 +31,6 @@ const SECTIONS: { value: Section; label: string; icon: typeof Brain }[] = [
   { value: "analysis", label: "Post-call analysis", icon: Sparkles },
 ];
 
-const LLM_MODELS = ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"];
-const LANGUAGES = [
-  ["en", "English"],
-  ["multi", "Multilingual (auto)"],
-  ["es", "Spanish"],
-  ["fr", "French"],
-  ["de", "German"],
-  ["pt", "Portuguese"],
-  ["it", "Italian"],
-  ["nl", "Dutch"],
-  ["hi", "Hindi"],
-  ["ja", "Japanese"],
-];
 const VARIABLES = ["name", "full_name", "company", "email", "phone", "role"];
 
 const EDITABLE: (keyof Agent)[] = [
@@ -442,78 +429,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
 
-          {section === "voice" && (
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <div className="mb-1.5 text-xs font-medium text-zinc-700">Voice</div>
-                <VoicePicker
-                  voices={voices?.voices ?? []}
-                  featured={voices?.featured ?? []}
-                  loading={!voices}
-                  source={voices?.source}
-                  value={draft.voice_id}
-                  speed={draft.voice_speed}
-                  language={draft.language}
-                  onChange={(id) => set("voice_id", id)}
-                />
-              </div>
-              <Field label={`Speaking speed · ${draft.voice_speed.toFixed(2)}x`}>
-                <input
-                  type="range"
-                  min={0.7}
-                  max={1.3}
-                  step={0.01}
-                  value={draft.voice_speed}
-                  onChange={(e) => set("voice_speed", Number(e.target.value))}
-                  className="w-full accent-brand-600"
-                />
-              </Field>
-              <Field label="Language">
-                <Select value={draft.language} onChange={(e) => set("language", e.target.value)}>
-                  {LANGUAGES.map(([v, l]) => (
-                    <option key={v} value={v}>
-                      {l}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="LLM model" hint="gpt-4.1-mini is fast and cheap; gpt-4.1 follows complex prompts better.">
-                <Select value={draft.llm_model} onChange={(e) => set("llm_model", e.target.value)}>
-                  {[...new Set([draft.llm_model, ...LLM_MODELS])].map((m) => (
-                    <option key={m}>{m}</option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={`Creativity (temperature) · ${draft.temperature.toFixed(1)}`} hint="Lower = more consistent, higher = more varied.">
-                <input
-                  type="range"
-                  min={0}
-                  max={1.2}
-                  step={0.1}
-                  value={draft.temperature}
-                  onChange={(e) => set("temperature", Number(e.target.value))}
-                  className="w-full accent-brand-600"
-                />
-              </Field>
-              <Field label="Max call length (minutes)">
-                <Input
-                  type="number"
-                  min={1}
-                  max={60}
-                  value={Math.round(draft.max_duration_seconds / 60)}
-                  onChange={(e) => set("max_duration_seconds", Math.min(60, Math.max(1, Number(e.target.value) || 1)) * 60)}
-                />
-              </Field>
-              <div className="sm:col-span-2">
-                <Toggle
-                  checked={draft.background_audio}
-                  onChange={(v) => set("background_audio", v)}
-                  label="Office background ambience"
-                  description="Plays subtle call-center noise on phone calls so the agent sounds like it's on a sales floor."
-                />
-              </div>
-            </div>
-          )}
+          {section === "voice" && <VoiceModelSettings draft={draft} set={set} voices={voices} />}
 
           {section === "actions" && (
             <div className="space-y-5">

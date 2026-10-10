@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # ── STT / TTS ─────────────────────────────────────────────────────────────
     deepgram_api_key: str = ""
     cartesia_api_key: str = ""
+    # Voice picker categories. Premium = the featured house voices + voices
+    # owned/cloned in your Cartesia account + any ids listed here (comma-separated).
+    voice_premium_label: str = "Premium Human Voices"
+    voice_standard_label: str = "Standard AI Voices"
+    premium_voice_ids: str = ""
 
     # ── Database ──────────────────────────────────────────────────────────────
     # Defaults to a local SQLite file so the app runs with no Postgres.

@@ -4,7 +4,9 @@ Settings router — which integrations are configured, and the voice catalog.
 
 from __future__ import annotations
 
+import re
 import time
+from collections import OrderedDict
 
 import httpx
 import structlog
@@ -12,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.agent.voices import FEATURED_VOICES
+from app.agent.models import LANGUAGES, RUNTIME_DEFAULT_MODEL, model_catalog, model_groups
+from app.agent.voices import FEATURED_VOICES, VOICE_MODELS
 from app.config import settings
 from app.services.auth import get_current_user
 
@@ -27,7 +30,150 @@ _FALLBACK_VOICES = [
     {"id": "a0e99841-438c-4a64-b679-ae501e7d6091", "name": "Barbershop Man", "gender": "male", "language": "en"},
 ]
 
-_voice_cache: dict = {"at": 0.0, "voices": None}
+_CARTESIA_URL = "https://api.cartesia.ai"
+_CARTESIA_VERSION = "2025-04-16"
+_CACHE_TTL = 3600
+
+# Raw Cartesia items, cached for an hour: {"at", "public", "owned"}.
+_voice_cache: dict = {"at": 0.0, "public": None, "owned": None}
+
+# Accent words looked for in a voice's own name/description (longest first so
+# "Latin American" wins over "American"). No match → accent is null.
+_ACCENTS = [
+    "Latin American", "New Zealand", "South African", "New York", "European Portuguese",
+    "American", "British", "Australian", "Canadian", "Irish", "Scottish", "Welsh", "Indian",
+    "Southern", "Nigerian", "Kenyan", "Jamaican", "Texan", "Midwestern", "Californian",
+    "Cockney", "Mexican", "Castilian", "Argentinian", "Argentine", "Colombian", "Brazilian",
+    "Parisian", "Quebecois", "Québécois", "Swiss", "Austrian", "Filipino", "Singaporean",
+]
+_ACCENT_RE = re.compile(r"\b(" + "|".join(re.escape(a) for a in _ACCENTS) + r")\b", re.IGNORECASE)
+_GENDERS = {"feminine": "female", "female": "female", "masculine": "male", "male": "male",
+            "gender_neutral": "neutral", "neutral": "neutral"}
+
+
+def _headers() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.cartesia_api_key}",
+        "X-API-Key": settings.cartesia_api_key,
+        "Cartesia-Version": _CARTESIA_VERSION,
+    }
+
+
+async def _fetch_cartesia_voices() -> tuple[list[dict], list[dict]]:
+    """(public library, account-owned voices) straight from Cartesia."""
+    public: list[dict] = []
+    params: dict = {"limit": 100}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for _ in range(10):  # the public library is large; cap at ~1000 voices
+            resp = await client.get(f"{_CARTESIA_URL}/voices", headers=_headers(), params=params)
+            resp.raise_for_status()
+            body = resp.json()
+            items = body.get("data", []) if isinstance(body, dict) else body
+            public.extend(items)
+            if not (isinstance(body, dict) and body.get("has_more") and items):
+                break
+            params["starting_after"] = items[-1].get("id")
+    owned: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{_CARTESIA_URL}/voices", headers=_headers(),
+                                    params={"limit": 100, "is_owner": "true"})
+            resp.raise_for_status()
+            body = resp.json()
+            owned = body.get("data", []) if isinstance(body, dict) else body
+    except Exception as exc:
+        log.debug("cartesia_owned_voices_failed", error=str(exc))
+    return public, owned
+
+
+def _premium_ids(owned_ids: set[str]) -> list[str]:
+    extra = [i.strip() for i in (settings.premium_voice_ids or "").split(",") if i.strip()]
+    return list(dict.fromkeys([v["id"] for v in FEATURED_VOICES] + sorted(owned_ids) + extra))
+
+
+def _accent(raw: dict) -> str | None:
+    if "accent" in raw:  # explicit metadata (or already resolved) — use as-is
+        return raw["accent"].strip() or None if isinstance(raw["accent"], str) else None
+    m = _ACCENT_RE.search(f"{raw.get('name') or ''} {raw.get('description') or ''}")
+    if not m:
+        return None
+    hit = m.group(1).lower()
+    return next(a for a in _ACCENTS if a.lower() == hit)
+
+
+def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> dict:
+    gender = _GENDERS.get(str(raw.get("gender") or "").strip().lower())
+    out = {
+        "id": raw.get("id"),
+        "name": raw.get("name") or raw.get("id"),
+        "provider": "cartesia",
+        "category": "premium" if premium else "standard",
+        "language": (raw.get("language") or None),
+        "accent": _accent(raw),
+        "gender": gender,
+        "description": (raw.get("description") or "")[:200],
+        "is_clone": owned,
+        "preview": can_preview,
+        "models": list(VOICE_MODELS),
+        "status": "available",
+    }
+    if owned:
+        out["mine"] = True  # kept for older clients
+    return out
+
+
+def build_catalog(public: list[dict], owned: list[dict], *, can_preview: bool) -> list[dict]:
+    """Merge featured + owned + public voices into one categorized, de-duplicated list.
+
+    Order: premium (featured, then owned, then PREMIUM_VOICE_IDS), then standard.
+    Catalog metadata wins over the featured list's; featured descriptions fill gaps.
+    """
+    owned_ids = {v.get("id") for v in owned if v.get("id")}
+    premium = _premium_ids(owned_ids)
+    premium_set = set(premium)
+    by_id: dict[str, dict] = {}
+    for raw in [*owned, *public]:
+        if raw.get("id") and raw["id"] not in by_id:
+            by_id[raw["id"]] = raw
+    for f in FEATURED_VOICES:
+        # Catalog metadata (language, gender…) + the house name/description.
+        cat = {k: v for k, v in (by_id.get(f["id"]) or {}).items() if v not in (None, "")}
+        merged = {**f, **cat, "name": f["name"], "description": f.get("description") or cat.get("description", "")}
+        merged["accent"] = _accent(cat) if cat else None  # from Cartesia's own metadata only
+        by_id[f["id"]] = merged
+    voices = [
+        _normalize(raw, owned=vid in owned_ids, premium=vid in premium_set, can_preview=can_preview)
+        for vid, raw in by_id.items()
+    ]
+    rank = {vid: i for i, vid in enumerate(premium)}
+    voices.sort(key=lambda v: (v["category"] != "premium", rank.get(v["id"], 0)))
+    return voices
+
+
+def _categories(voices: list[dict]) -> list[dict]:
+    return [
+        {"key": "premium", "label": settings.voice_premium_label,
+         "count": sum(v["category"] == "premium" for v in voices)},
+        {"key": "standard", "label": settings.voice_standard_label,
+         "count": sum(v["category"] == "standard" for v in voices)},
+    ]
+
+
+def _voices_response(source: str, voices: list[dict], message: str | None = None) -> dict:
+    by_id = {v["id"]: v for v in voices}
+    return {
+        "source": source,
+        "voices": voices,
+        "featured": [by_id[f["id"]] for f in FEATURED_VOICES if f["id"] in by_id],
+        "categories": _categories(voices),
+        "preview_available": bool(settings.cartesia_api_key),
+        "message": message,
+    }
+
+
+def _fallback_response(message: str) -> dict:
+    voices = build_catalog(_FALLBACK_VOICES, [], can_preview=bool(settings.cartesia_api_key))
+    return _voices_response("fallback", voices, message)
 
 
 @router.get("/status")
@@ -55,65 +201,33 @@ async def integration_status():
 
 @router.get("/voices")
 async def list_voices():
+    """The Cartesia voice catalog, split into premium / standard categories."""
     if not settings.cartesia_api_key:
-        return {"source": "fallback", "voices": _FALLBACK_VOICES, "featured": FEATURED_VOICES}
-    if _voice_cache["voices"] and time.time() - _voice_cache["at"] < 3600:
-        return {"source": "cartesia", "voices": _voice_cache["voices"], "featured": FEATURED_VOICES}
-    try:
-        voices: list[dict] = []
-        params: dict = {"limit": 100}
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            for _ in range(10):  # the public library is large; cap at ~1000 voices
-                resp = await client.get(
-                    "https://api.cartesia.ai/voices",
-                    headers={
-                        "Authorization": f"Bearer {settings.cartesia_api_key}",
-                        "X-API-Key": settings.cartesia_api_key,
-                        "Cartesia-Version": "2025-04-16",
-                    },
-                    params=params,
-                )
-                resp.raise_for_status()
-                body = resp.json()
-                items = body.get("data", []) if isinstance(body, dict) else body
-                for v in items:
-                    voices.append({
-                        "id": v.get("id"),
-                        "name": v.get("name"),
-                        "gender": v.get("gender") or "",
-                        "language": v.get("language") or "",
-                        "description": (v.get("description") or "")[:140],
-                    })
-                if not (isinstance(body, dict) and body.get("has_more") and items):
-                    break
-                params["starting_after"] = items[-1].get("id")
-        # Voices you cloned in Cartesia go first, marked as yours.
+        return _fallback_response("Add CARTESIA_API_KEY to browse and preview the full voice library.")
+    fresh = _voice_cache["public"] is not None and time.time() - _voice_cache["at"] < _CACHE_TTL
+    if not fresh:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    "https://api.cartesia.ai/voices",
-                    headers={"Authorization": f"Bearer {settings.cartesia_api_key}",
-                             "Cartesia-Version": "2025-04-16"},
-                    params={"limit": 100, "is_owner": "true"},
-                )
-                resp.raise_for_status()
-                body = resp.json()
-                owned = body.get("data", []) if isinstance(body, dict) else body
-            owned_ids = {v.get("id") for v in owned}
-            mine = [{"id": v.get("id"), "name": v.get("name"), "gender": v.get("gender") or "",
-                     "language": v.get("language") or "", "description": (v.get("description") or "")[:140],
-                     "mine": True} for v in owned]
-            voices = mine + [v for v in voices if v["id"] not in owned_ids]
+            public, owned = await _fetch_cartesia_voices()
         except Exception as exc:
-            log.debug("cartesia_owned_voices_failed", error=str(exc))
-        voices = [v for v in voices if v["id"]]
-        if not voices:
-            return {"source": "fallback", "voices": _FALLBACK_VOICES, "featured": FEATURED_VOICES}
-        _voice_cache.update(at=time.time(), voices=voices)
-        return {"source": "cartesia", "voices": voices, "featured": FEATURED_VOICES}
-    except Exception as exc:
-        log.warning("cartesia_voices_failed", error=str(exc))
-        return {"source": "fallback", "voices": _FALLBACK_VOICES, "featured": FEATURED_VOICES}
+            log.warning("cartesia_voices_failed", error=str(exc))
+            return _fallback_response("Couldn't load the Cartesia voice library — showing a short fallback list.")
+        if not public and not owned:
+            return _fallback_response("Cartesia returned no voices — showing a short fallback list.")
+        _voice_cache.update(at=time.time(), public=public, owned=owned)
+    voices = build_catalog(_voice_cache["public"], _voice_cache["owned"], can_preview=True)
+    return _voices_response("cartesia", voices)
+
+
+@router.get("/models")
+async def list_models():
+    """LLM models the voice runtime can run, grouped, plus language support."""
+    models = model_catalog()
+    return {
+        "models": models,
+        "groups": model_groups(models),
+        "default": RUNTIME_DEFAULT_MODEL,
+        "languages": LANGUAGES,
+    }
 
 
 class VoicePreview(BaseModel):
@@ -123,26 +237,44 @@ class VoicePreview(BaseModel):
     language: str = "en"
 
 
+# Small LRU of generated preview WAVs keyed by (voice_id, speed, language, text).
+_PREVIEW_CACHE_MAX = 50
+_preview_cache: OrderedDict[tuple, bytes] = OrderedDict()
+
+
+async def _synthesize(payload: dict) -> bytes:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{_CARTESIA_URL}/tts/bytes",
+            headers={"Authorization": f"Bearer {settings.cartesia_api_key}", "Cartesia-Version": _CARTESIA_VERSION},
+            json=payload,
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Cartesia: {resp.text[:200]}")
+    return resp.content
+
+
 @router.post("/voices/preview")
 async def preview_voice(body: VoicePreview):
     """Speak a short line in the chosen voice (WAV) so it can be auditioned in the editor."""
     if not settings.cartesia_api_key:
         raise HTTPException(status_code=400, detail="Set CARTESIA_API_KEY to preview voices.")
+    voice_id = body.voice_id.strip()
     lang = body.language if body.language not in ("multi", "") else "en"
+    key = (voice_id, round(body.speed, 2), lang, body.text)
+    if key in _preview_cache:
+        _preview_cache.move_to_end(key)
+        return Response(content=_preview_cache[key], media_type="audio/wav")
     payload = {
-        "model_id": "sonic-3",
+        "model_id": VOICE_MODELS[0],
         "transcript": body.text,
-        "voice": {"mode": "id", "id": body.voice_id.strip()},
+        "voice": {"mode": "id", "id": voice_id},
         "output_format": {"container": "wav", "encoding": "pcm_s16le", "sample_rate": 24000},
         "language": lang,
         "generation_config": {"speed": body.speed},
     }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            "https://api.cartesia.ai/tts/bytes",
-            headers={"Authorization": f"Bearer {settings.cartesia_api_key}", "Cartesia-Version": "2025-04-16"},
-            json=payload,
-        )
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Cartesia: {resp.text[:200]}")
-    return Response(content=resp.content, media_type="audio/wav")
+    audio = await _synthesize(payload)
+    _preview_cache[key] = audio
+    while len(_preview_cache) > _PREVIEW_CACHE_MAX:
+        _preview_cache.popitem(last=False)
+    return Response(content=audio, media_type="audio/wav")

@@ -1,7 +1,14 @@
 """
 House voices — the named Cartesia voices offered as one-click options in the
 agent editor. The first one is the default for new agents.
+
+They're always listed in the "premium" voice category (see
+app/routers/settings.py), together with voices owned/cloned in the Cartesia
+account and any ids in PREMIUM_VOICE_IDS. Language/accent come from the live
+Cartesia catalog; nothing here is a guess about them.
 """
+
+VOICE_MODELS = ["sonic-3"]  # the Cartesia TTS model the voice worker uses
 
 FEATURED_VOICES: list[dict] = [
     {"id": "6c756032-11c3-4be8-a120-74f9673fb700", "name": "Lauren", "gender": "feminine",

@@ -151,10 +151,56 @@ export interface SettingsStatus {
 export interface Voice {
   id: string;
   name: string;
-  gender?: string;
-  language?: string;
+  provider?: "cartesia" | string;
+  /** "premium" = house voices + the account's own/cloned voices; everything else "standard". */
+  category?: "premium" | "standard";
+  gender?: string | null;
+  language?: string | null;
+  accent?: string | null;
   description?: string;
+  /** True only for voices owned by (cloned in) the account. */
+  is_clone?: boolean;
+  /** Previews can be generated (a Cartesia key is set). */
+  preview?: boolean;
+  models?: string[];
+  status?: string;
+  /** Legacy alias of is_clone. */
   mine?: boolean;
+}
+
+export interface VoiceCategory {
+  key: "premium" | "standard";
+  label: string;
+  count: number;
+}
+
+export interface VoiceCatalog {
+  source: "cartesia" | "fallback" | string;
+  voices: Voice[];
+  featured?: Voice[];
+  categories?: VoiceCategory[];
+  preview_available?: boolean;
+  message?: string | null;
+}
+
+export interface ModelOption {
+  id: string;
+  name: string;
+  provider: string;
+  description: string;
+  speed?: "fast" | "standard" | null;
+  tags: ("recommended" | "fast" | "advanced")[];
+  /** Agent traits this model suits: general · booking · transfer · complex_scripts. */
+  recommended_for: string[];
+  status: string;
+  group: "recommended" | "fast" | "advanced" | "other";
+}
+
+export interface ModelCatalog {
+  models: ModelOption[];
+  groups: { key: ModelOption["group"]; label: string; models: string[] }[];
+  default: string;
+  languages: { code: string; label: string; stt: boolean; tts: boolean }[];
 }
 
 export interface ChatTurn {
