@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Bot, ChevronsUpDown, Coins, Contact, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug,
+  BarChart3, Bot, CalendarCheck, ChevronsUpDown, Coins, Contact, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug,
   UserRound, X,
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
@@ -18,7 +18,9 @@ const NAV = [
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/contacts", label: "Contacts", icon: Contact },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+  { href: "/meetings", label: "Meetings", icon: CalendarCheck },
   { href: "/calls", label: "Call Logs", icon: PhoneCall },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true },
 ];
 
