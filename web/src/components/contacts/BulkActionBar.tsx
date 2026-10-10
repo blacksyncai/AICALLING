@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderPlus, Tag, Trash2, X, CircleDot } from "lucide-react";
+import { Ban, FolderPlus, Tag, Trash2, X, CircleDot } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/components/toast";
 import { Button, Field, Input, Modal, Select } from "@/components/ui";
@@ -9,12 +9,13 @@ import type { Campaign } from "@/lib/types";
 import { humanize } from "@/lib/utils";
 import { type BulkAction, CONTACT_STATUSES } from "./shared";
 
-type PickerAction = Exclude<BulkAction, "delete">;
+type PickerAction = "add_to_campaign" | "set_status" | "add_tag" | "dnc";
 
 const TITLES: Record<PickerAction, string> = {
   add_to_campaign: "Add to campaign",
   set_status: "Set status",
   add_tag: "Add tag",
+  dnc: "Do-Not-Call",
 };
 
 export function BulkActionBar({
@@ -36,7 +37,7 @@ export function BulkActionBar({
 
   function open(a: PickerAction) {
     setPicker(a);
-    setValue(a === "add_to_campaign" ? (campaigns[0]?.id ?? "") : a === "set_status" ? "interested" : "");
+    setValue(a === "add_to_campaign" ? (campaigns[0]?.id ?? "") : a === "set_status" ? "interested" : a === "dnc" ? "dnc_on" : "");
   }
 
   async function run(action: BulkAction, extra: Record<string, string> = {}) {
@@ -58,6 +59,7 @@ export function BulkActionBar({
   function submitPicker(e: React.FormEvent) {
     e.preventDefault();
     if (!picker || !value.trim()) return;
+    if (picker === "dnc") return run(value as BulkAction);
     const key = picker === "add_to_campaign" ? "campaign_id" : picker === "set_status" ? "status" : "tag";
     run(picker, { [key]: value.trim() });
   }
@@ -77,6 +79,9 @@ export function BulkActionBar({
         <Button size="sm" onClick={() => open("add_tag")} disabled={busy}>
           <Tag className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Add tag</span>
           <span className="sm:hidden">Tag</span>
+        </Button>
+        <Button size="sm" onClick={() => open("dnc")} disabled={busy}>
+          <Ban className="h-3.5 w-3.5" /> Do-Not-Call
         </Button>
         <Button
           size="sm"
@@ -115,6 +120,14 @@ export function BulkActionBar({
                     {humanize(s)}
                   </option>
                 ))}
+              </Select>
+            </Field>
+          )}
+          {picker === "dnc" && (
+            <Field label="Action" hint="Contacts on the Do-Not-Call list are skipped by every campaign and can't be called directly.">
+              <Select value={value} onChange={(e) => setValue(e.target.value)}>
+                <option value="dnc_on">Add to Do-Not-Call</option>
+                <option value="dnc_off">Remove from Do-Not-Call</option>
               </Select>
             </Field>
           )}

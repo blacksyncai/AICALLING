@@ -7,7 +7,7 @@ import useSWR from "swr";
 import { AddContactModal } from "@/components/contacts/AddContactModal";
 import { BulkActionBar } from "@/components/contacts/BulkActionBar";
 import { ImportContactsModal } from "@/components/contacts/ImportContactsModal";
-import { CONTACT_STATUSES, ContactAvatar, StatusBadge, TagChip } from "@/components/contacts/shared";
+import { CONTACT_STATUSES, ContactAvatar, DncBadge, StatusBadge, TagChip } from "@/components/contacts/shared";
 import { Button, Card, EmptyState, Input, Notice, PageHeader, Select, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import type { Campaign, ContactList } from "@/lib/types";
@@ -21,6 +21,7 @@ export default function ContactsPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [campaignId, setCampaignId] = useState("");
+  const [dnc, setDnc] = useState(false);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
@@ -42,24 +43,26 @@ export default function ContactsPage() {
   useEffect(() => {
     setPage(1);
     setSelected(new Set());
-  }, [q, status, campaignId]);
+  }, [q, status, campaignId, dnc]);
 
   const url = useMemo(() => {
     const p = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
     if (q) p.set("q", q);
     if (status) p.set("status", status);
     if (campaignId) p.set("campaign_id", campaignId);
+    if (dnc) p.set("dnc", "true");
     return `/api/contacts?${p}`;
-  }, [q, status, campaignId, page]);
+  }, [q, status, campaignId, dnc, page]);
 
-  const { data, error, isLoading, mutate } = useSWR<ContactList>(url, fetcher, { keepPreviousData: true });
+  const { data, error, isLoading, mutate } = useSWR<ContactList & { dnc_count?: number }>(url, fetcher, { keepPreviousData: true });
   const { data: campaignsData } = useSWR<{ campaigns: Campaign[] }>("/api/campaigns/", fetcher);
   const campaigns = campaignsData?.campaigns ?? [];
 
   const items = data?.items ?? [];
   const counts = data?.status_counts ?? {};
   const allTotal = Object.values(counts).reduce((a, b) => a + b, 0);
-  const filtered = !!(q || status || campaignId);
+  const filtered = !!(q || status || campaignId || dnc);
+  const dncCount = data?.dnc_count ?? 0;
   const total = data?.total ?? 0;
   const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const to = Math.min(page * PAGE_SIZE, total);
@@ -89,7 +92,7 @@ export default function ContactsPage() {
     { label: "Meeting booked", value: counts.meeting_booked ?? 0, accent: "text-emerald-700" },
   ];
 
-  const noContactsAtAll = data && allTotal === 0 && !q && !campaignId;
+  const noContactsAtAll = data && allTotal === 0 && !q && !campaignId && !dnc;
 
   return (
     <>
@@ -168,16 +171,32 @@ export default function ContactsPage() {
                 {[["", "All", allTotal] as const, ...statusChips.map((s) => [s, humanize(s), counts[s]] as const)].map(([value, label, count]) => (
                   <button
                     key={value || "all"}
-                    onClick={() => setStatus(value)}
+                    onClick={() => {
+                      setStatus(value);
+                      if (!value) setDnc(false);
+                    }}
                     className={cn(
                       "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      status === value ? "border-brand-600 bg-brand-600 text-white" : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",
+                      status === value && (value || !dnc) ? "border-brand-600 bg-brand-600 text-white" : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",
                     )}
                   >
                     {label}
-                    <span className={cn("tabular-nums", status === value ? "text-brand-100" : "text-zinc-400")}>{count}</span>
+                    <span className={cn("tabular-nums", status === value && (value || !dnc) ? "text-brand-100" : "text-zinc-400")}>{count}</span>
                   </button>
                 ))}
+                {(dncCount > 0 || dnc) && (
+                  <button
+                    onClick={() => setDnc((v) => !v)}
+                    aria-pressed={dnc}
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      dnc ? "border-red-600 bg-red-600 text-white" : "border-red-200 bg-white text-red-700 hover:bg-red-50",
+                    )}
+                  >
+                    Do-Not-Call
+                    <span className={cn("tabular-nums", dnc ? "text-red-100" : "text-red-400")}>{dncCount}</span>
+                  </button>
+                )}
               </div>
               {selected.size > 0 && <BulkActionBar ids={[...selected]} campaigns={campaigns} onClear={() => setSelected(new Set())} onDone={() => mutate()} />}
             </div>
@@ -230,7 +249,10 @@ export default function ContactsPage() {
                           <div className="flex min-w-0 items-center gap-2.5">
                             <ContactAvatar name={c.name || c.phone} />
                             <div className="min-w-0">
-                              <div className="truncate font-medium text-zinc-900">{c.name || "Unnamed"}</div>
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate font-medium text-zinc-900">{c.name || "Unnamed"}</span>
+                                {c.do_not_call && <DncBadge />}
+                              </div>
                               <div className="truncate text-xs text-zinc-500">{[c.role, c.company].filter(Boolean).join(" · ") || "—"}</div>
                             </div>
                           </div>

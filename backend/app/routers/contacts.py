@@ -49,6 +49,7 @@ class ContactPatch(BaseModel):
     status: str | None = None
     tags: list[str] | None = None
     campaign_id: uuid.UUID | None = None
+    do_not_call: bool | None = None
 
 
 class ContactImport(BaseModel):
@@ -63,7 +64,7 @@ class CallContact(BaseModel):
 
 class BulkAction(BaseModel):
     ids: list[uuid.UUID]
-    action: str  # delete | add_to_campaign | set_status | add_tag
+    action: str  # delete | add_to_campaign | set_status | add_tag | dnc_on | dnc_off
     campaign_id: uuid.UUID | None = None
     status: str | None = None
     tag: str | None = None
@@ -91,6 +92,8 @@ def contact_to_dict(l: Lead, campaign_name: str | None = None) -> dict:
         "campaign_id": str(l.campaign_id) if l.campaign_id else None,
         "campaign_name": campaign_name,
         "last_called_at": _iso(l.last_called_at),
+        "do_not_call": bool(l.do_not_call),
+        "attempts": l.attempts or 0,
         "created_at": _iso(l.created_at),
         "updated_at": _iso(l.updated_at),
     }
@@ -146,6 +149,7 @@ async def list_contacts(
     status: str | None = None,
     campaign_id: uuid.UUID | None = None,
     tag: str | None = None,
+    dnc: bool | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
@@ -159,8 +163,15 @@ async def list_contacts(
     # Status counts reflect the search/campaign filter but not the status filter itself.
     if tag:
         base = base.where(cast(Lead.tags, String).ilike(f'%"{tag}"%'))
+    if dnc is True:
+        base = base.where(Lead.do_not_call.is_(True))
+    elif dnc is False:
+        base = base.where(or_(Lead.do_not_call.is_(None), Lead.do_not_call.is_(False)))
     sub = base.subquery()
     counts = dict((await db.execute(select(sub.c.status, func.count()).group_by(sub.c.status))).all())
+    dnc_count = (await db.execute(
+        select(func.count()).select_from(sub).where(sub.c.do_not_call.is_(True))
+    )).scalar_one()
     filtered = base
     if status:
         filtered = filtered.where(Lead.status == status)
@@ -177,6 +188,7 @@ async def list_contacts(
         "page": page,
         "page_size": page_size,
         "status_counts": counts,
+        "dnc_count": dnc_count,
     }
 
 
@@ -250,6 +262,8 @@ async def bulk_action(body: BulkAction, ctx: CtxDep, db: DbDep):
             l.campaign_id = campaign.id
             if l.status not in ("meeting_booked",):
                 l.status = "new"  # queue them up for the campaign
+                l.attempts = 0
+                l.next_attempt_at = None
         touched_campaigns.add(campaign.id)
     elif body.action == "set_status":
         if body.status not in PIPELINE:
@@ -262,6 +276,9 @@ async def bulk_action(body: BulkAction, ctx: CtxDep, db: DbDep):
             raise HTTPException(status_code=400, detail="Enter a tag.")
         for l in leads:
             l.tags = _clean_tags([*(l.tags or []), tag])
+    elif body.action in ("dnc_on", "dnc_off"):
+        for l in leads:
+            l.do_not_call = body.action == "dnc_on"
     else:
         raise HTTPException(status_code=400, detail="Unknown action.")
     await db.flush()
@@ -295,6 +312,8 @@ async def call_contact(contact_id: uuid.UUID, body: CallContact, ctx: CtxDep, db
     from app.services.outbound_call import CallSetupError, call_service
 
     lead = await _contact(db, ctx, contact_id)
+    if lead.do_not_call:
+        raise HTTPException(status_code=400, detail="This contact is on your Do-Not-Call list.")
     agent = await db.get(Agent, body.agent_id)
     if not agent or agent.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Agent not found")

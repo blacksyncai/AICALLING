@@ -18,7 +18,7 @@ export const CONTACT_STATUSES = [
   "failed",
 ] as const;
 
-export type BulkAction = "delete" | "add_to_campaign" | "set_status" | "add_tag";
+export type BulkAction = "delete" | "add_to_campaign" | "set_status" | "add_tag" | "dnc_on" | "dnc_off";
 
 export interface ImportResult {
   created: number;
@@ -64,6 +64,14 @@ export function statusTone(status: string) {
 
 export function StatusBadge({ status }: { status: string }) {
   return <Badge tone={statusTone(status)}>{humanize(status)}</Badge>;
+}
+
+export function DncBadge({ className }: { className?: string }) {
+  return (
+    <Badge tone="red" className={cn("shrink-0", className)}>
+      <span title="On the Do-Not-Call list — agents will never call this contact">DNC</span>
+    </Badge>
+  );
 }
 
 export function TagChip({ tag, onRemove }: { tag: string; onRemove?: () => void }) {

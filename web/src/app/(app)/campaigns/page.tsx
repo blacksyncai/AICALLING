@@ -1,10 +1,11 @@
 "use client";
 
-import { Megaphone, Plus } from "lucide-react";
+import { Clock, Megaphone, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
+import { describeWindow } from "@/components/campaigns/CallingRules";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
@@ -123,6 +124,15 @@ export default function CampaignsPage() {
                         <Link href={`/campaigns/${c.id}`} className="font-medium hover:text-brand-700">
                           {c.name}
                         </Link>
+                        {c.call_window_start && c.call_days && (
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
+                            <Clock className="h-3 w-3 shrink-0" />
+                            <span className="truncate">
+                              {describeWindow(c)}
+                              {c.max_attempts > 1 ? ` · up to ${c.max_attempts} tries` : ""}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-3 text-zinc-600">{agentName(c.agent_id)}</td>
                       <td className="px-5 py-3">

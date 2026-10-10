@@ -6,11 +6,14 @@ import { useRouter } from "next/navigation";
 import { use, useMemo, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
+import { CallingRulesCard, CallingStatus } from "@/components/campaigns/CallingRules";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Modal, Notice, Select, Spinner, Textarea } from "@/components/ui";
 import { del, fetcher, patch, post } from "@/lib/api";
 import type { Agent, Call, Campaign, Lead, SettingsStatus } from "@/lib/types";
 import { CAMPAIGN_TONE, OUTCOME_TONE, formatDuration, humanize, timeAgo } from "@/lib/utils";
+
+type CampaignLead = Lead & { do_not_call?: boolean; attempts?: number; next_attempt_at?: string | null };
 
 const SAMPLE_CSV = `name,phone,company,email,city
 Jane Cooper,+14155550123,Acme Inc,jane@acme.com,San Francisco
@@ -133,7 +136,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
   const router = useRouter();
   const toast = useToast();
   const { data: campaign, mutate: refreshCampaign, error } = useSWR<Campaign>(`/api/campaigns/${id}`, fetcher, { refreshInterval: 5000 });
-  const { data: leadsData, mutate: refreshLeads } = useSWR<{ leads: Lead[] }>(`/api/campaigns/${id}/leads?page_size=200`, fetcher, { refreshInterval: 5000 });
+  const { data: leadsData, mutate: refreshLeads } = useSWR<{ leads: CampaignLead[] }>(`/api/campaigns/${id}/leads?page_size=200`, fetcher, { refreshInterval: 5000 });
   const { data: calls } = useSWR<{ items: Call[] }>(`/api/calls/?campaign_id=${id}&page_size=50`, fetcher, { refreshInterval: 5000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
@@ -169,8 +172,8 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
       </div>
     );
 
-  const counts = leads.reduce<Record<string, number>>((acc, l) => ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc), {});
-  const pending = counts.new ?? 0;
+  const counts = leads.reduce<Record<string, number>>((acc, l) => (l.do_not_call ? acc : ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc)), {});
+  const pending = (counts.new ?? 0) + (campaign.pending_retries ?? 0);
   const running = campaign.status === "running";
   const allSelected = leads.length > 0 && selected.size === leads.length;
   const canDial = !!status?.capabilities.phone_call;
@@ -187,6 +190,11 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
             <Badge tone={CAMPAIGN_TONE[campaign.status]}>{campaign.status}</Badge>
           </div>
           <p className="mt-1 text-sm text-zinc-500">Created {timeAgo(campaign.created_at)}</p>
+          {["draft", "running", "paused"].includes(campaign.status) && (
+            <div className="mt-1">
+              <CallingStatus campaign={campaign} />
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {running ? (
@@ -199,7 +207,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
               onClick={() => action("start", () => post(`/api/campaigns/${id}/start`), "Campaign started — dialing now")}
               loading={busy === "start"}
               disabled={!canDial || pending === 0 || !["draft", "paused"].includes(campaign.status)}
-              title={!canDial ? "Finish phone setup first" : pending === 0 ? "No new contacts to call" : undefined}
+              title={!canDial ? "Finish phone setup first" : pending === 0 ? "No contacts left to call" : undefined}
             >
               <Play className="h-4 w-4" /> {campaign.status === "paused" ? "Resume" : "Start campaign"}
             </Button>
@@ -230,7 +238,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-5">
         {[
           ["Contacts", campaign.total_targets],
-          ["To call", pending],
+          ["To call", counts.new ?? 0],
           ["Dialed", campaign.total_dialed],
           ["Qualified", campaign.total_qualified],
           ["Booked", campaign.total_booked],
@@ -275,6 +283,8 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         </div>
       </Card>
 
+      <CallingRulesCard campaign={campaign} onSaved={refreshCampaign} />
+
       <Card className="mb-6">
         <CardHeader
           title={`Contacts (${leads.length})`}
@@ -289,8 +299,14 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
                   onClick={() =>
                     action(
                       "call",
-                      () => post(`/api/campaigns/${id}/call`, { lead_ids: [...selected] }).then(() => setSelected(new Set())),
-                      `Calling ${selected.size} contact${selected.size > 1 ? "s" : ""}`,
+                      () =>
+                        post<{ dispatched: number; skipped_dnc?: number }>(`/api/campaigns/${id}/call`, { lead_ids: [...selected] }).then((r) => {
+                          setSelected(new Set());
+                          toast(
+                            `Calling ${r.dispatched} contact${r.dispatched === 1 ? "" : "s"}` +
+                              (r.skipped_dnc ? ` · skipped ${r.skipped_dnc} on the Do-Not-Call list` : ""),
+                          );
+                        }),
                     )
                   }
                 >
@@ -355,7 +371,16 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
                         aria-label={`Select ${l.name}`}
                       />
                     </td>
-                    <td className="px-3 py-2.5 font-medium">{l.name}</td>
+                    <td className="px-3 py-2.5 font-medium">
+                      <span className="flex items-center gap-2">
+                        {l.name}
+                        {l.do_not_call && (
+                          <Badge tone="red" className="shrink-0">
+                            DNC
+                          </Badge>
+                        )}
+                      </span>
+                    </td>
                     <td className="px-3 py-2.5 font-mono text-xs text-zinc-600">{l.phone}</td>
                     <td className="px-3 py-2.5 text-zinc-600">{l.company || "—"}</td>
                     <td className="max-w-[220px] truncate px-3 py-2.5 text-xs text-zinc-500">
@@ -365,6 +390,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
                     </td>
                     <td className="px-3 py-2.5">
                       <Badge tone={l.status === "new" ? "gray" : l.status === "calling" ? "brand" : (OUTCOME_TONE[l.status] ?? "gray")}>{humanize(l.status)}</Badge>
+                      {(l.attempts ?? 0) > 1 && <span className="ml-1.5 text-xs text-zinc-400">{l.attempts} tries</span>}
                     </td>
                   </tr>
                 ))}

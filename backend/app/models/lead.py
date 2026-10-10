@@ -5,7 +5,7 @@ Lead model — a prospect sourced from Orange Slice or a webhook intent trigger.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -46,6 +46,13 @@ class Lead(Base):
     custom_fields: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
     last_called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ── Dialing rules (NULL = default) ───────────────────────────────────────
+    # Campaign call attempts so far (NULL = 0) and when the next retry is due.
+    attempts: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Never dial this contact (NULL = False).
+    do_not_call: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
 
     # ── Source ────────────────────────────────────────────────────────────────
     intent_source: Mapped[str] = mapped_column(

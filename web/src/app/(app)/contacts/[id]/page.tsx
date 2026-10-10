@@ -6,10 +6,10 @@ import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import useSWR from "swr";
 import { CallNowModal } from "@/components/contacts/CallNowModal";
-import { CONTACT_STATUSES, ContactAvatar, TagChip, statusTone } from "@/components/contacts/shared";
+import { CONTACT_STATUSES, ContactAvatar, DncBadge, TagChip, statusTone } from "@/components/contacts/shared";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, Select, Spinner, Textarea } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, Select, Spinner, Textarea, Toggle } from "@/components/ui";
 import { del, fetcher, patch } from "@/lib/api";
 import type { Campaign, Contact, ContactDetail } from "@/lib/types";
 import { cn, formatDateTime, formatDuration, humanize, timeAgo } from "@/lib/utils";
@@ -116,7 +116,10 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         <div className="flex min-w-0 items-center gap-4">
           <ContactAvatar name={displayName} size="lg" />
           <div className="min-w-0">
-            <h1 className="truncate text-2xl font-semibold tracking-tight text-zinc-900">{contact.name || "Unnamed contact"}</h1>
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-2xl font-semibold tracking-tight text-zinc-900">{contact.name || "Unnamed contact"}</h1>
+              {contact.do_not_call && <DncBadge />}
+            </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-500">
               {(contact.role || contact.company) && <span className="truncate">{[contact.role, contact.company].filter(Boolean).join(" at ")}</span>}
               <span className="inline-flex items-center gap-1 font-mono text-xs">
@@ -149,7 +152,12 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
               </option>
             ))}
           </select>
-          <Button variant="primary" onClick={() => setCallOpen(true)}>
+          <Button
+            variant="primary"
+            onClick={() => setCallOpen(true)}
+            disabled={contact.do_not_call}
+            title={contact.do_not_call ? "This contact is on your Do-Not-Call list" : undefined}
+          >
             <PhoneCall className="h-4 w-4" /> Call now
           </Button>
         </div>
@@ -257,6 +265,24 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
 
         {/* Side column */}
         <div className="min-w-0 space-y-6">
+          <Card>
+            <CardHeader title="Calling" />
+            <div className="space-y-3 p-5">
+              <Toggle
+                checked={!!contact.do_not_call}
+                onChange={(v) =>
+                  busy !== "dnc" && save("dnc", { do_not_call: v }, v ? "Added to your Do-Not-Call list" : "Removed from your Do-Not-Call list")
+                }
+                label="Do not call"
+                description="Agents will never call this person — campaigns skip them and calling them directly is blocked."
+              />
+              {contact.attempts > 0 && (
+                <p className="text-xs text-zinc-500">
+                  Called {contact.attempts} time{contact.attempts === 1 ? "" : "s"} by campaigns.
+                </p>
+              )}
+            </div>
+          </Card>
           <Card>
             <CardHeader title="Tags" />
             <div className="space-y-3 p-5">

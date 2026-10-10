@@ -43,6 +43,16 @@ export interface Campaign {
   status: "draft" | "running" | "paused" | "completed" | "cancelled";
   agent_id: string | null;
   max_concurrent_calls: number;
+  // Calling hours (local time in `timezone`) and automatic retries.
+  call_window_start: string;
+  call_window_end: string;
+  call_days: number[];
+  timezone: string;
+  max_attempts: number;
+  retry_delay_minutes: number;
+  within_calling_hours: boolean;
+  next_window_at: string | null;
+  pending_retries: number;
   total_targets: number;
   total_dialed: number;
   total_qualified: number;
@@ -254,6 +264,8 @@ export interface Contact {
   campaign_id: string | null;
   campaign_name: string | null;
   last_called_at: string | null;
+  do_not_call: boolean;
+  attempts: number;
   created_at: string | null;
   updated_at: string | null;
 }

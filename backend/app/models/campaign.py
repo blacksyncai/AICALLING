@@ -5,7 +5,7 @@ Campaign model — a batch of leads to dial with a shared ICP.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -42,6 +42,18 @@ class Campaign(Base):
 
     # Calls this campaign may have in flight at once.
     max_concurrent_calls: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
+
+    # ── Calling rules (NULL = default) ───────────────────────────────────────
+    # Local "HH:MM" window the queue may dial in (default 09:00–17:00).
+    call_window_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    call_window_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # Weekdays allowed, 0=Mon … 6=Sun (default Mon–Fri).
+    call_days: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # IANA time zone the window is in (default America/New_York).
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Automatic retries for unanswered calls: total tries per contact (default 1 = no retry).
+    max_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retry_delay_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # ── Counters ──────────────────────────────────────────────────────────────
     total_targets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
