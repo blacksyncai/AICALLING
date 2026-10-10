@@ -322,7 +322,7 @@ def check_admin_password(user: User, password: str) -> None:
         raise HTTPException(status_code=503, detail="The admin password isn't set up on the server.")
     if not hmac.compare_digest(password.encode(), settings.admin_password.encode()):
         _failed_unlocks[user.id] = [*recent, now]
-        raise HTTPException(status_code=401, detail="Wrong admin password.")
+        raise HTTPException(status_code=403, detail="Wrong admin password.")
     _failed_unlocks.pop(user.id, None)
 
 
