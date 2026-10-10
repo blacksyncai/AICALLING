@@ -17,8 +17,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...(init.headers ?? {}),
     },
   });
-  if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/")) {
-    // Session ended (signed out elsewhere or expired) — back to sign in.
+  // Signed out (or the session expired) — back to sign in. A Clerk session that the API
+  // rejected would just bounce straight back here, so only redirect without one.
+  if (res.status === 401 && typeof window !== "undefined" && !token && !path.startsWith("/api/auth/")) {
     const next = window.location.pathname + window.location.search;
     window.location.href = `/sign-in?redirect_url=${encodeURIComponent(next)}`;
   }

@@ -17,17 +17,31 @@ export const clerkAppearance = {
 };
 
 type ClerkSession = { getToken: () => Promise<string | null> };
-type ClerkGlobal = { session?: ClerkSession | null; signOut: (opts?: { redirectUrl?: string }) => Promise<void> };
+type ClerkGlobal = {
+  loaded?: boolean;
+  session?: ClerkSession | null;
+  signOut: (opts?: { redirectUrl?: string }) => Promise<void>;
+};
 
 /** Clerk's browser instance (set up by <ClerkProvider>), if it has loaded. */
 export function clerkInstance(): ClerkGlobal | undefined {
   return typeof window === "undefined" ? undefined : (window as unknown as { Clerk?: ClerkGlobal }).Clerk;
 }
 
+/** Resolves once Clerk has loaded in the browser (so its session is known), or after a timeout. */
+export async function clerkReady(timeoutMs = 8000): Promise<ClerkGlobal | undefined> {
+  if (typeof window === "undefined" || !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) return undefined;
+  const start = Date.now();
+  while (!clerkInstance()?.loaded && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return clerkInstance();
+}
+
 /** A fresh session token for the API — Clerk refreshes it before it expires. */
 export async function sessionToken(): Promise<string | null> {
   try {
-    return (await clerkInstance()?.session?.getToken()) ?? null;
+    return (await (await clerkReady())?.session?.getToken()) ?? null;
   } catch {
     return null;
   }

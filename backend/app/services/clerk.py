@@ -9,7 +9,7 @@ so accounts, roles and credits keep living in BlackSync.
 
 from __future__ import annotations
 
-import asyncio
+import time
 
 import httpx
 import jwt
@@ -20,7 +20,10 @@ from app.config import settings
 log = structlog.get_logger(__name__)
 
 API = "https://api.clerk.com/v1"
-_jwks: jwt.PyJWKClient | None = None
+# Clerk's signing keys, by key id. (Fetched with httpx: Clerk's API refuses urllib,
+# which PyJWT's own JWKS client uses.)
+_keys: dict[str, jwt.PyJWK] = {}
+_keys_fetched_at = 0.0
 
 
 class ClerkError(Exception):
@@ -31,22 +34,32 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {settings.clerk_secret_key}"}
 
 
-def _jwks_client() -> jwt.PyJWKClient:
-    global _jwks
-    if _jwks is None:
-        _jwks = jwt.PyJWKClient(f"{API}/jwks", headers=_headers(), cache_keys=True, lifespan=3600)
-    return _jwks
+async def _signing_key(kid: str) -> jwt.PyJWK:
+    global _keys_fetched_at
+    # Refetch on an unknown key id (Clerk rotated keys), at most once a minute.
+    if kid not in _keys and time.time() - _keys_fetched_at > 60:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{API}/jwks", headers=_headers())
+        resp.raise_for_status()
+        _keys.clear()
+        for k in jwt.PyJWKSet.from_dict(resp.json()).keys:
+            _keys[k.key_id] = k
+        _keys_fetched_at = time.time()
+    if kid not in _keys:
+        raise jwt.InvalidKeyError(f"unknown signing key {kid}")
+    return _keys[kid]
 
 
-def _verify(token: str) -> dict:
-    key = _jwks_client().get_signing_key_from_jwt(token)
+async def _verify(token: str) -> dict:
+    kid = jwt.get_unverified_header(token).get("kid", "")
+    key = await _signing_key(kid)
     return jwt.decode(token, key.key, algorithms=["RS256"], leeway=10, options={"verify_aud": False})
 
 
 async def verify_session_token(token: str) -> str | None:
     """The Clerk user id (sub) for a valid session token, else None."""
     try:
-        claims = await asyncio.to_thread(_verify, token)
+        claims = await _verify(token)
     except Exception as exc:
         log.debug("clerk_token_invalid", error=str(exc))
         return None
