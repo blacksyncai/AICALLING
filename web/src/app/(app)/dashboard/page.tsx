@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CalendarCheck, CheckCircle2, Circle, Clock, Megaphone, PhoneCall, PhoneIncoming } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CalendarCheck, CheckCircle2, Circle, Clock, Coins, Megaphone, MessagesSquare, PhoneCall, PhoneIncoming, Users } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
-import { Badge, Button, Card, EmptyState, Spinner } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import type { Agent, Call, Campaign, Overview, SettingsStatus } from "@/lib/types";
 import { CAMPAIGN_TONE, OUTCOME_TONE, cn, formatDuration, timeAgo } from "@/lib/utils";
 
@@ -92,6 +93,9 @@ export default function DashboardPage() {
   const { data: campaigns } = useSWR<{ campaigns: Campaign[] }>("/api/campaigns/", fetcher, { refreshInterval: 15000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
+  const { session } = useSession();
+  // Platform keys are configured by the BlackSync admin, so only they see the setup checklist.
+  const isPlatformAdmin = !!session?.user.is_superadmin && !session.impersonating;
 
   const steps = [
     { done: !!status?.capabilities.chat_test, label: "Connect OpenAI", href: "/settings" },
@@ -144,7 +148,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Setup strip */}
-      {status && setupLeft > 0 && (
+      {isPlatformAdmin && status && setupLeft > 0 && (
         <Card className="flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-4">
           <div className="text-sm font-medium">
             Finish setup <span className="text-zinc-500">· {4 - setupLeft}/4 done</span>
@@ -160,6 +164,18 @@ export default function DashboardPage() {
         </Card>
       )}
 
+      {overview && !overview.unlimited_credits && overview.credits_balance <= 10 && (
+        <Notice tone={overview.credits_balance <= 0 ? "red" : "amber"}>
+          <span className="flex items-center gap-2 text-sm">
+            <Coins className="h-4 w-4 shrink-0" />
+            {overview.credits_balance <= 0
+              ? "You're out of calling credits — phone calls and campaigns are paused until more are added."
+              : `Only ${overview.credits_balance} calling credit${overview.credits_balance === 1 ? "" : "s"} left (1 credit = 1 minute).`}{" "}
+            <Link href="/profile?tab=billing" className="font-medium underline">View credits</Link>
+          </span>
+        </Notice>
+      )}
+
       {/* Stats */}
       {!overview || !prev ? (
         <div className="flex justify-center py-16">
@@ -167,18 +183,35 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <StatCard label="Total leads" value={overview.total_leads.toLocaleString()} icon={Users}>
+              {overview.new_leads ? (
+                <span className="text-zinc-500">
+                  <span className="font-medium text-emerald-700">+{overview.new_leads.toLocaleString()}</span> added in the last {days}d
+                </span>
+              ) : (
+                <Link href="/contacts" className="text-zinc-500 hover:text-brand-700">Import contacts →</Link>
+              )}
+            </StatCard>
             <StatCard label="Calls placed" value={overview.total_calls.toLocaleString()} icon={PhoneCall}>
               <Trend now={overview.total_calls} before={prev.total_calls} days={days} />
             </StatCard>
             <StatCard label="Connect rate" value={`${Math.round(overview.connect_rate * 100)}%`} icon={PhoneIncoming}>
               <Trend now={overview.connect_rate} before={prev.connect_rate} days={days} format="pts" />
             </StatCard>
-            <StatCard label="Talk time" value={`${overview.total_minutes.toLocaleString()} min`} icon={Clock}>
-              <span className="text-zinc-500">avg {formatDuration(overview.avg_duration_seconds)} per connected call</span>
+            <StatCard label="Meaningful conversations" value={overview.meaningful_calls.toLocaleString()} icon={MessagesSquare}>
+              <span className="text-zinc-500">
+                <Link href="/contacts?status=callback" className="font-medium text-zinc-900 hover:text-brand-700">
+                  {overview.follow_ups.toLocaleString()} follow-up{overview.follow_ups === 1 ? "" : "s"}
+                </Link>{" "}
+                to work · <Trend now={overview.meaningful_calls} before={prev.meaningful_calls} days={days} />
+              </span>
             </StatCard>
             <StatCard label="Meetings booked" value={overview.meetings_booked.toLocaleString()} icon={CalendarCheck}>
               <Trend now={overview.meetings_booked} before={prev.meetings_booked} days={days} />
+            </StatCard>
+            <StatCard label="Talk time" value={`${overview.total_minutes.toLocaleString()} min`} icon={Clock}>
+              <span className="text-zinc-500">avg {formatDuration(overview.avg_duration_seconds)} per connected call</span>
             </StatCard>
           </div>
 

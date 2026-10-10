@@ -4,6 +4,7 @@ import { CheckCircle2, Circle, ExternalLink } from "lucide-react";
 import useSWR from "swr";
 import { Badge, Card, CardHeader, Notice, PageHeader, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import type { SettingsStatus } from "@/lib/types";
 
 const INTEGRATIONS: {
@@ -30,11 +31,24 @@ const CAPS: { key: keyof SettingsStatus["capabilities"]; label: string; needs: s
 ];
 
 export default function SettingsPage() {
+  const { session } = useSession();
+  if (session && !session.user.is_superadmin) {
+    return (
+      <>
+        <PageHeader title="Platform settings" />
+        <Notice tone="blue">Platform settings are managed by your BlackSync admin. Your own details live under Profile & team.</Notice>
+      </>
+    );
+  }
+  return <PlatformSettings />;
+}
+
+function PlatformSettings() {
   const { data: s, error } = useSWR<SettingsStatus>("/api/settings/status", fetcher, { refreshInterval: 10000 });
 
   return (
     <>
-      <PageHeader title="Settings" description="Connect providers by adding keys to backend/.env, then restart the API and worker." />
+      <PageHeader title="Platform settings" description="Connect providers by adding keys to backend/.env, then restart the API and worker." />
       {error && <Notice tone="red">Can&apos;t reach the backend: {error.message}</Notice>}
       {!s && !error && (
         <div className="flex justify-center py-20">
