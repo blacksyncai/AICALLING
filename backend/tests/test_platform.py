@@ -97,10 +97,11 @@ def test_outcome_webhook_runs_analysis(client, agent_id, monkeypatch):
     from app.models.call_log import CallLog
 
     call_id = uuid.uuid4()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
 
     async def make_call():
         async with AsyncSessionLocal() as db:
-            db.add(CallLog(id=call_id, agent_id=uuid.UUID(agent_id), call_type="web",
+            db.add(CallLog(id=call_id, org_id=org_id, agent_id=uuid.UUID(agent_id), call_type="web",
                            livekit_room_name="web-test", status="connected"))
             await db.commit()
 
@@ -115,7 +116,7 @@ def test_outcome_webhook_runs_analysis(client, agent_id, monkeypatch):
 
     monkeypatch.setattr(llm, "_chat", fake_chat)
     transcript = [{"role": "assistant", "text": "Hi"}, {"role": "user", "text": "Sure, book it"}]
-    r = client.post(f"/api/webhook/calls/{call_id}/outcome", json={"outcome": "completed", "transcript": transcript})
+    r = client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": "completed", "transcript": transcript})
     assert r.status_code == 200
 
     call = client.get(f"/api/calls/{call_id}").json()
@@ -179,10 +180,11 @@ def test_failed_dial_is_recorded_with_reason(client, agent_id, monkeypatch):
     from app.services import outbound_call
 
     call_id = uuid.uuid4()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
 
     async def scenario():
         async with AsyncSessionLocal() as db:
-            db.add(CallLog(id=call_id, agent_id=uuid.UUID(agent_id), call_type="outbound",
+            db.add(CallLog(id=call_id, org_id=org_id, agent_id=uuid.UUID(agent_id), call_type="outbound",
                            livekit_room_name="call-x", status="initiated", to_phone="+14155550123"))
             await db.commit()
 
@@ -211,5 +213,5 @@ def test_failed_dial_is_recorded_with_reason(client, agent_id, monkeypatch):
     assert "403 Forbidden" in call["summary"] and "credential" in call["summary"]
 
     # The worker's later empty "no_answer" report must not overwrite the reason.
-    client.post(f"/api/webhook/calls/{call_id}/outcome", json={"outcome": "no_answer", "transcript": []})
+    client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": "no_answer", "transcript": []})
     assert client.get(f"/api/calls/{call_id}").json()["outcome"] == "failed"

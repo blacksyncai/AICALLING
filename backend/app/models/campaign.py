@@ -20,6 +20,12 @@ class Campaign(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
+    # Owning organization (sub-account).
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+
     # ── Identity ──────────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")

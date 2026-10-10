@@ -96,6 +96,8 @@ export interface Call {
   extracted_data?: Record<string, unknown>;
   metrics?: { turns: number; avg_response: number; avg_eou: number | null; avg_llm_ttft: number | null; avg_tts_ttfb: number | null } | null;
   prospect_email?: string | null;
+  credits_charged?: number | null;
+  lead_id?: string | null;
 }
 
 export interface OverviewTotals {
@@ -106,6 +108,8 @@ export interface OverviewTotals {
   meetings_booked: number;
   success_rate: number;
   connect_rate: number;
+  meaningful_calls: number;
+  follow_ups: number;
 }
 
 export interface Overview extends OverviewTotals {
@@ -115,6 +119,11 @@ export interface Overview extends OverviewTotals {
   agents: number;
   running_campaigns: number;
   days: number;
+  total_leads: number;
+  new_leads: number;
+  previous_new_leads: number;
+  credits_balance: number;
+  unlimited_credits: boolean;
 }
 
 export interface SettingsStatus {
@@ -143,4 +152,205 @@ export interface ToolEvent {
   tool: string;
   args: Record<string, unknown>;
   result: string;
+}
+
+// ── Accounts ──────────────────────────────────────────────────────────────────
+
+export type Role = "owner" | "admin" | "member";
+
+export interface User {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  is_superadmin: boolean;
+  created_at: string | null;
+}
+
+export interface Org {
+  id: string;
+  name: string;
+  status: "active" | "suspended";
+  credits_balance: number;
+  unlimited_credits: boolean;
+  created_at: string | null;
+}
+
+export interface Session {
+  user: User;
+  org: Org | null;
+  /** "superadmin" when a platform admin is viewing an account they aren't a member of. */
+  role: Role | "superadmin";
+  impersonating: boolean;
+  memberships: { org_id: string; org_name: string; role: Role }[];
+}
+
+export interface Member extends User {
+  membership_id: string;
+  role: Role;
+  last_login_at: string | null;
+  joined_at: string | null;
+}
+
+export interface PendingInvite {
+  id: string;
+  email: string;
+  role: Role;
+  expires_at: string | null;
+  created_at: string | null;
+}
+
+/** Returned once when an invite is created. */
+export interface CreatedInvite extends PendingInvite {
+  invite_url: string;
+  emailed: boolean;
+}
+
+export interface Team {
+  members: Member[];
+  invites: PendingInvite[];
+  email_enabled: boolean;
+}
+
+/** GET /api/account/org */
+export interface OrgDetail extends Org, Team {
+  role: Role | "superadmin";
+  can_manage: boolean;
+}
+
+export interface CreditTransaction {
+  id: string;
+  amount: number;
+  balance_after: number;
+  kind: "grant" | "usage" | "adjustment";
+  note: string;
+  call_id: string | null;
+  created_at: string | null;
+}
+
+/** GET /api/account/credits */
+export interface CreditHistory {
+  balance: number;
+  unlimited: boolean;
+  transactions: CreditTransaction[];
+}
+
+// ── Contacts (CRM) ────────────────────────────────────────────────────────────
+
+export interface Contact {
+  id: string;
+  name: string;
+  company: string;
+  phone: string;
+  email: string;
+  role: string;
+  status: string;
+  notes: string;
+  tags: string[];
+  custom_fields: Record<string, string>;
+  source: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  last_called_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ContactCall {
+  id: string;
+  status: string;
+  outcome: string | null;
+  summary: string | null;
+  duration_seconds: number | null;
+  agent_name: string | null;
+  started_at: string | null;
+}
+
+export interface ContactDetail extends Contact {
+  calls: ContactCall[];
+}
+
+/** GET /api/contacts */
+export interface ContactList {
+  items: Contact[];
+  total: number;
+  page: number;
+  page_size: number;
+  status_counts: Record<string, number>;
+}
+
+// ── Integrations ──────────────────────────────────────────────────────────────
+
+export type WebhookEvent = "call.completed" | "meeting.booked" | "contact.created";
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  events: WebhookEvent[];
+  secret: string;
+  active: boolean;
+  last_status: number | null;
+  last_error: string | null;
+  last_sent_at: string | null;
+  created_at: string | null;
+}
+
+/** GET /api/integrations */
+export interface Integrations {
+  api_keys: ApiKey[];
+  webhooks: Webhook[];
+  events: WebhookEvent[];
+}
+
+// ── Admin portal ──────────────────────────────────────────────────────────────
+
+export interface Usage {
+  calls: number;
+  minutes: number;
+  credits_used: number;
+}
+
+export interface AdminOrg extends Org {
+  owner: { name: string; email: string } | null;
+  members: number;
+  agents: number;
+  contacts: number;
+  usage_30d: Usage;
+}
+
+export interface AdminOrgDetail extends Org, Team {
+  usage_30d: Usage;
+  all_time: { calls: number; minutes: number };
+  agents: number;
+  campaigns: number;
+  contacts: number;
+  transactions: CreditTransaction[];
+}
+
+export interface PlatformOverview {
+  accounts: number;
+  users: number;
+  calls_30d: number;
+  minutes_30d: number;
+  credits_used_30d: number;
+  credits_outstanding: number;
+}
+
+/** POST /api/admin/orgs */
+export interface CreatedOrg extends Org {
+  login_email: string;
+  owner_status: "created" | "invited" | "existing_user_added";
+  temporary_password?: string | null;
+  invite_url?: string;
+  emailed?: boolean;
 }

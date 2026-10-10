@@ -30,6 +30,12 @@ class CallLog(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
+    # Owning organization (sub-account).
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+
     # ── Foreign Keys ──────────────────────────────────────────────────────────
     lead_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("leads.id", ondelete="CASCADE"), nullable=True, index=True
@@ -72,7 +78,13 @@ class CallLog(Base):
 
     # ── Timestamps ────────────────────────────────────────────────────────────
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    # When the callee picked up (phone calls) — talk time and billing start here.
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Credits billed for this call (set once, so re-reported outcomes never double-bill).
+    credits_charged: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # When call.completed / meeting.booked webhooks went out (sent once per call).
+    events_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────────────────
     lead = relationship("Lead", back_populates="call_logs", lazy="noload")

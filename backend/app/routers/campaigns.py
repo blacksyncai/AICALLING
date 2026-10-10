@@ -1,5 +1,6 @@
 """
-Pounce — /api/campaigns router
+Campaigns router — contact lists an agent dials through, with concurrency
+limits, pause/resume and per-campaign stats.
 """
 
 from __future__ import annotations
@@ -7,17 +8,19 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated
-
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select, update
 
-from app.database import AsyncSessionLocal, get_db
+from app.database import AsyncSessionLocal
+from app.models.account import Organization
+from app.models.agent import Agent
 from app.models.campaign import Campaign
 from app.models.lead import Lead
+from app.services.accounts import InsufficientCredits, ensure_can_call
+from app.services.auth import Context, CtxDep, DbDep
+from app.services.contacts import CsvError, parse_contacts_csv
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -69,17 +72,33 @@ def _campaign_to_dict(c: Campaign) -> dict:
     }
 
 
+async def _get_campaign(db, ctx: Context, campaign_id: uuid.UUID) -> Campaign:
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign or campaign.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
+
+
+async def _check_agent(db, ctx: Context, agent_id: uuid.UUID | None) -> None:
+    if agent_id is not None:
+        agent = await db.get(Agent, agent_id)
+        if not agent or agent.org_id != ctx.org.id:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
 @router.get("/")
 async def list_campaigns(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
     stmt = (
         select(Campaign)
+        .where(Campaign.org_id == ctx.org.id)
         .order_by(Campaign.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -92,22 +111,23 @@ async def list_campaigns(
 @router.get("/{campaign_id}")
 async def get_campaign(
     campaign_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = await _get_campaign(db, ctx, campaign_id)
     return _campaign_to_dict(campaign)
 
 
 @router.post("/", status_code=201)
 async def create_campaign(
     body: CampaignCreate,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
+    await _check_agent(db, ctx, body.agent_id)
     campaign = Campaign(
         id=uuid.uuid4(),
+        org_id=ctx.org.id,
         name=body.name,
         description=body.description,
         icp_description=body.icp_description,
@@ -125,11 +145,11 @@ async def create_campaign(
 async def update_campaign(
     campaign_id: uuid.UUID,
     body: CampaignUpdate,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
-    campaign = await db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = await _get_campaign(db, ctx, campaign_id)
+    await _check_agent(db, ctx, body.agent_id)
     for key, value in body.model_dump(exclude_unset=True).items():
         if value is not None:
             setattr(campaign, key, value)
@@ -141,96 +161,40 @@ async def update_campaign(
 @router.delete("/{campaign_id}", status_code=204)
 async def delete_campaign(
     campaign_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
-    campaign = await db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    await db.execute(delete(Lead).where(Lead.campaign_id == campaign_id))
+    campaign = await _get_campaign(db, ctx, campaign_id)
+    # Its contacts stay in the CRM, just no longer in this campaign.
+    await db.execute(update(Lead).where(Lead.campaign_id == campaign_id).values(campaign_id=None))
     await db.delete(campaign)
     await db.commit()
-
-
-_PHONE_KEYS = ("phone", "phone_number", "mobile", "number", "phone number", "telephone", "cell")
-_NAME_KEYS = ("name", "full_name", "full name", "contact", "contact_name", "first_name", "first name")
-_KNOWN = {"company": ("company", "company_name", "organization", "business"),
-          "email": ("email", "email_address", "e-mail"),
-          "role": ("role", "title", "job_title", "position")}
-
-
-def _normalize_phone(raw: str) -> str:
-    raw = (raw or "").strip()
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if not digits:
-        return ""
-    if raw.startswith("+"):
-        return "+" + digits
-    if len(digits) == 10:          # assume North American number without country code
-        return "+1" + digits
-    return "+" + digits
 
 
 @router.post("/{campaign_id}/leads/import", status_code=201)
 async def import_leads(
     campaign_id: uuid.UUID,
     body: LeadImport,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
-    """Import leads from CSV text (header row required)."""
-    import csv
-    import io
-
-    campaign = await db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    reader = csv.DictReader(io.StringIO(body.csv.strip().lstrip("\ufeff")))
-    if not reader.fieldnames:
-        raise HTTPException(status_code=400, detail="CSV needs a header row")
-    cols = {c: (c or "").strip().lower() for c in reader.fieldnames}
-
-    def pick(row: dict, keys: tuple) -> tuple[str, str | None]:
-        for orig, low in cols.items():
-            if low in keys and (row.get(orig) or "").strip():
-                return row[orig].strip(), orig
-        return "", None
-
-    if not any(low in _PHONE_KEYS for low in cols.values()):
-        raise HTTPException(status_code=400, detail="CSV needs a phone column (e.g. 'phone')")
-
-    created, skipped = 0, 0
-    for row in reader:
-        phone, phone_col = pick(row, _PHONE_KEYS)
-        phone = _normalize_phone(phone)
-        if len(phone) < 11:
-            skipped += 1
-            continue
-        name, name_col = pick(row, _NAME_KEYS)
-        used = {phone_col, name_col}
-        known: dict[str, str] = {}
-        for field, keys in _KNOWN.items():
-            val, col = pick(row, keys)
-            known[field] = val
-            used.add(col)
-        custom = {
-            cols[c].replace(" ", "_"): (v or "").strip()
-            for c, v in row.items() if c and c not in used and (v or "").strip()
-        }
-        db.add(Lead(
-            id=uuid.uuid4(), name=name or phone, company=known["company"], phone=phone,
-            email=known["email"], role=known["role"], campaign_id=campaign_id,
-            intent_source="csv", status="new", custom_fields=custom or None,
-        ))
-        created += 1
-
-    campaign.total_targets = (campaign.total_targets or 0) + created
+    """Import contacts into this campaign from CSV text (header row required)."""
+    campaign = await _get_campaign(db, ctx, campaign_id)
+    try:
+        rows, skipped = parse_contacts_csv(body.csv)
+    except CsvError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    for row in rows:
+        db.add(Lead(id=uuid.uuid4(), org_id=ctx.org.id, campaign_id=campaign_id,
+                    intent_source="csv", status="new", **row))
+    campaign.total_targets = (campaign.total_targets or 0) + len(rows)
     campaign.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    log.info("leads_imported", campaign_id=str(campaign_id), created=created, skipped=skipped)
-    return {"created": created, "skipped": skipped}
+    log.info("leads_imported", campaign_id=str(campaign_id), created=len(rows), skipped=skipped)
+    return {"created": len(rows), "skipped": skipped}
 
 
-def _ensure_can_dial(campaign: Campaign) -> None:
+def _ensure_can_dial(campaign: Campaign, org: Organization) -> None:
     from app.config import settings
 
     if not campaign.agent_id:
@@ -241,29 +205,31 @@ def _ensure_can_dial(campaign: Campaign) -> None:
             detail="Phone calling isn't configured yet — see Settings for the keys you need "
                    "(LiveKit, Deepgram, Cartesia, OpenAI and a LiveKit SIP outbound trunk).",
         )
+    try:
+        ensure_can_call(org)
+    except InsufficientCredits as exc:
+        raise HTTPException(status_code=402, detail=str(exc))
 
 
 @router.post("/{campaign_id}/start")
 async def start_campaign(
     campaign_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
     """
     Start a campaign:
     1. Set status = running
     2. Enqueue all 'new' leads in background asyncio task
     """
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = await _get_campaign(db, ctx, campaign_id)
     if campaign.status not in ("draft", "paused"):
         raise HTTPException(
             status_code=400,
             detail=f"Campaign is {campaign.status}, cannot start",
         )
-    _ensure_can_dial(campaign)
+    _ensure_can_dial(campaign, ctx.org)
 
     campaign.status = "running"
     campaign.updated_at = datetime.now(timezone.utc)
@@ -279,12 +245,10 @@ async def start_campaign(
 @router.post("/{campaign_id}/pause")
 async def pause_campaign(
     campaign_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = await _get_campaign(db, ctx, campaign_id)
 
     campaign.status = "paused"
     campaign.updated_at = datetime.now(timezone.utc)
@@ -295,12 +259,10 @@ async def pause_campaign(
 @router.post("/{campaign_id}/cancel")
 async def cancel_campaign(
     campaign_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = await _get_campaign(db, ctx, campaign_id)
 
     campaign.status = "cancelled"
     campaign.updated_at = datetime.now(timezone.utc)
@@ -311,15 +273,13 @@ async def cancel_campaign(
 @router.get("/{campaign_id}/leads")
 async def list_campaign_leads(
     campaign_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
     status: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
-    # Verify campaign exists
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    await _get_campaign(db, ctx, campaign_id)
 
     stmt = select(Lead).where(Lead.campaign_id == campaign_id)
     if status:
@@ -355,7 +315,8 @@ async def call_selected_leads(
     campaign_id: uuid.UUID,
     body: CallSelectedRequest,
     background_tasks: BackgroundTasks,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep,
+    db: DbDep,
 ):
     """
     Fire outbound calls for a specific set of selected leads (checkbox
@@ -363,14 +324,11 @@ async def call_selected_leads(
     its own (editable) phone number — no demo override. Leads with no valid
     phone are skipped server-side with an error logged.
     """
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = await _get_campaign(db, ctx, campaign_id)
 
     if not body.lead_ids:
         raise HTTPException(status_code=400, detail="No leads selected")
-    _ensure_can_dial(campaign)
+    _ensure_can_dial(campaign, ctx.org)
 
     # Only dial leads that actually belong to this campaign.
     rows = await db.execute(
@@ -413,6 +371,9 @@ async def _dispatch_selected(campaign_id: str, lead_ids: list[str]) -> None:
                     campaign.total_dialed += 1
                     campaign.updated_at = datetime.now(timezone.utc)
                     await db.commit()
+            except InsufficientCredits as exc:
+                await _pause_for_credits(campaign_uuid, str(exc))
+                break
             except Exception as exc:
                 log.error("call_selected_dispatch_error", lead_id=lid, error=str(exc))
         await asyncio.sleep(2)
@@ -424,6 +385,16 @@ async def _dispatch_selected(campaign_id: str, lead_ids: list[str]) -> None:
 
 
 _IN_FLIGHT = ("initiated", "ringing", "connected")
+
+
+async def _pause_for_credits(campaign_uuid: uuid.UUID, reason: str) -> None:
+    async with AsyncSessionLocal() as db:
+        campaign = await db.get(Campaign, campaign_uuid)
+        if campaign and campaign.status == "running":
+            campaign.status = "paused"
+            campaign.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+    log.warning("campaign_paused_no_credits", campaign_id=str(campaign_uuid), reason=reason)
 
 
 async def _wait_for_capacity(campaign_uuid: uuid.UUID) -> bool:
@@ -512,6 +483,9 @@ async def _process_call_queue(campaign_id: str) -> None:
                 campaign.updated_at = datetime.now(timezone.utc)
                 await db.commit()
 
+            except InsufficientCredits as exc:
+                await _pause_for_credits(campaign_uuid, str(exc))
+                return
             except Exception as exc:
                 log.error(
                     "call_queue_dispatch_error",

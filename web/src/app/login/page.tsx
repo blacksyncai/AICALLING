@@ -1,12 +1,11 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Logo } from "@/components/Logo";
 import { Button, Field, Input, Notice } from "@/components/ui";
 
 function LoginForm() {
-  const router = useRouter();
   const next = useSearchParams().get("next") || "/dashboard";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,7 +22,8 @@ function LoginForm() {
       body: JSON.stringify({ email, password }),
     });
     setLoading(false);
-    if (res.ok) router.replace(next);
+    // Full navigation so the app loads fresh with the new session.
+    if (res.ok) window.location.href = next;
     else setError((await res.json().catch(() => ({}))).detail ?? "Sign in failed");
   }
 

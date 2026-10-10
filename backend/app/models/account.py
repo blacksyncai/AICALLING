@@ -1,0 +1,159 @@
+"""
+Accounts — organizations (sub-accounts), their users and team invites, the
+calling-credit ledger, and the API keys / outgoing webhooks each org owns.
+
+Every agent, campaign, contact and call belongs to one organization; a user
+can belong to several, and a platform super-admin can open any of them.
+"""
+
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # active | suspended — a suspended org can sign in but not place calls.
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    # 1 credit = 1 minute of phone calling (billed per started minute, from answer).
+    credits_balance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # House accounts skip the credit check entirely.
+    unlimited_credits: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    last_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    phone: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Platform admin: sees the admin portal and can open every organization.
+    is_superadmin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The organization the user is currently working in.
+    active_org_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True
+    )
+    # Bumped on password change so older session cookies stop working.
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
+
+
+ROLES = ("owner", "admin", "member")
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("user_id", "org_id", name="uq_membership_user_org"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # owner | admin | member — owners and admins manage the team and org name.
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class Invite(Base):
+    __tablename__ = "invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class CreditTransaction(Base):
+    __tablename__ = "credit_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Positive adds credits, negative spends them.
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    # grant | usage | adjustment
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    call_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("call_logs.id", ondelete="SET NULL"), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # First characters of the key, shown in the UI so keys can be told apart.
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+WEBHOOK_EVENTS = ("call.completed", "meeting.booked", "contact.created")
+
+
+class WebhookEndpoint(Base):
+    __tablename__ = "webhook_endpoints"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    events: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Signs each delivery (X-BlackSync-Signature: sha256=<hmac of body>).
+    secret: Mapped[str] = mapped_column(String(64), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class AppSecret(Base):
+    """Small key/value store for generated platform secrets (e.g. the session signing key)."""
+
+    __tablename__ = "app_secrets"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)

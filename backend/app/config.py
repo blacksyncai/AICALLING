@@ -72,6 +72,19 @@ class Settings(BaseSettings):
 
     # ── Deployment ────────────────────────────────────────────────────────────
     webhook_base_url: str = "http://localhost:8000"
+    # Public URL of the web app — used in invite links (falls back to the request's host).
+    app_url: str = ""
+
+    # ── Accounts ──────────────────────────────────────────────────────────────
+    # The platform super-admin created on first boot, and their house account.
+    auth_email: str = ""
+    auth_password: str = ""
+    house_org_name: str = "BlackSync"
+
+    # ── Email (team invites) ──────────────────────────────────────────────────
+    # Without a Resend key, invites still work — the UI shows a link to share.
+    resend_api_key: str = ""
+    email_from: str = "BlackSync <onboarding@resend.dev>"
 
     @model_validator(mode="after")
     def _clean_values(self):

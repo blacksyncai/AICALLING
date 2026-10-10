@@ -6,20 +6,18 @@ Agents router — create/configure voice agents and test them
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
-
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runtime import agent_to_runtime
 from app.agent.templates import TEMPLATES, get_template
 from app.agent.voices import DEFAULT_VOICE_ID
-from app.database import get_db
 from app.models.agent import Agent
 from app.models.call_log import CallLog
+from app.services.accounts import InsufficientCredits
+from app.services.auth import Context, CtxDep, DbDep
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -100,9 +98,9 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
     return d
 
 
-async def _get_agent(db: AsyncSession, agent_id: uuid.UUID) -> Agent:
+async def _get_agent(db, ctx: Context, agent_id: uuid.UUID) -> Agent:
     agent = await db.get(Agent, agent_id)
-    if not agent:
+    if not agent or agent.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
 
@@ -125,29 +123,22 @@ def new_agent_from_template(key: str, name: str | None = None) -> Agent:
     )
 
 
-async def seed_default_agent(db: AsyncSession) -> None:
-    """First boot: create one ready-to-test agent so the dashboard isn't empty."""
-    count = (await db.execute(select(func.count()).select_from(Agent))).scalar_one()
-    if count == 0:
-        db.add(new_agent_from_template("sales_sdr"))
-        await db.commit()
-        log.info("seeded_default_agent")
-
-
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
 @router.get("/templates/list")
-async def list_templates():
+async def list_templates(_: CtxDep):
     return [{k: t[k] for k in ("template", "name", "description", "enable_booking")} for t in TEMPLATES]
 
 
 @router.get("/")
-async def list_agents(db: Annotated[AsyncSession, Depends(get_db)]):
-    agents = (await db.execute(select(Agent).order_by(Agent.created_at.desc()))).scalars().all()
+async def list_agents(ctx: CtxDep, db: DbDep):
+    agents = (await db.execute(
+        select(Agent).where(Agent.org_id == ctx.org.id).order_by(Agent.created_at.desc())
+    )).scalars().all()
     rows = await db.execute(
         select(CallLog.agent_id, func.count(), func.coalesce(func.sum(CallLog.duration_seconds), 0))
-        .where(CallLog.agent_id.isnot(None))
+        .where(CallLog.org_id == ctx.org.id, CallLog.agent_id.isnot(None))
         .group_by(CallLog.agent_id)
     )
     stats = {r[0]: {"calls": r[1], "seconds": int(r[2] or 0)} for r in rows}
@@ -155,8 +146,9 @@ async def list_agents(db: Annotated[AsyncSession, Depends(get_db)]):
 
 
 @router.post("/", status_code=201)
-async def create_agent(body: AgentCreate, db: Annotated[AsyncSession, Depends(get_db)]):
+async def create_agent(body: AgentCreate, ctx: CtxDep, db: DbDep):
     agent = new_agent_from_template(body.template, body.name)
+    agent.org_id = ctx.org.id
     db.add(agent)
     await db.commit()
     log.info("agent_created", agent_id=str(agent.id), template=body.template)
@@ -164,19 +156,13 @@ async def create_agent(body: AgentCreate, db: Annotated[AsyncSession, Depends(ge
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
-    return agent_to_dict(await _get_agent(db, agent_id))
-
-
-@router.get("/{agent_id}/runtime")
-async def get_agent_runtime(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
-    """Config consumed by the voice worker when it isn't inlined in room metadata."""
-    return agent_to_runtime(await _get_agent(db, agent_id))
+async def get_agent(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    return agent_to_dict(await _get_agent(db, ctx, agent_id))
 
 
 @router.patch("/{agent_id}")
-async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, db: Annotated[AsyncSession, Depends(get_db)]):
-    agent = await _get_agent(db, agent_id)
+async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: DbDep):
+    agent = await _get_agent(db, ctx, agent_id)
     for key, value in body.model_dump(exclude_unset=True).items():
         if value is None:
             continue
@@ -187,9 +173,10 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, db: Annotated[Asy
 
 
 @router.post("/{agent_id}/duplicate", status_code=201)
-async def duplicate_agent(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
-    src = await _get_agent(db, agent_id)
-    copy = Agent(id=uuid.uuid4(), template=src.template, **{k: getattr(src, k) for k in _EDITABLE})
+async def duplicate_agent(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    src = await _get_agent(db, ctx, agent_id)
+    copy = Agent(id=uuid.uuid4(), org_id=ctx.org.id, template=src.template,
+                 **{k: getattr(src, k) for k in _EDITABLE})
     copy.name = f"{src.name} (copy)"
     db.add(copy)
     await db.commit()
@@ -197,18 +184,18 @@ async def duplicate_agent(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depen
 
 
 @router.delete("/{agent_id}", status_code=204)
-async def delete_agent(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
-    agent = await _get_agent(db, agent_id)
+async def delete_agent(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    agent = await _get_agent(db, ctx, agent_id)
     await db.delete(agent)
     await db.commit()
 
 
 @router.post("/{agent_id}/chat")
-async def chat_with_agent(agent_id: uuid.UUID, body: ChatRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def chat_with_agent(agent_id: uuid.UUID, body: ChatRequest, ctx: CtxDep, db: DbDep):
     """Text playground — same prompt, knowledge and tools as the voice agent."""
     from app.services.llm import LLMNotConfigured, playground_reply
 
-    agent = await _get_agent(db, agent_id)
+    agent = await _get_agent(db, ctx, agent_id)
     try:
         return await playground_reply(
             agent_to_runtime(agent),
@@ -224,11 +211,11 @@ async def chat_with_agent(agent_id: uuid.UUID, body: ChatRequest, db: Annotated[
 
 
 @router.post("/{agent_id}/web-call")
-async def start_web_call(agent_id: uuid.UUID, body: WebCallRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def start_web_call(agent_id: uuid.UUID, body: WebCallRequest, ctx: CtxDep, db: DbDep):
     """Browser voice test — returns a LiveKit URL + token for livekit-client."""
     from app.services.outbound_call import CallSetupError, call_service
 
-    agent = await _get_agent(db, agent_id)
+    agent = await _get_agent(db, ctx, agent_id)
     try:
         return await call_service.start_web_call(agent, db, body.variables)
     except CallSetupError as exc:
@@ -239,13 +226,15 @@ async def start_web_call(agent_id: uuid.UUID, body: WebCallRequest, db: Annotate
 
 
 @router.post("/{agent_id}/phone-call")
-async def start_phone_call(agent_id: uuid.UUID, body: PhoneCallRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def start_phone_call(agent_id: uuid.UUID, body: PhoneCallRequest, ctx: CtxDep, db: DbDep):
     """Have the agent call a phone number right now (e.g. your own mobile)."""
     from app.services.outbound_call import CallSetupError, call_service
 
-    agent = await _get_agent(db, agent_id)
+    agent = await _get_agent(db, ctx, agent_id)
     try:
         call = await call_service.dispatch_call(None, db, agent=agent, to_phone=body.to_phone)
+    except InsufficientCredits as exc:
+        raise HTTPException(status_code=402, detail=str(exc))
     except (CallSetupError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

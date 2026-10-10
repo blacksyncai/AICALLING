@@ -20,6 +20,12 @@ class Lead(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
+    # Owning organization (sub-account).
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+
     # ── Contact ───────────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     company: Mapped[str] = mapped_column(String(255), nullable=False, default="")
@@ -38,6 +44,8 @@ class Lead(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Arbitrary extra CSV columns — usable as {{variables}} in agent prompts.
     custom_fields: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    last_called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Source ────────────────────────────────────────────────────────────────
     intent_source: Mapped[str] = mapped_column(

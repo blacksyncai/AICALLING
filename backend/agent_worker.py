@@ -169,7 +169,7 @@ class PounceAgent(Agent):
             try:
                 async with _httpx.AsyncClient(timeout=5.0) as client:
                     await client.patch(
-                        f"{settings.api_base_url}/api/leads/{self._state.lead_id}",
+                        f"{settings.api_base_url}/internal/leads/{self._state.lead_id}",
                         json={"question": question, "answer": answer},
                     )
             except Exception as exc:
@@ -353,7 +353,7 @@ async def _push_live_event(call_log_id: str, event: dict) -> None:
     try:
         async with _httpx.AsyncClient(timeout=2.0) as client:
             await client.post(
-                f"{settings.api_base_url}/api/webhook/calls/{call_log_id}/live-event",
+                f"{settings.api_base_url}/internal/calls/{call_log_id}/live-event",
                 json=event,
             )
     except Exception as exc:
@@ -374,7 +374,7 @@ async def _post_call_outcome(state, outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{settings.api_base_url}/api/webhook/calls/{state.call_log_id}/outcome",
+                f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome",
                 json={
                     "outcome": outcome,
                     "qualification_score": state.qualification_score,
@@ -676,7 +676,7 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{settings.api_base_url}/api/webhook/calls/{run.call_log_id}/outcome",
+                f"{settings.api_base_url}/internal/calls/{run.call_log_id}/outcome",
                 json={
                     "outcome": outcome,
                     "agreed_meeting_time": run.meeting_time,
@@ -696,7 +696,7 @@ async def _fetch_agent_config(agent_id: str) -> dict | None:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(f"{settings.api_base_url}/api/agents/{agent_id}/runtime")
+            resp = await client.get(f"{settings.api_base_url}/internal/agents/{agent_id}/runtime")
             resp.raise_for_status()
             return resp.json()
     except Exception as exc:

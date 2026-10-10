@@ -8,17 +8,14 @@ from __future__ import annotations
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
-
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
 from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
+from app.services.auth import CtxDep, DbDep
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
 
@@ -52,6 +49,8 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         "agreed_meeting_time": c.agreed_meeting_time,
         "started_at": _iso(c.started_at),
         "ended_at": _iso(c.ended_at),
+        "credits_charged": c.credits_charged,
+        "lead_id": str(c.lead_id) if c.lead_id else None,
     }
     if full:
         d["transcript"] = c.transcript or []
@@ -59,13 +58,13 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         d["metrics"] = c.metrics or None
         d["prospect_email"] = c.prospect_email
         d["livekit_room_name"] = c.livekit_room_name
-        d["lead_id"] = str(c.lead_id) if c.lead_id else None
     return d
 
 
-def _joined():
+def _joined(org_id):
     return (
         select(CallLog, Lead, Agent, Campaign)
+        .where(CallLog.org_id == org_id)
         .outerjoin(Lead, Lead.id == CallLog.lead_id)
         .outerjoin(Agent, Agent.id == CallLog.agent_id)
         .outerjoin(Campaign, Campaign.id == CallLog.campaign_id)
@@ -74,7 +73,7 @@ def _joined():
 
 @router.get("/")
 async def list_calls(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    ctx: CtxDep, db: DbDep,
     agent_id: uuid.UUID | None = None,
     campaign_id: uuid.UUID | None = None,
     outcome: str | None = None,
@@ -82,8 +81,8 @@ async def list_calls(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
-    stmt = _joined()
-    count_stmt = select(func.count()).select_from(CallLog)
+    stmt = _joined(ctx.org.id)
+    count_stmt = select(func.count()).select_from(CallLog).where(CallLog.org_id == ctx.org.id)
     filters = []
     if agent_id:
         filters.append(CallLog.agent_id == agent_id)
@@ -109,7 +108,7 @@ async def list_calls(
 
 
 @router.get("/overview")
-async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Query(default=30, ge=1, le=365)):
+async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, le=365)):
     """Dashboard KPIs for the window plus the previous window (for trends), computed in
     Python so it works on SQLite and Postgres alike."""
     now = datetime.now(timezone.utc)
@@ -117,7 +116,7 @@ async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Que
     prev_since = since - timedelta(days=days)
     rows = (await db.execute(
         select(CallLog.started_at, CallLog.outcome, CallLog.duration_seconds)
-        .where(CallLog.started_at >= prev_since)
+        .where(CallLog.org_id == ctx.org.id, CallLog.started_at >= prev_since)
     )).all()
 
     def _aware(d: datetime | None) -> datetime | None:
@@ -126,6 +125,15 @@ async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Que
     cur = [r for r in rows if r.started_at and _aware(r.started_at) >= since]
     prev = [r for r in rows if r.started_at and _aware(r.started_at) < since]
     positive = {"meeting_booked", "qualified", "interested", "transferred"}
+    # A "meaningful conversation": a real back-and-forth (30s+) that wasn't voicemail,
+    # or any call that ended with a positive outcome or a follow-up.
+    follow_up = {"callback", "interested"}
+    dead = {"voicemail", "no_answer", "failed"}
+
+    def meaningful(c) -> bool:
+        if c.outcome in positive or c.outcome in follow_up:
+            return True
+        return (c.duration_seconds or 0) >= 30 and c.outcome not in dead
 
     def summarize(calls: list) -> dict:
         connected = [c for c in calls if (c.duration_seconds or 0) > 0]
@@ -139,6 +147,8 @@ async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Que
             "meetings_booked": sum(1 for c in calls if c.outcome == "meeting_booked"),
             "success_rate": round(wins / len(connected), 4) if connected else 0,
             "connect_rate": round(len(connected) / len(calls), 4) if calls else 0,
+            "meaningful_calls": sum(1 for c in calls if meaningful(c)),
+            "follow_ups": sum(1 for c in calls if c.outcome in follow_up),
         }
 
     per_day: dict[str, dict] = {}
@@ -154,10 +164,14 @@ async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Que
             if c.outcome == "meeting_booked":
                 per_day[key]["booked"] += 1
 
-    agents_n = (await db.execute(select(func.count()).select_from(Agent))).scalar_one()
+    org_id = ctx.org.id
+    agents_n = (await db.execute(select(func.count()).select_from(Agent).where(Agent.org_id == org_id))).scalar_one()
     campaigns_n = (await db.execute(
-        select(func.count()).select_from(Campaign).where(Campaign.status == "running")
+        select(func.count()).select_from(Campaign).where(Campaign.org_id == org_id, Campaign.status == "running")
     )).scalar_one()
+    lead_dates = (await db.execute(select(Lead.created_at).where(Lead.org_id == org_id))).scalars().all()
+    new_leads = sum(1 for d in lead_dates if d and _aware(d) >= since)
+    prev_new_leads = sum(1 for d in lead_dates if d and prev_since <= _aware(d) < since)
 
     return {
         **summarize(cur),
@@ -166,13 +180,18 @@ async def overview(db: Annotated[AsyncSession, Depends(get_db)], days: int = Que
         "calls_per_day": list(per_day.values()),
         "agents": agents_n,
         "running_campaigns": campaigns_n,
+        "total_leads": len(lead_dates),
+        "new_leads": new_leads,
+        "previous_new_leads": prev_new_leads,
+        "credits_balance": ctx.org.credits_balance,
+        "unlimited_credits": ctx.org.unlimited_credits,
         "days": days,
     }
 
 
 @router.get("/{call_id}")
-async def get_call(call_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
-    row = (await db.execute(_joined().where(CallLog.id == call_id))).first()
+async def get_call(call_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    row = (await db.execute(_joined(ctx.org.id).where(CallLog.id == call_id))).first()
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     c, l, a, cp = row
@@ -181,11 +200,12 @@ async def get_call(call_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_d
 
 @router.post("/{call_id}/analyze")
 async def reanalyze_call(call_id: uuid.UUID, background_tasks: BackgroundTasks,
-                         db: Annotated[AsyncSession, Depends(get_db)]):
+                         ctx: CtxDep, db: DbDep):
     """Re-run post-call analysis (e.g. after changing the agent's extraction fields)."""
     from app.services.outbound_call import analyze_and_store
 
-    if not await db.get(CallLog, call_id):
+    call = await db.get(CallLog, call_id)
+    if not call or call.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Call not found")
     background_tasks.add_task(analyze_and_store, str(call_id))
     return {"queued": True}

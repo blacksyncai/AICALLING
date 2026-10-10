@@ -29,10 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runtime import agent_to_runtime, lead_variables
 from app.config import settings
+from app.models.account import Organization
 from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
+from app.services.accounts import charge_call, emit_event, ensure_can_call
 
 log = structlog.get_logger(__name__)
 
@@ -113,6 +115,7 @@ async def _mark_call_failed(call_id: uuid.UUID, lead_id: uuid.UUID | None, outco
         if lead_id:
             await db.execute(update(Lead).where(Lead.id == lead_id).values(status=outcome, updated_at=now))
         await db.commit()
+    await emit_call_events(call_id)
 
 
 async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, room_name: str) -> None:
@@ -121,6 +124,11 @@ async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, ro
         resp = await lk.sip.create_sip_participant(req, timeout=60)
         log.info("livekit_sip_answered", room=room_name, to=req.sip_call_to,
                  sip_call_id=getattr(resp, "sip_call_id", ""))
+        from app.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(CallLog).where(CallLog.id == call_id, CallLog.answered_at.is_(None))
+                             .values(answered_at=datetime.now(timezone.utc), status="connected"))
+            await db.commit()
     except api.SipCallError as exc:
         code = exc.sip_status_code or 0
         status = exc.metadata.get("sip_status", "") if exc.metadata else ""
@@ -163,7 +171,7 @@ class CallService:
             )
         room_name = f"web-{agent.id.hex[:8]}-{int(time.time())}"
         call_log = CallLog(
-            id=uuid.uuid4(), agent_id=agent.id, call_type="web", livekit_room_name=room_name,
+            id=uuid.uuid4(), org_id=agent.org_id, agent_id=agent.id, call_type="web", livekit_room_name=room_name,
             status="connected", started_at=datetime.now(timezone.utc),
         )
         db.add(call_log)
@@ -210,9 +218,17 @@ class CallService:
             if campaign and campaign.agent_id:
                 agent = await db.get(Agent, campaign.agent_id)
 
+        org_id = (agent.org_id if agent else None) or (lead.org_id if lead else None)
+        org = await db.get(Organization, org_id) if org_id else None
+        if org is None:
+            raise CallSetupError("This call isn't attached to an account.")
+        await db.refresh(org, ["credits_balance", "status", "unlimited_credits"])
+        ensure_can_call(org)  # raises InsufficientCredits
+
         room_name = f"call-{(lead.id.hex[:8] if lead else 'test')}-{int(time.time())}"
         call_log = CallLog(
             id=uuid.uuid4(),
+            org_id=org.id,
             lead_id=lead.id if lead else None,
             campaign_id=campaign_id,
             agent_id=agent.id if agent else None,
@@ -229,8 +245,9 @@ class CallService:
         metadata = _build_metadata(call_log, agent, variables, "outbound", lead)
 
         if lead:
+            now = datetime.now(timezone.utc)
             await db.execute(update(Lead).where(Lead.id == lead.id)
-                             .values(status="calling", updated_at=datetime.now(timezone.utc)))
+                             .values(status="calling", last_called_at=now, updated_at=now))
         await db.commit()
         log.info("dispatching_call", lead_id=str(lead.id) if lead else None, phone=phone,
                  room=room_name, agent=str(agent.id) if agent else "legacy")
@@ -288,10 +305,14 @@ class CallService:
             return call_log
 
         now = datetime.now(timezone.utc)
-        started = call_log.started_at
+        # Talk time runs from pickup for phone calls (ringing isn't billed), from start for web calls.
+        started = call_log.answered_at or call_log.started_at
         if started and started.tzinfo is None:  # SQLite drops tzinfo
             started = started.replace(tzinfo=timezone.utc)
         duration = int((now - started).total_seconds()) if started else None
+        if (call_log.call_type == "outbound" and not call_log.answered_at
+                and not any(t.get("role") == "user" for t in (transcript or []))):
+            duration = 0  # never picked up
 
         status = {"no_answer": "no_answer", "voicemail": "no_answer", "failed": "failed"}.get(outcome, "completed")
         await db.execute(update(CallLog).where(CallLog.id == call_log.id).values(
@@ -324,12 +345,23 @@ class CallService:
                 await db.execute(update(Campaign).where(Campaign.id == call_log.campaign_id).values(**inc))
 
         await db.commit()
-        log.info("call_outcome_updated", call_log_id=call_log_id, outcome=outcome, duration=duration)
+        await db.refresh(call_log)
+        await charge_call(db, call_log)
+        await db.commit()
+        log.info("call_outcome_updated", call_log_id=call_log_id, outcome=outcome, duration=duration,
+                 credits=call_log.credits_charged)
         return call_log
 
 
 async def analyze_and_store(call_log_id: str) -> None:
     """Background: run post-call analysis and save summary/sentiment/extracted fields."""
+    try:
+        await _analyze(call_log_id)
+    finally:
+        await emit_call_events(uuid.UUID(call_log_id))
+
+
+async def _analyze(call_log_id: str) -> None:
     from app.database import AsyncSessionLocal
     from app.services.llm import analyze_call
 
@@ -354,6 +386,49 @@ async def analyze_and_store(call_log_id: str) -> None:
                 call_log.outcome = result["outcome"]
         await db.commit()
         log.info("call_analyzed", call_log_id=call_log_id, outcome=call_log.outcome)
+
+
+async def emit_call_events(call_id: uuid.UUID) -> None:
+    """call.completed for every finished phone call, plus meeting.booked when one was booked."""
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        # Claim the call so its events go out exactly once (re-analysis, late worker reports).
+        claimed = await db.execute(update(CallLog).where(
+            CallLog.id == call_id, CallLog.events_sent_at.is_(None), CallLog.call_type == "outbound",
+            CallLog.org_id.isnot(None),
+        ).values(events_sent_at=datetime.now(timezone.utc)))
+        await db.commit()
+        if claimed.rowcount != 1:
+            return
+        call = await db.get(CallLog, call_id)
+        lead = await db.get(Lead, call.lead_id) if call.lead_id else None
+        agent = await db.get(Agent, call.agent_id) if call.agent_id else None
+        campaign = await db.get(Campaign, call.campaign_id) if call.campaign_id else None
+    data = {
+        "call_id": str(call.id),
+        "status": call.status,
+        "outcome": call.outcome,
+        "summary": call.summary,
+        "sentiment": call.sentiment,
+        "duration_seconds": call.duration_seconds,
+        "to_phone": call.to_phone,
+        "contact": {"id": str(lead.id), "name": lead.name, "phone": lead.phone, "email": lead.email,
+                    "company": lead.company} if lead else None,
+        "agent_id": str(call.agent_id) if call.agent_id else None,
+        "agent_name": agent.name if agent else None,
+        "campaign_id": str(call.campaign_id) if call.campaign_id else None,
+        "campaign_name": campaign.name if campaign else None,
+        "meeting_time": call.agreed_meeting_time,
+        "meeting_link": call.meeting_link,
+        "prospect_email": call.prospect_email,
+        "extracted_data": call.extracted_data or {},
+        "started_at": call.started_at,
+        "ended_at": call.ended_at,
+    }
+    await emit_event(call.org_id, "call.completed", data)
+    if call.outcome == "meeting_booked":
+        await emit_event(call.org_id, "meeting.booked", data)
 
 
 # Singleton (name kept for existing imports)

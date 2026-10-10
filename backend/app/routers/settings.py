@@ -8,15 +8,16 @@ import time
 
 import httpx
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.agent.voices import FEATURED_VOICES
 from app.config import settings
+from app.services.auth import get_current_user
 
 log = structlog.get_logger(__name__)
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depends(get_current_user)])
 
 # Shown when no Cartesia key is set (or the API is unreachable). Any Cartesia
 # voice ID can also be pasted into the agent editor.

@@ -9,6 +9,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
   });
+  if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/")) {
+    // Session ended (signed out elsewhere, password changed, expired) — back to sign in.
+    const next = window.location.pathname + window.location.search;
+    window.location.href = `/login?next=${encodeURIComponent(next)}`;
+  }
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {

@@ -1,86 +1,171 @@
 "use client";
 
-import { Bot, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Settings, X } from "lucide-react";
+import {
+  Bot, ChevronsUpDown, Coins, Contact, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug, Settings,
+  ShieldCheck, UserRound, X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
-import useSWR from "swr";
-import { fetcher } from "@/lib/api";
-import type { SettingsStatus } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import { canManage, displayName, initials, signOut, switchOrg, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { Logo } from "./Logo";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/contacts", label: "Contacts", icon: Contact },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/calls", label: "Call Logs", icon: PhoneCall },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true },
 ];
 
-export function Sidebar() {
+function NavLink({ href, label, icon: Icon, onClick }: { href: string; label: string; icon: typeof Bot; onClick: () => void }) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
-  const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher, { refreshInterval: 30000 });
+  const active = pathname === href || pathname.startsWith(`${href}/`);
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white",
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </Link>
+  );
+}
 
-  const ready = status?.capabilities;
-  const level = !status ? "unknown" : ready?.phone_call ? "phone" : ready?.web_call ? "web" : ready?.chat_test ? "chat" : "none";
+function CreditsPill({ onClick }: { onClick: () => void }) {
+  const { session } = useSession();
+  const org = session?.org;
+  if (!org) return null;
+  const low = !org.unlimited_credits && org.credits_balance <= 10;
+  return (
+    <Link
+      href="/profile?tab=billing"
+      onClick={onClick}
+      className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5 text-xs hover:bg-white/10"
+    >
+      <span className="flex items-center gap-2 text-zinc-400">
+        <Coins className={cn("h-4 w-4", low ? "text-amber-400" : "text-brand-400")} />
+        Calling credits
+      </span>
+      <span className={cn("font-mono font-medium tabular-nums", low ? "text-amber-300" : "text-white")}>
+        {org.unlimited_credits ? "Unlimited" : org.credits_balance.toLocaleString()}
+      </span>
+    </Link>
+  );
+}
+
+function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
+  const { session } = useSession();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  if (!session) return <div className="h-12 animate-pulse rounded-lg bg-white/5" />;
+  const name = displayName(session.user);
+  const otherOrgs = session.memberships.filter((m) => m.org_id !== session.org?.id);
+  const item = "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100";
+
+  return (
+    <div ref={ref} className="relative">
+      {open && (
+        <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-xl">
+          <div className="px-2.5 py-2">
+            <div className="truncate text-sm font-medium text-zinc-900">{name}</div>
+            <div className="truncate text-xs text-zinc-500">{session.user.email}</div>
+          </div>
+          <div className="my-1 h-px bg-zinc-100" />
+          <Link href="/profile" className={item} onClick={() => { setOpen(false); onNavigate(); }}>
+            <UserRound className="h-4 w-4 text-zinc-400" /> Profile & team
+          </Link>
+          {session.user.is_superadmin && (
+            <>
+              <Link href="/admin" className={item} onClick={() => { setOpen(false); onNavigate(); }}>
+                <ShieldCheck className="h-4 w-4 text-zinc-400" /> Admin portal
+              </Link>
+              <Link href="/settings" className={item} onClick={() => { setOpen(false); onNavigate(); }}>
+                <Settings className="h-4 w-4 text-zinc-400" /> Platform settings
+              </Link>
+            </>
+          )}
+          {otherOrgs.length > 0 && (
+            <>
+              <div className="my-1 h-px bg-zinc-100" />
+              <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">Switch account</div>
+              {otherOrgs.map((m) => (
+                <button key={m.org_id} className={item} onClick={() => switchOrg(m.org_id)}>
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-zinc-100 text-[10px] font-semibold text-zinc-600">
+                    {initials(m.org_name)}
+                  </span>
+                  <span className="truncate">{m.org_name}</span>
+                </button>
+              ))}
+            </>
+          )}
+          <div className="my-1 h-px bg-zinc-100" />
+          <button className={item} onClick={signOut}>
+            <LogOut className="h-4 w-4 text-zinc-400" /> Sign out
+          </button>
+        </div>
+      )}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-white/5"
+        aria-expanded={open}
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full brand-gradient text-xs font-semibold text-white">
+          {initials(name)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-white">{name}</span>
+          <span className="block truncate text-xs text-zinc-400">{session.org?.name ?? "No account"}</span>
+        </span>
+        <ChevronsUpDown className="h-4 w-4 shrink-0 text-zinc-500" />
+      </button>
+    </div>
+  );
+}
+
+export function Sidebar() {
+  const [open, setOpen] = useState(false);
+  const { session } = useSession();
+  const manager = canManage(session);
+  const close = () => setOpen(false);
 
   const nav = (
     <nav className="flex h-full flex-col">
       <div className="flex h-14 items-center px-5">
-        <Link href="/dashboard" onClick={() => setOpen(false)}>
+        <Link href="/dashboard" onClick={close}>
           <Logo className="text-white" />
         </Link>
       </div>
-      <div className="flex-1 space-y-0.5 px-3 py-2">
-        {NAV.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
-          return (
-            <Link
-              key={href}
-              href={href}
-              onClick={() => setOpen(false)}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white",
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </Link>
-          );
-        })}
+      <div className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
+        {NAV.filter((n) => !n.managersOnly || manager).map((n) => (
+          <NavLink key={n.href} {...n} onClick={close} />
+        ))}
+        {session?.user.is_superadmin && (
+          <>
+            <div className="px-3 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Platform</div>
+            <NavLink href="/admin" label="Admin portal" icon={ShieldCheck} onClick={close} />
+          </>
+        )}
       </div>
       <div className="space-y-2 border-t border-white/10 p-3">
-        <Link href="/settings" onClick={() => setOpen(false)} className="block rounded-lg bg-white/5 px-3 py-2.5 text-xs hover:bg-white/10">
-          <div className="flex items-center gap-2 font-medium text-white">
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                level === "phone" && "bg-emerald-400",
-                level === "web" && "bg-sky-400",
-                level === "chat" && "bg-amber-400",
-                (level === "none" || level === "unknown") && "bg-zinc-500",
-              )}
-            />
-            {level === "phone" && "Phone calling ready"}
-            {level === "web" && "Voice testing ready"}
-            {level === "chat" && "Chat testing only"}
-            {level === "none" && "Add API keys to start"}
-            {level === "unknown" && "Backend offline"}
-          </div>
-          <div className="mt-0.5 text-zinc-400">View setup →</div>
-        </Link>
-        <button
-          onClick={async () => {
-            await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-            window.location.href = "/login";
-          }}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-zinc-400 hover:bg-white/5 hover:text-white"
-        >
-          <LogOut className="h-4 w-4" /> Sign out
-        </button>
+        <CreditsPill onClick={close} />
+        <AccountMenu onNavigate={close} />
       </div>
     </nav>
   );
@@ -94,7 +179,7 @@ export function Sidebar() {
         </button>
       </div>
       <div className="h-14 lg:hidden" />
-      {open && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setOpen(false)} />}
+      {open && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={close} />}
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-40 w-60 bg-zinc-950 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",

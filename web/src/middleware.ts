@@ -1,25 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authEnabled, COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 
-const PUBLIC = ["/login", "/api/auth/"];
+// Pages need a session cookie; the API (proxied to the backend) checks the session itself.
+const SESSION_COOKIE = "bs_session";
+const PUBLIC = ["/login", "/invite/"];
 
-export async function middleware(req: NextRequest) {
-  if (!authEnabled()) return NextResponse.next();
+export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC.some((p) => pathname.startsWith(p))) return NextResponse.next();
-
-  const token = req.cookies.get(COOKIE_NAME)?.value;
-  if (token && (await verifySessionToken(token))) return NextResponse.next();
-
-  if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ detail: "Not signed in" }, { status: 401 });
-  }
+  if (req.cookies.get(SESSION_COOKIE)?.value) return NextResponse.next();
   const url = req.nextUrl.clone();
   url.pathname = "/login";
-  url.searchParams.set("next", pathname);
+  url.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
   return NextResponse.redirect(url);
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon).*)"],
+  matcher: ["/((?!api/|_next/static|_next/image|favicon).*)"],
 };
