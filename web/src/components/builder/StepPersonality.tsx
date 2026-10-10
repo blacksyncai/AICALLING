@@ -39,14 +39,17 @@ export function PersonalityFields({
   transferOn,
   setTransferOn,
   showErrors,
+  compact = false,
 }: {
   behavior: Behavior;
   onChange: (patch: Partial<Behavior>) => void;
   catalog: BuilderCatalog | undefined;
-  voices: VoicesResponse | undefined;
+  voices?: VoicesResponse | undefined;
   transferOn: boolean;
   setTransferOn: (v: boolean) => void;
   showErrors: boolean;
+  /** The wizard asks for name, language, voice and model on their own steps. */
+  compact?: boolean;
 }) {
   const booking = bookingStatus(catalog);
   const styles = catalog?.styles ?? [];
@@ -55,6 +58,8 @@ export function PersonalityFields({
 
   return (
     <div className="space-y-5">
+      {!compact && (
+        <>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Agent name" hint="Leave empty and AI will pick one.">
           <Input value={behavior.agent_name ?? ""} onChange={(e) => onChange({ agent_name: e.target.value })} placeholder="e.g. Sarah" />
@@ -109,6 +114,9 @@ export function PersonalityFields({
           <span className="font-medium text-zinc-800">AI model: {RECOMMENDED_MODEL} (recommended).</span> {MODEL_NOTE}
         </span>
       </div>
+
+        </>
+      )}
 
       {styles.length > 0 && (
         <div>

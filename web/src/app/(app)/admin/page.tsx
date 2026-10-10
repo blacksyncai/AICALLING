@@ -1,11 +1,12 @@
 "use client";
 
-import { Building2, Lock, LogIn, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
+import { BookOpen, Building2, Lock, LogIn, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { NewAccountModal } from "@/components/admin/NewAccountModal";
+import { PlaybooksTab } from "@/components/admin/playbooks";
 import { AdminGuard, Avatar, StatTile, fmt } from "@/components/admin/shared";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Spinner, Tabs } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -26,7 +27,7 @@ type AdminUser = {
   accounts: { org_id: string; org_name: string; role: string }[];
 };
 
-type Tab = "accounts" | "users";
+type Tab = "accounts" | "users" | "playbooks";
 
 export default function AdminPage() {
   return (
@@ -38,6 +39,9 @@ export default function AdminPage() {
 
 function AdminPortal() {
   const [tab, setTab] = useState<Tab>("accounts");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "playbooks") setTab("playbooks");
+  }, []);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [q, setQ] = useState("");
@@ -87,13 +91,14 @@ function AdminPortal() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="w-full sm:w-64">
+        <div className="w-full sm:w-96">
           <Tabs<Tab>
             value={tab}
             onChange={setTab}
             tabs={[
               { value: "accounts", label: "Accounts", icon: <Building2 className="h-3.5 w-3.5" /> },
               { value: "users", label: "Users", icon: <Users className="h-3.5 w-3.5" /> },
+              { value: "playbooks", label: "Playbooks", icon: <BookOpen className="h-3.5 w-3.5" /> },
             ]}
           />
         </div>
@@ -130,8 +135,10 @@ function AdminPortal() {
             <AccountsTable orgs={orgs.orgs} />
           )}
         </Card>
-      ) : (
+      ) : tab === "users" ? (
         <UsersTable />
+      ) : (
+        <PlaybooksTab />
       )}
 
       <NewAccountModal

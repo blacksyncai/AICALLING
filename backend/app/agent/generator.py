@@ -2,7 +2,7 @@
 Agent generation for the "Build with AI" wizard (see docs/agent-builder.md).
 
 - assist():              short "Got it…" summary + 0–3 follow-up questions for the wizard's goal step
-- generate_agent_spec(): wizard draft + business knowledge → validated prompt sections + call plan
+- draft_brief() / validate_draft(): the wizard draft, normalized (generation itself: app/agent/pipeline.py)
 - improve_agent():       rewrite an agent's prompt from a plain-language instruction (proposal only)
 - regenerate_section():  rewrite one prompt section (proposal only)
 - readiness():           launch checklist in plain language
@@ -83,6 +83,15 @@ class InvalidOutput(ValueError):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+def section_order(agent_or_builder) -> list[tuple[str, str]]:
+    """(key, heading) pairs for an agent's sections: production-generator agents ("v2") or the original twelve."""
+    b = agent_or_builder if isinstance(agent_or_builder, dict) else (getattr(agent_or_builder, "builder", None) or {})
+    if b.get("schema") == "v2":
+        from app.agent.composer import SECTIONS_V2
+        return list(SECTIONS_V2)
+    return [(k, SECTION_TITLES[k]) for k in SECTION_KEYS]
+
+
 def assemble_prompt(sections: dict) -> str:
     # Same rule as the web editor (web/src/components/agent-editor/prompt.ts): empty sections are left out.
     return "\n\n".join(
@@ -116,16 +125,16 @@ def _str(v, name: str, max_len: int, required: bool = True) -> str:
     return v
 
 
-def _sections(v, keys=SECTION_KEYS, partial: bool = False) -> dict:
+def _sections(v, keys=SECTION_KEYS, partial: bool = False, max_len: int = MAX_SECTION) -> dict:
     if not isinstance(v, dict):
         raise InvalidOutput("sections must be an object")
     out = {}
     for k, text in v.items():
-        if k not in SECTION_KEYS:
+        if k not in keys:
             if partial:
                 raise InvalidOutput(f"unknown section {k}")
             continue
-        out[k] = _str(text, f"sections.{k}", MAX_SECTION)
+        out[k] = _str(text, f"sections.{k}", max_len)
     if not partial:
         missing = [k for k in keys if k not in out]
         if missing:
@@ -133,24 +142,9 @@ def _sections(v, keys=SECTION_KEYS, partial: bool = False) -> dict:
     return out
 
 
-def _fields(v) -> list[dict]:
-    if not isinstance(v, list) or len(v) > MAX_FIELDS:
-        raise InvalidOutput("extraction_fields must be a list of at most 8")
-    out, seen = [], {f["name"] for f in STANDARD_FIELDS}
-    for f in v:
-        if not isinstance(f, dict):
-            raise InvalidOutput("extraction field must be an object")
-        name = f.get("name")
-        if not isinstance(name, str) or not _FIELD_NAME.match(name):
-            raise InvalidOutput(f"bad extraction field name {name!r}")
-        desc = _str(f.get("description", ""), "extraction field description", 200, required=False)
-        if name not in seen:
-            out.append({"name": name, "description": desc})
-            seen.add(name)
-    return out
 
 
-async def _json_call(messages: list[dict], validate, temperature: float = 0.4) -> dict:
+async def _json_call(messages: list[dict], validate, temperature: float = 0.4, max_tokens: int | None = None) -> dict:
     """Ask the model for JSON; validate; retry once with the error; else GenerationError."""
     from app.services import llm  # late: tests patch llm._chat
 
@@ -159,14 +153,19 @@ async def _json_call(messages: list[dict], validate, temperature: float = 0.4) -
     msgs = list(messages)
     last_error = ""
     for attempt in range(2):
-        data = await llm._chat({
+        payload = {
             "model": GEN_MODEL,
             "temperature": temperature,
             "response_format": {"type": "json_object"},
             "messages": msgs,
-        }, timeout=90.0)
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        data = await llm._chat(payload, timeout=120.0)
         content = ""
         try:
+            if data["choices"][0].get("finish_reason") == "length":
+                raise InvalidOutput("the answer was cut off before it finished; return the complete JSON, more concisely")
             content = data["choices"][0]["message"]["content"] or ""
             parsed = json.loads(content)
             if not isinstance(parsed, dict):
@@ -214,7 +213,7 @@ def _answers_text(use_case: dict, answers: dict) -> str:
     return "\n".join(lines)
 
 
-_EXPLICIT_BEHAVIOR = ("agent_name", "voice_id", "style", "booking", "transfer_number", "transfer_when",
+_EXPLICIT_BEHAVIOR = ("style", "booking", "transfer_number", "transfer_when",
                       "callback", "ai_disclosure", "qualification_depth")
 
 
@@ -247,8 +246,10 @@ def _behavior_flags(data: dict, actions: list[str]) -> dict:
             "booking": "book_appointment" in actions and catalog.calendar_configured(),
             "transfer": False, "transfer_number": "", "transfer_when": "",
             "callback": True, "ai_disclosure": True, "depth": "standard",
-            "style": "", "custom_style": "", "agent_name": "",
-            "language": b.get("language") or "en", "voice_id": "", "recommended": True,
+            "style": "", "custom_style": "",
+            # Name and voice are asked on their own steps, so they apply even with recommended settings.
+            "agent_name": (b.get("agent_name") or "").strip()[:MAX_AGENT_NAME],
+            "language": b.get("language") or "en", "voice_id": b.get("voice_id") or "", "recommended": True,
         }
     transfer_number = (b.get("transfer_number") or "").strip()
     transfer_when = (b.get("transfer_when") or "").strip()
@@ -434,182 +435,12 @@ def _qa_text(items: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _apply_guarantees(sections: dict, flags: dict, business_name: str) -> dict:
-    """Deterministic fixes the model can't be trusted to always get right."""
-    s = dict(sections)
-    if not flags["booking"]:
-        s["booking"] = DISABLED_TEXT["booking"]
-    if not flags["transfer"]:
-        s["transfer"] = DISABLED_TEXT["transfer"]
-    if not flags["callback"]:
-        s["callback"] = DISABLED_TEXT["callback"]
-    if "one question at a time" not in s["identity"].lower():
-        s["identity"] = f"{s['identity']}\n\n{VOICE_RULES}"
-    comp = s["compliance"]
-    if flags["ai_disclosure"] and not re.search(r"\bAI\b", comp):
-        s["compliance"] = (f"{comp}\n\nIf asked whether you're an AI or a real person, say honestly that "
-                           f"you're an AI assistant for {business_name}.")
-    if "do_not_call" not in s["compliance"]:
-        s["compliance"] += ("\n\nIf they ask not to be called again, apologize, confirm they won't be called "
-                            "again, and end the call with the do_not_call outcome.")
-    return s
 
 
-def _str_list(v, name: str, max_items: int, max_len: int, min_items: int = 1) -> list[str]:
-    if not isinstance(v, list):
-        raise InvalidOutput(f"{name} must be a list")
-    out = [_str(x, name, max_len) for x in v if not (isinstance(x, str) and not x.strip())]
-    if len(out) < min_items:
-        raise InvalidOutput(f"{name} needs at least {min_items} item(s)")
-    return out[:max_items]
 
 
-PLAN_KEYS = ("primary_objective", "target_audience", "qualification_questions", "desired_outcomes",
-             "transfer_rules", "booking_rules", "follow_up_logic")
 
 
-def _plan(p: dict) -> dict:
-    return {
-        "title": _str(p.get("title"), "title", 60),
-        "primary_objective": _str(p.get("primary_objective"), "primary_objective", 400),
-        "target_audience": _str(p.get("target_audience"), "target_audience", 300),
-        "qualification_questions": _str_list(p.get("qualification_questions"), "qualification_questions", 10, 200),
-        "desired_outcomes": _str_list(p.get("desired_outcomes"), "desired_outcomes", 6, 200),
-        "transfer_rules": _str(p.get("transfer_rules", ""), "transfer_rules", 800, required=False),
-        "booking_rules": _str(p.get("booking_rules", ""), "booking_rules", 800, required=False),
-        "follow_up_logic": _str(p.get("follow_up_logic", ""), "follow_up_logic", 800, required=False),
-    }
-
-
-# ── Generate ──────────────────────────────────────────────────────────────────
-
-
-async def generate_agent_spec(data: dict, knowledge: str) -> dict:
-    """Draft data → {agent_name, first_message, sections, extraction_fields, success_criteria, plan, flags, ...}."""
-    brief = validate_draft(data)
-    business = brief["business"]
-    flags = _behavior_flags(data, brief["actions"])
-    direction = brief["direction"]
-    industry_label = catalog.industry_label(business["industry"])
-    name = business["name"].strip()
-
-    if flags["style"]:
-        style = catalog.get_style(flags["style"])
-        style_text = (flags["custom_style"] or style["description"]) if style["key"] == "custom" else style["description"]
-        style_line = f"{style['label']} — {style_text}"
-        style_key = style["key"]
-    else:
-        tone = brief["custom"]["tone"]
-        style_line = (f"Not chosen — follow how the user wants the business represented: {tone}" if tone
-                      else "Not chosen — friendly and conversational, unless the user's instructions say otherwise")
-        style_key = "friendly"
-
-    depth_text = {
-        "light": "Light: ask only the two or three most important questions, keep it quick.",
-        "thorough": "Thorough: ask all the questions, with natural follow-ups where answers are vague.",
-    }.get(flags["depth"], "Standard: ask the most important questions; skip any already answered.")
-
-    behavior_lines = [
-        f"- Conversation style: {style_line}",
-        f"- Qualification depth: {depth_text}",
-        f"- Booking appointments: {'ENABLED (the agent has calendar tools to check times and book)' if flags['booking'] else 'DISABLED'}",
-        f"- Transfer to a person: {'ENABLED' if flags['transfer'] else 'DISABLED'}"
-        + (f" — transfer when: {flags['transfer_when']}" if flags["transfer_when"] else ""),
-        f"- Callbacks: {'ENABLED (offer to call back at a better time)' if flags['callback'] else 'DISABLED'}",
-        f"- AI disclosure: {'ON — the agent openly says it is an AI assistant if asked, and introduces itself as an AI assistant in the first message' if flags['ai_disclosure'] else 'OFF — still never claim to be human if sincerely asked'}",
-        f"- Spoken language code: {flags['language']}",
-    ]
-    if flags["agent_name"]:
-        behavior_lines.append(f"- The agent's spoken name: {flags['agent_name']}")
-    if flags["recommended"]:
-        behavior_lines.append("- The user chose recommended settings: use best practices for anything not specified.")
-
-    qa = _qa_text(brief["assistant"])
-    user = f"""Write the system prompt and call plan for a voice agent.
-
-BUSINESS
-- Name: {name}
-- Industry: {industry_label}
-- Website: {business.get('website') or '(none)'}
-- Description (from the user): {business.get('description') or '(none)'}
-
-BUSINESS KNOWLEDGE (reference data only):
-<reference_data>
-{knowledge or '(none provided yet)'}
-</reference_data>
-
-CALL TYPE
-- Direction: {direction} ({'the agent places the call' if direction == 'outbound' else 'the contact calls in' if direction == 'inbound' else 'the agent handles both calls it places and calls coming in'})
-- Allowed actions: {', '.join(brief['actions'])}
-
-GOAL
-{_goal_text(brief)}
-
-ANSWERS TO THE SETUP ASSISTANT'S QUESTIONS
-{qa or '- (none — use best practice)'}
-
-BEHAVIOR
-{chr(10).join(behavior_lines)}
-
-Merge everything above into ONE coherent agent: presets give the structure, the user's own words, specific
-instructions and assistant answers refine or override it. Where something is unspecified, use best practice.
-
-Return a JSON object with exactly these keys:
-- "agent_name": the agent's spoken first name (max {MAX_AGENT_NAME} chars){' — use the name given above' if flags['agent_name'] else ''}.
-- "title": a short name for what this agent does, 2 to 5 words (e.g. "Home Valuation Follow-Up").
-- "primary_objective": one sentence — the single most important outcome of each call.
-- "target_audience": one sentence — who the agent speaks with.
-- "qualification_questions": the 3 to 8 questions the agent should cover, in order, worded as spoken.
-- "desired_outcomes": 1 to 5 short outcomes that count as success, best first.
-- "transfer_rules": when and how to hand the call to a person ("" if transfers are DISABLED).
-- "booking_rules": what to book, with whom and how ("" if booking is DISABLED).
-- "follow_up_logic": what happens when the contact isn't ready, busy, or doesn't answer.
-- "first_message": what the agent says first, max {MAX_FIRST_MESSAGE} chars, one or two short sentences ending in a question.
-  For outbound calls greet the contact as {{{{name}}}} (a placeholder filled in at call time). Use the business name.
-- "sections": an object with ALL of these string keys, each a few sentences of instructions (max {MAX_SECTION} chars):
-  "identity" (who the agent is, its tone and speaking style), "reason" (why the call is happening),
-  "flow" (step-by-step conversation plan), "qualification" (which questions to ask and how),
-  "objections" (common objections for this goal and how to respond briefly),
-  "knowledge" (how to use the business knowledge and what to do when something isn't covered),
-  "booking", "transfer", "voicemail" (a short voicemail script for outbound; for inbound say voicemail doesn't apply),
-  "callback", "closing", "compliance" (honesty, AI disclosure, do-not-call and wrong-number handling, no advice).
-  If a capability above is DISABLED, its section must still be present and say plainly not to do it
-  (for example booking: "Don't offer to book meetings.").
-- "extraction_fields": up to {MAX_FIELDS} extra facts to pull from each call transcript, specific to this goal,
-  as [{{"name": "snake_case_name", "description": "…"}}]. Don't repeat lead_intent, timeline, key_objections or next_action.
-- "success_criteria": one or two sentences describing what a successful call looks like."""
-
-    def validate(p: dict) -> dict:
-        return {
-            "agent_name": _str(p.get("agent_name"), "agent_name", MAX_AGENT_NAME),
-            "first_message": _str(p.get("first_message"), "first_message", MAX_FIRST_MESSAGE),
-            "sections": _sections(p.get("sections")),
-            "extraction_fields": _fields(p.get("extraction_fields", [])),
-            "success_criteria": _str(p.get("success_criteria"), "success_criteria", MAX_SUCCESS),
-            "plan": _plan(p),
-        }
-
-    spec = await _json_call([{"role": "system", "content": _WRITING_RULES}, {"role": "user", "content": user}],
-                            validate)
-    spec["sections"] = _apply_guarantees(spec["sections"], flags, name)
-    plan = spec["plan"]
-    if not flags["booking"]:
-        plan["booking_rules"] = "Booking is off. If they want to meet, a teammate reaches out to set a time."
-    if not flags["transfer"]:
-        plan["transfer_rules"] = "Transfers are off. If they ask for a person, a teammate calls them back."
-    if flags["agent_name"]:
-        spec["agent_name"] = flags["agent_name"]
-    presets = brief["presets"]
-    if len(presets) == 1 and not brief["custom_mode"]:
-        label = presets[0]["label"]
-    elif presets:
-        label = presets[0]["label"] + (f" + {len(presets) - 1} more" if len(presets) > 1 else " (customized)")
-    else:
-        label = plan["title"]
-    spec.update(flags=flags, direction=direction, use_case=brief["primary"], use_cases=presets,
-                custom_mode=brief["custom_mode"], business=business, style=style_key,
-                industry=business["industry"], label=label, brief=brief)
-    return spec
 
 
 # ── Assist (interactive follow-up questions) ──────────────────────────────────
@@ -797,7 +628,10 @@ def _keep_compliance(new: str, old: str, agent) -> str:
 async def improve_agent(agent, instruction: str, knowledge: str) -> dict:
     instruction = instruction.strip()
     sections = (agent.builder or {}).get("sections") if agent.builder else None
-    has_sections = isinstance(sections, dict) and all(isinstance(sections.get(k), str) for k in SECTION_KEYS)
+    order = section_order(agent)
+    keys = tuple(k for k, _ in order)
+    v2 = (agent.builder or {}).get("schema") == "v2"
+    has_sections = isinstance(sections, dict) and all(isinstance(sections.get(k), str) for k in keys)
     rules = _WRITING_RULES + """
 You are editing an existing agent. Treat the user's instruction as their wish for how the agent should
 behave and change ONLY what the instruction concerns; keep everything else word for word. Never remove
@@ -822,22 +656,29 @@ USER INSTRUCTION:
 Return JSON: {{"summary": "one or two plain sentences describing what you changed",
 "first_message": "the full first message (unchanged unless the instruction concerns it; max {MAX_FIRST_MESSAGE} chars)",
 "changed_sections": {{"<section key>": "full new text of each section you changed"}}}}
-Only include sections you actually changed. Valid keys: {', '.join(SECTION_KEYS)}."""
+Only include sections you actually changed. Valid keys: {', '.join(keys)}."""
 
         def validate(p: dict) -> dict:
             return {
                 "summary": _str(p.get("summary"), "summary", 500),
                 "first_message": _str(p.get("first_message"), "first_message", MAX_FIRST_MESSAGE),
-                "changed": _sections(p.get("changed_sections", {}), partial=True),
+                "changed": _sections(p.get("changed_sections", {}), keys=keys, partial=True,
+                                     max_len=12000 if v2 else MAX_SECTION),
             }
 
-        out = await _json_call([{"role": "system", "content": rules}, {"role": "user", "content": user}], validate)
-        new_sections = {k: sections[k] for k in SECTION_KEYS}
+        out = await _json_call([{"role": "system", "content": rules}, {"role": "user", "content": user}], validate,
+                               max_tokens=16000 if v2 else None)
+        new_sections = {k: sections[k] for k in keys}
         for k, text in out["changed"].items():
             new_sections[k] = _keep_compliance(text, sections[k], agent) if k == "compliance" else text
+        if v2:
+            from app.agent.composer import assemble
+            prompt = assemble(new_sections)
+        else:
+            prompt = assemble_prompt(new_sections)
         return {
             "summary": out["summary"],
-            "system_prompt": assemble_prompt(new_sections),
+            "system_prompt": prompt,
             "first_message": out["first_message"],
             "sections": new_sections,
         }
@@ -967,6 +808,11 @@ def readiness(agent, org) -> dict:
             add("calendar", "Calendar booking", "warning",
                 "Booking is on, but no calendar is connected yet, so the agent can't book real meetings. Your BlackSync admin connects the calendar.",
                 href)
+    elif b.get("booking_requested"):
+        add("calendar", "Calendar booking", "warning",
+            "You asked for booking, but no calendar is connected, so the agent has a teammate follow up to schedule "
+            "instead of offering times. Once a calendar is connected, turn on booking under Actions and regenerate "
+            "the 'Tools, Transfers, and Calendar' section.", href)
     else:
         add("calendar", "Calendar booking", "ok", "Booking is off for this agent.")
 

@@ -148,50 +148,6 @@ def test_drafts_crud_and_isolation(client, make_client):
 # ── Generate ──────────────────────────────────────────────────────────────────
 
 
-def test_generate_creates_agent(client, monkeypatch):
-    draft = client.post("/api/agent-builder/drafts", json={"data": _draft_data(), "step": 6}).json()
-    sent = _mock_chat(monkeypatch, [json.dumps(_spec())])
-
-    r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 200, r.text
-    agent_id = r.json()["agent_id"]
-
-    payload = sent[0]
-    assert payload["model"] == "gpt-4.1" and payload["response_format"] == {"type": "json_object"}
-    prompt = payload["messages"][1]["content"]
-    assert "Skyline Realty" in prompt and "Buyer Lead Follow-Up" in prompt and "<reference_data>" in prompt
-    assert "Booking appointments: DISABLED" in prompt and "pre-approved" in prompt
-
-    agent = client.get(f"/api/agents/{agent_id}").json()
-    assert agent["template"] == "ai_builder" and agent["llm_model"] == "gpt-4.1"
-    assert agent["first_message"].startswith("Hi {{name}}")
-    assert agent["enable_booking"] is False and agent["transfer_number"] == "+15125550100"
-    assert agent["ai_disclosure"] is True and agent["temperature"] == 0.5
-    assert "Buyer Lead Follow-Up" in agent["description"] and "Skyline Realty" in agent["description"]
-
-    sp = agent["system_prompt"]
-    assert sp.startswith("## Identity and Style\n\n")
-    headings = [line for line in sp.splitlines() if line.startswith("## ")]
-    assert len(headings) == 12 and headings[-1] == "## Honesty and Compliance"
-    assert "Don't offer to book meetings" in sp  # booking disabled → fixed section text
-
-    b = agent["builder"]
-    assert b["industry"] == "real_estate" and b["use_case"] == "buyer_follow_up"
-    assert b["direction"] == "outbound" and b["style"] == "friendly" and b["draft_id"] == draft["id"]
-    assert set(b["sections"]) == set(SECTION_KEYS)
-    assert "one question at a time" in b["sections"]["identity"].lower()  # voice rules guaranteed
-    assert b["use_cases"] == ["buyer_follow_up"]
-    assert b["plan"]["primary_objective"] == "Book a buyer consultation with an agent."
-    assert b["plan"]["desired_outcomes"][0] == "Buyer consultation booked"
-
-    names = [f["name"] for f in agent["extraction_fields"]]
-    assert names == ["lead_intent", "timeline", "key_objections", "next_action", "budget", "preferred_area"]
-    assert agent["success_criteria"].startswith("Successful")
-
-    d = client.get(f"/api/agent-builder/drafts/{draft['id']}").json()
-    assert d["agent_id"] == agent_id
-    drafts = client.get("/api/agent-builder/drafts").json()["drafts"]
-    assert all(x["agent_id"] is None for x in drafts[:[x["agent_id"] for x in drafts].count(None)])
 
 
 def test_generate_validates_draft(client, monkeypatch):
@@ -210,36 +166,25 @@ def test_generate_validates_draft(client, monkeypatch):
     assert client.post("/api/agent-builder/generate", json={"draft_id": str(uuid.uuid4())}).status_code == 404
 
 
-def test_generate_retries_invalid_json_then_502(client, monkeypatch):
-    draft = client.post("/api/agent-builder/drafts", json={"data": _draft_data()}).json()
-    bad_sections = _spec()
-    del bad_sections["sections"]["voicemail"]
-    sent = _mock_chat(monkeypatch, ["not json", json.dumps(bad_sections)])
-    before = len(client.get("/api/agents/").json())
-    r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 502 and "try again" in r.json()["detail"]
-    assert len(sent) == 2  # one retry
-    assert len(client.get("/api/agents/").json()) == before
-
-    # Invalid first, valid on retry → succeeds.
-    bad_field = _spec(extraction_fields=[{"name": "Bad Name", "description": ""}])
-    _mock_chat(monkeypatch, [json.dumps(bad_field), json.dumps(_spec())])
-    assert client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]}).status_code == 200
 
 
-def test_generate_without_openai_key(client, monkeypatch):
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "openai_api_key", "")
-    draft = client.post("/api/agent-builder/drafts", json={"data": _draft_data()}).json()
-    r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 400 and r.json()["detail"] == "AI generation needs the OpenAI key to be configured."
 
 
-def _generated_agent(client, monkeypatch, **data_over):
-    draft = client.post("/api/agent-builder/drafts", json={"data": _draft_data(**data_over)}).json()
-    _mock_chat(monkeypatch, [json.dumps(_spec())])
-    return client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]}).json()["agent_id"]
+def _generated_agent(client, monkeypatch, direction="outbound", transfer_number="+15125550100", transfer_enabled=True):
+    """An agent built by the original 12-section builder — existing agents must keep working."""
+    from app.agent.generator import assemble_prompt
+
+    spec = _spec()
+    agent_id = client.post("/api/agents/", json={"template": "blank"}).json()["id"]
+    r = client.patch(f"/api/agents/{agent_id}", json={
+        "system_prompt": assemble_prompt(spec["sections"]), "first_message": spec["first_message"],
+        "transfer_number": transfer_number, "enable_booking": False, "knowledge_base": "Austin homes",
+        "builder": {"industry": "real_estate", "use_case": "buyer_follow_up", "direction": direction,
+                    "business_name": "Skyline Realty", "persona": "Jordan", "transfer_enabled": transfer_enabled,
+                    "sections": spec["sections"], "plan": {"primary_objective": spec["primary_objective"]}},
+    })
+    assert r.status_code == 200, r.text
+    return agent_id
 
 
 # ── Improve / regenerate ──────────────────────────────────────────────────────
@@ -328,7 +273,7 @@ def test_readiness_warnings_and_transfer(client, monkeypatch):
     for k, v in {"livekit_url": "wss://x", "livekit_api_key": "k", "livekit_api_secret": "s",
                  "deepgram_api_key": "d", "cartesia_api_key": "c"}.items():
         monkeypatch.setattr(settings, k, v)
-    agent_id = _generated_agent(client, monkeypatch, goal={"direction": "inbound", "use_case": "buyer_inquiry"})
+    agent_id = _generated_agent(client, monkeypatch, direction="inbound")
     client.patch(f"/api/agents/{agent_id}", json={"ai_disclosure": False, "enable_booking": True,
                                                   "transfer_number": "", "knowledge_base": ""})
     body = client.get(f"/api/agent-builder/agents/{agent_id}/readiness").json()
@@ -344,9 +289,7 @@ def test_readiness_warnings_and_transfer(client, monkeypatch):
 
 
 def test_readiness_transfer_without_number(client, monkeypatch):
-    agent_id = _generated_agent(client, monkeypatch, behavior={
-        "booking": False, "transfer_number": "", "transfer_when": "Caller wants a showing today",
-        "callback": True, "ai_disclosure": True})
+    agent_id = _generated_agent(client, monkeypatch, transfer_number="")
     agent = client.get(f"/api/agents/{agent_id}").json()
     assert agent["builder"]["transfer_enabled"] is True and agent["transfer_number"] == ""
     checks = {c["key"]: c for c in client.get(f"/api/agent-builder/agents/{agent_id}/readiness").json()["checks"]}
@@ -555,100 +498,12 @@ def test_assist_validation_retry_and_errors(client, monkeypatch, make_client):
 # ── Generate: custom, multi-preset, old drafts ───────────────────────────────
 
 
-def test_generate_custom_only_draft(client, monkeypatch):
-    data = _draft_data(
-        business={"name": "Acme Widgets", "industry": "other", "website": "", "description": ""},
-        goal={"use_cases": ["custom"], "use_case": "custom",
-              "custom": {"description": "Call trade-show contacts, find out what they need, and book a demo.",
-                         "audience": "Business owners", "tone": "Professional", "outcome": "Book a demo"},
-              "assistant": [{"id": "demo_length", "question": "How long are demos?", "answer": "You decide",
-                             "skipped": False, "delegated": True}]},
-        behavior={"decide_later": True, "agent_name": "Ignored"},
-    )
-    draft = client.post("/api/agent-builder/drafts", json={"data": data, "step": 4}).json()
-    sent = _mock_chat(monkeypatch, [json.dumps(_spec(title="Trade Show Demo Booking"))])
-    r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 200, r.text
-    prompt = sent[0]["messages"][1]["content"]
-    assert "trade-show contacts" in prompt and "Business owners" in prompt and "Book a demo" in prompt
-    assert "SELECTED PRESETS" not in prompt
-    assert "the user asked you to decide" in prompt
-    assert "recommended settings" in prompt and "Transfer to a person: DISABLED" in prompt
-    assert "Booking appointments: DISABLED" in prompt  # recommended + no calendar configured
-
-    agent = client.get(f"/api/agents/{r.json()['agent_id']}").json()
-    assert agent["name"] == "Jordan – Trade Show Demo Booking"  # decide later ignores the typed name
-    b = agent["builder"]
-    assert b["use_case"] == "custom" and b["use_cases"] == ["custom"] and b["industry"] == "other"
-    plan = b["plan"]
-    assert plan["primary_objective"] and plan["target_audience"] and plan["follow_up_logic"]
-    assert plan["qualification_questions"] and plan["desired_outcomes"]
-    assert plan["transfer_rules"].startswith("Transfers are off")
-    assert plan["request"]["description"].startswith("Call trade-show")
-    assert plan["recommended_settings"] is True
-    assert agent["llm_model"] == "gpt-4.1" and agent["voice_id"]
 
 
-def test_generate_multiple_presets_with_extras(client, monkeypatch):
-    goal = {"direction": "outbound", "use_cases": ["seller_follow_up", "expired_listings", "general_prospecting"],
-            "use_case": "seller_follow_up",
-            "extra_instructions": "Avoid sounding like a typical salesperson.",
-            "custom": {"description": "LEFTOVER text from a deselected Create your own chip"},
-            "assistant": [{"id": "lead_source", "question": "Where are leads from?", "answer": "Zillow", "skipped": False},
-                          {"id": "price", "question": "Ask about price?", "answer": None, "skipped": True},
-                          {"id": "pending", "question": "Unanswered?", "answer": None, "skipped": False}]}
-    draft = client.post("/api/agent-builder/drafts", json={"data": _draft_data(goal=goal)}).json()
-    sent = _mock_chat(monkeypatch, [json.dumps(_spec())])
-    r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 200, r.text
-    prompt = sent[0]["messages"][1]["content"]
-    assert "[PRIMARY] Seller Lead Follow-Up" in prompt and "[ALSO] Expired Listings" in prompt
-    assert "[ALSO] General Prospecting" in prompt  # alias resolved
-    assert "Avoid sounding like a typical salesperson." in prompt
-    assert "Where are leads from?" in prompt and "Zillow" in prompt and "skipped" in prompt
-    assert "Unanswered?" not in prompt and "LEFTOVER" not in prompt
-    assert "Setup answers" not in prompt  # new drafts don't inject legacy followup defaults
-
-    agent = client.get(f"/api/agents/{r.json()['agent_id']}").json()
-    b = agent["builder"]
-    assert b["use_case"] == "seller_follow_up"
-    assert b["use_cases"] == ["seller_follow_up", "expired_listings", "cold_prospecting"]
-    assert b["plan"]["booking_rules"].startswith("Booking is off")  # booking disabled in behavior
-    assert b["plan"]["transfer_rules"] == "Transfer when they want to talk to an agent today."
-    assert agent["name"] == "Jordan – Seller Lead Follow-Up + 2 more"
-    assert agent["system_prompt"].count("## ") == 12
 
 
-def test_generate_old_format_draft(client, monkeypatch):
-    # Old drafts: single use_case + followup answers, old step numbers (1–6), no use_cases list.
-    data = _draft_data(goal={"direction": "outbound", "use_case": "custom",
-                             "answers": {"custom_goal": "Confirm next week's delivery windows and gate codes",
-                                         "custom_questions": "Ask for the gate code", "contact_type": "Both"}})
-    data["business"]["industry"] = "logistics"
-    draft = client.post("/api/agent-builder/drafts", json={"data": data, "step": 5}).json()
-    assert draft["step"] == 5
-    sent = _mock_chat(monkeypatch, [json.dumps(_spec())])
-    r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 200, r.text
-    prompt = sent[0]["messages"][1]["content"]
-    assert "delivery windows" in prompt and "Ask for the gate code" in prompt
-    agent = client.get(f"/api/agents/{r.json()['agent_id']}").json()
-    assert agent["builder"]["use_case"] == "custom" and agent["transfer_number"] == "+15125550100"
-
-    # Old preset draft keeps its setup answers in the prompt.
-    draft = client.post("/api/agent-builder/drafts", json={"data": _draft_data(), "step": 6}).json()
-    sent = _mock_chat(monkeypatch, [json.dumps(_spec())])
-    assert client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]}).status_code == 200
-    assert "Are these new leads or existing contacts? New leads" in sent[0]["messages"][1]["content"]
 
 
-def test_generate_requires_plan_fields(client, monkeypatch):
-    draft = client.post("/api/agent-builder/drafts", json={"data": _draft_data()}).json()
-    no_plan = _spec()
-    del no_plan["qualification_questions"]
-    sent = _mock_chat(monkeypatch, [json.dumps(no_plan), json.dumps(_spec(desired_outcomes=[]))])
-    r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 502 and len(sent) == 2
 
 
 def test_transfer_request_without_number_is_flagged():

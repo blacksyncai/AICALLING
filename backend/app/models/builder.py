@@ -75,6 +75,12 @@ class AgentDraft(Base):
     data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Set once the draft has been turned into an agent.
     agent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    # Generation job, kept apart from `data` so wizard autosaves never overwrite it.
+    # gen_status: running | failed | done
+    gen_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    gen_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    gen_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gen_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)

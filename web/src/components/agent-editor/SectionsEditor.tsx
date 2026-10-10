@@ -1,33 +1,47 @@
 "use client";
 
 import { Check, ChevronRight, RotateCcw, Sparkles, X } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 import { Button, Input, Textarea } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { post } from "@/lib/api";
-import { PROMPT_SECTIONS } from "@/lib/builder";
 import { cn } from "@/lib/utils";
 import { DiffView } from "./DiffView";
+import { countWords, type SectionOrder } from "./prompt";
 
 type RegenState = { asking: boolean; instruction: string; loading: boolean; proposal: string | null };
 const IDLE: RegenState = { asking: false, instruction: "", loading: false, proposal: null };
 
-/** The AI-built script as 12 labelled, collapsible sections, each with "Regenerate". */
+/** Textarea that grows with its content (capped at most of the viewport, then scrolls). */
+function AutoTextarea(props: ComponentProps<typeof Textarea>) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [props.value]);
+  return <Textarea ref={ref} {...props} className={cn("max-h-[70vh] min-h-28 resize-y", props.className)} />;
+}
+
+/** The AI-built script as labelled, collapsible sections (in the agent's order), each with "Regenerate". */
 export function SectionsEditor({
   agentId,
   sections,
+  order,
   onChange,
   beforeRegenerate,
 }: {
   agentId: string;
   sections: Record<string, string>;
+  order: SectionOrder;
   onChange: (key: string, text: string) => void;
   beforeRegenerate?: () => Promise<boolean>;
 }) {
   const toast = useToast();
   const [open, setOpen] = useState<Record<string, boolean>>({ identity: true });
   const [regen, setRegen] = useState<Record<string, RegenState>>({});
-  const allOpen = PROMPT_SECTIONS.every(([k]) => open[k]);
+  const allOpen = order.every(([k]) => open[k]);
 
   const patchRegen = (key: string, p: Partial<RegenState>) => setRegen((r) => ({ ...r, [key]: { ...(r[key] ?? IDLE), ...p } }));
 
@@ -54,13 +68,13 @@ export function SectionsEditor({
         <span className="text-xs font-medium text-zinc-700">Script</span>
         <button
           className="text-xs font-medium text-zinc-500 hover:text-zinc-800"
-          onClick={() => setOpen(allOpen ? {} : Object.fromEntries(PROMPT_SECTIONS.map(([k]) => [k, true])))}
+          onClick={() => setOpen(allOpen ? {} : Object.fromEntries(order.map(([k]) => [k, true])))}
         >
           {allOpen ? "Collapse all" : "Expand all"}
         </button>
       </div>
       <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white">
-        {PROMPT_SECTIONS.map(([key, label], idx) => {
+        {order.map(([key, label], idx) => {
           const text = sections[key] ?? "";
           const isOpen = !!open[key];
           const st = regen[key] ?? IDLE;
@@ -77,7 +91,11 @@ export function SectionsEditor({
                   <ChevronRight className={cn("h-4 w-4 shrink-0 text-zinc-400 transition-transform", isOpen && "rotate-90")} />
                   <span className="w-5 shrink-0 text-[11px] tabular-nums text-zinc-400">{idx + 1}</span>
                   <span className="truncate text-sm font-medium text-zinc-900">{label}</span>
-                  {!text.trim() && <span className="shrink-0 text-[11px] text-zinc-400">empty</span>}
+                  {text.trim() ? (
+                    <span className="hidden shrink-0 text-[11px] tabular-nums text-zinc-400 sm:inline">{countWords(text).toLocaleString()} words</span>
+                  ) : (
+                    <span className="shrink-0 text-[11px] text-zinc-400">empty</span>
+                  )}
                   {st.proposal !== null && <span className="shrink-0 rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700">New version</span>}
                 </button>
                 <Button
@@ -126,7 +144,7 @@ export function SectionsEditor({
                   {st.proposal !== null ? (
                     <div className="space-y-2">
                       <div className="text-xs font-medium text-zinc-700">Proposed change</div>
-                      <DiffView before={text} after={st.proposal} className="max-h-80 overflow-y-auto" />
+                      <DiffView before={text} after={st.proposal} className="max-h-[60vh] overflow-y-auto" />
                       <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
@@ -144,13 +162,7 @@ export function SectionsEditor({
                       </div>
                     </div>
                   ) : (
-                    <Textarea
-                      value={text}
-                      onChange={(e) => onChange(key, e.target.value)}
-                      rows={Math.min(18, Math.max(4, text.split("\n").length + 1))}
-                      className="text-[13px]"
-                      aria-label={label}
-                    />
+                    <AutoTextarea value={text} onChange={(e) => onChange(key, e.target.value)} rows={6} className="text-[13px]" aria-label={label} />
                   )}
                 </div>
               )}

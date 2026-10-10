@@ -1,14 +1,20 @@
 "use client";
 
-import { AlertCircle, RotateCcw, Sparkles } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { AlertCircle, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
+import type { ReactNode } from "react";
 import { Button, Notice } from "@/components/ui";
-import { CUSTOM_USE_CASE, type BuilderCatalog, type BusinessProfile, type DraftData } from "@/lib/builder";
+import { CUSTOM_USE_CASE, type BuilderCatalog, type BusinessProfile, type DraftData, type Generation } from "@/lib/builder";
 import { cn } from "@/lib/utils";
 import { customDescription, presetKeys, selectedKeys, useCasesFor } from "./goal";
 import { decidesLater, recommendedRows } from "./StepFineTune";
 import { LANGUAGES, RECOMMENDED_MODEL, type VoicesResponse } from "./StepPersonality";
 import { StepTitle, displayHost } from "./parts";
+
+const REPRESENT: Record<string, string> = {
+  team_member: "As part of your team",
+  ai_assistant: "As your AI assistant",
+  custom: "With your own introduction",
+};
 
 const DIRECTION = { outbound: "Calls out", inbound: "Answers calls", both: "Calls out and answers calls" } as const;
 
@@ -19,6 +25,7 @@ export function StepReview({
   voices,
   onEdit,
   bookingLikely,
+  references,
 }: {
   data: DraftData;
   catalog: BuilderCatalog | undefined;
@@ -26,6 +33,7 @@ export function StepReview({
   voices: VoicesResponse | undefined;
   onEdit: (step: number) => void;
   bookingLikely: boolean;
+  references: number;
 }) {
   const b = data.business ?? {};
   const g = data.goal ?? {};
@@ -73,26 +81,32 @@ export function StepReview({
           {g.extra_instructions?.trim() && !own && <Row label="Specifics" value={<span className="line-clamp-2">{g.extra_instructions.trim()}</span>} />}
           {answered > 0 && <Row label="AI follow-ups" value={`${answered} answered`} />}
         </Group>
-        <Group title="Fine-tune" onEdit={() => onEdit(3)}>
+        <Group title="Agent" onEdit={() => onEdit(3)}>
+          <Row label="Name" value={be.agent_name?.trim() || "AI will pick one"} />
+          <Row label="Introduces itself" value={REPRESENT[be.representation ?? "ai_assistant"]} />
           {later ? (
             <>
-              <Row label="Settings" value="Recommended — change anytime in the agent editor" />
+              <Row label="Call settings" value="Recommended — change anytime in the agent editor" />
               {recommendedRows(catalog, bookingLikely)
-                .slice(0, 3)
+                .slice(0, 2)
                 .map(([k, v]) => (
                   <Row key={k} label={k} value={v} />
                 ))}
             </>
           ) : (
             <>
-              <Row label="Agent name" value={be.agent_name?.trim() || "AI will pick one"} />
-              <Row label="Voice" value={`${voice}${language ? ` · ${language}` : ""}`} />
-              <Row label="AI model" value={`${RECOMMENDED_MODEL} (recommended)`} />
               {style && <Row label="Style" value={style} />}
               <Row label="On the call" value={actions.join(" · ") || "Conversation only"} />
               <Row label="Tools" value={tools.length ? tools.join(", ") : "None for now"} />
             </>
           )}
+        </Group>
+        <Group title="References" onEdit={() => onEdit(4)}>
+          <Row label="Your scripts" value={references > 0 ? `${references} added` : "None — skipped"} />
+        </Group>
+        <Group title="Voice" onEdit={() => onEdit(5)}>
+          <Row label="Voice" value={`${voice}${language ? ` · ${language}` : ""}`} />
+          <Row label="AI model" value={`${be.llm_model || RECOMMENDED_MODEL}`} />
         </Group>
       </div>
     </div>
@@ -127,25 +141,12 @@ function Row({ label, value }: { label: string; value: ReactNode | undefined }) 
   );
 }
 
-const LINES = [
-  "Reading your business knowledge",
-  "Writing your agent's introduction",
-  "Planning how the conversation should flow",
-  "Preparing answers to common questions",
-  "Getting ready for objections",
-  "Setting up booking and transfers",
-  "Adding disclosure and compliance details",
-  "Final checks",
-];
-
-export function Generating() {
-  const [i, setI] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setI((n) => Math.min(n + 1, LINES.length - 1)), 4000);
-    return () => clearInterval(t);
-  }, []);
+/** Live progress of the background generation job (stages come from the server). */
+export function Generating({ generation }: { generation: Generation | null }) {
+  const stages = generation?.stages ?? [];
+  const current = Math.max(0, stages.findIndex((s) => s.key === generation?.stage));
   return (
-    <div className="flex flex-col items-center px-4 py-14 text-center" role="status" aria-live="polite">
+    <div className="flex flex-col items-center px-4 py-12 text-center" role="status" aria-live="polite">
       <div className="relative">
         <span className="absolute inset-0 animate-ping rounded-2xl bg-brand-500/20" />
         <span className="relative flex h-14 w-14 items-center justify-center rounded-2xl brand-gradient text-white shadow-lg">
@@ -153,16 +154,21 @@ export function Generating() {
         </span>
       </div>
       <h2 className="mt-6 font-display text-xl font-semibold tracking-tight text-zinc-900">Building your agent</h2>
-      <p key={i} className="mt-2 h-5 text-sm text-zinc-500 transition duration-500 starting:translate-y-1 starting:opacity-0">
-        {LINES[i]}…
-      </p>
-      <div className="mt-6 h-1 w-56 max-w-full overflow-hidden rounded-full bg-zinc-100">
-        <div
-          className="h-full rounded-full bg-brand-600 transition-all duration-[4000ms] ease-out"
-          style={{ width: `${Math.min(95, 10 + (i / (LINES.length - 1)) * 85)}%` }}
-        />
-      </div>
-      <p className="mt-4 text-xs text-zinc-400">This usually takes under a minute.</p>
+      <ol className="mt-5 w-full max-w-xs space-y-2 text-left">
+        {stages.map((s, i) => (
+          <li key={s.key} className="flex items-center gap-2.5 text-sm">
+            {i < current ? (
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+            ) : i === current ? (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-600" />
+            ) : (
+              <span className="h-4 w-4 shrink-0 rounded-full border border-zinc-300" />
+            )}
+            <span className={cn(i <= current ? "text-zinc-900" : "text-zinc-400")}>{s.label}</span>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-5 text-xs text-zinc-400">A full script takes one to three minutes. You can leave this page — we&apos;ll keep going.</p>
     </div>
   );
 }

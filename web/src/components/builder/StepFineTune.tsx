@@ -2,8 +2,8 @@
 
 import { Plug } from "lucide-react";
 import type { BuilderCatalog, DraftData } from "@/lib/builder";
-import { Collapsible, Segmented, StepTitle } from "./parts";
-import { MODEL_NOTE, PersonalityFields, RECOMMENDED_MODEL, bookingStatus, type Behavior, type VoicesResponse } from "./StepPersonality";
+import { Collapsible, Segmented } from "./parts";
+import { PersonalityFields, bookingStatus, type Behavior } from "./StepPersonality";
 import { ToolsPicker } from "./StepTools";
 
 type Mode = "later" | "now";
@@ -22,8 +22,6 @@ export function decidesLater(behavior: Behavior | undefined): boolean {
 export function recommendedRows(catalog: BuilderCatalog | undefined, bookingLikely: boolean): [string, string][] {
   const calendar = bookingStatus(catalog) === "available";
   return [
-    ["Voice", "Recommended voice"],
-    ["AI model", `${RECOMMENDED_MODEL} (recommended)`],
     ["Booking", bookingLikely ? (calendar ? "On — books into your calendar" : "Off until your calendar is connected") : "Off for this goal"],
     ["Transfers", "Off — add a number in the agent editor"],
     ["Tools & CRM", "None for now"],
@@ -35,7 +33,6 @@ export function StepFineTune({
   behavior,
   onChange,
   catalog,
-  voices,
   transferOn,
   setTransferOn,
   showErrors,
@@ -47,7 +44,6 @@ export function StepFineTune({
   behavior: Behavior;
   onChange: (patch: Partial<Behavior>) => void;
   catalog: BuilderCatalog | undefined;
-  voices: VoicesResponse | undefined;
   transferOn: boolean;
   setTransferOn: (v: boolean) => void;
   showErrors: boolean;
@@ -74,11 +70,9 @@ export function StepFineTune({
 
   return (
     <div>
-      <StepTitle title="Fine-tune (optional)" description="Everything has a recommended default. You can change any of it later." />
-
       <div className="space-y-5">
         <Segmented<Mode>
-          label="Settings"
+          label="Call settings"
           value={later ? "later" : "now"}
           onChange={setMode}
           options={[
@@ -97,7 +91,6 @@ export function StepFineTune({
                 </div>
               ))}
             </dl>
-            <p className="text-xs text-zinc-500">{MODEL_NOTE}</p>
           </div>
         ) : (
           <>
@@ -105,10 +98,10 @@ export function StepFineTune({
               behavior={behavior}
               onChange={onChange}
               catalog={catalog}
-              voices={voices}
               transferOn={transferOn}
               setTransferOn={setTransferOn}
               showErrors={showErrors}
+              compact
             />
             <Collapsible
               defaultOpen={tools.length > 0}

@@ -13,7 +13,10 @@ import { CreatedBanner } from "@/components/agent-editor/CreatedBanner";
 import { ImproveWithAI } from "@/components/agent-editor/ImproveWithAI";
 import { assemblePrompt, humanizeKey } from "@/components/agent-editor/prompt";
 import { CheckList, ReadinessCard, type Readiness } from "@/components/agent-editor/ReadinessCard";
+import { QualityPanel } from "@/components/agent-editor/QualityPanel";
 import { SectionsEditor } from "@/components/agent-editor/SectionsEditor";
+import { VersionHistory } from "@/components/agent-editor/VersionHistory";
+import { sectionOrder } from "@/lib/builder";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, Field, Input, Modal, Notice, Spinner, Tabs, Textarea, Toggle } from "@/components/ui";
 import { fetcher, patch } from "@/lib/api";
@@ -181,7 +184,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
   const builder = draft.builder ?? null;
   const builderSections = builder?.sections && Object.keys(builder.sections).length > 0 ? builder.sections : null;
   const useSections = !!builderSections && !rawPrompt;
-  const promptOutOfSync = !!builderSections && !!saved && squash(assemblePrompt(builderSections)) !== squash(draft.system_prompt);
+  const order = sectionOrder(builder);
+  const promptOutOfSync = !!builderSections && !!saved && squash(assemblePrompt(builderSections, order)) !== squash(draft.system_prompt);
   const blockers = readiness?.checks.filter((c) => c.status === "blocker") ?? [];
   const chips = builder ? [builder.industry, builder.use_case, builder.direction].filter(Boolean).map((k) => humanizeKey(k)) : [];
 
@@ -189,7 +193,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
     setDraft((d) => {
       if (!d?.builder) return d;
       const sections = { ...(d.builder.sections ?? {}), [key]: text };
-      return { ...d, builder: { ...d.builder, sections }, system_prompt: assemblePrompt(sections) };
+      return { ...d, builder: { ...d.builder, sections }, system_prompt: assemblePrompt(sections, sectionOrder(d.builder)) };
     });
   }
 
@@ -315,6 +319,15 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                     refreshReadiness();
                   }}
                 />
+                <VersionHistory
+                  agent={saved ?? draft}
+                  dirty={dirty}
+                  onRestored={(updated) => {
+                    mutate(updated, false);
+                    setDraft(updated);
+                    refreshReadiness();
+                  }}
+                />
                 {builderSections && (
                   <button
                     onClick={() => setRawPrompt((v) => !v)}
@@ -335,7 +348,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               )}
               {useSections && builderSections ? (
                 <div>
-                  <SectionsEditor agentId={id} sections={builderSections} onChange={setSectionText} />
+                  {builder?.quality && <QualityPanel quality={builder.quality} />}
+                  <SectionsEditor agentId={id} sections={builderSections} order={order} onChange={setSectionText} />
                   <p className="mt-1.5 text-xs text-zinc-500">
                     Use lead variables like <code>{"{{name}}"}</code> or <code>{"{{company}}"}</code> anywhere — they&apos;re filled from each lead.{" "}
                     {draft.system_prompt.length.toLocaleString()} chars

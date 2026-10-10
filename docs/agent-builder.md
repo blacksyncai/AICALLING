@@ -70,7 +70,10 @@ section) is exported for agent generation.
 | POST | `/drafts` | `{data?, step?}` | Draft |
 | GET/PATCH/DELETE | `/drafts/{id}` | PATCH `{step?, data?}` (data replaces) | Draft |
 | POST | `/assist` | `{draft_id}` | Assist response (below) — reads the saved draft, never writes it |
-| POST | `/generate` | `{draft_id}` | `{agent_id}` — creates a real `Agent` in the org |
+| POST | `/generate` | `{draft_id}` | 202 + generation status — starts the background pipeline (see below) |
+| GET | `/drafts/{id}/generation` | — | `{status: idle\|running\|failed\|done, stage, stages, error, agent_id}` |
+| GET/POST | `/drafts/{id}/references` | `{filename, content_base64}` or `{name, text}` | customer scripts (PDF/DOCX/TXT/paste), org-scoped, max 5 |
+| DELETE | `/references/{id}` | — | 204 |
 
 Catalog:
 ```json
@@ -204,3 +207,71 @@ AI disclosure off (warning), account suspended (blocker).
 `CALL_OUTCOMES` gains `wrong_number` and `do_not_call`. A call ending in `do_not_call`
 sets the contact's `do_not_call = True`. Post-call analysis always extracts
 `lead_intent`, `timeline`, `key_objections`, `next_action` in addition to agent fields.
+
+
+## Production generator (`app/agent/pipeline.py`)
+
+The old generator asked for a single JSON answer. It had to hold all 12 sections and the call plan, each section was
+"a few sentences" with a 2,500-character limit, and nothing checked depth or `finish_reason`. That is why agents came
+out as two- or three-sentence descriptions. Generation now runs as a background job:
+
+1. **Context.** The pipeline gathers:
+   - the business profile, with a source for every fact (`[K#] … (source: url)`), and the wizard answers;
+   - the customer's own reference documents;
+   - the real contact fields (base fields plus the org's custom CSV columns) and the real tools;
+   - the pattern cards of 1–3 relevant internal playbooks.
+
+   The original playbook scripts are never included.
+2. **Spec.** The spec comes from two schema-validated model calls (`app/agent/spec.py`): *strategy* first, then
+   *conversation*. Each call gets an 8–12k output-token budget.
+   - Invalid output goes back to the model with the exact validation error.
+   - When `finish_reason == "length"`, the call is retried with double the budget, up to 32k.
+3. **Composer** (`app/agent/composer.py`). Turns the spec into 12 typed sections:
+   - Identity
+   - Objectives
+   - Conduct
+   - Variables
+   - Opening
+   - Dynamic call flow
+   - Qualification
+   - Objections
+   - Tools
+   - Post-call output
+   - Compliance
+   - Turn-taking
+
+   Non-negotiable rules are added deterministically: AI disclosure, do-not-call, prompt-injection resistance,
+   the limits of the real tools, and the turn-taking stop points.
+4. **Quality gate** (`app/agent/quality.py`). Checks that:
+   - every section has content and the prompt has enough words (it fails below 450);
+   - the opening has stop points and the required branches are present;
+   - qualification includes reasons and a stop rule, and there are at least 3 objections;
+   - the outcomes are valid and the extraction fields are set;
+   - only real tools and contact fields are used;
+   - nothing from a playbook's `private_terms` appears, no foreign URLs or endpoints, and no credentials.
+
+   When a check fails, the affected half of the spec goes back to the model for repair, at most twice. If it still
+   fails, the job ends with a clear error.
+5. **Save.** Saves the agent with `builder.schema = "v2"`, `section_order`, `sections`, `spec`, `quality` and the
+   playbook versions used, plus an `AgentVersion` snapshot. Booking is enabled only when a real calendar is
+   connected; otherwise `booking_requested` makes readiness warn.
+
+Sample output for a fictitious business: [agent-generator-sample.md](agent-generator-sample.md).
+
+### Internal playbook library (admin only)
+
+`/api/admin/playbooks` lets admins:
+- list, read, update tags, title and active state, and roll back to an earlier version;
+- add a version, which saves the pattern card and private terms;
+- create a new playbook.
+
+Each version keeps the original script verbatim. The three bundled scripts are installed once at startup by
+`app/services/playbooks.py`. They are never turned into customer agents.
+
+### Prompt versions
+
+Every saved change to an agent's prompt, first message or sections creates an `AgentVersion`. Agents that existed
+before this feature get an "original" baseline on their first edit. The endpoints are:
+- `GET /api/agents/{id}/versions`
+- `GET /api/agents/{id}/versions/{vid}`
+- `POST /api/agents/{id}/versions/{vid}/restore`

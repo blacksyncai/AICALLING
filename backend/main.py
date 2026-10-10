@@ -41,6 +41,12 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await load_signing_key(db)
         await bootstrap(db)
+    from app.services.playbooks import seed_playbooks
+    async with AsyncSessionLocal() as db:
+        try:
+            await seed_playbooks(db)
+        except Exception as exc:  # never block startup on the reference library
+            log.warning("playbook_seed_failed", error=str(exc))
     from app.routers.business_profile import start_refresh_loop
     refresh_task = start_refresh_loop()
     yield

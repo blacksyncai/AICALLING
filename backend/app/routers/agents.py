@@ -163,13 +163,72 @@ async def get_agent(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
     return agent_to_dict(await _get_agent(db, ctx, agent_id))
 
 
+def _prompt_state(agent) -> tuple:
+    return (agent.system_prompt or "", agent.first_message or "", (agent.builder or {}).get("sections"))
+
+
 @router.patch("/{agent_id}")
 async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: DbDep):
+    from app.services.agent_versions import ensure_baseline, snapshot
+
     agent = await _get_agent(db, ctx, agent_id)
-    for key, value in body.model_dump(exclude_unset=True).items():
-        if value is None:
-            continue
+    before = _prompt_state(agent)
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if {"system_prompt", "first_message", "builder"} & changes.keys():
+        await ensure_baseline(db, agent)
+    if "builder" in changes and isinstance(agent.builder, dict):
+        # Generator-owned metadata can't be dropped or rewritten from the editor.
+        for key in ("schema", "spec", "quality", "generation"):
+            if key in agent.builder:
+                changes["builder"][key] = agent.builder[key]
+    for key, value in changes.items():
         setattr(agent, key, value)
+    if _prompt_state(agent) != before:
+        await snapshot(db, agent, "edited", ctx.user.id)
+    await db.commit()
+    await db.refresh(agent)
+    return agent_to_dict(agent)
+
+
+@router.get("/{agent_id}/versions")
+async def list_versions(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    from app.models.playbook import AgentVersion
+    from app.services.agent_versions import version_to_dict
+
+    agent = await _get_agent(db, ctx, agent_id)
+    rows = (await db.execute(select(AgentVersion).where(AgentVersion.agent_id == agent.id, AgentVersion.org_id == ctx.org.id)
+                             .order_by(AgentVersion.version.desc()))).scalars().all()
+    return {"versions": [version_to_dict(v) for v in rows]}
+
+
+async def _get_version(db, ctx: Context, agent_id: uuid.UUID, version_id: uuid.UUID):
+    from app.models.playbook import AgentVersion
+
+    agent = await _get_agent(db, ctx, agent_id)
+    v = await db.get(AgentVersion, version_id)
+    if not v or v.agent_id != agent.id or v.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return agent, v
+
+
+@router.get("/{agent_id}/versions/{version_id}")
+async def get_version(agent_id: uuid.UUID, version_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    from app.services.agent_versions import version_to_dict
+
+    _, v = await _get_version(db, ctx, agent_id, version_id)
+    return version_to_dict(v, full=True)
+
+
+@router.post("/{agent_id}/versions/{version_id}/restore")
+async def restore_version(agent_id: uuid.UUID, version_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    from app.services.agent_versions import snapshot
+
+    agent, v = await _get_version(db, ctx, agent_id, version_id)
+    agent.system_prompt = v.system_prompt
+    agent.first_message = v.first_message
+    if v.sections is not None:
+        agent.builder = {**(agent.builder or {}), "sections": dict(v.sections)}
+    await snapshot(db, agent, "restored", ctx.user.id, note=f"Restored version {v.version}")
     await db.commit()
     await db.refresh(agent)
     return agent_to_dict(agent)

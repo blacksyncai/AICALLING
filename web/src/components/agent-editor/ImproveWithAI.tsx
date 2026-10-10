@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useToast } from "@/components/toast";
 import { Button, Input, Modal } from "@/components/ui";
 import { patch, post } from "@/lib/api";
-import { PROMPT_SECTIONS } from "@/lib/builder";
+import { sectionOrder } from "@/lib/builder";
 import type { Agent } from "@/lib/types";
 import { DiffView } from "./DiffView";
 import { assemblePrompt } from "./prompt";
@@ -62,7 +62,7 @@ export function ImproveWithAI({
 
   const changedSections =
     proposal?.sections && currentSections
-      ? PROMPT_SECTIONS.filter(([k]) => (proposal.sections?.[k] ?? currentSections[k] ?? "") !== (currentSections[k] ?? ""))
+      ? sectionOrder(agent.builder).filter(([k]) => (proposal.sections?.[k] ?? currentSections[k] ?? "") !== (currentSections[k] ?? ""))
       : [];
   const firstChanged = !!proposal && proposal.first_message !== agent.first_message;
   const useSectionView = !!proposal?.sections && !!currentSections;
@@ -76,7 +76,7 @@ export function ImproveWithAI({
       if (proposal.sections && agent.builder) {
         const sections = { ...(agent.builder.sections ?? {}), ...proposal.sections };
         body.builder = { ...agent.builder, sections };
-        body.system_prompt = assemblePrompt(sections);
+        body.system_prompt = assemblePrompt(sections, sectionOrder(agent.builder));
       } else {
         body.system_prompt = proposal.system_prompt;
       }

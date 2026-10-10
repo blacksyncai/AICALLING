@@ -318,3 +318,164 @@ async def list_users(_: AdminDep, db: DbDep):
         if m and o:
             entry["accounts"].append({"org_id": str(o.id), "org_name": o.name, "role": m.role})
     return {"users": list(users.values())}
+
+
+# ── Internal Agent Playbook Library ───────────────────────────────────────────
+# Reference scripts that teach the agent generator what "production quality" means.
+# Admin-only: customers never see them, and the generator only reads the pattern card.
+
+
+class PlaybookPatch(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    tags: dict | None = None
+    active: bool | None = None
+    # Roll back (or forward) to an existing version.
+    current_version: int | None = Field(default=None, ge=1)
+
+
+class PlaybookVersionCreate(BaseModel):
+    patterns: str = Field(min_length=50, max_length=30000)
+    private_terms: list[str] = Field(default_factory=list, max_length=100)
+    # Defaults to the current version's original script.
+    original_text: str | None = Field(default=None, max_length=200000)
+    note: str = Field(default="", max_length=500)
+
+
+class PlaybookCreate(PlaybookVersionCreate):
+    slug: str = Field(pattern=r"^[a-z][a-z0-9_]{2,79}$")
+    title: str = Field(min_length=2, max_length=255)
+    tags: dict = Field(default_factory=dict)
+
+
+_TAG_KEYS = ("verticals", "directions", "goals", "styles")
+
+
+def _clean_tags(tags: dict) -> dict:
+    out = {}
+    for k in _TAG_KEYS:
+        vals = tags.get(k) or []
+        if not isinstance(vals, list):
+            raise HTTPException(status_code=400, detail=f"tags.{k} must be a list")
+        out[k] = sorted({str(v).strip().lower()[:40] for v in vals if str(v).strip()})[:30]
+    return out
+
+
+def _version_dict(v, full: bool = False) -> dict:
+    d = {"version": v.version, "note": v.note, "private_terms": v.private_terms or [],
+         "created_at": v.created_at.isoformat() if v.created_at else None,
+         "original_chars": len(v.original_text or ""), "pattern_chars": len(v.patterns or "")}
+    if full:
+        d.update(original_text=v.original_text, patterns=v.patterns)
+    return d
+
+
+async def _playbook(db, playbook_id: uuid.UUID):
+    from app.models.playbook import Playbook
+
+    pb = await db.get(Playbook, playbook_id)
+    if not pb:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    return pb
+
+
+async def _playbook_payload(db, pb) -> dict:
+    from app.models.playbook import PlaybookVersion
+
+    versions = (await db.execute(select(PlaybookVersion).where(PlaybookVersion.playbook_id == pb.id)
+                                 .order_by(PlaybookVersion.version.desc()))).scalars().all()
+    current = next((v for v in versions if v.version == pb.current_version), None)
+    return {"id": str(pb.id), "slug": pb.slug, "title": pb.title, "tags": pb.tags or {}, "active": pb.active,
+            "current_version": pb.current_version, "updated_at": pb.updated_at.isoformat() if pb.updated_at else None,
+            "current": _version_dict(current, full=True) if current else None,
+            "versions": [_version_dict(v) for v in versions]}
+
+
+@router.get("/playbooks")
+async def list_playbooks(_: AdminDep, db: DbDep):
+    from app.models.playbook import Playbook
+
+    rows = (await db.execute(select(Playbook).order_by(Playbook.title))).scalars().all()
+    return {"playbooks": [{"id": str(p.id), "slug": p.slug, "title": p.title, "tags": p.tags or {},
+                           "active": p.active, "current_version": p.current_version} for p in rows]}
+
+
+@router.get("/playbooks/{playbook_id}")
+async def get_playbook(playbook_id: uuid.UUID, _: AdminDep, db: DbDep):
+    return await _playbook_payload(db, await _playbook(db, playbook_id))
+
+
+@router.get("/playbooks/{playbook_id}/versions/{version}")
+async def get_playbook_version(playbook_id: uuid.UUID, version: int, _: AdminDep, db: DbDep):
+    from app.models.playbook import PlaybookVersion
+
+    pb = await _playbook(db, playbook_id)
+    v = (await db.execute(select(PlaybookVersion).where(PlaybookVersion.playbook_id == pb.id,
+                                                        PlaybookVersion.version == version))).scalar_one_or_none()
+    if not v:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return _version_dict(v, full=True)
+
+
+@router.patch("/playbooks/{playbook_id}")
+async def update_playbook(playbook_id: uuid.UUID, body: PlaybookPatch, admin: AdminDep, db: DbDep):
+    from app.models.playbook import PlaybookVersion
+
+    pb = await _playbook(db, playbook_id)
+    if body.title is not None:
+        pb.title = body.title.strip() or pb.title
+    if body.tags is not None:
+        pb.tags = _clean_tags(body.tags)
+    if body.active is not None:
+        pb.active = body.active
+    if body.current_version is not None:
+        exists = (await db.execute(select(PlaybookVersion.id).where(
+            PlaybookVersion.playbook_id == pb.id, PlaybookVersion.version == body.current_version))).first()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Version not found")
+        pb.current_version = body.current_version
+    await db.commit()
+    log.info("playbook_updated", playbook=pb.slug, by=str(admin.id))
+    return await _playbook_payload(db, pb)
+
+
+async def _add_version(db, pb, body: PlaybookVersionCreate, user_id, original_fallback: str) -> None:
+    from app.models.playbook import PlaybookVersion
+
+    last = (await db.execute(select(func.max(PlaybookVersion.version)).where(
+        PlaybookVersion.playbook_id == pb.id))).scalar_one() or 0
+    terms = sorted({t.strip() for t in body.private_terms if t and t.strip()})
+    db.add(PlaybookVersion(playbook_id=pb.id, version=last + 1, original_text=body.original_text or original_fallback,
+                           patterns=body.patterns.strip(), private_terms=terms, note=body.note.strip(),
+                           created_by=user_id))
+    pb.current_version = last + 1
+
+
+@router.post("/playbooks/{playbook_id}/versions", status_code=201)
+async def add_playbook_version(playbook_id: uuid.UUID, body: PlaybookVersionCreate, admin: AdminDep, db: DbDep):
+    """Save edited patterns / private terms as a new version (older versions stay in the history)."""
+    from app.models.playbook import PlaybookVersion
+
+    pb = await _playbook(db, playbook_id)
+    current = (await db.execute(select(PlaybookVersion).where(
+        PlaybookVersion.playbook_id == pb.id, PlaybookVersion.version == pb.current_version))).scalar_one_or_none()
+    await _add_version(db, pb, body, admin.id, current.original_text if current else "")
+    await db.commit()
+    log.info("playbook_version_added", playbook=pb.slug, version=pb.current_version, by=str(admin.id))
+    return await _playbook_payload(db, pb)
+
+
+@router.post("/playbooks", status_code=201)
+async def create_playbook(body: PlaybookCreate, admin: AdminDep, db: DbDep):
+    from app.models.playbook import Playbook
+
+    if (await db.execute(select(Playbook.id).where(Playbook.slug == body.slug))).first():
+        raise HTTPException(status_code=409, detail="A playbook with that slug already exists.")
+    if not (body.original_text or "").strip():
+        raise HTTPException(status_code=400, detail="Paste the original script.")
+    pb = Playbook(slug=body.slug, title=body.title.strip(), tags=_clean_tags(body.tags), active=True, current_version=0)
+    db.add(pb)
+    await db.flush()
+    await _add_version(db, pb, body, admin.id, "")
+    await db.commit()
+    log.info("playbook_created", playbook=pb.slug, by=str(admin.id))
+    return await _playbook_payload(db, pb)

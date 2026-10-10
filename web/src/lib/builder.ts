@@ -157,8 +157,15 @@ export interface DraftData {
     transfer_when?: string;
     callback?: boolean;
     ai_disclosure?: boolean;
+    /** How the agent presents itself: as part of the team, openly as an AI assistant, or a custom intro. */
+    representation?: "team_member" | "ai_assistant" | "custom";
+    custom_intro?: string;
+    /** AI model chosen in the voice step (kept as chosen — never swapped silently). */
+    llm_model?: string;
   };
   integrations?: { selected?: string[] };
+  /** Steps the user chose to skip (e.g. "references", "voice"). */
+  skipped?: string[];
 }
 
 export interface AgentDraft {
@@ -167,6 +174,49 @@ export interface AgentDraft {
   data: DraftData;
   updated_at: string | null;
   agent_id: string | null;
+  generation?: Generation;
+}
+
+/** GET /api/agent-builder/drafts/{id}/generation — the background generation job. */
+export interface Generation {
+  status: "idle" | "running" | "failed" | "done";
+  stage: string | null;
+  stages: { key: string; label: string }[];
+  error: string | null;
+  agent_id: string | null;
+}
+
+/** A script or notes the customer uploaded/pasted for this draft (organization-scoped). */
+export interface ReferenceDoc {
+  id: string;
+  name: string;
+  kind: "pdf" | "docx" | "txt" | "paste";
+  chars: number;
+  preview: string;
+  created_at: string | null;
+}
+
+export interface QualityCheck {
+  key: string;
+  label: string;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+}
+
+/** GET /api/agents/{id}/versions */
+export interface AgentVersionSummary {
+  id: string;
+  version: number;
+  source: "generated" | "edited" | "improved" | "regenerated" | "restored" | "original";
+  note: string;
+  words: number;
+  created_at: string | null;
+}
+
+export interface AgentVersionFull extends AgentVersionSummary {
+  system_prompt: string;
+  first_message: string;
+  sections: Record<string, string> | null;
 }
 
 // Keys and headings must match SECTION_TITLES in backend/app/agent/generator.py —
@@ -199,7 +249,37 @@ export interface BuilderPlan {
   recommended_settings?: boolean;
 }
 
+// Sections of agents built by the production generator (builder.schema === "v2").
+// Keys and headings must match SECTIONS_V2 in backend/app/agent/composer.py.
+export const PROMPT_SECTIONS_V2 = [
+  ["identity", "Agent Identity & Role"],
+  ["objectives", "Objectives and Success Criteria"],
+  ["conduct", "Voice & Conversational Conduct"],
+  ["variables", "Variables and Personalization"],
+  ["opening", "Opening Script"],
+  ["flow", "Dynamic Call Flow"],
+  ["qualification", "Qualification Questions and Stop Rules"],
+  ["objections", "Objection Handling & Direct Answers"],
+  ["tools", "Tools, Transfers, and Calendar"],
+  ["outcomes", "Post-Call Structured Output"],
+  ["compliance", "Compliance, Privacy, and Security"],
+  ["turn_taking", "Turn-Taking Edge Cases"],
+] as const;
+
+/** (key, heading) pairs for an agent's sections, in prompt order. */
+export function sectionOrder(builder: BuilderInfo | null | undefined): [string, string][] {
+  if (builder?.section_order?.length) return builder.section_order.map(([k, l]) => [k, l]);
+  if (builder?.schema === "v2") return PROMPT_SECTIONS_V2.map(([k, l]) => [k, l]);
+  return PROMPT_SECTIONS.map(([k, l]) => [k, l]);
+}
+
 export interface BuilderInfo {
+  /** "v2" = built by the production generator (12 operating sections). */
+  schema?: string;
+  section_order?: [string, string][];
+  quality?: { words: number; repairs: number; checks: QualityCheck[] };
+  booking_requested?: boolean;
+  representation?: string;
   industry?: string;
   use_case?: string;
   use_cases?: string[];
