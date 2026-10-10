@@ -165,3 +165,51 @@ def test_cannot_end_as_booked_without_booking(client, agent_id, monkeypatch):
     body = client.post(f"/api/agents/{agent_id}/chat", json={"messages": [{"role": "user", "content": "ok"}]}).json()
     assert body["ended"] is False
     assert "no meeting is booked" in body["tool_events"][0]["result"]
+
+
+def test_failed_dial_is_recorded_with_reason(client, agent_id, monkeypatch):
+    """A carrier rejection (e.g. Twilio 403) marks the call failed with a readable reason."""
+    import asyncio
+    import uuid
+
+    from livekit import api
+
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.services import outbound_call
+
+    call_id = uuid.uuid4()
+
+    async def scenario():
+        async with AsyncSessionLocal() as db:
+            db.add(CallLog(id=call_id, agent_id=uuid.UUID(agent_id), call_type="outbound",
+                           livekit_room_name="call-x", status="initiated", to_phone="+14155550123"))
+            await db.commit()
+
+        class FakeSip:
+            async def create_sip_participant(self, req, timeout=None):
+                raise api.SipCallError("permission_denied", "SIP call failed", status=403,
+                                       metadata={"sip_status_code": "403", "sip_status": "Forbidden"})
+
+        class FakeRoom:
+            async def delete_room(self, req):
+                return None
+
+        class FakeLK:
+            sip, room = FakeSip(), FakeRoom()
+
+            async def aclose(self):
+                return None
+
+        monkeypatch.setattr(outbound_call, "_lk", lambda: FakeLK())
+        req = api.CreateSIPParticipantRequest(sip_trunk_id="ST_x", sip_call_to="+14155550123", room_name="call-x")
+        await outbound_call._dial_and_watch(req, call_id, None, "call-x")
+
+    asyncio.run(scenario())
+    call = client.get(f"/api/calls/{call_id}").json()
+    assert call["status"] == "failed" and call["outcome"] == "failed"
+    assert "403 Forbidden" in call["summary"] and "credential" in call["summary"]
+
+    # The worker's later empty "no_answer" report must not overwrite the reason.
+    client.post(f"/api/webhook/calls/{call_id}/outcome", json={"outcome": "no_answer", "transcript": []})
+    assert client.get(f"/api/calls/{call_id}").json()["outcome"] == "failed"

@@ -16,6 +16,7 @@ Call flow (phone):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -84,6 +85,60 @@ def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, cal
         meta["fetch_config"] = True
         raw = json.dumps(meta)
     return raw
+
+
+_BACKGROUND: set = set()
+
+# SIP codes that mean "nobody picked up" rather than a setup problem.
+_NO_ANSWER_CODES = {408, 480, 486, 487, 600, 603}
+
+_SIP_HINTS = {
+    401: "the carrier rejected the trunk's login — check the SIP trunk username/password",
+    403: "the carrier refused the call — check the trunk's credential list, termination URI, "
+         "geo-permissions, or (on a Twilio trial) that the number is verified",
+    404: "the number was not found",
+    484: "the number looks incomplete",
+}
+
+
+async def _mark_call_failed(call_id: uuid.UUID, lead_id: uuid.UUID | None, outcome: str, reason: str) -> None:
+    from app.database import AsyncSessionLocal
+
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(CallLog).where(CallLog.id == call_id).values(
+            status="no_answer" if outcome == "no_answer" else "failed",
+            outcome=outcome, summary=reason, duration_seconds=0, ended_at=now,
+        ))
+        if lead_id:
+            await db.execute(update(Lead).where(Lead.id == lead_id).values(status=outcome, updated_at=now))
+        await db.commit()
+
+
+async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, room_name: str) -> None:
+    lk = _lk()
+    try:
+        resp = await lk.sip.create_sip_participant(req, timeout=60)
+        log.info("livekit_sip_answered", room=room_name, to=req.sip_call_to,
+                 sip_call_id=getattr(resp, "sip_call_id", ""))
+    except api.SipCallError as exc:
+        code = exc.sip_status_code or 0
+        status = exc.metadata.get("sip_status", "") if exc.metadata else ""
+        outcome = "no_answer" if code in _NO_ANSWER_CODES else "failed"
+        hint = _SIP_HINTS.get(code, "")
+        reason = (f"Not answered ({code} {status})." if outcome == "no_answer"
+                  else f"Call failed: {code} {status}" + (f" — {hint}." if hint else "."))
+        log.warning("livekit_sip_failed", room=room_name, to=req.sip_call_to, sip_code=code, sip_status=status)
+        await _mark_call_failed(call_id, lead_id, outcome, reason)
+        try:
+            await lk.room.delete_room(api.DeleteRoomRequest(room=room_name))
+        except Exception:
+            pass
+    except Exception as exc:
+        log.warning("livekit_sip_error", room=room_name, error=str(exc))
+        await _mark_call_failed(call_id, lead_id, "failed", f"Call failed: {exc}")
+    finally:
+        await lk.aclose()
 
 
 class CallService:
@@ -183,31 +238,30 @@ class CallService:
         lk = _lk()
         try:
             await self._create_room_and_dispatch(lk, room_name, metadata)
-            sip_resp = await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
-                sip_trunk_id=settings.livekit_sip_outbound_trunk_id,
-                sip_call_to=phone,
-                room_name=room_name,
-                participant_identity=f"sip_{phone.lstrip('+')}",
-                participant_name=(lead.name if lead else phone) or phone,
-                play_dialtone=False,
-                ringing_timeout=timedelta(seconds=45),
-                wait_until_answered=False,
-                krisp_enabled=True,
-            ))
-            log.info("livekit_sip_dialed", room=room_name, to=phone,
-                     sip_call_id=getattr(sip_resp, "sip_call_id", ""))
         except Exception as exc:
             log.error("dispatch_call_failed", error=str(exc), room=room_name)
-            now = datetime.now(timezone.utc)
-            await db.execute(update(CallLog).where(CallLog.id == call_log.id)
-                             .values(status="failed", outcome="failed", ended_at=now))
-            if lead:
-                await db.execute(update(Lead).where(Lead.id == lead.id).values(status="failed", updated_at=now))
-            await db.commit()
+            await _mark_call_failed(call_log.id, lead.id if lead else None, "failed", f"Could not start call: {exc}")
             raise
         finally:
             await lk.aclose()
 
+        # Dial in the background and wait for the outcome, so a carrier rejection
+        # (403, busy, no answer…) is recorded on the call instead of it looking
+        # "in progress" forever.
+        sip_req = api.CreateSIPParticipantRequest(
+            sip_trunk_id=settings.livekit_sip_outbound_trunk_id,
+            sip_call_to=phone,
+            room_name=room_name,
+            participant_identity=f"sip_{phone.lstrip('+')}",
+            participant_name=(lead.name if lead else phone) or phone,
+            play_dialtone=False,
+            ringing_timeout=timedelta(seconds=45),
+            wait_until_answered=True,
+            krisp_enabled=True,
+        )
+        task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name))
+        _BACKGROUND.add(task)
+        task.add_done_callback(_BACKGROUND.discard)
         return call_log
 
     async def update_call_outcome(
@@ -228,6 +282,10 @@ class CallService:
         if not call_log:
             log.warning("update_call_outcome_not_found", call_log_id=call_log_id)
             return None
+        # A dial that already failed (e.g. carrier 403) keeps its specific reason;
+        # the worker's empty "no answer" report afterwards shouldn't overwrite it.
+        if call_log.ended_at and call_log.status in ("failed", "no_answer") and not transcript:
+            return call_log
 
         now = datetime.now(timezone.utc)
         started = call_log.started_at
