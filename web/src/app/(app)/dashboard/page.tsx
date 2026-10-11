@@ -1,7 +1,6 @@
 "use client";
 
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CalendarCheck, CheckCircle2, Circle, Clock, Coins, Megaphone, MessagesSquare, PhoneCall, PhoneIncoming, Users } from "lucide-react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
@@ -14,11 +13,6 @@ import { useSession } from "@/lib/session";
 import type { Agent, Call, Campaign, Overview, SettingsStatus } from "@/lib/types";
 import { CAMPAIGN_TONE, OUTCOME_TONE, cn, formatDuration, timeAgo } from "@/lib/utils";
 
-// Recharts measures the DOM, so render the chart on the client only.
-const CallVolumeChart = dynamic(() => import("@/components/dashboard/CallVolumeChart").then((m) => m.CallVolumeChart), {
-  ssr: false,
-  loading: () => <div className="h-64 animate-pulse rounded-lg bg-zinc-100" />,
-});
 
 const RANGES = [7, 30, 90] as const;
 
@@ -225,20 +219,6 @@ export default function DashboardPage() {
 
           <ActivityHeatmap />
 
-          <Card>
-            <div className="flex flex-wrap items-start justify-between gap-2 px-5 pt-5">
-              <div>
-                <h3 className="font-semibold">Call volume</h3>
-                <p className="text-sm text-zinc-500">Dialed, connected and booked per day, last {days} days</p>
-              </div>
-              <div className="text-right text-xs text-zinc-500">
-                Success rate <span className="ml-1 font-display text-base font-semibold text-zinc-900">{Math.round(overview.success_rate * 100)}%</span>
-              </div>
-            </div>
-            <div className="p-5 pt-4">
-              <CallVolumeChart data={overview.calls_per_day} />
-            </div>
-          </Card>
         </>
       )}
 
