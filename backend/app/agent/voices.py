@@ -27,6 +27,8 @@ FEATURED_VOICES: list[dict] = [
     {"id": "710feaa3-b550-42f3-b3eb-6f37f2a7cc0a", "name": "Jake"},
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza", "gender": "masculine",
      "description": "Live voice clone.", "clone": True},
+    {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M", "gender": "feminine",
+     "description": "Live voice clone.", "clone": True},
 ]
 
 DEFAULT_VOICE_ID = FEATURED_VOICES[0]["id"]
