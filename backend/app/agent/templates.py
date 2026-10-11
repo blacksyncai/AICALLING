@@ -69,7 +69,7 @@ Keep the whole call under about two minutes.
     ],
     "success_criteria": "Successful if the caller shared what they want to use BlackSync for.",
     "enable_booking": False,
-    "llm_model": "gpt-4.1-mini",
+    "llm_model": "gpt-4.1-nano",
     "max_duration_seconds": 180,
     "voice_id": "97f03c16-fab2-4747-b655-9caefbd68fcf",  # Marissa M (house clone)
 }

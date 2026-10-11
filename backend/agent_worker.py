@@ -866,7 +866,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     language = cfg.get("language") or "en"
     tuning = voice_tuning(cfg.get("voice_tuning"))
-    model = cfg.get("llm_model") or "gpt-4.1-mini"
+    model = cfg.get("llm_model") or "gpt-4.1-nano"
     api_key, base_url, sends_temperature = llm_endpoint(model)
     llm_kwargs = dict(model=model, api_key=api_key, base_url=base_url)
     if sends_temperature:

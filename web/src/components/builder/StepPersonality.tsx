@@ -21,7 +21,7 @@ export const LANGUAGES: [string, string][] = [
   ["multi", "Multilingual"],
 ];
 
-export const RECOMMENDED_MODEL = "GPT-4.1";
+export const RECOMMENDED_MODEL = "GPT-4.1 nano";
 export const MODEL_NOTE = "We'll use the recommended model; change it anytime in the agent editor.";
 
 export type VoicesResponse = { source: string; voices: Voice[]; featured?: Voice[] };

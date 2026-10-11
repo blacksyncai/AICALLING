@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
+from app.agent.models import RUNTIME_DEFAULT_MODEL
 from app.agent.runtime import agent_to_runtime
 from app.agent.templates import TEMPLATES, get_template
 from app.agent.voices import DEFAULT_VOICE_ID
@@ -154,7 +155,7 @@ def new_agent_from_template(key: str, name: str | None = None) -> Agent:
         extraction_fields=t["extraction_fields"],
         success_criteria=t["success_criteria"],
         enable_booking=t["enable_booking"],
-        llm_model=t.get("llm_model", "gpt-4.1-mini"),
+        llm_model=t.get("llm_model", RUNTIME_DEFAULT_MODEL),
         voice_id=t.get("voice_id", DEFAULT_VOICE_ID),
         **({"max_duration_seconds": t["max_duration_seconds"]} if t.get("max_duration_seconds") else {}),
     )

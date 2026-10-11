@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.agent import catalog, generator, pipeline
+from app.agent.models import RUNTIME_DEFAULT_MODEL
 from app.agent.voices import DEFAULT_VOICE_ID
 from app.models.agent import Agent
 from app.models.builder import AgentDraft
@@ -282,7 +283,7 @@ def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result:
               for f in strategy["outcomes"]["extraction_fields"]]
     std = [f for f in generator.STANDARD_FIELDS if f["name"] not in {x["name"] for x in fields}]
     behavior = data.get("behavior") or {}
-    model = behavior.get("llm_model") if isinstance(behavior.get("llm_model"), str) and behavior.get("llm_model") else generator.GEN_MODEL
+    model = behavior.get("llm_model") if isinstance(behavior.get("llm_model"), str) and behavior.get("llm_model") else RUNTIME_DEFAULT_MODEL
     obj = strategy["objectives"]
     plan = {
         "title": strategy["title"],

@@ -19,7 +19,7 @@ from app.config import settings
 
 # What the runtime falls back to when an agent has no model set
 # (app/agent/runtime.py, agent_worker.py).
-RUNTIME_DEFAULT_MODEL = "gpt-4.1-mini"
+RUNTIME_DEFAULT_MODEL = "gpt-4.1-nano"
 
 # id, name, description, speed (only where known), tags, recommended_for.
 # `recommended_for` uses agent traits the editor knows about:
@@ -28,7 +28,7 @@ LLM_MODELS: list[dict] = [
     {
         "id": "gpt-4.1-mini",
         "name": "GPT-4.1 mini",
-        "description": "Fast and low-cost, good at following call scripts. The default for new agents.",
+        "description": "Fast and low-cost, good at following call scripts.",
         "speed": "fast",
         "tags": ["recommended", "fast"],
         "recommended_for": ["general"],
@@ -44,9 +44,9 @@ LLM_MODELS: list[dict] = [
     {
         "id": "gpt-4.1-nano",
         "name": "GPT-4.1 nano",
-        "description": "Lowest latency and cost. Best for short, simple scripts.",
+        "description": "Lowest latency, so replies come fastest. The default for new agents.",
         "speed": "fast",
-        "tags": ["fast"],
+        "tags": ["recommended", "fast"],
         "recommended_for": [],
     },
     {

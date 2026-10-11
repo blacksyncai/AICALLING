@@ -35,7 +35,7 @@ def agent_to_runtime(agent) -> dict:
         "first_message": agent.first_message or "",
         "knowledge_base": agent.knowledge_base or "",
         "language": agent.language or "en",
-        "llm_model": agent.llm_model or "gpt-4.1-mini",
+        "llm_model": agent.llm_model or "gpt-4.1-nano",
         "temperature": agent.temperature if agent.temperature is not None else 0.5,
         "voice_id": agent.voice_id or "",
         "voice_speed": agent.voice_speed or 1.0,

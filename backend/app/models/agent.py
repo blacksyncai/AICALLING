@@ -42,7 +42,7 @@ class Agent(Base):
     language: Mapped[str] = mapped_column(String(16), nullable=False, default="en")
 
     # ── Model / voice ─────────────────────────────────────────────────────────
-    llm_model: Mapped[str] = mapped_column(String(64), nullable=False, default="gpt-4.1-mini")
+    llm_model: Mapped[str] = mapped_column(String(64), nullable=False, default="gpt-4.1-nano")
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     voice_id: Mapped[str] = mapped_column(String(128), nullable=False, default=DEFAULT_VOICE_ID)
     voice_speed: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
