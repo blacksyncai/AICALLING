@@ -66,6 +66,7 @@ class AgentUpdate(BaseModel):
     ai_disclosure: bool | None = None
     caller_number: str | None = None
     record_calls: bool | None = None
+    specialty: str | None = Field(default=None, max_length=60)
 
 
 class ChatMessage(BaseModel):
@@ -88,6 +89,12 @@ class PhoneCallRequest(BaseModel):
     name: str = ""
 
 
+def catalog_specialty(a: Agent) -> str | None:
+    from app.agent.catalog import specialty_label
+
+    return specialty_label(a)
+
+
 def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
     d = {
         "id": str(a.id),
@@ -96,6 +103,8 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         "extraction_fields": a.extraction_fields or [],
         "ai_disclosure": a.ai_disclosure is not False,
         "caller_number": a.caller_number or "",
+        "specialty": catalog_specialty(a) or "",
+        "specialty_custom": bool(a.specialty_custom),
         "record_calls": a.record_calls is not False,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
@@ -185,6 +194,13 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
         for key in ("schema", "spec", "quality", "generation"):
             if key in agent.builder:
                 changes["builder"][key] = agent.builder[key]
+    if "specialty" in body.model_dump(exclude_unset=True):
+        # A person naming the specialty locks it; clearing it goes back to the inferred one.
+        # Re-sending the current label (a normal editor save) changes nothing.
+        label = (body.specialty or "").strip()[:60]
+        if label != (catalog_specialty(agent) or ""):
+            agent.specialty, agent.specialty_custom = (label, True) if label else (None, None)
+        changes.pop("specialty", None)
     if "caller_number" in changes:
         from app.services import telephony
 

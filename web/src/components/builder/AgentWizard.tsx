@@ -1,28 +1,37 @@
 "use client";
 
 import { ArrowLeft, ArrowRight, Check, CloudOff, Loader2, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Spinner } from "@/components/ui";
 import { ApiError, api, fetcher, patch, post } from "@/lib/api";
-import type { AgentDraft, AssistResponse, BuilderCatalog, BusinessProfile, DraftData, DraftGoal, Generation, ReferenceDoc } from "@/lib/builder";
-import { goalReady, presetKeys, useCasesFor } from "./goal";
+import {
+  CUSTOM_USE_CASE,
+  SOMETHING_ELSE,
+  type AgentDraft,
+  type BuilderCatalog,
+  type BusinessProfile,
+  type DraftData,
+  type DraftGoal,
+  type Generation,
+  type ReferenceDoc,
+} from "@/lib/builder";
+import { MIN_DESCRIPTION, useCasesFor } from "./goal";
 import { StepBusiness } from "./StepBusiness";
-import { StepAgent } from "./StepAgent";
-import { decidesLater } from "./StepFineTune";
-import { StepGoal } from "./StepGoal";
-import type { VoicesResponse } from "./StepPersonality";
+import { StepIdentity } from "./StepIdentity";
+import { StepLaunch } from "./StepLaunch";
+import { StepMission, missionReady } from "./StepMission";
+import { bookingStatus, type Behavior, type VoicesResponse } from "./StepPersonality";
 import { StepReferences } from "./StepReferences";
-import { StepVoice } from "./StepVoice";
-import { GenerateError, Generating, StepReview } from "./StepReview";
-import { DRAFT_VERSION, LAST_STEP, StepProgress, STEPS, put, resumeStep } from "./parts";
+import { GenerateError, Generating } from "./StepReview";
+import { Collapsible, DRAFT_VERSION, GENERATE_STEP, LAST_STEP, LAUNCH_STEP, StepProgress, STEPS, put, resumeStep } from "./parts";
 
 const AUTOSAVE_MS = 800;
 const POLL_MS = 1500;
 const GEN_POLL_MS = 2000;
-const DONE_STEP = LAST_STEP + 1; // "Done" is the redirect to the new agent
 
 type SaveState = "idle" | "pending" | "saving" | "saved" | "error";
 
@@ -37,6 +46,63 @@ async function loadOrCreateDraft(id: string | null): Promise<AgentDraft> {
   return post<AgentDraft>("/api/agent-builder/drafts", { step: 1, data: {} });
 }
 
+const ADVANCED_LABELS: [keyof NonNullable<DraftGoal["advanced"]>, string][] = [
+  ["qualification", "A good lead"],
+  ["questions", "Questions it must ask"],
+  ["objections", "Objections to expect"],
+  ["booking", "When to book"],
+  ["follow_up", "Follow-up"],
+];
+
+/**
+ * Turn the v4 answers (specialty, mission, advanced details) into the fields the existing generator reads
+ * (use_cases, custom, extra_instructions, behavior). Nothing new on the server — one generation pipeline.
+ */
+export function toGeneratorInput(data: DraftData, catalog: BuilderCatalog | undefined): DraftData {
+  const g = data.goal ?? {};
+  const sp = g.specialty;
+  const adv = g.advanced ?? {};
+  const known = new Set(useCasesFor(catalog, data.business?.industry).map((u) => u.key));
+  const presets = sp && sp.key !== SOMETHING_ELSE ? sp.use_cases.filter((k) => known.has(k)) : [];
+  const own = sp?.key === SOMETHING_ELSE ? sp.description?.trim() : "";
+  const mission = (g.mission ?? "").trim();
+  const description = [own && `What the agent is: ${own}`, mission && `Mission: ${mission}`].filter(Boolean).join("\n");
+  const extra = [
+    ...ADVANCED_LABELS.filter(([k]) => adv[k]?.trim()).map(([k, l]) => `${l}: ${adv[k]!.trim()}`),
+    g.additional?.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const b: Behavior = { ...data.behavior };
+  if (b.decide_later !== false) {
+    b.decide_later = true;
+  } else {
+    // Customized in "Advanced": fill the rest with the same defaults as the recommended settings.
+    const presetActions = useCasesFor(catalog, data.business?.industry).filter((u) => presets.includes(u.key));
+    const bookingLikely = presetActions.length === 0 || presetActions.some((u) => u.actions.includes("book_appointment"));
+    b.qualification_depth ??= "standard";
+    b.callback ??= true;
+    b.ai_disclosure ??= true;
+    b.booking ??= bookingStatus(catalog) === "available" && bookingLikely;
+    if (!b.transfer_number?.trim()) {
+      delete b.transfer_number;
+      delete b.transfer_when;
+    }
+  }
+  return {
+    ...data,
+    goal: {
+      ...g,
+      use_cases: [...presets, CUSTOM_USE_CASE],
+      use_case: presets[0] ?? CUSTOM_USE_CASE,
+      custom: { description, audience: adv.audience?.trim() ?? "", tone: adv.tone?.trim() ?? "", outcome: "" },
+      extra_instructions: extra,
+    },
+    behavior: b,
+  };
+}
+
 export function AgentWizard() {
   const router = useRouter();
   const params = useSearchParams();
@@ -46,6 +112,7 @@ export function AgentWizard() {
   const { data: voices } = useSWR<VoicesResponse>("/api/settings/voices", fetcher, { revalidateOnFocus: false });
 
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [agentId, setAgentId] = useState<string | null>(null);
   const [data, setData] = useState<DraftData>({});
   const [step, setStep] = useState(1);
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
@@ -55,7 +122,6 @@ export function AgentWizard() {
   const [generating, setGenerating] = useState(false);
   const [generation, setGeneration] = useState<Generation | null>(null);
   const [genError, setGenError] = useState("");
-  const [transferOn, setTransferOnState] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
 
   // Autosave bookkeeping (refs so saves always send the newest state).
@@ -78,12 +144,9 @@ export function AgentWizard() {
           loadOrCreateDraft(params.get("draft")),
           api<BusinessProfile>("/api/business-profile").catch(() => null),
         ]);
-        if (draft.agent_id) {
-          router.replace(`/agents/${draft.agent_id}`);
-          return;
-        }
         let d: DraftData = draft.data ?? {};
         if (prof?.exists) {
+          // The org profile supplies the defaults; the customer can still change them here.
           const b = d.business ?? {};
           d = {
             ...d,
@@ -96,15 +159,20 @@ export function AgentWizard() {
           };
         }
         setProfile(prof);
-        const resume = resumeStep(draft.step, draft.data); // older drafts used six steps
         setData({ ...d, v: DRAFT_VERSION });
-        setStep(resume);
-        setTransferOnState(!!d.behavior?.transfer_number);
         setDraftId(draft.id);
         draftRef.current = draft.id;
-        if (draft.generation?.status === "running") {
-          setGeneration(draft.generation);
-          setGenerating(true);
+        if (draft.agent_id) {
+          // Already generated: go straight to test & launch (never builds a second agent).
+          setAgentId(draft.agent_id);
+          setStep(LAUNCH_STEP);
+        } else {
+          setStep(resumeStep(draft.step, draft.data));
+          if (draft.generation?.status === "running") {
+            setGeneration(draft.generation);
+            setGenerating(true);
+            setStep(GENERATE_STEP);
+          }
         }
         if (params.get("draft") !== draft.id) router.replace(`/agents/new?draft=${draft.id}`, { scroll: false });
       } catch (e) {
@@ -141,7 +209,7 @@ export function AgentWizard() {
   }, [save]);
 
   useEffect(() => {
-    latest.current = { step, data };
+    latest.current = { step: Math.min(step, LAST_STEP), data };
     if (!draftId) return;
     if (!hydrated.current) {
       hydrated.current = true;
@@ -182,8 +250,10 @@ export function AgentWizard() {
         setGeneration(g);
         if (g.status === "done" && g.agent_id) {
           stopped = true;
-          setStep(DONE_STEP);
-          router.push(`/agents/${g.agent_id}?created=1`);
+          setAgentId(g.agent_id);
+          setGenerating(false);
+          setStep(LAUNCH_STEP);
+          window.scrollTo({ top: 0, behavior: "smooth" });
         } else if (g.status === "failed") {
           stopped = true;
           setGenError(g.error || "Something went wrong. Please try again.");
@@ -199,10 +269,10 @@ export function AgentWizard() {
       stopped = true;
       clearInterval(t);
     };
-  }, [generating, draftId, router]);
+  }, [generating, draftId]);
 
   const { data: refs } = useSWR<{ references: ReferenceDoc[] }>(
-    draftId && step === LAST_STEP ? `/api/agent-builder/drafts/${draftId}/references` : null,
+    draftId && step === LAUNCH_STEP ? `/api/agent-builder/drafts/${draftId}/references` : null,
     fetcher,
   );
 
@@ -210,33 +280,18 @@ export function AgentWizard() {
   const business = data.business ?? {};
   const behavior = data.behavior ?? {};
   const goal = data.goal ?? {};
-  const presets = useCasesFor(catalog, business.industry).filter((u) => presetKeys(goal).includes(u.key));
-  // Custom-only goals can book; presets decide for themselves.
-  const bookingLikely = presets.length === 0 || presets.some((u) => u.actions.includes("book_appointment"));
 
   const setGoal = useCallback((fn: (g: DraftGoal) => DraftGoal) => setData((d) => ({ ...d, goal: fn(d.goal ?? {}) })), []);
-
-  /** Save the goal now, then ask the AI assistant to review it (it reads the saved draft). */
-  const runAssist = useCallback(
-    async (g: DraftGoal) => {
-      latest.current = { ...latest.current, data: { ...latest.current.data, goal: g } };
-      dirty.current = true;
-      await flush();
-      if (!lastSaveOk.current) throw new Error("We couldn't save your goal. Check your connection and try again.");
-      return post<AssistResponse>("/api/agent-builder/assist", { draft_id: draftRef.current });
-    },
-    [flush],
-  );
-
-  function setTransferOn(v: boolean) {
-    setTransferOnState(v);
-    if (!v) setData((d) => ({ ...d, behavior: { ...d.behavior, transfer_number: "", transfer_when: "" } }));
-  }
+  const setBusiness = useCallback((p: Partial<NonNullable<DraftData["business"]>>) => setData((d) => ({ ...d, business: { ...d.business, ...p } })), []);
+  const setBehavior = useCallback((p: Partial<Behavior>) => setData((d) => ({ ...d, behavior: { ...d.behavior, ...p } })), []);
 
   function invalid(n: number): boolean {
-    if (n === 1) return !business.name?.trim() || !business.industry;
-    if (n === 2) return !goalReady(goal);
-    if (n === 3) return !decidesLater(behavior) && transferOn && !behavior.transfer_number?.trim();
+    if (n === 1) {
+      const sp = goal.specialty;
+      if (!business.name?.trim() || !business.industry || !sp) return true;
+      return sp.key === SOMETHING_ELSE && (sp.description ?? "").trim().length < MIN_DESCRIPTION;
+    }
+    if (n === 3) return !missionReady(goal) || (behavior.transfer_number !== undefined && !behavior.transfer_number.trim());
     return false;
   }
 
@@ -253,6 +308,7 @@ export function AgentWizard() {
       return;
     }
     if (step === 1) {
+      // Keep the org profile in step with what was confirmed here (the website analyzer reads it).
       setBusy(true);
       try {
         const p = await put<BusinessProfile>("/api/business-profile", {
@@ -269,11 +325,12 @@ export function AgentWizard() {
       }
       setBusy(false);
     }
+    if (step === LAST_STEP) return generate();
     go(step + 1);
   }
 
   async function generate() {
-    for (const n of [1, 2, 3]) {
+    for (const n of [1, 3]) {
       if (invalid(n)) {
         go(n);
         setShowErrors(true);
@@ -281,16 +338,26 @@ export function AgentWizard() {
       }
     }
     setGenError("");
+    const input = toGeneratorInput(data, catalog);
+    setData(input);
+    latest.current = { step: LAST_STEP, data: input };
+    dirty.current = true;
+    await flush();
+    if (!lastSaveOk.current) {
+      setGenError("We couldn't save your answers. Check your connection.");
+      return;
+    }
+    setStep(GENERATE_STEP);
+    window.scrollTo({ top: 0, behavior: "smooth" });
     try {
-      await flush();
       const g = await post<Generation>("/api/agent-builder/generate", { draft_id: draftRef.current });
+      setGeneration(g);
       if (g.status === "done" && g.agent_id) {
-        router.push(`/agents/${g.agent_id}?created=1`);
+        setAgentId(g.agent_id);
+        setStep(LAUNCH_STEP);
         return;
       }
-      setGeneration(g);
       setGenerating(true);
-      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       setGenError((e as Error).message);
     }
@@ -332,28 +399,29 @@ export function AgentWizard() {
     );
   }
 
-  const hasKnowledge = (profile?.item_count ?? 0) > 0;
-  const primaryLabel =
-    step === 1
-      ? hasKnowledge
-        ? "Looks good, continue"
-        : "Continue"
-      : "Continue";
+  const filling = step <= LAST_STEP;
+  const wide = step === LAUNCH_STEP;
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className={wide ? "mx-auto max-w-5xl" : "mx-auto max-w-3xl"}>
       {/* Top bar */}
       <div className="mb-5 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg brand-gradient text-white">
             <Sparkles className="h-3.5 w-3.5" />
           </span>
-          <h1 className="truncate font-display text-base font-semibold tracking-tight text-zinc-900">New agent</h1>
-          <SaveIndicator state={saveState} />
+          <h1 className="truncate font-display text-base font-semibold tracking-tight text-zinc-900">Build with AI</h1>
+          {filling && <SaveIndicator state={saveState} />}
         </div>
-        <Button size="sm" variant="ghost" onClick={saveAndExit} disabled={generating || busy}>
-          Save &amp; exit
-        </Button>
+        {filling ? (
+          <Button size="sm" variant="ghost" onClick={saveAndExit} disabled={busy}>
+            Save &amp; exit
+          </Button>
+        ) : step === LAUNCH_STEP ? (
+          <Link href="/agents" className="text-xs font-medium text-zinc-500 hover:text-zinc-900">
+            Back to agents
+          </Link>
+        ) : null}
       </div>
 
       <div className="mb-6">
@@ -365,61 +433,62 @@ export function AgentWizard() {
       )}
 
       <Card className="overflow-hidden">
-        {generating ? (
-          <Generating generation={generation} />
+        {step === GENERATE_STEP ? (
+          genError ? (
+            <div className="p-5 sm:p-8">
+              <GenerateError message={genError} onRetry={generate} />
+              <button type="button" onClick={() => go(LAST_STEP)} className="mt-3 text-xs font-medium text-zinc-600 hover:text-zinc-900">
+                Back to your answers
+              </button>
+            </div>
+          ) : (
+            <Generating generation={generation} />
+          )
         ) : (
           <div key={step} className="p-5 transition duration-300 ease-out starting:translate-y-2 starting:opacity-0 sm:p-8">
             {step === 1 && (
-              <StepBusiness
+              <StepIdentity
                 business={business}
-                onChange={(p) => setData((d) => ({ ...d, business: { ...d.business, ...p } }))}
+                onBusiness={setBusiness}
+                goal={goal}
+                setGoal={setGoal}
+                behavior={behavior}
+                onBehavior={setBehavior}
                 catalog={catalog}
-                profile={profile}
-                onProfile={setProfile}
+                voices={voices}
                 showErrors={showErrors}
               />
             )}
             {step === 2 && (
-              <StepGoal goal={goal} setGoal={setGoal} catalog={catalog} industry={business.industry} showErrors={showErrors} runAssist={runAssist} />
+              <div className="space-y-4">
+                <StepBusiness business={business} onChange={setBusiness} catalog={catalog} profile={profile} onProfile={setProfile} showErrors={false} knowledgeOnly />
+                <Collapsible title="Scripts or notes (optional)" meta="Upload or paste">
+                  <StepReferences draftId={draftId} />
+                </Collapsible>
+              </div>
             )}
             {step === 3 && (
-              <StepAgent
+              <StepMission
+                draftId={draftId}
+                goal={goal}
+                setGoal={setGoal}
                 behavior={behavior}
-                onChange={(p) => setData((d) => ({ ...d, behavior: { ...d.behavior, ...p } }))}
-                businessName={business.name?.trim() ?? ""}
+                onBehavior={setBehavior}
                 catalog={catalog}
-                transferOn={transferOn}
-                setTransferOn={setTransferOn}
+                flush={flush}
                 showErrors={showErrors}
-                tools={data.integrations?.selected ?? []}
-                onToolsChange={(selected) => setData((d) => ({ ...d, integrations: { ...d.integrations, selected } }))}
-                industry={business.industry}
-                bookingLikely={bookingLikely}
               />
             )}
-            {step === 4 && <StepReferences draftId={draftId} />}
-            {step === 5 && (
-              <StepVoice behavior={behavior} onChange={(p) => setData((d) => ({ ...d, behavior: { ...d.behavior, ...p } }))} voices={voices} />
+            {step === LAUNCH_STEP && agentId && (
+              <StepLaunch agentId={agentId} catalog={catalog} profile={profile} voices={voices} references={refs?.references.length ?? 0} />
             )}
-            {step === LAST_STEP && (
-              <StepReview
-                data={data}
-                catalog={catalog}
-                profile={profile}
-                voices={voices}
-                onEdit={go}
-                bookingLikely={bookingLikely}
-                references={refs?.references.length ?? 0}
-              />
-            )}
-            {genError && <GenerateError message={genError} onRetry={generate} />}
           </div>
         )}
       </Card>
 
-      {/* Actions */}
-      {!generating && (
-        <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex items-center justify-between gap-3 border-t border-zinc-200 bg-white/90 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:backdrop-blur-none">
+      {/* Actions — in the page flow on mobile so they never cover the form */}
+      {filling && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           {step > 1 ? (
             <Button variant="ghost" onClick={() => go(step - 1)} disabled={busy}>
               <ArrowLeft className="h-4 w-4" /> Back
@@ -428,41 +497,29 @@ export function AgentWizard() {
             <span />
           )}
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3">
-            {step === 1 && analyzing && (
-              <button type="button" onClick={next} className="text-xs font-medium text-zinc-500 hover:text-zinc-800">
-                Continue without waiting
+            {step === 2 && analyzing && <span className="text-xs text-zinc-500">You can continue while we read your site.</span>}
+            {step === 2 && !analyzing && !(profile?.item_count ?? 0) && (
+              <button type="button" onClick={() => go(3)} className="text-xs font-medium text-zinc-500 hover:text-zinc-800">
+                Continue without a website
               </button>
             )}
-            {step >= 2 && step < LAST_STEP && goalReady(goal) && (
-              <Button variant="secondary" onClick={generate} className="hidden sm:inline-flex">
-                <Sparkles className="h-4 w-4" /> Generate now
-              </Button>
-            )}
-            {(step === 4 || step === 5) && (
-              <Button variant="ghost" onClick={() => go(step + 1)}>
-                Skip
-              </Button>
-            )}
-            {step === LAST_STEP ? (
-              <Button variant="primary" onClick={generate}>
-                <Sparkles className="h-4 w-4" /> Generate my agent
-              </Button>
-            ) : (
-              <Button variant="primary" onClick={next} loading={busy} disabled={step === 1 && analyzing}>
-                {step === 1 && hasKnowledge && !busy && <Check className="h-4 w-4" />}
-                {step === 1 && analyzing ? "Analyzing…" : primaryLabel}
-                {!busy && !(step === 1 && hasKnowledge) && <ArrowRight className="h-4 w-4" />}
-              </Button>
-            )}
+            <Button variant="primary" onClick={next} loading={busy}>
+              {step === LAST_STEP ? (
+                <>
+                  <Sparkles className="h-4 w-4" /> Build my agent
+                </>
+              ) : (
+                <>
+                  Continue <ArrowRight className="h-4 w-4" />
+                </>
+              )}
+            </Button>
           </div>
         </div>
       )}
-      {step === 2 && !generating && goalReady(goal) && !goal.ready && (
-        <p className="mt-2 text-right text-xs text-zinc-500">You can generate any time with &quot;Generate now&quot; — we&apos;ll use smart defaults for the rest.</p>
-      )}
-      {showErrors && invalid(step) && (
+      {filling && showErrors && invalid(step) && (
         <p className="mt-2 text-right text-xs text-red-600" role="alert">
-          {step < LAST_STEP ? `Please fill in the highlighted fields to continue to ${STEPS[step]}.` : "Please fill in the highlighted fields."}
+          Please fill in the highlighted fields to continue{step < LAST_STEP ? ` to ${STEPS[step]}` : ""}.
         </p>
       )}
     </div>

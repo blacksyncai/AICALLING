@@ -33,6 +33,10 @@ export interface Agent {
   ai_disclosure?: boolean;
   caller_number?: string;
   record_calls?: boolean;
+  /** Short badge for what the agent does ("Expired Listings"); "" when unknown. */
+  specialty?: string;
+  /** True when a person set the specialty (regeneration leaves it alone). */
+  specialty_custom?: boolean;
 }
 
 export interface PhoneNumberItem {

@@ -61,8 +61,22 @@ export interface UseCase {
   followups: Followup[];
 }
 
+/** What the agent specializes in ("Expired Listings") — maps onto use-case presets. */
+export interface Specialty {
+  key: string;
+  label: string;
+  direction: "outbound" | "inbound" | "both";
+  use_cases: string[];
+  /** Default mission when the presets don't say enough on their own. */
+  mission?: string;
+}
+
+/** Key of the "Something else" specialty (described in the customer's own words). */
+export const SOMETHING_ELSE = "something_else";
+
 export interface BuilderCatalog {
   industries: { key: string; label: string; icon: string }[];
+  specialties?: Record<string, Specialty[]>;
   use_cases: Record<string, UseCase[]>;
   /** Alternate keys accepted in drafts and saved agents. */
   use_case_aliases?: Record<string, string>;
@@ -118,7 +132,30 @@ export interface CustomGoal {
   outcome?: string;
 }
 
+/** Optional "advanced" mission details (step 3); all free text, all optional. */
+export interface MissionAdvanced {
+  audience?: string;
+  qualification?: string;
+  questions?: string;
+  objections?: string;
+  transfer?: string;
+  booking?: string;
+  follow_up?: string;
+  tone?: string;
+}
+
 export interface DraftGoal {
+  /** v4 wizard: the chosen specialty (+ the customer's words for "Something else"). */
+  specialty?: Specialty & { description?: string };
+  /** True once the customer changed the call direction themselves. */
+  direction_set?: boolean;
+  /** The mission as shown/edited in step 3. */
+  mission?: string;
+  /** Where the current mission text came from. */
+  mission_source?: "ai" | "template" | "user";
+  advanced?: MissionAdvanced;
+  /** v4: the customer's own extra instructions (extra_instructions is composed from these at generate time). */
+  additional?: string;
   direction?: "outbound" | "inbound" | "both";
   /** Primary use case (first of use_cases) — kept for older drafts and agents. */
   use_case?: string;

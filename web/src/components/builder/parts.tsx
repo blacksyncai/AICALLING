@@ -23,23 +23,19 @@ import { cn } from "@/lib/utils";
 
 export const put = <T,>(path: string, body: unknown) => api<T>(path, { method: "PUT", body: JSON.stringify(body) });
 
-export const STEPS = ["Business", "Goal", "Agent", "References", "Voice", "Review", "Done"] as const;
+export const STEPS = ["Agent", "Knowledge", "Mission", "Generate", "Launch"] as const;
 
 /** Draft data version written by this wizard (see DraftData.v). */
-export const DRAFT_VERSION = 3;
-/** Last interactive step; the step after it ("Done") is the redirect to the new agent. */
-export const LAST_STEP = 6;
+export const DRAFT_VERSION = 4;
+/** Last step the customer fills in; then the agent is generated (4) and reviewed/launched (5). */
+export const LAST_STEP = 3;
+export const GENERATE_STEP = 4;
+export const LAUNCH_STEP = 5;
 
-// v2 drafts used: 1 Business, 2 Goal, 3 Fine-tune, 4 Review.
-const V2_STEPS: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4: 6 };
-// Older drafts (no `v`) used: 1 Business, 2 Goal, 3 Personality, 4 Tools, 5 Review, 6 Done.
-const OLD_STEPS: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4: 3, 5: 6, 6: 6 };
-
-/** Where to resume a saved draft, remapping step numbers from older drafts. */
+/** Where to resume a saved draft. Earlier wizard versions start again at step 1 (their answers carry over). */
 export function resumeStep(step: number | undefined, data: { v?: number } | undefined): number {
-  const s = step || 1;
-  const n = data?.v === DRAFT_VERSION ? s : data?.v === 2 ? (V2_STEPS[s] ?? 1) : (OLD_STEPS[s] ?? 1);
-  return Math.min(Math.max(n, 1), LAST_STEP);
+  if (data?.v !== DRAFT_VERSION) return 1;
+  return Math.min(Math.max(step || 1, 1), LAST_STEP);
 }
 
 /** Icon for an industry. The catalog sends a lucide-style icon name; fall back to the industry key. */

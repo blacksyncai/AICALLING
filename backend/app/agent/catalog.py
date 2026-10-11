@@ -864,9 +864,68 @@ def integrations() -> list[dict]:
     return items
 
 
+# ── Specialties ("What kind of agent are we building?") ────────────────────────
+# A specialty is the agent's job title in a word or three. It maps to one or more
+# use-case presets (which carry the objectives, questions and allowed actions) and
+# recommends a call direction. Industries without a curated list use their presets.
+
+
+def _sp(key: str, label: str, direction: str, use_cases: list[str], mission: str = "") -> dict:
+    return {"key": key, "label": label, "direction": direction, "use_cases": use_cases, "mission": mission}
+
+
+_CURATED: dict[str, list[dict]] = {
+    "real_estate": [
+        _sp("real_estate_isa", "Real Estate ISA", "outbound", ["speed_to_lead", "buyer_follow_up", "seller_follow_up"]),
+        _sp("expired_listings", "Expired Listings", "outbound", ["expired_listings"]),
+        _sp("fsbo_prospecting", "FSBO Prospecting", "outbound", ["fsbo_prospecting"]),
+        _sp("circle_prospecting", "Circle Prospecting", "outbound", ["circle_prospecting"]),
+        _sp("buyer_follow_up", "Buyer Follow-Up", "outbound", ["buyer_follow_up"]),
+        _sp("seller_reactivation", "Seller Reactivation", "outbound", ["seller_follow_up", "lead_reactivation"]),
+        _sp("speed_to_lead", "Speed to Lead", "outbound", ["speed_to_lead"]),
+    ],
+    "home_services": [
+        _sp("inbound_answering", "Inbound Call Answering", "inbound", ["inbound_answering"]),
+        _sp("missed_call_recovery", "Missed Call Recovery", "outbound", ["missed_call_recovery"]),
+        _sp("estimate_follow_up", "Estimate Follow-Up", "outbound", ["old_estimate_follow_up"]),
+        _sp("appointment_scheduling", "Appointment Scheduling", "inbound", ["estimate_scheduling"]),
+        _sp("customer_reactivation", "Customer Reactivation", "outbound", ["customer_reactivation"]),
+        _sp("outbound_prospecting", "Outbound Prospecting", "outbound", [],
+            "Call homeowners in our service area, introduce our services, find out whether they have a "
+            "project or repair coming up, and book an estimate with interested homeowners."),
+    ],
+}
+
+
+def specialties_for(industry: str) -> list[dict]:
+    """5–7 specialties for an industry (curated where we have them, otherwise its presets)."""
+    if industry in _CURATED:
+        return _CURATED[industry]
+    presets = USE_CASES.get(industry) or USE_CASES.get("other") or []
+    return [_sp(u["key"], u["label"], u["direction"], [u["key"]]) for u in presets[:7]]
+
+
+def specialty_label(agent) -> str | None:
+    """The agent's specialty: the saved one, else inferred from how it was built (None if unsure)."""
+    if getattr(agent, "specialty", None):
+        return agent.specialty
+    b = getattr(agent, "builder", None) or {}
+    industry, key = b.get("industry") or "", b.get("use_case") or ""
+    if key and key != CUSTOM_KEY:
+        uc = get_use_case(industry, key) or get_use_case("other", key)
+        if uc:
+            return uc["label"]
+    return _TEMPLATE_SPECIALTY.get(getattr(agent, "template", "") or "")
+
+
+_TEMPLATE_SPECIALTY = {"sales_sdr": "Sales SDR", "appointment_setter": "Appointment Setter",
+                       "real_estate": "Real Estate", "receptionist": "Receptionist"}
+
+
 def catalog() -> dict:
     return {"industries": INDUSTRIES, "use_cases": USE_CASES, "use_case_aliases": USE_CASE_ALIASES,
-            "styles": STYLES, "integrations": integrations()}
+            "styles": STYLES, "integrations": integrations(),
+            "specialties": {i["key"]: specialties_for(i["key"]) for i in INDUSTRIES}}
 
 
 def industry_label(key: str) -> str | None:

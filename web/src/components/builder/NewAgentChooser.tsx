@@ -11,7 +11,7 @@ import { fetcher, post } from "@/lib/api";
 import type { AgentDraft } from "@/lib/builder";
 import type { Agent } from "@/lib/types";
 import { cn, timeAgo } from "@/lib/utils";
-import { LAST_STEP, resumeStep } from "./parts";
+import { STEPS, resumeStep } from "./parts";
 
 export function NewAgentChooser({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
@@ -45,7 +45,7 @@ export function NewAgentChooser({ open, onClose }: { open: boolean; onClose: () 
             <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-zinc-900">
               Build with AI <Badge tone="brand">Recommended</Badge>
             </span>
-            <span className="mt-0.5 block text-xs text-zinc-600">Tell us about your business. We&apos;ll build your AI agent.</span>
+            <span className="mt-0.5 block text-xs text-zinc-600">Pick a specialty, a voice and a mission. We&apos;ll do the rest.</span>
           </span>
           <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-brand-600 transition-transform group-hover:translate-x-0.5" />
         </Link>
@@ -75,10 +75,14 @@ export function NewAgentChooser({ open, onClose }: { open: boolean; onClose: () 
                   >
                     <History className="h-4 w-4 shrink-0 text-zinc-400" />
                     <span className="min-w-0 flex-1 truncate">
-                      <span className="font-medium text-zinc-900">{d.data?.business?.name?.trim() || "Untitled business"}</span>
+                      <span className="font-medium text-zinc-900">
+                        {[d.data?.behavior?.agent_name?.trim(), d.data?.goal?.specialty?.label].filter(Boolean).join(" — ") ||
+                          d.data?.business?.name?.trim() ||
+                          "Untitled agent"}
+                      </span>
                       <span className="text-zinc-500">
                         {" "}
-                        · Step {step} of {LAST_STEP}
+                        · Step {step} of {STEPS.length}
                         {d.updated_at && ` · ${timeAgo(d.updated_at)}`}
                       </span>
                     </span>

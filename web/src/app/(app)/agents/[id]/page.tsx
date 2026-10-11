@@ -41,7 +41,7 @@ const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
   "llm_model", "temperature", "voice_id", "voice_speed", "background_audio", "enable_booking",
   "calcom_event_type_id", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
-  "ai_disclosure", "builder", "caller_number", "record_calls",
+  "ai_disclosure", "builder", "caller_number", "record_calls", "specialty",
 ];
 
 function pickEditable(a: Agent) {
@@ -304,9 +304,14 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
 
           {section === "prompt" && (
             <div className="space-y-5">
-              <Field label="Description" hint="Internal note — not used by the agent.">
-                <Input value={draft.description} onChange={(e) => set("description", e.target.value)} />
-              </Field>
+              <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+                <Field label="Specialty" hint="Badge in your agent list. Yours stays when the agent is regenerated.">
+                  <Input value={draft.specialty ?? ""} onChange={(e) => set("specialty", e.target.value)} maxLength={60} placeholder="e.g. Expired Listings" />
+                </Field>
+                <Field label="Description" hint="Internal note — not used by the agent.">
+                  <Input value={draft.description} onChange={(e) => set("description", e.target.value)} />
+                </Field>
+              </div>
               <Field label="First message" hint="Spoken word-for-word as soon as the call connects. Leave empty to let the agent improvise.">
                 <Textarea rows={2} value={draft.first_message} onChange={(e) => set("first_message", e.target.value)} />
               </Field>

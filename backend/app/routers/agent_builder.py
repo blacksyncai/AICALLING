@@ -299,11 +299,19 @@ def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result:
                       for it in brief["assistant"] if it["answer"] or it["delegated"]],
         "recommended_settings": flags["recommended"],
     }
+    sp = (data.get("goal") or {}).get("specialty")
+    sp = sp if isinstance(sp, dict) else {}
+    specialty = (sp.get("label") if sp.get("key") != "something_else" else "") or \
+        (presets[0]["label"] if presets else strategy["title"])
     return Agent(
         id=uuid.uuid4(),
         org_id=org_id,
         template="ai_builder",
-        name=f"{strategy['agent_name']} – {label}"[:255],
+        # Name and specialty are separate: "Ethan" + badge "Expired Listings".
+        name=(strategy["agent_name"] or label)[:255],
+        specialty=(specialty or "")[:60] or None,
+        # Not live until the customer tests and launches it (POST /agents/{id}/launch).
+        status="paused",
         description=f"{label} for {business_name}"[:500],
         system_prompt=composed["system_prompt"],
         first_message=composed["first_message"],
@@ -411,6 +419,41 @@ async def delete_reference(reference_id: uuid.UUID, ctx: CtxDep, db: DbDep):
         raise HTTPException(status_code=404, detail="Reference not found")
     await db.delete(doc)
     await db.commit()
+
+
+# ── Wizard helpers ────────────────────────────────────────────────────────────
+
+
+@router.post("/drafts/{draft_id}/mission")
+async def suggest_mission(draft_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    """An AI-written mission for the chosen specialty and business (falls back to the preset wording)."""
+    draft = await _get_draft(db, ctx, draft_id)
+    data = draft.data or {}
+    fallback = generator.fallback_mission(data)
+    from app.config import settings
+
+    if not settings.openai_api_key:
+        return {"mission": fallback, "source": "template"}
+    try:
+        text = await generator.suggest_mission(data, await generator.knowledge_for(db, ctx.org.id))
+        return {"mission": text, "source": "ai"}
+    except Exception as exc:
+        log.warning("mission_suggest_failed", error=str(exc))
+        return {"mission": fallback, "source": "template"}
+
+
+@router.post("/agents/{agent_id}/launch")
+async def launch(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    """Go live only when nothing blocks the agent from taking calls."""
+    agent = await _get_agent(db, ctx, agent_id)
+    check = generator.readiness(agent, ctx.org)
+    blockers = [c for c in check["checks"] if c["status"] == "blocker"]
+    if blockers:
+        raise HTTPException(status_code=409, detail="Fix these before going live: " + "; ".join(c["label"] for c in blockers))
+    agent.status = "active"
+    await db.commit()
+    log.info("agent_launched", agent_id=str(agent.id), org_id=str(ctx.org.id))
+    return {"status": agent.status, "readiness": check}
 
 
 # ── Editor helpers ────────────────────────────────────────────────────────────

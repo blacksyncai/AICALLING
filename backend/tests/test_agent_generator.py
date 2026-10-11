@@ -329,3 +329,70 @@ def test_identity_check_passes_when_model_words_company_differently(client, monk
     assert status["status"] == "done", status
     agent = client.get(f"/api/agents/{status['agent_id']}").json()
     assert "You represent Blacksync AI LLC." in agent["builder"]["sections"]["identity"]
+
+
+# ── Build With AI v3: specialty, name, mission, launch ────────────────────────
+
+
+def test_catalog_lists_specialties_per_industry(client):
+    sp = client.get("/api/agent-builder/catalog").json()["specialties"]
+    re_labels = [s["label"] for s in sp["real_estate"]]
+    assert re_labels[:2] == ["Real Estate ISA", "Expired Listings"] and 5 <= len(re_labels) <= 7
+    hs = {s["key"]: s for s in sp["home_services"]}
+    assert hs["inbound_answering"]["direction"] == "inbound" and hs["missed_call_recovery"]["direction"] == "outbound"
+    assert all(5 <= len(v) <= 7 for v in sp.values())
+
+
+def test_generated_agent_has_separate_name_and_specialty_and_starts_paused(client, monkeypatch):
+    _route_chat(monkeypatch)
+    data = copy.deepcopy(DRAFT)
+    data.setdefault("goal", {})["specialty"] = {"key": "custom_badge", "label": "Solar Callbacks", "use_cases": []}
+    _, status = _generate(client, data)
+    assert status["status"] == "done", status
+    agent = client.get(f"/api/agents/{status['agent_id']}").json()
+    assert agent["specialty"] == "Solar Callbacks" and agent["status"] == "paused"
+    # An editor save re-sends the current label: that must not lock it.
+    r = client.patch(f"/api/agents/{agent['id']}", json={"specialty": "Solar Callbacks"}).json()
+    assert r["specialty"] == "Solar Callbacks" and r["specialty_custom"] is False
+    assert "–" not in agent["name"] and agent["name"] == STRATEGY["agent_name"]
+
+    # A person's label sticks (and is marked custom); clearing it falls back to the inferred one.
+    r = client.patch(f"/api/agents/{agent['id']}", json={"specialty": "Buyer Callbacks"}).json()
+    assert r["specialty"] == "Buyer Callbacks" and r["specialty_custom"] is True
+    r = client.patch(f"/api/agents/{agent['id']}", json={"specialty": ""}).json()
+    assert r["specialty_custom"] is False
+
+    # Launch is refused while something blocks calls (no voice service in tests) and the agent stays paused.
+    r = client.post(f"/api/agent-builder/agents/{agent['id']}/launch")
+    assert r.status_code == 409 and "Voice service" in r.json()["detail"]
+    assert client.get(f"/api/agents/{agent['id']}").json()["status"] == "paused"
+
+
+def test_launch_goes_live_when_ready(client, monkeypatch):
+    from app.agent import generator
+
+    _route_chat(monkeypatch)
+    _, status = _generate(client)
+    monkeypatch.setattr(generator, "readiness", lambda agent, org: {"ready": True, "checks": [
+        {"key": "voice", "label": "Voice service", "status": "ok", "detail": ""}]})
+    r = client.post(f"/api/agent-builder/agents/{status['agent_id']}/launch")
+    assert r.status_code == 200 and r.json()["status"] == "active"
+
+
+def test_mission_suggestion_uses_ai_and_falls_back(client, monkeypatch):
+    async def fake_chat(payload, timeout=45.0):
+        return _reply(json.dumps({"mission": "Call homeowners whose listings expired and book a listing appointment."}))
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    data = {"business": {"name": "Acme Realty", "industry": "real_estate"},
+            "goal": {"specialty": {"key": "expired_listings", "label": "Expired Listings", "use_cases": ["expired_listings"]}}}
+    draft = client.post("/api/agent-builder/drafts", json={"data": data, "step": 3}).json()
+    r = client.post(f"/api/agent-builder/drafts/{draft['id']}/mission").json()
+    assert r == {"mission": "Call homeowners whose listings expired and book a listing appointment.", "source": "ai"}
+
+    async def broken(payload, timeout=45.0):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(llm, "_chat", broken)
+    r = client.post(f"/api/agent-builder/drafts/{draft['id']}/mission").json()
+    assert r["source"] == "template" and r["mission"]

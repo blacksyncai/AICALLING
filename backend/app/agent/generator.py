@@ -845,3 +845,56 @@ def readiness(agent, org) -> dict:
             href)
 
     return {"ready": not any(c["status"] == "blocker" for c in checks), "checks": checks}
+
+
+# ── Mission suggestion (wizard step 3) ────────────────────────────────────────
+
+
+def fallback_mission(data: dict) -> str:
+    """A plain mission built from the chosen specialty's presets — used when the AI isn't available."""
+    goal = data.get("goal") or {}
+    sp = goal.get("specialty") if isinstance(goal.get("specialty"), dict) else {}
+    industry = ((data.get("business") or {}).get("industry")) or "other"
+    if sp.get("mission"):
+        return sp["mission"]
+    parts = []
+    for key in sp.get("use_cases") or []:
+        uc = catalog.get_use_case(industry, key)
+        if uc:
+            parts.append(uc["description"].rstrip(".") + ".")
+    return " ".join(parts) or ""
+
+
+async def suggest_mission(data: dict, knowledge: str) -> str:
+    """One or two sentences describing what a successful call achieves, from the specialty and the business."""
+    goal = data.get("goal") or {}
+    business = data.get("business") or {}
+    sp = goal.get("specialty") if isinstance(goal.get("specialty"), dict) else {}
+    industry = business.get("industry") or "other"
+    presets = [uc for uc in (catalog.get_use_case(industry, k) for k in sp.get("use_cases") or []) if uc]
+    lines = [f"- {uc['label']}: {uc['description']} Objectives: {'; '.join(uc['objectives'])}" for uc in presets]
+    user = f"""BUSINESS: {(business.get('name') or '').strip() or '(not given)'} — {catalog.industry_label(industry) or industry}
+DESCRIPTION: {business.get('description') or '(none)'}
+AGENT SPECIALTY: {sp.get('label') or '(not chosen)'}
+{('USER DESCRIBED IT AS: ' + sp['description']) if sp.get('description') else ''}
+CALL DIRECTION: {goal.get('direction') or 'outbound'}
+PRESET GUIDANCE:
+{chr(10).join(lines) or '- (none)'}
+
+BUSINESS KNOWLEDGE (reference only — use real services/areas from here, never invent any):
+<reference_data>
+{(knowledge or '(none)')[:6000]}
+</reference_data>
+
+Write the agent's mission in first person from the business owner's point of view, like:
+"Reach out to homeowners with expired listings, understand whether they're still interested in selling, identify their
+motivation and timeline, and transfer interested homeowners to my team or schedule an appointment."
+Rules: 1–2 sentences, under 60 words, plain language, no invented facts, prices, integrations or promises.
+Return JSON: {{"mission": "…"}}"""
+
+    def validate(p: dict) -> dict:
+        return {"mission": _str(p.get("mission"), "mission", 500)}
+
+    out = await _json_call([{"role": "system", "content": "You help small businesses describe what their AI phone agent should accomplish."},
+                            {"role": "user", "content": user}], validate, temperature=0.4)
+    return out["mission"]

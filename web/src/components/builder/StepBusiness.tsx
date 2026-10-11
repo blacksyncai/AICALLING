@@ -22,6 +22,7 @@ export function StepBusiness({
   profile,
   onProfile,
   showErrors,
+  knowledgeOnly = false,
 }: {
   business: Business;
   onChange: (patch: Partial<Business>) => void;
@@ -29,6 +30,8 @@ export function StepBusiness({
   profile: BusinessProfile | null;
   onProfile: (p: BusinessProfile) => void;
   showErrors: boolean;
+  /** Wizard step 2: only the website/knowledge part (name and industry were asked in step 1). */
+  knowledgeOnly?: boolean;
 }) {
   const toast = useToast();
   const [starting, setStarting] = useState(false);
@@ -67,9 +70,18 @@ export function StepBusiness({
 
   return (
     <div>
-      <StepTitle title="Tell us about your business" description="We'll use this to write how your agent talks about you." />
+      {knowledgeOnly ? (
+        <StepTitle
+          title="What should your agent know?"
+          description="Add your website and we'll help your agent learn about your business. You review everything before it's used."
+        />
+      ) : (
+        <StepTitle title="Tell us about your business" description="We'll use this to write how your agent talks about you." />
+      )}
 
       <div className="space-y-5">
+        {!knowledgeOnly && (
+          <>
         <Field label="Business name">
           <Input
             value={business.name ?? ""}
@@ -127,6 +139,8 @@ export function StepBusiness({
             placeholder="e.g. We install and repair heating and cooling systems for homes in Austin."
           />
         </Field>
+          </>
+        )}
 
         {/* Website + knowledge */}
         <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4">
@@ -135,7 +149,7 @@ export function StepBusiness({
               <Sparkles className="h-4 w-4" />
             </span>
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-zinc-900">Teach your agent about your business</h3>
+              <h3 className="text-sm font-semibold text-zinc-900">{knowledgeOnly ? "Your website" : "Teach your agent about your business"}</h3>
               <p className="mt-0.5 text-xs text-zinc-500">
                 Add your website and we&apos;ll pull out your services, hours, team and common questions. You&apos;ll review everything.
               </p>
@@ -192,7 +206,7 @@ export function StepBusiness({
                 <span className="flex gap-2">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span>
-                    {profile.error} You can add details yourself below or upload a file — or skip this for now.
+                    {profile.error} You can add details yourself below or upload a file — or continue without it.
                   </span>
                 </span>
               </Notice>

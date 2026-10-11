@@ -53,6 +53,10 @@ class Agent(Base):
     calcom_event_type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     transfer_number: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
+    # What the agent does, as a short badge ("Expired Listings"). Set by the builder; when a person
+    # edits it, specialty_custom is set and regeneration never overwrites it.
+    specialty: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    specialty_custom: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Caller ID for this agent's calls (one of the account's numbers); blank = account default.
     caller_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Record phone calls (None = on when recording storage is configured).

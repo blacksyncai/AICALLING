@@ -153,7 +153,8 @@ export function Generating({ generation }: { generation: Generation | null }) {
           <Sparkles className="h-6 w-6 animate-pulse" />
         </span>
       </div>
-      <h2 className="mt-6 font-display text-xl font-semibold tracking-tight text-zinc-900">Building your agent</h2>
+      <h2 className="mt-6 font-display text-xl font-semibold tracking-tight text-zinc-900">Your agent is coming together</h2>
+      <p className="mt-1 text-sm text-zinc-500">Writing the script, conversation flow and call rules from your answers.</p>
       <ol className="mt-5 w-full max-w-xs space-y-2 text-left">
         {stages.map((s, i) => (
           <li key={s.key} className="flex items-center gap-2.5 text-sm">

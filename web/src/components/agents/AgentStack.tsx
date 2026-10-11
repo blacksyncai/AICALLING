@@ -42,10 +42,16 @@ function gradientFor(id: string) {
   return GRADIENTS[h % GRADIENTS.length];
 }
 
+/** Badge: the agent's specialty ("Expired Listings") when known, else its template's role. */
+function roleFor(a: Agent) {
+  const base = ROLES[a.template] ?? CUSTOM;
+  return a.specialty ? { ...base, label: a.specialty } : base;
+}
+
 function matches(a: Agent, q: string) {
   const s = q.trim().toLowerCase();
   if (!s) return true;
-  const role = (ROLES[a.template] ?? CUSTOM).label;
+  const role = roleFor(a).label;
   return [a.name, a.description, role].some((v) => (v ?? "").toLowerCase().includes(s));
 }
 
@@ -64,12 +70,12 @@ function Avatar({ agent, size = "md" }: { agent: Agent; size?: "md" | "sm" }) {
 }
 
 function RoleBadge({ agent }: { agent: Agent }) {
-  const role = ROLES[agent.template] ?? CUSTOM;
+  const role = roleFor(agent);
   const Icon = role.icon;
   return (
-    <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset", role.cls)}>
-      <Icon className="h-3 w-3" />
-      <span className="max-w-[90px] truncate text-[11px] font-medium uppercase tracking-wide sm:max-w-none">{role.label}</span>
+    <span title={role.label} className={cn("inline-flex min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset", role.cls)}>
+      <Icon className="h-3 w-3 shrink-0" />
+      <span className="max-w-[110px] truncate text-[11px] font-medium uppercase tracking-wide sm:max-w-[180px]">{role.label}</span>
     </span>
   );
 }
