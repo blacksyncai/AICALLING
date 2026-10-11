@@ -85,6 +85,7 @@ export function VoiceModelSettings({
             onChange={(id) => set("llm_model", id)}
             traits={traits.length ? traits : ["general"]}
           />
+          <CallCost model={draft.llm_model} voiceId={draft.voice_id} voices={voices} />
         </div>
         <Field label={`Speaking speed · ${draft.voice_speed.toFixed(2)}x`} className="sm:col-span-2">
           <input
@@ -150,5 +151,28 @@ export function VoiceModelSettings({
         )}
       </div>
     </div>
+  );
+}
+
+interface Rates {
+  model_rates: Record<string, number>;
+  premium_voice_surcharge: number;
+  cents_per_credit: number;
+}
+
+/** "1.4 credits/min • Approx $0.36/min" for the model and voice being edited (same rule as billing). */
+function CallCost({ model, voiceId, voices }: { model: string; voiceId: string; voices: VoiceCatalog | undefined }) {
+  const { data } = useSWR<Rates>("/api/billing/rates", fetcher, { revalidateOnFocus: false });
+  if (!data) return null;
+  const standard = new Set((voices?.voices ?? []).filter((v) => v.category === "standard").map((v) => v.id));
+  const premium = !!voices && !!voiceId && !standard.has(voiceId);
+  const base = data.model_rates[model] ?? data.model_rates["gpt-4.1-mini"] ?? 1;
+  const rate = Math.round((base + (premium ? data.premium_voice_surcharge : 0)) * 1000) / 1000;
+  const dollars = (rate * data.cents_per_credit) / 100;
+  return (
+    <p className="mt-1.5 text-xs text-zinc-500">
+      <span className="font-medium text-zinc-700">{rate.toLocaleString()} credits/min</span> • Approx ${dollars.toFixed(2)}/min
+      {premium && data.premium_voice_surcharge > 0 ? " (includes premium voice)" : ""}
+    </p>
   );
 }

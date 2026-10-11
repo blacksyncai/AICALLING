@@ -1,0 +1,183 @@
+"use client";
+
+import { Coins, CreditCard, LayoutGrid, Receipt, UserSearch } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import useSWR, { useSWRConfig } from "swr";
+import { CreditsTab } from "@/components/billing/CreditsTab";
+import { InvoicesTab } from "@/components/billing/InvoicesTab";
+import { LookupsTab } from "@/components/billing/LookupsTab";
+import { OverviewTab } from "@/components/billing/OverviewTab";
+import { PlansTab } from "@/components/billing/PlansTab";
+import type { Overview, Purchase } from "@/components/billing/types";
+import { Notice, PageHeader, Spinner } from "@/components/ui";
+import { api, fetcher } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+const TABS = [
+  { value: "overview", label: "Overview", icon: LayoutGrid },
+  { value: "plans", label: "Plans", icon: CreditCard },
+  { value: "credits", label: "Calling Credits", icon: Coins },
+  { value: "lookups", label: "Lead Lookup Balance", icon: UserSearch },
+  { value: "invoices", label: "Invoices & Payment Methods", icon: Receipt },
+] as const;
+
+type Tab = (typeof TABS)[number]["value"];
+
+function CheckoutReturn() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { mutate } = useSWRConfig();
+  const state = params.get("checkout");
+  const purchaseId = params.get("purchase");
+  const [purchase, setPurchase] = useState<Purchase | null>(null);
+  const [gaveUp, setGaveUp] = useState(false);
+
+  useEffect(() => {
+    if (state !== "success" || !purchaseId) return;
+    let stop = false;
+    let tries = 0;
+    async function poll() {
+      try {
+        const p = await api<Purchase>(`/api/billing/purchases/${purchaseId}`);
+        if (stop) return;
+        setPurchase(p);
+        if (p.status !== "pending") {
+          void mutate((key) => typeof key === "string" && (key.startsWith("/api/billing") || key === "/api/auth/me"));
+          return;
+        }
+      } catch {
+        /* keep polling */
+      }
+      if (++tries < 20) setTimeout(poll, 1500);
+      else setGaveUp(true);
+    }
+    void poll();
+    return () => {
+      stop = true;
+    };
+  }, [state, purchaseId, mutate]);
+
+  if (!state) return null;
+  const dismiss = () => {
+    const p = new URLSearchParams(params.toString());
+    p.delete("checkout");
+    p.delete("purchase");
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+  };
+
+  let body: React.ReactNode;
+  let tone: "green" | "blue" | "amber" | "red" = "blue";
+  if (state === "canceled") {
+    body = "Checkout canceled — nothing was charged.";
+    tone = "amber";
+  } else if (!purchaseId) {
+    body = "Thanks! Your subscription is being set up — it appears here within a few seconds.";
+    tone = "green";
+  } else if (purchase?.status === "paid") {
+    body =
+      purchase.kind === "lookup_funds"
+        ? `Payment received — $${(purchase.amount_cents / 100).toFixed(2)} added to your lookup balance.`
+        : `Payment received — ${purchase.credits.toLocaleString()} calling credits added.`;
+    tone = "green";
+  } else if (purchase?.status === "failed") {
+    body = purchase.error || "The payment didn't go through. Nothing was added.";
+    tone = "red";
+  } else {
+    body = gaveUp ? "Your payment is still processing. Credits are added as soon as it clears." : "Confirming your payment…";
+  }
+  return (
+    <div className="mb-6">
+      <Notice tone={tone}>
+        <span className="flex items-center justify-between gap-3">
+          <span>{body}</span>
+          <button type="button" onClick={dismiss} className="shrink-0 text-xs font-medium underline">
+            Dismiss
+          </button>
+        </span>
+      </Notice>
+    </div>
+  );
+}
+
+function BillingContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const raw = params.get("tab");
+  const tab: Tab = TABS.some((t) => t.value === raw) ? (raw as Tab) : "overview";
+  const { data: overview, error, mutate } = useSWR<Overview>("/api/billing/overview", fetcher);
+
+  function select(next: Tab) {
+    const p = new URLSearchParams(params.toString());
+    if (next === "overview") p.delete("tab");
+    else p.set("tab", next);
+    const qs = p.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }
+
+  return (
+    <>
+      <PageHeader title="Billing & Usage" description="Your plan, calling credits, lead lookup balance and invoices." />
+      <CheckoutReturn />
+      <div className="-mx-4 mb-6 overflow-x-auto border-b border-zinc-200 px-4 sm:mx-0 sm:px-0">
+        <nav className="flex min-w-max gap-1" role="tablist">
+          {TABS.map((t) => {
+            const active = t.value === tab;
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.value}
+                role="tab"
+                aria-selected={active}
+                onClick={() => select(t.value)}
+                className={cn(
+                  "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors",
+                  active ? "border-brand-600 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+      {error ? (
+        <Notice tone="red">{error.message}</Notice>
+      ) : !overview ? (
+        <div className="flex justify-center py-16">
+          <Spinner />
+        </div>
+      ) : (
+        <>
+          {!overview.stripe_ready && (
+            <div className="mb-6">
+              <Notice>Online payments aren&apos;t switched on yet. Your balances and usage are shown below; purchases open once payments are set up.</Notice>
+            </div>
+          )}
+          {tab === "overview" && <OverviewTab overview={overview} go={select} />}
+          {tab === "plans" && <PlansTab canManage={overview.can_manage} refresh={() => void mutate()} />}
+          {tab === "credits" && <CreditsTab canManage={overview.can_manage} />}
+          {tab === "lookups" && <LookupsTab canManage={overview.can_manage} />}
+          {tab === "invoices" && <InvoicesTab canManage={overview.can_manage} />}
+        </>
+      )}
+    </>
+  );
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center py-16">
+          <Spinner />
+        </div>
+      }
+    >
+      <BillingContent />
+    </Suspense>
+  );
+}

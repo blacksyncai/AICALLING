@@ -1,6 +1,7 @@
 "use client";
 
 import { ClipboardPaste, Eye, FileSpreadsheet, Search, UserPlus, UserSearch } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { BulkLookup } from "@/components/lead-finder/BulkLookup";
@@ -38,6 +39,8 @@ export default function LeadFinderPage() {
   const [form, setForm] = useState<LookupAddress>(EMPTY);
   const [paste, setPaste] = useState("");
   const [verify, setVerify] = useState(false);
+  const [priceCheck, setPriceCheck] = useState<{ price: number; balance: number; policy: string } | null>(null);
+  const [needsFunds, setNeedsFunds] = useState(false);
   const [filled, setFilled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -46,7 +49,11 @@ export default function LeadFinderPage() {
   const [opening, setOpening] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
-  const limitReached = !!usage && !usage.unlimited && usage.credits <= 0;
+  // Nothing left to pay with: no free lookups today, no prepaid credits, and no usable balance.
+  const limitReached =
+    !!usage && !usage.unlimited && usage.free_remaining <= 0 && usage.credits <= 0 &&
+    (usage.price_cents == null || usage.balance_cents < usage.price_cents);
+  const money = (c: number) => `$${(c / 100).toFixed(2)}`;
   const unavailable = !!usage && (!usage.enabled || !usage.configured);
   const missing = !form.street.trim() || !form.city.trim() || !form.state.trim();
 
@@ -89,19 +96,28 @@ export default function LeadFinderPage() {
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   }
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  async function submit(e: FormEvent | null, expectedPrice?: number) {
+    e?.preventDefault();
     if (busy || missing) return;
     setBusy(true);
     setError("");
+    setPriceCheck(null);
     try {
-      const res = await post<LookupResponse>("/api/lead-finder/lookups", form);
+      const body = expectedPrice === undefined ? form : { ...form, expected_price_cents: expectedPrice };
+      const res = await post<LookupResponse>("/api/lead-finder/lookups", body);
       await refreshUsage(res.usage, false);
       refreshHistory();
       show(res.lookup, res.cached);
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 0;
-      setError((err as Error).message || (status >= 500 ? "Something went wrong. Please try again." : "That lookup didn't work."));
+      const code = err instanceof ApiError ? err.body.code : undefined;
+      if (code === "confirm_price" && err instanceof ApiError) {
+        // Free lookups are used up: show the price and let the user decide.
+        setPriceCheck({ price: Number(err.body.price_cents), balance: Number(err.body.balance_cents), policy: String(err.body.policy) });
+      } else {
+        setError((err as Error).message || (status >= 500 ? "Something went wrong. Please try again." : "That lookup didn't work."));
+        if (code === "insufficient_balance") setNeedsFunds(true);
+      }
       refreshUsage();
     } finally {
       setBusy(false);
@@ -155,7 +171,11 @@ export default function LeadFinderPage() {
         </div>
         {usage && usage.enabled && (
           <span className={cn("text-sm font-medium tabular-nums", limitReached ? "text-amber-700" : "text-zinc-700")}>
-            {usage.unlimited ? "Unlimited lookup credits" : `${usage.credits.toLocaleString()} lookup ${usage.credits === 1 ? "credit" : "credits"}`}
+            {usage.unlimited
+              ? "Unlimited lookups"
+              : `${usage.free_remaining} of ${usage.free_daily} free today` +
+                (usage.credits ? ` · ${usage.credits.toLocaleString()} prepaid` : "") +
+                (usage.price_cents != null ? ` · ${money(usage.balance_cents)} balance` : "")}
           </span>
         )}
       </div>
@@ -240,16 +260,61 @@ export default function LeadFinderPage() {
               {usage && !usage.configured && usage.enabled && (
                 <Notice tone="amber">Property lookup is temporarily unavailable. Please try again later.</Notice>
               )}
-              {limitReached && (
+              {needsFunds && (
                 <Notice tone="amber">
-                  {isAdmin
-                    ? "You're out of lead lookup credits. Add more with \u201cAdd credits\u201d — saved results stay free to open."
-                    : "You're out of lead lookup credits. Ask your BlackSync admin to add more — saved results stay free to open."}
+                  <Link href="/billing?tab=lookups" className="font-medium underline">
+                    Add funds to your lookup balance
+                  </Link>{" "}
+                  to keep searching today.
+                </Notice>
+              )}
+              {priceCheck && (
+                <div className="rounded-lg border border-brand-200 bg-brand-50/60 p-4 text-sm">
+                  <p className="font-medium text-zinc-900">You&apos;ve used today&apos;s free lookups.</p>
+                  <p className="mt-1 text-zinc-600">
+                    This lookup costs <strong>{money(priceCheck.price)}</strong> from your lookup balance ({money(priceCheck.balance)}),{" "}
+                    {priceCheck.policy === "completed" ? "charged once the lookup completes." : "charged only if an owner is found."}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {priceCheck.balance >= priceCheck.price ? (
+                      <Button type="button" variant="primary" size="sm" onClick={() => void submit(null, priceCheck.price)}>
+                        Look up for {money(priceCheck.price)}
+                      </Button>
+                    ) : (
+                      <Link href="/billing?tab=lookups" className="inline-flex h-8 items-center rounded-lg bg-brand-600 px-3 text-xs font-medium text-white hover:bg-brand-700">
+                        Add funds
+                      </Link>
+                    )}
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setPriceCheck(null)}>
+                      Not now
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {limitReached && !priceCheck && (
+                <Notice tone="amber">
+                  {usage?.price_cents != null ? (
+                    <>
+                      You&apos;ve used today&apos;s free lookups.{" "}
+                      <Link href="/billing?tab=lookups" className="font-medium underline">
+                        Add funds
+                      </Link>{" "}
+                      to keep going ({money(usage.price_cents)} per lookup), or come back tomorrow. Saved results stay free to open.
+                    </>
+                  ) : (
+                    "You've used today's free lookups — they reset at midnight UTC. Saved results stay free to open."
+                  )}
                 </Notice>
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-zinc-500">1 credit per owner found. No match costs nothing, and saved results are free to reopen.</p>
+                <p className="text-xs text-zinc-500">
+                  {usage && usage.free_remaining > 0
+                    ? `Free — ${usage.free_remaining} free ${usage.free_remaining === 1 ? "lookup" : "lookups"} left today. Saved results are always free to reopen.`
+                    : usage?.policy === "completed"
+                      ? "Paid lookups are charged once they complete. Saved results are free to reopen."
+                      : "Paid lookups are only charged when an owner is found. Saved results are free to reopen."}
+                </p>
                 <Button type="submit" variant="primary" loading={busy} disabled={busy || missing || limitReached || unavailable}>
                   {!busy && <Search className="h-4 w-4" />} {busy ? "Looking up…" : "Find Property Owner"}
                 </Button>

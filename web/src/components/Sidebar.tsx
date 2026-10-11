@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  BarChart3, BookOpen, Bot, CalendarCheck, ChevronsUpDown, Coins, Contact, Hash, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug,
+  BarChart3, BookOpen, Bot, CalendarCheck, ChevronsUpDown, Coins, Contact, CreditCard, Hash, LayoutDashboard, LogOut, Megaphone, Menu, PhoneCall, Plug,
   UserRound, UserSearch, X,
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
@@ -23,6 +23,7 @@ const NAV = [
   { href: "/meetings", label: "Meetings", icon: CalendarCheck },
   { href: "/calls", label: "Call Logs", icon: PhoneCall },
   { href: "/phone-numbers", label: "Phone Numbers", icon: Hash },
+  { href: "/billing", label: "Billing & Usage", icon: CreditCard },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true },
 ];
@@ -52,7 +53,7 @@ function CreditsPill({ onClick }: { onClick: () => void }) {
   const low = !org.unlimited_credits && org.credits_balance <= 10;
   return (
     <Link
-      href="/profile?tab=billing"
+      href="/billing"
       onClick={onClick}
       className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5 text-xs hover:bg-white/10"
     >

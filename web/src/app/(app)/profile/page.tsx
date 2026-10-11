@@ -1,9 +1,8 @@
 "use client";
 
-import { Building2, Coins, KeyRound, UserRound, Users } from "lucide-react";
+import { Building2, KeyRound, UserRound, Users } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, type ReactNode } from "react";
-import { BillingTab } from "@/components/profile/BillingTab";
+import { Suspense, useEffect, type ReactNode } from "react";
 import { OrgTab } from "@/components/profile/OrgTab";
 import { ProfileTab } from "@/components/profile/ProfileTab";
 import { SecurityTab } from "@/components/profile/SecurityTab";
@@ -16,7 +15,6 @@ const TABS = [
   { value: "security", label: "Security", icon: KeyRound },
   { value: "team", label: "Team", icon: Users },
   { value: "organization", label: "Organization", icon: Building2 },
-  { value: "billing", label: "Credits", icon: Coins },
 ] as const;
 
 type Tab = (typeof TABS)[number]["value"];
@@ -26,7 +24,6 @@ const PANELS: Record<Tab, () => ReactNode> = {
   security: () => <SecurityTab />,
   team: () => <TeamTab />,
   organization: () => <OrgTab />,
-  billing: () => <BillingTab />,
 };
 
 function ProfileContent() {
@@ -34,6 +31,10 @@ function ProfileContent() {
   const pathname = usePathname();
   const params = useSearchParams();
   const raw = params.get("tab");
+  // Credits moved to Billing & Usage.
+  useEffect(() => {
+    if (raw === "billing") router.replace("/billing?tab=credits");
+  }, [raw, router]);
   const tab: Tab = TABS.some((t) => t.value === raw) ? (raw as Tab) : "profile";
 
   function select(next: Tab) {
@@ -46,7 +47,7 @@ function ProfileContent() {
 
   return (
     <>
-      <PageHeader title="Account" description="Your profile, sign-in, team and calling credits." />
+      <PageHeader title="Account" description="Your profile, sign-in and team." />
       <div className="-mx-4 mb-6 overflow-x-auto border-b border-zinc-200 px-4 sm:mx-0 sm:px-0">
         <nav className="flex min-w-max gap-1" role="tablist">
           {TABS.map((t) => {

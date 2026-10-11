@@ -26,7 +26,7 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     # active | suspended — a suspended org can sign in but not place calls.
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
-    # 1 credit = 1 minute of phone calling (billed per started minute, from answer).
+    # Calling credits. A call costs (connected seconds / 60) × the agent's credit rate — see services/billing/credits.py.
     credits_balance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # House accounts skip the credit check entirely.
     unlimited_credits: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -39,6 +39,8 @@ class Organization(Base):
     # Lead-lookup credits — separate from calling credits. 1 credit = 1 property owner found.
     lead_credits_balance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     lead_credits_unlimited: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    # Fraction of a calling credit (thousandths) carried to the next call, so per-second billing adds up exactly.
+    credit_carry_milli: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     # Lead-lookup prepaid balance in cents (restricted to lead data; separate from calling credits).
     lookup_balance_cents: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)

@@ -44,6 +44,10 @@ class PropertyLookup(Base):
     # queued (bulk, waiting) | reserved (in flight) | completed | failed
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="reserved")
     found: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # How this lookup was paid: free (daily allowance) | credit (prepaid lookup credit) | balance (USD) | unlimited | cache.
+    pay_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # What the customer was charged from the lookup balance, in cents (0 = free / released).
+    charge_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Amount DataSkip charged, as returned by the API (USD).
     charged: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Normalized result: {"contact": {...}, "phones": [...], "emails": [...]}; NULL once deleted/expired.
@@ -88,6 +92,10 @@ class LookupBatch(Base):
     failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cached: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     credits_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # credit | balance | unlimited — and, for balance, the confirmed price per lookup and total charged.
+    pay_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    unit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    charged_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     charged: Mapped[float | None] = mapped_column(Float, nullable=True, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)

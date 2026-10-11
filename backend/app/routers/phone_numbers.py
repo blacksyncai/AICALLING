@@ -9,7 +9,6 @@ release numbers for any account.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 import structlog
 from fastapi import APIRouter, HTTPException
@@ -64,6 +63,16 @@ def _err(exc: Exception) -> HTTPException:
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=502, detail=str(exc))
+
+
+async def _sync_billing(db, org_id: uuid.UUID) -> None:
+    """Keep the additional-number add-on in step (never blocks the number change itself)."""
+    from app.services.billing.subscriptions import sync_phone_quantity
+
+    try:
+        await sync_phone_quantity(db, org_id)
+    except Exception as exc:
+        log.error("phone_quantity_sync_failed", org_id=str(org_id), error=str(exc))
 
 
 async def _own_number(db, org_id: uuid.UUID, number_id: uuid.UUID) -> PhoneNumber:
@@ -148,6 +157,7 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
         row = await telephony.purchase(db, ctx.org.id, body.number, body.label)
     except (telephony.TelephonyError, ValueError) as exc:
         raise _err(exc)
+    await _sync_billing(db, ctx.org.id)
     return telephony.number_to_dict(row)
 
 
@@ -235,6 +245,7 @@ async def admin_assign(org_id: uuid.UUID, body: AdminAssign, admin: AdminDep, db
     db.add(BillingAudit(admin_id=admin.id, org_id=org_id, target="phone_numbers", previous="",
                         adjustment=body.mode, new=row.number, reason=f"Number {body.mode}d by admin"))
     await db.commit()
+    await _sync_billing(db, org_id)
     return telephony.number_to_dict(row)
 
 
@@ -252,6 +263,7 @@ async def admin_release(number_id: uuid.UUID, admin: AdminDep, db: DbDep, return
                         adjustment="released" if return_to_twilio else "unassigned", new="",
                         reason="Released to Twilio" if return_to_twilio else "Unassigned by admin"))
     await db.commit()
+    await _sync_billing(db, org_id)
     return {"ok": True}
 
 

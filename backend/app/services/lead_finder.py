@@ -59,9 +59,10 @@ _SUFFIXES = {
 class LookupError_(Exception):
     """A lookup that didn't complete. `status` is the HTTP status for our API; `code` is for admins."""
 
-    def __init__(self, status: int, code: str, message: str, retry_after: int | None = None):
+    def __init__(self, status: int, code: str, message: str, retry_after: int | None = None, extra: dict | None = None):
         super().__init__(message)
         self.status, self.code, self.message, self.retry_after = status, code, message, retry_after
+        self.extra = extra or {}
 
 
 # ── Addresses ─────────────────────────────────────────────────────────────────
@@ -267,35 +268,44 @@ STALE_AFTER = timedelta(minutes=5)
 
 
 async def release_stale(db, org: Organization) -> None:
-    """Single lookups stranded by a crash or redeploy: mark failed and give their held credit back."""
+    """Single lookups stranded by a crash or redeploy: mark failed and give their hold back."""
+    from app.services.billing import lookups as pay
+
     cutoff = datetime.now(timezone.utc) - STALE_AFTER
     stale = (await db.execute(select(PropertyLookup).where(
         PropertyLookup.org_id == org.id, PropertyLookup.status == "reserved", PropertyLookup.batch_id.is_(None),
         PropertyLookup.created_at < cutoff))).scalars().all()
     for r in stale:
         r.status, r.error_code, r.error = "failed", "interrupted", "Lookup interrupted before it finished"
+        # Rows from before pay_source existed held one lookup credit.
+        await pay.release(db, org, r.pay_source or "credit", 1, r.charge_cents or 0)
+        r.charge_cents = 0
     if stale:
-        await release_credits(db, org, len(stale))
         await db.commit()
 
 
-async def start_lookup(db, org: Organization, user_id, addr: dict, key: str) -> PropertyLookup:
-    """Hold one credit and create the in-flight lookup row. Raises LookupError_(402/409)."""
+async def start_lookup(db, org: Organization, user_id, addr: dict, key: str,
+                       expected_price_cents: int | None = None) -> PropertyLookup:
+    """Reserve payment and create the in-flight lookup row. Raises LookupError_(402/409)."""
+    from app.services.billing import lookups as pay
+
     await release_stale(db, org)
     inflight = (await db.execute(select(PropertyLookup.id).where(
         PropertyLookup.org_id == org.id, PropertyLookup.address_key == key,
         PropertyLookup.status == "reserved", PropertyLookup.batch_id.is_(None)))).first()
     if inflight:
         raise LookupError_(409, "in_progress", "This address is already being looked up. Give it a moment.")
-    try:
-        await hold_credits(db, org, 1)
-    except NotEnoughCredits:
-        raise LookupError_(402, "no_credits", "You're out of lead lookup credits. Ask your BlackSync admin to add more.")
-    row = PropertyLookup(org_id=org.id, user_id=user_id, lookup_date=today_utc(), address_key=key,
-                         street=addr["street"], city=addr["city"], state=addr["state"], zip=addr["zip"],
-                         status="reserved", credits=0)
-    db.add(row)
-    await db.commit()
+    # Serializes the free-allowance count (holds take their own locks inside).
+    async with pay.choice_lock(org.id):
+        try:
+            source, unit = await pay.choose_single(db, org, expected_price_cents)
+        except pay.PaymentNeeded as exc:
+            raise LookupError_(402, exc.code, exc.message, extra=exc.extra)
+        row = PropertyLookup(org_id=org.id, user_id=user_id, lookup_date=today_utc(), address_key=key,
+                             street=addr["street"], city=addr["city"], state=addr["state"], zip=addr["zip"],
+                             status="reserved", credits=0, pay_source=source, charge_cents=unit)
+        db.add(row)
+        await db.commit()
     return row
 
 

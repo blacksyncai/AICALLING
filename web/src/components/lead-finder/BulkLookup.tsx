@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, Download, FileSpreadsheet, Play, Trash2, Upload, UserPlus } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
@@ -53,7 +54,10 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
     if (!preview) return;
     try {
       const u = await api<LeadFinderUsage>("/api/lead-finder/usage");
-      setPreview({ ...preview, usage: u, enough_credits: u.unlimited || u.credits >= preview.max_credits });
+      const byCredits = u.unlimited || u.credits >= preview.max_credits;
+      const byBalance = u.price_cents != null && u.balance_cents >= preview.max_credits * u.price_cents;
+      setPreview({ ...preview, usage: u, enough_credits: byCredits || byBalance, pay_with: byCredits ? "credits" : "balance",
+                   price_cents: u.price_cents, max_total_cents: byCredits || u.price_cents == null ? 0 : preview.max_credits * u.price_cents });
     } catch {
       /* the balance refreshes on its own */
     }
@@ -79,9 +83,16 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
 
   async function start() {
     if (!preview) return;
+    const paid = preview.pay_with === "balance" && preview.new_rows > 0 && preview.price_cents != null;
+    if (paid) {
+      const each = `$${((preview.price_cents ?? 0) / 100).toFixed(2)}`;
+      const policy = (preview.usage ?? usage)?.policy === "completed" ? "every completed lookup" : "each owner found";
+      if (!window.confirm(`Run ${preview.new_rows.toLocaleString()} paid lookups at ${each} for ${policy}? ` +
+        `Up to $${(preview.max_total_cents / 100).toFixed(2)} is set aside from your lookup balance and anything not used is returned.`)) return;
+    }
     setBusy(true);
     try {
-      await post(`/api/lead-finder/batches/${preview.id}/start`);
+      await post(`/api/lead-finder/batches/${preview.id}/start`, paid ? { expected_price_cents: preview.price_cents } : {});
       setOpenId(preview.id);
       setPreview(null);
       refreshBatches();
@@ -149,10 +160,21 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
             <Stat label="Ready to look up" value={preview.new_rows} />
             <Stat label="Already looked up (free)" value={preview.cached_rows} />
             <Stat label="Skipped" value={preview.invalid.length} />
-            <Stat label="Credits (max)" value={preview.max_credits} hint={(preview.usage ?? usage)?.unlimited ? "Unlimited" : `You have ${((preview.usage ?? usage)?.credits ?? 0).toLocaleString()}`} />
+            {preview.pay_with === "balance" ? (
+              <Stat
+                label="Max cost"
+                value={`$${(preview.max_total_cents / 100).toFixed(2)}`}
+                hint={preview.price_cents != null ? `$${(preview.price_cents / 100).toFixed(2)} each · balance $${(((preview.usage ?? usage)?.balance_cents ?? 0) / 100).toFixed(2)}` : "Paid lookups are off"}
+              />
+            ) : (
+              <Stat label="Credits (max)" value={preview.max_credits} hint={(preview.usage ?? usage)?.unlimited ? "Unlimited" : `You have ${((preview.usage ?? usage)?.credits ?? 0).toLocaleString()}`} />
+            )}
           </dl>
           <p className="mt-3 text-xs text-zinc-500">
-            Credits are only used for owners found — misses and errors are returned to your balance when the run finishes.
+            {(preview.usage ?? usage)?.policy === "completed"
+              ? "Every completed lookup is charged; errors are returned when the run finishes."
+              : "Only owners found are charged — misses and errors are returned when the run finishes."}{" "}
+            Free daily lookups apply to single addresses only.
           </p>
           {preview.invalid.length > 0 && (
             <div className="mt-3">
@@ -173,8 +195,21 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
           {!preview.enough_credits && (
             <div className="mt-3 space-y-2">
               <Notice tone="amber">
-                This file needs up to {preview.max_credits.toLocaleString()} credits and you have {usage?.credits.toLocaleString() ?? 0}.{" "}
-                {isAdmin ? "Add credits, then start." : "Ask your BlackSync admin for more, or upload fewer addresses."}
+                {preview.price_cents != null ? (
+                  <>
+                    This file costs up to ${((preview.max_credits * preview.price_cents) / 100).toFixed(2)} and your lookup balance is $
+                    {(((preview.usage ?? usage)?.balance_cents ?? 0) / 100).toFixed(2)}.{" "}
+                    <Link href="/billing?tab=lookups" className="font-medium underline">
+                      Add funds
+                    </Link>{" "}
+                    or upload fewer addresses.
+                  </>
+                ) : (
+                  <>
+                    This file needs up to {preview.max_credits.toLocaleString()} lookup credits and you have {usage?.credits.toLocaleString() ?? 0}.{" "}
+                    {isAdmin ? "Add credits, then start." : "Upload fewer addresses, or ask your BlackSync admin for more."}
+                  </>
+                )}
               </Notice>
               {isAdmin && session?.org && (
                 <div className="max-w-xs">
@@ -210,7 +245,7 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900">{b.filename}</span>
                   <Badge tone={STATUS[b.status].tone}>{STATUS[b.status].label}</Badge>
                   <span className="text-xs tabular-nums text-zinc-500">
-                    {b.matched.toLocaleString()} found · {b.processed.toLocaleString()} done · {b.credits_used.toLocaleString()} credits
+                    {b.matched.toLocaleString()} found · {b.processed.toLocaleString()} done · {b.pay_source === "balance" ? `$${((b.charged_cents ?? 0) / 100).toFixed(2)}` : `${b.credits_used.toLocaleString()} credits`}
                   </span>
                   <span className="text-xs text-zinc-400">{fmtDate(b.created_at)}</span>
                 </button>
@@ -223,11 +258,11 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
   );
 }
 
-function Stat({ label, value, hint }: { label: string; value: number; hint?: string }) {
+function Stat({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
   return (
     <div className="rounded-lg bg-zinc-50 px-3 py-2">
       <dt className="text-xs text-zinc-500">{label}</dt>
-      <dd className="font-display text-lg font-semibold tabular-nums text-zinc-900">{value.toLocaleString()}</dd>
+      <dd className="font-display text-lg font-semibold tabular-nums text-zinc-900">{typeof value === "number" ? value.toLocaleString() : value}</dd>
       {hint && <dd className="text-[11px] text-zinc-400">{hint}</dd>}
     </div>
   );
@@ -316,7 +351,11 @@ function BatchView({ id, onBack, onUsage }: { id: string; onBack: () => void; on
           <Stat label="Owners found" value={data.matched} />
           <Stat label="No match" value={data.no_match} />
           <Stat label="Failed (free)" value={data.failed} />
-          <Stat label="Credits used" value={data.credits_used} />
+          {data.pay_source === "balance" ? (
+            <Stat label="Charged" value={`$${((data.charged_cents ?? 0) / 100).toFixed(2)}`} />
+          ) : (
+            <Stat label="Credits used" value={data.credits_used} />
+          )}
         </dl>
         {data.error && (
           <div className="mt-3">

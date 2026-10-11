@@ -23,7 +23,7 @@ from app.routers.account import create_invite, credit_tx_to_dict, team_payload
 from app.routers.auth import org_to_dict, user_to_dict
 from app.config import settings
 from app.services import clerk
-from app.services.accounts import adjust_credits, create_organization
+from app.services.accounts import create_organization
 from app.services.auth import (
     ADMIN_COOKIE, ADMIN_TTL_S, AdminDep, DbDep, SuperadminDep, admin_unlocked, check_admin_password,
     create_admin_token, generate_password, hash_password, normalize_email,
@@ -279,16 +279,27 @@ async def update_org(org_id: uuid.UUID, body: OrgPatch, _: AdminDep, db: DbDep):
 
 @router.post("/orgs/{org_id}/credits")
 async def grant_credits(org_id: uuid.UUID, body: CreditGrant, admin: AdminDep, db: DbDep):
-    """Add (or with a negative amount, remove) calling credits."""
+    """Add (or with a negative amount, remove) calling credits. Audited; never takes the balance below zero."""
+    from app.models.billing import BillingAudit
+    from app.services.billing.credits import add_lot, consume
+
     if body.amount == 0:
         raise HTTPException(status_code=400, detail="Enter a non-zero amount.")
     org = await _org_or_404(db, org_id)
-    tx = await adjust_credits(db, org, body.amount, kind="grant" if body.amount > 0 else "adjustment",
-                              note=body.note.strip() or ("Credits added" if body.amount > 0 else "Credits removed"),
-                              created_by=admin.id)
+    await db.refresh(org, ["credits_balance"])
+    before = org.credits_balance or 0
+    reason = body.note.strip() or ("Credits added" if body.amount > 0 else "Credits removed")
+    if body.amount > 0:
+        await add_lot(db, org, body.amount, source="grant", kind="grant", note=reason, created_by=admin.id)
+    else:
+        await consume(db, org, -body.amount, kind="adjustment", note=reason, created_by=admin.id)
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="calling_credits", previous=str(before),
+                        adjustment=f"{(org.credits_balance or 0) - before:+d}", new=str(org.credits_balance), reason=reason))
     await db.commit()
+    tx = (await db.execute(select(CreditTransaction).where(CreditTransaction.org_id == org.id)
+                           .order_by(CreditTransaction.created_at.desc()).limit(1))).scalar_one_or_none()
     log.info("admin_credits", org_id=str(org.id), amount=body.amount, by=str(admin.id))
-    return {"balance": org.credits_balance, "transaction": credit_tx_to_dict(tx)}
+    return {"balance": org.credits_balance, "transaction": credit_tx_to_dict(tx) if tx else None}
 
 
 @router.post("/orgs/{org_id}/invites", status_code=201)

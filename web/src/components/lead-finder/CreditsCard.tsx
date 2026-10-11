@@ -1,6 +1,7 @@
 "use client";
 
 import { Coins, Plus } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { useToast } from "@/components/toast";
 import { Button, Card, Input } from "@/components/ui";
@@ -11,22 +12,47 @@ import type { LeadFinderUsage } from "./types";
 
 const PRESETS = [50, 100, 500];
 
-/** Lead-lookup credit balance (separate from calling credits). Platform admins can top up right here. */
+/** What the account can look up with: free daily lookups, prepaid lookup credits and the lookup balance. */
 export function CreditsCard({ usage, onChanged }: { usage: LeadFinderUsage | undefined; onChanged?: () => void }) {
-  const empty = !!usage && !usage.unlimited && usage.credits <= 0;
   const { session } = useSession();
   const isAdmin = !!session?.user.is_superadmin;
+  const money = (c: number) => `$${(c / 100).toFixed(2)}`;
+  const out = !!usage && !usage.unlimited && usage.free_remaining <= 0 && usage.credits <= 0 &&
+    (usage.price_cents == null || usage.balance_cents < usage.price_cents);
   return (
     <Card className="h-fit p-4">
       <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
-        <Coins className={cn("h-3.5 w-3.5", empty ? "text-amber-500" : "text-brand-500")} /> Lookup credits
+        <Coins className={cn("h-3.5 w-3.5", out ? "text-amber-500" : "text-brand-500")} /> Free lookups today
       </div>
-      <div className={cn("mt-1 font-display text-2xl font-semibold tabular-nums", empty ? "text-amber-700" : "text-zinc-900")}>
-        {!usage ? "—" : usage.unlimited ? "Unlimited" : usage.credits.toLocaleString()}
+      <div className={cn("mt-1 font-display text-2xl font-semibold tabular-nums", out ? "text-amber-700" : "text-zinc-900")}>
+        {!usage ? "—" : usage.unlimited ? "Unlimited" : `${usage.free_remaining} / ${usage.free_daily}`}
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
-        1 credit per owner found. No match or errors cost nothing. Separate from your calling credits.
+      {usage && !usage.unlimited && (
+        <dl className="mt-3 space-y-1.5 text-xs">
+          {usage.credits > 0 && (
+            <div className="flex justify-between">
+              <dt className="text-zinc-500">Prepaid lookups</dt>
+              <dd className="tabular-nums text-zinc-800">{usage.credits.toLocaleString()}</dd>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <dt className="text-zinc-500">Lookup balance</dt>
+            <dd className="tabular-nums text-zinc-800">{money(usage.balance_cents)}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-zinc-500">Paid lookup price</dt>
+            <dd className="tabular-nums text-zinc-800">{usage.price_cents == null ? "Not available" : money(usage.price_cents)}</dd>
+          </div>
+        </dl>
+      )}
+      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+        {usage?.policy === "completed" ? "Paid lookups are charged when they complete." : "Paid lookups are charged only when an owner is found."} Separate from calling credits.
       </p>
+      {usage && !usage.unlimited && (
+        <Link href="/billing?tab=lookups" className="mt-2 inline-block text-xs font-medium text-brand-700 hover:text-brand-800">
+          Add funds →
+        </Link>
+      )}
       {isAdmin && session?.org && !usage?.unlimited && <AddCredits orgId={session.org.id} onAdded={onChanged} />}
     </Card>
   );
@@ -70,7 +96,7 @@ export function AddCredits({ orgId, onAdded, compact }: { orgId: string; onAdded
   if (!open) {
     return (
       <Button size="sm" variant={compact ? "primary" : "secondary"} className={cn(!compact && "mt-3 w-full")} onClick={() => setOpen(true)}>
-        <Plus className="h-3.5 w-3.5" /> Add credits
+        <Plus className="h-3.5 w-3.5" /> Add prepaid lookups
       </Button>
     );
   }

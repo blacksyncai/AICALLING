@@ -25,6 +25,7 @@ from app.config import settings
 from app.models.lead import Lead
 from app.models.lead_finder import LookupBatch, PropertyLookup
 from app.services import lead_finder as lf
+from app.services.billing import lookups as pay
 from app.services.auth import Context, CtxDep, DbDep
 from app.services.contacts import normalize_phone
 
@@ -39,6 +40,12 @@ class LookupRequest(BaseModel):
     city: str = Field(default="", max_length=120)
     state: str = Field(default="", max_length=40)
     zip: str = Field(default="", max_length=12)
+    # The per-lookup price the customer confirmed (needed once the free lookups are used up).
+    expected_price_cents: int | None = None
+
+
+class BatchStart(BaseModel):
+    expected_price_cents: int | None = None
 
 
 class ParseRequest(BaseModel):
@@ -82,18 +89,23 @@ def batch_to_dict(b: LookupBatch, valid: int | None = None) -> dict:
         "total_rows": b.total_rows, "valid": valid if valid is not None else len(b.rows or []),
         "invalid": b.invalid or [], "processed": b.processed, "matched": b.matched, "no_match": b.no_match,
         "failed": b.failed, "cached": b.cached, "credits_used": b.credits_used, "error": b.error,
+        "pay_source": b.pay_source, "unit_cents": b.unit_cents, "charged_cents": b.charged_cents or 0,
         "created_at": _iso(b.created_at), "finished_at": _iso(b.finished_at),
     }
 
 
 async def usage_payload(db, ctx: Context) -> dict:
     await db.refresh(ctx.org, ["lead_credits_balance", "lead_credits_unlimited", "lead_finder_enabled"])
+    st = await pay.status(db, ctx.org)
     return {
         "enabled": lf.enabled(ctx.org),
         "configured": bool(settings.skiptrace_api_key),
         "credits": lf.credits_of(ctx.org),
         "unlimited": lf.unlimited(ctx.org),
         "retention_days": settings.lead_finder_retention_days,
+        "free_daily": st["free_daily"], "free_remaining": st["free_remaining"],
+        "balance_cents": st["balance_cents"], "price_cents": st["price_cents"],
+        "paid_enabled": st["paid_enabled"], "policy": st["policy"],
     }
 
 
@@ -123,7 +135,7 @@ async def _get_batch(db, ctx: Context, batch_id: uuid.UUID) -> LookupBatch:
 
 def _error(exc: lf.LookupError_, usage: dict | None = None) -> JSONResponse:
     headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
-    body = {"detail": exc.message, "code": exc.code}
+    body = {"detail": exc.message, "code": exc.code, **getattr(exc, "extra", {})}
     if usage is not None:
         body["usage"] = usage
     return JSONResponse(status_code=exc.status, content=body, headers=headers)
@@ -151,7 +163,6 @@ def _apply_result(row: PropertyLookup, data: dict) -> bool:
         charged = 0.0
     row.status, row.found, row.charged, row.result = "completed", found, charged, result
     row.owner_name = (result["contact"]["full_name"] or None) if result else None
-    row.credits = 1 if found else 0
     row.completed_at = datetime.now(timezone.utc)
     return found
 
@@ -197,7 +208,7 @@ async def create_lookup(body: LookupRequest, ctx: CtxDep, db: DbDep):
         return _error(lf.LookupError_(503, "auth", "Property lookup is temporarily unavailable. Please try again later."))
 
     try:
-        row = await lf.start_lookup(db, ctx.org, ctx.user.id, addr, key)
+        row = await lf.start_lookup(db, ctx.org, ctx.user.id, addr, key, body.expected_price_cents)
     except lf.LookupError_ as exc:
         return _error(exc, await usage_payload(db, ctx))
 
@@ -206,22 +217,26 @@ async def create_lookup(body: LookupRequest, ctx: CtxDep, db: DbDep):
     except lf.LookupError_ as exc:
         row.status, row.error_code, row.error = "failed", exc.code, exc.message
         row.completed_at = datetime.now(timezone.utc)
-        await lf.release_credits(db, ctx.org, 1)
+        await pay.release(db, ctx.org, row.pay_source, 1, row.charge_cents or 0)
+        row.charge_cents = 0
         await db.commit()
         log.warning("lead_finder_lookup_failed", org_id=str(ctx.org.id), lookup_id=str(row.id), code=exc.code)
         return _error(exc, await usage_payload(db, ctx))
     except Exception:
         row.status, row.error_code, row.error = "failed", "internal", "Unexpected error"
-        await lf.release_credits(db, ctx.org, 1)
+        await pay.release(db, ctx.org, row.pay_source, 1, row.charge_cents or 0)
+        row.charge_cents = 0
         await db.commit()
         log.exception("lead_finder_lookup_crashed", org_id=str(ctx.org.id), lookup_id=str(row.id))
         raise HTTPException(status_code=502, detail="Something went wrong with the lookup. Please try again.")
 
     found = _apply_result(row, data)
-    if found:
-        await lf.record_usage(db, ctx.org, 1, "Property lookup", ctx.user.id, lookup_id=row.id)
-    else:
-        await lf.release_credits(db, ctx.org, 1)
+    policy = await pay.settings_store.get(db, "lookup_charge_policy")
+    keep = 1 if pay.charged(policy, found) else 0
+    row.charge_cents = await pay.settle(db, ctx.org, row.pay_source, row.charge_cents or 0, held=1, charge_n=keep,
+                                        note="Property lookup", user_id=ctx.user.id,
+                                        lookup_id=row.id)
+    row.credits = keep if row.pay_source == "credit" else 0
     await db.commit()
     log.info("lead_finder_lookup", org_id=str(ctx.org.id), user_id=str(ctx.user.id), lookup_id=str(row.id),
              found=found, charged=row.charged)
@@ -344,14 +359,19 @@ async def upload_batch(body: BatchUpload, ctx: CtxDep, db: DbDep):
     await db.commit()
     usage = await usage_payload(db, ctx)
     new = len(valid) - cached
+    by_credits = usage["unlimited"] or usage["credits"] >= new
+    price = usage["price_cents"]
+    by_balance = price is not None and usage["balance_cents"] >= new * price
     return {**batch_to_dict(b), "valid": len(valid), "cached_rows": cached, "new_rows": new,
-            "max_credits": new, "usage": usage,
-            "enough_credits": usage["unlimited"] or usage["credits"] >= new}
+            "max_credits": new, "usage": usage, "pay_with": "credits" if by_credits else "balance",
+            "price_cents": price, "max_total_cents": new * price if price is not None and not by_credits else 0,
+            "enough_credits": by_credits or by_balance}
 
 
 @router.post("/batches/{batch_id}/start", status_code=202)
-async def start_batch(batch_id: uuid.UUID, background: BackgroundTasks, ctx: CtxDep, db: DbDep):
-    """Hold credits for every new address (worst case) and run the lookups in the background."""
+async def start_batch(batch_id: uuid.UUID, background: BackgroundTasks, ctx: CtxDep, db: DbDep,
+                      body: BatchStart | None = None):
+    """Reserve payment for every new address (worst case) and run the lookups in the background."""
     _require_ready(ctx)
     b = await _get_batch(db, ctx, batch_id)
     if b.status != "draft":
@@ -361,10 +381,16 @@ async def start_batch(batch_id: uuid.UUID, background: BackgroundTasks, ctx: Ctx
     rows = b.rows or []
     new_rows = [r for r in rows if not (await _cached(db, ctx.org.id, r["key"]))]
     try:
-        await lf.hold_credits(db, ctx.org, len(new_rows))
-    except lf.NotEnoughCredits as exc:
-        raise HTTPException(status_code=402, detail=f"This file needs up to {exc.needed:,} lookup credits and you have "
-                                                    f"{exc.available:,}. Ask your BlackSync admin to add more, or upload fewer addresses.")
+        source, unit = await pay.choose_bulk(db, ctx.org, len(new_rows), body.expected_price_cents if body else None)
+    except pay.PaymentNeeded as exc:
+        detail = exc.message
+        if exc.code == "insufficient_balance":
+            detail = (f"This file needs up to ${exc.extra['needed_cents'] / 100:,.2f} and your lookup balance is "
+                      f"${exc.extra['balance_cents'] / 100:,.2f}. Add funds under Billing & Usage, or upload fewer addresses.")
+        elif exc.code == "paid_disabled":
+            detail = "Bulk lookups need prepaid lookup credits or a lookup balance, and neither is available yet."
+        return JSONResponse(status_code=402, content={"detail": detail, "code": exc.code, **exc.extra})
+    b.pay_source, b.unit_cents, b.charged_cents = source, unit, 0
     now = datetime.now(timezone.utc)
     for r in rows:
         cached = await _cached(db, ctx.org.id, r["key"])
@@ -396,6 +422,8 @@ async def run_batch(batch_id: uuid.UUID, org_id: uuid.UUID, user_id) -> None:
         org = await db.get(Organization, org_id)
         if not b or not org:
             return
+        source, unit = b.pay_source or "credit", b.unit_cents or 0
+        policy = await pay.settings_store.get(db, "lookup_charge_policy")
         try:
             while True:
                 queued = (await db.execute(select(PropertyLookup).where(
@@ -423,7 +451,7 @@ async def run_batch(batch_id: uuid.UUID, org_id: uuid.UUID, user_id) -> None:
                         r.error = "Lookup failed — no credit used"
                     b.failed += len(queued)
                     b.processed += len(queued)
-                    await lf.release_credits(db, org, len(queued))
+                    await pay.release(db, org, source, len(queued), unit)
                     await db.commit()
                     log.warning("lead_finder_batch_chunk_failed", batch_id=str(b.id), code=error.code if error else None)
                     if error and error.code in ("auth", "balance"):
@@ -442,9 +470,15 @@ async def run_batch(batch_id: uuid.UUID, org_id: uuid.UUID, user_id) -> None:
                     b.no_match += not found
                     b.charged = (b.charged or 0) + (r.charged or 0)
                 b.processed += len(queued)
-                b.credits_used += found_n
-                await lf.release_credits(db, org, len(queued) - found_n)
-                await lf.record_usage(db, org, found_n, f"Bulk lookup: {b.filename}", user_id, batch_id=b.id)
+                charge_rows = [r for r in queued if r.status == "completed" and pay.charged(policy, bool(r.found))]
+                cents = await pay.settle(db, org, source, unit, held=len(queued), charge_n=len(charge_rows),
+                                         note=f"Bulk lookup: {b.filename}", user_id=user_id, batch_id=b.id)
+                for r in charge_rows:
+                    r.charge_cents, r.pay_source = unit if source == "balance" else 0, source
+                    r.credits = 1 if source == "credit" else 0
+                if source == "credit":
+                    b.credits_used += len(charge_rows)
+                b.charged_cents = (b.charged_cents or 0) + cents
                 await db.commit()
             if b.status == "running":
                 b.status = "done"
@@ -458,7 +492,7 @@ async def run_batch(batch_id: uuid.UUID, org_id: uuid.UUID, user_id) -> None:
             b = await db.get(LookupBatch, batch_id)
             org = await db.get(Organization, org_id)
             if b and org:
-                await _fail_remaining(db, b, org, "The lookup stopped unexpectedly. Unused credits were returned.")
+                await _fail_remaining(db, b, org, "The lookup stopped unexpectedly. Nothing was charged for unfinished addresses.")
 
 
 async def _fail_remaining(db, b: LookupBatch, org, message: str) -> None:
@@ -469,7 +503,7 @@ async def _fail_remaining(db, b: LookupBatch, org, message: str) -> None:
         r.status, r.error_code, r.error = "failed", "interrupted", "Lookup failed — no credit used"
     b.failed += len(left)
     b.processed += len(left)
-    await lf.release_credits(db, org, len(left))
+    await pay.release(db, org, b.pay_source or "credit", len(left), b.unit_cents or 0)
     b.status, b.error, b.finished_at = "failed", message, datetime.now(timezone.utc)
     await db.commit()
 
@@ -486,7 +520,7 @@ async def _row_count(db, b: LookupBatch) -> int:
 async def _check_stale(db, ctx: Context, b: LookupBatch) -> None:
     updated = b.updated_at if b.updated_at.tzinfo else b.updated_at.replace(tzinfo=timezone.utc)
     if b.status == "running" and datetime.now(timezone.utc) - updated > BATCH_STALE:
-        await _fail_remaining(db, b, ctx.org, "The lookup was interrupted. Unused credits were returned.")
+        await _fail_remaining(db, b, ctx.org, "The lookup was interrupted. Nothing was charged for unfinished addresses.")
 
 
 @router.get("/batches")

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import { CreditsCard, LedgerCard, SettingsCard, TeamCard } from "@/components/admin/AccountCards";
+import { BillingCard } from "@/components/admin/BillingCard";
 import { LeadFinderCard } from "@/components/admin/LeadFinderCard";
 import { PhoneNumbersCard } from "@/components/admin/PhoneNumbersCard";
 import { AdminGuard, StatTile, fmt } from "@/components/admin/shared";
@@ -101,6 +102,7 @@ function AccountDetail() {
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="flex min-w-0 flex-col gap-6">
           <CreditsCard org={org} refresh={refresh} />
+          <BillingCard orgId={org.id} />
           <LedgerCard org={org} />
         </div>
         <div className="flex min-w-0 flex-col gap-6">

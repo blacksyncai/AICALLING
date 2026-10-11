@@ -23,6 +23,14 @@ FOUND = {
 MISS = {"success": True, "found": False, "charged": 0, "contact": None, "phones": [], "emails": []}
 
 
+@pytest.fixture(autouse=True)
+def no_free_lookups(client):
+    """These tests cover prepaid lookup credits, so switch the free daily allowance off (tests/test_billing.py covers it)."""
+    client.patch("/api/admin/billing/settings", json={"lookup_free_daily": 0})
+    yield
+    client.patch("/api/admin/billing/settings", json={"lookup_free_daily": 5})
+
+
 @pytest.fixture
 def provider(monkeypatch):
     """Fake DataSkip at the HTTP layer. Set `.reply` to a dict or an int status; `.calls` records requests."""
@@ -123,7 +131,7 @@ def test_credits_pay_for_matches_only_and_block_at_zero(client, make_client, pro
     assert c.post("/api/lead-finder/lookups", json=_addr(21)).status_code == 200
     assert _credits(c) == 0
     r = c.post("/api/lead-finder/lookups", json=_addr(22))
-    assert r.status_code == 402 and r.json()["code"] == "no_credits"
+    assert r.status_code == 402 and r.json()["code"] == "paid_disabled"  # no lookup price set yet
     assert len(provider.calls) == 5  # the blocked one never reached DataSkip
     assert c.post("/api/lead-finder/lookups", json=_addr(20)).json()["cached"] is True  # saved results stay free
 

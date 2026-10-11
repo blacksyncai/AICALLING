@@ -1,0 +1,114 @@
+"use client";
+
+import { Gift, UserSearch } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
+import useSWR from "swr";
+import { useToast } from "@/components/toast";
+import { Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
+import { fetcher, post } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { type Catalog, type LookupStatus, fmtDateTime, usd } from "./types";
+
+interface LookupsData extends LookupStatus {
+  ledger: { id: string; amount_cents: number; balance_after_cents: number; kind: string; note: string; created_at: string | null }[];
+}
+
+export function LookupsTab({ canManage }: { canManage: boolean }) {
+  const toast = useToast();
+  const { data } = useSWR<LookupsData>("/api/billing/lookups", fetcher);
+  const { data: cat } = useSWR<Catalog>("/api/billing/catalog", fetcher);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  if (!data || !cat)
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    );
+
+  async function add(key: string) {
+    setBusy(key);
+    try {
+      window.location.href = (await post<{ url: string }>("/api/billing/lookups/checkout", { amount: key })).url;
+    } catch (e) {
+      toast((e as Error).message, "error");
+      setBusy(null);
+    }
+  }
+
+  const price = data.price_cents;
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card className="p-5 md:col-span-2">
+          <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
+            <UserSearch className="h-4 w-4" /> Lead lookup balance
+          </div>
+          <div className="mt-2 font-display text-3xl font-semibold tabular-nums">{data.unlimited ? "Unlimited" : usd(data.balance_cents)}</div>
+          <p className="mt-1 text-sm text-zinc-600">
+            {price == null
+              ? "Paid lookups aren't available yet — you can use your free daily lookups."
+              : `${usd(price)} per lookup, ${data.policy === "match" ? "charged only when an owner is found" : "charged for every completed lookup"}. You always confirm the price before a paid lookup runs.`}
+          </p>
+          <p className="mt-2 text-xs text-zinc-500">This balance can only be used for lead data. It&apos;s separate from calling credits and isn&apos;t refundable as cash.</p>
+          {data.prepaid_credits > 0 && <p className="mt-2 text-xs text-zinc-600">You also have {data.prepaid_credits.toLocaleString()} prepaid lookups — they&apos;re used before your balance.</p>}
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
+            <Gift className="h-4 w-4" /> Free lookups today
+          </div>
+          <div className="mt-2 font-display text-3xl font-semibold tabular-nums">
+            {data.free_remaining}
+            <span className="text-lg text-zinc-400"> / {data.free_daily}</span>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">Single-address lookups. Resets at midnight UTC. Re-opening a saved result is always free.</p>
+          <Link href="/lead-finder" className="mt-3 inline-block text-sm font-medium text-brand-700 hover:text-brand-800">
+            Open Lead Finder →
+          </Link>
+        </Card>
+      </div>
+
+      <div>
+        <h2 className="mb-3 text-sm font-semibold text-zinc-900">Add funds</h2>
+        <div className="grid grid-cols-3 gap-3 sm:max-w-md">
+          {cat.lookup_funds.map((f) => (
+            <Button key={f.key} className="h-14 text-base" loading={busy === f.key} disabled={!canManage || !f.available || !!busy} onClick={() => void add(f.key)}>
+              {usd(f.amount_cents, 0)}
+            </Button>
+          ))}
+        </div>
+        {!cat.lookup_funds.some((f) => f.available) && (
+          <div className="mt-3 sm:max-w-md">
+            <Notice>Adding funds online isn&apos;t available yet. Contact us to top up your lookup balance.</Notice>
+          </div>
+        )}
+      </div>
+
+      <Card>
+        <CardHeader title="Lookup balance history" />
+        {data.ledger.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-zinc-500">No activity yet.</p>
+        ) : (
+          <ul className="divide-y divide-zinc-100 text-sm">
+            {data.ledger.map((t) => (
+              <li key={t.id} className="flex items-center justify-between gap-3 px-5 py-2.5">
+                <span className="min-w-0">
+                  <span className="block truncate text-zinc-800">{t.note || t.kind}</span>
+                  <span className="text-xs text-zinc-400">{fmtDateTime(t.created_at)}</span>
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className={cn("block font-mono tabular-nums", t.amount_cents > 0 ? "text-emerald-700" : "text-zinc-700")}>
+                    {t.amount_cents > 0 ? "+" : ""}
+                    {usd(t.amount_cents)}
+                  </span>
+                  <span className="text-xs tabular-nums text-zinc-400">{usd(t.balance_after_cents)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}

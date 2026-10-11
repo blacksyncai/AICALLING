@@ -177,7 +177,7 @@ export default function DashboardPage() {
             {overview.credits_balance <= 0
               ? "You're out of calling credits — phone calls and campaigns are paused until more are added."
               : `Only ${overview.credits_balance} calling credit${overview.credits_balance === 1 ? "" : "s"} left (1 credit = 1 minute).`}{" "}
-            <Link href="/profile?tab=billing" className="font-medium underline">View credits</Link>
+            <Link href="/billing?tab=credits" className="font-medium underline">View credits</Link>
           </span>
         </Notice>
       )}

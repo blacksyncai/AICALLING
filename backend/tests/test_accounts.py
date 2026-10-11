@@ -66,7 +66,8 @@ def test_credits_gate_and_bill_phone_calls(client, make_client, monkeypatch):
     r = client.post(f"/api/admin/orgs/{org['id']}/credits", json={"amount": 10, "note": "Trial"})
     assert r.status_code == 200 and r.json()["balance"] == 10
 
-    # A 2m05s answered call (after 20s of ringing) bills 3 credits, once.
+    # A 2m05s answered call (after 20s of ringing) at 1 credit/min bills 2 whole credits, once;
+    # the remaining 0.08 credit carries to the account's next call.
     call_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
 
@@ -85,10 +86,10 @@ def test_credits_gate_and_bill_phone_calls(client, make_client, monkeypatch):
                            json={"outcome": "completed", "transcript": transcript}).status_code == 200
 
     credits = owner.get("/api/account/credits").json()
-    assert credits["balance"] == 7
-    assert [t["amount"] for t in credits["transactions"]] == [-3, 10]
+    assert credits["balance"] == 8
+    assert [t["amount"] for t in credits["transactions"]] == [-2, 10]
     call = owner.get(f"/api/calls/{call_id}").json()
-    assert call["credits_charged"] == 3 and 120 <= call["duration_seconds"] <= 130
+    assert call["credits_charged"] == 2 and 120 <= call["duration_seconds"] <= 130
 
 
 def test_team_invites_roles_and_password(client, make_client):

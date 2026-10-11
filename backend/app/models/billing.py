@@ -74,6 +74,8 @@ class Purchase(Base):
     refunded_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # What a refund/dispute couldn't take back because it was already used.
     unrecovered: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Credits (or cents, for lookup funds) taken back when a dispute opened — restored if it's won.
+    dispute_taken: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)

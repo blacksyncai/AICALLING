@@ -1,7 +1,7 @@
 import { sessionToken } from "@/lib/clerk";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public body: Record<string, unknown> = {}) {
     super(message);
   }
 }
@@ -25,15 +25,17 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let parsed: Record<string, unknown> = {};
     try {
       const body = await res.json();
+      parsed = body && typeof body === "object" ? body : {};
       const detail = body.detail ?? body.message;
       if (typeof detail === "string") message = detail;
       else if (Array.isArray(detail)) message = detail.map((d) => d.msg ?? String(d)).join("; ");
     } catch {
       if (res.status >= 500) message = "Backend unreachable — is the API running on BACKEND_ORIGIN?";
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, parsed);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -46,5 +48,8 @@ export const post = <T,>(path: string, body?: unknown) =>
 
 export const patch = <T,>(path: string, body: unknown) =>
   api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+
+export const put = <T,>(path: string, body: unknown) =>
+  api<T>(path, { method: "PUT", body: JSON.stringify(body) });
 
 export const del = (path: string) => api<void>(path, { method: "DELETE" });

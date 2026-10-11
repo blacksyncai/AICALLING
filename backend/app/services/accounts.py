@@ -9,7 +9,6 @@ import asyncio
 import hashlib
 import hmac
 import json
-import math
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -85,7 +84,9 @@ async def create_organization(db: AsyncSession, name: str, *, credits: int = 0,
     agent.org_id = org.id
     db.add(agent)
     if credits:
-        await adjust_credits(db, org, credits, kind="grant", note="Starting credits", created_by=created_by)
+        from app.services.billing.credits import add_lot
+
+        await add_lot(db, org, credits, source="grant", kind="grant", note="Starting credits", created_by=created_by)
     return org
 
 
@@ -123,25 +124,15 @@ async def adjust_credits(db: AsyncSession, org: Organization, amount: int, *, ki
     return tx
 
 
-def credits_for_seconds(seconds: int | None) -> int:
-    return math.ceil(seconds / 60) if seconds and seconds > 0 else 0
-
-
 async def charge_call(db: AsyncSession, call: CallLog) -> None:
-    """Bill a finished phone call once (1 credit per started minute of talk time)."""
-    if call.credits_charged is not None or call.call_type != "outbound" or not call.org_id:
-        return
-    amount = credits_for_seconds(call.duration_seconds)
-    call.credits_charged = amount
-    if amount == 0:
-        return
-    org = await db.get(Organization, call.org_id)
-    if not org or org.unlimited_credits:
-        call.credits_charged = 0
-        return
-    minutes = f"{amount} min"
-    await adjust_credits(db, org, -amount, kind="usage", note=f"Call to {call.to_phone or 'contact'} · {minutes}",
-                         call_id=call.id)
+    """Bill a finished phone call once — per second at the agent's credit rate (see billing/credits.py)."""
+    from app.services.billing.credits import charge_call as _charge
+
+    await _charge(db, call)
+    if call.org_id and call.credits_charged:
+        from app.services.billing.recharge import schedule_check
+
+        schedule_check(call.org_id)
 
 
 # ── Outgoing webhooks ─────────────────────────────────────────────────────────

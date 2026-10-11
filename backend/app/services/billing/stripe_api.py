@@ -190,6 +190,11 @@ async def list_payments(customer: str, limit: int = 24) -> list[dict]:
     return [_plain(p) for p in res["data"]]
 
 
+async def retrieve_charge(charge_id: str) -> dict:
+    s = _client()
+    return _plain(await _run(s.Charge.retrieve, charge_id))
+
+
 def construct_event(payload: bytes, signature: str) -> dict:
     s = _client()
     if not settings.stripe_webhook_secret:

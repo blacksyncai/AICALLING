@@ -74,7 +74,7 @@ def validate_e164(phone: str) -> str:
 
 
 def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, call_type: str,
-                    lead: Lead | None) -> str:
+                    lead: Lead | None, max_seconds: int | None = None) -> str:
     meta: dict = {
         "call_log_id": str(call_log.id),
         "call_type": call_type,
@@ -91,6 +91,8 @@ def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, cal
     if agent is not None:
         meta["agent_id"] = str(agent.id)
         meta["agent"] = agent_to_runtime(agent)
+        if max_seconds:
+            meta["agent"]["max_duration_seconds"] = min(meta["agent"].get("max_duration_seconds") or 600, max_seconds)
     raw = json.dumps(meta)
     if len(raw) > _MAX_INLINE_METADATA and agent is not None:
         meta["agent"]["knowledge_base"] = ""
@@ -257,6 +259,11 @@ class CallService:
         ensure_can_call(org)  # raises InsufficientCredits
 
         from app.services import recordings, telephony
+        from app.services.billing.credits import reserve_for_call
+
+        # Set credits aside and cap the call at what the balance covers.
+        requested = (agent.max_duration_seconds if agent else 600) or 600
+        max_seconds, rate, reserved = await reserve_for_call(db, org, agent, requested)
 
         room_name = f"call-{uuid.uuid4()}"
         from_number = await telephony.caller_id_for(db, org.id, agent)
@@ -270,6 +277,8 @@ class CallService:
             to_phone=phone,
             from_phone=from_number or None,
             livekit_room_name=room_name,
+            credits_reserved=reserved,
+            credit_rate=rate,
             status="initiated",
             started_at=datetime.now(timezone.utc),
         )
@@ -277,7 +286,7 @@ class CallService:
         await db.flush()
 
         variables = {**(lead_variables(lead) if lead else {}), "phone": phone}
-        metadata = _build_metadata(call_log, agent, variables, "outbound", lead)
+        metadata = _build_metadata(call_log, agent, variables, "outbound", lead, max_seconds=max_seconds)
 
         if lead:
             now = datetime.now(timezone.utc)

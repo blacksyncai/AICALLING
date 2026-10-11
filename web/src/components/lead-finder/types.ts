@@ -6,6 +6,15 @@ export interface LeadFinderUsage {
   credits: number;
   unlimited: boolean;
   retention_days: number;
+  /** Free single lookups per day, and how many are left today. */
+  free_daily: number;
+  free_remaining: number;
+  /** Prepaid lookup balance (USD cents) and the admin-set price per paid lookup (null = paid lookups off). */
+  balance_cents: number;
+  price_cents: number | null;
+  paid_enabled: boolean;
+  /** "match": charged only when an owner is found; "completed": every completed lookup. */
+  policy: "match" | "completed";
 }
 
 export interface LookupAddress {
@@ -81,6 +90,9 @@ export interface LookupBatch {
   failed: number;
   cached: number;
   credits_used: number;
+  pay_source?: "credit" | "balance" | "unlimited" | null;
+  unit_cents?: number | null;
+  charged_cents?: number;
   error: string | null;
   created_at: string | null;
   finished_at: string | null;
@@ -92,6 +104,10 @@ export interface BatchPreview extends LookupBatch {
   new_rows: number;
   max_credits: number;
   enough_credits: boolean;
+  /** How this file will be paid for, and (for the balance) the price per lookup and worst-case total. */
+  pay_with: "credits" | "balance";
+  price_cents: number | null;
+  max_total_cents: number;
   usage: LeadFinderUsage;
 }
 
