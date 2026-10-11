@@ -23,6 +23,8 @@ FEATURED_VOICES: list[dict] = [
     {"id": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", "name": "Sarah"},
     {"id": "f786b574-daa5-4673-aa0c-cbe3e8534c02", "name": "Kate"},
     {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "name": "Jena"},
+    {"id": "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc", "name": "Ava"},
+    {"id": "710feaa3-b550-42f3-b3eb-6f37f2a7cc0a", "name": "Jake"},
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza", "gender": "masculine",
      "description": "Live voice clone.", "clone": True},
 ]
