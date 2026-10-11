@@ -91,7 +91,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
       {live && <div className="mb-6"><Notice tone="blue">This call is still in progress. The transcript and AI summary appear when it ends.</Notice></div>}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Card>
+        <Card id="transcript" className="scroll-mt-6">
           <CardHeader title="Transcript" />
           <div className="space-y-3 p-5">
             {!call.transcript?.length && <p className="text-sm text-zinc-500">{live ? "Waiting for the call to finish…" : "No transcript was captured."}</p>}
@@ -121,7 +121,11 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
 
         <div className="space-y-6">
-          {call.has_recording && <RecordingPlayer callId={id} live={live} />}
+          {call.has_recording && (
+            <div id="recording" className="scroll-mt-6">
+              <RecordingPlayer callId={id} live={live} />
+            </div>
+          )}
           <Card>
             <CardHeader title={<span className="flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-brand-600" /> AI summary</span>} />
             <div className="p-5 text-sm leading-relaxed text-zinc-700">

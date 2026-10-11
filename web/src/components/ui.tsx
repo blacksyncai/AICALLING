@@ -37,9 +37,9 @@ export function Button({
   );
 }
 
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
+export function Card({ className, children, id }: { className?: string; children: ReactNode; id?: string }) {
   return (
-    <div className={cn("rounded-xl border border-zinc-200/80 bg-white shadow-[0_1px_2px_rgba(33,27,24,0.04),0_2px_8px_-2px_rgba(33,27,24,0.05)]", className)}>
+    <div id={id} className={cn("rounded-xl border border-zinc-200/80 bg-white shadow-[0_1px_2px_rgba(33,27,24,0.04),0_2px_8px_-2px_rgba(33,27,24,0.05)]", className)}>
       {children}
     </div>
   );

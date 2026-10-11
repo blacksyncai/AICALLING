@@ -266,16 +266,17 @@ def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     rate = c.get(f"/api/billing/agents/{agent['id']}/rate").json()
     assert rate["credits_per_minute"] == 1.2
 
-    _finish_call(client, org["id"], agent["id"], 90)        # 90s × 1.2/60 = exactly 1.8 credits
-    assert _balance(c) == 8.2
-    _finish_call(client, org["id"], agent["id"], 61)        # 1.22 credits
-    assert _balance(c) == 6.98
-    _finish_call(client, org["id"], agent["id"], 5)         # 5 seconds = 0.1 credit
-    assert _balance(c) == 6.88
-    _finish_call(client, org["id"], agent["id"], 600)       # owes 12, only 6.88 left → 0 (never negative)
+    # AI time per second at the model rate + the phone line fee (0.08 per started minute).
+    _finish_call(client, org["id"], agent["id"], 90)        # 1.8 + 2 × 0.08 = 1.96
+    assert _balance(c) == 8.04
+    _finish_call(client, org["id"], agent["id"], 61)        # 1.22 + 0.16 = 1.38
+    assert _balance(c) == 6.66
+    _finish_call(client, org["id"], agent["id"], 5)         # 0.1 + 0.08 = 0.18
+    assert _balance(c) == 6.48
+    _finish_call(client, org["id"], agent["id"], 600)       # owes 12.8, only 6.48 left → 0 (never negative)
     assert _balance(c) == 0
     ledger = c.get("/api/billing/credits").json()["ledger"]
-    assert [t["amount"] for t in ledger[1:4]] == [-0.1, -1.22, -1.8] and all(t["balance_after"] >= 0 for t in ledger)
+    assert [t["amount"] for t in ledger[1:4]] == [-0.18, -1.38, -1.96] and all(t["balance_after"] >= 0 for t in ledger)
 
     # Calls that never connect cost nothing, even with a stray duration.
     org2, c2 = _account(client, make_client, "No Answer Co", credits=5)
@@ -286,7 +287,9 @@ def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     assert _balance(c2) == 5
 
 
-def test_included_credits_spent_first_and_expire_purchased_never(client, make_client, stripe):
+def test_included_credits_spent_first_and_expire_purchased_never(client, make_client, stripe, monkeypatch):
+    from app.services.billing import settings_store
+    monkeypatch.setitem(settings_store.DEFAULTS, "phone_minute_fee", 0)  # checks other logic
     org, c = _account(client, make_client, "Plan Co")
     c.post("/api/billing/plans/solo/checkout")
     sess = stripe.sessions[-1]
@@ -338,6 +341,8 @@ def test_unknown_plan_is_preserved_read_only(client, make_client, stripe):
 
 
 def test_call_reservation_caps_duration(client, make_client, monkeypatch):
+    from app.services.billing import settings_store
+    monkeypatch.setitem(settings_store.DEFAULTS, "phone_minute_fee", 0)  # checks other logic
     from app.services import outbound_call
 
     org, c = _account(client, make_client, "Cap Co", credits=3)
@@ -369,7 +374,9 @@ def test_call_reservation_caps_duration(client, make_client, monkeypatch):
 # ── Auto-recharge ─────────────────────────────────────────────────────────────
 
 
-def test_auto_recharge_consent_threshold_limit_and_failures(client, make_client, stripe):
+def test_auto_recharge_consent_threshold_limit_and_failures(client, make_client, stripe, monkeypatch):
+    from app.services.billing import settings_store
+    monkeypatch.setitem(settings_store.DEFAULTS, "phone_minute_fee", 0)  # checks other logic
     org, c = _account(client, make_client, "Recharge Co")
     cfg = c.get("/api/billing/auto-recharge").json()
     assert cfg["enabled"] is False
@@ -619,3 +626,32 @@ def test_admin_connects_stripe_key_encrypted_and_never_returned(client, make_cli
     finally:
         for name in ("stripe_secret_key", "stripe_webhook_secret", "stripe_webhook_id", "stripe_account_name"):
             secret_store._cache.pop(name, None)
+
+
+def test_browser_tests_free_minutes_then_billed(client, make_client):
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+
+    org, c = _account(client, make_client, "Tester Co", credits=10)
+    agent = c.get("/api/agents/").json()[0]
+    rate = c.get(f"/api/billing/agents/{agent['id']}/rate").json()["credits_per_minute"]
+
+    def web(seconds):
+        cid = uuid.uuid4()
+        now = datetime.now(timezone.utc)
+
+        async def make():
+            async with AsyncSessionLocal() as db:
+                db.add(CallLog(id=cid, org_id=uuid.UUID(org["id"]), agent_id=uuid.UUID(agent["id"]), call_type="web",
+                               livekit_room_name=f"web-{cid}", status="connected", started_at=now - timedelta(seconds=seconds)))
+                await db.commit()
+
+        asyncio.run(make())
+        client.post(f"/internal/calls/{cid}/outcome", json={"outcome": "completed", "transcript": [{"role": "user", "text": "hi"}]})
+        return c.get(f"/api/calls/{cid}").json()
+
+    first = web(540)                      # 9 of the 10 free minutes
+    assert first["credits_used"] == 0 and _balance(c) == 10
+    second = web(120)                     # 1 free minute left, 1 minute billed at the model rate, no phone fee
+    assert second["credits_used"] == round(rate, 3)
+    assert _balance(c) == round(10 - rate, 3)

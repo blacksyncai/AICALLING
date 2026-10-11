@@ -129,8 +129,12 @@ class CallUsage(Base):
     voice_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     connected_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     credit_rate: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
-    # Exact usage in thousandths of a credit, before rounding.
+    # Exact usage in thousandths of a credit, before rounding (AI time + phone fee).
     credits_exact_milli: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Of that, the phone line fee (thousandths), and browser-test seconds covered by the free allowance.
+    phone_fee_milli: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    free_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    call_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     credits_deducted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Credits owed that the balance couldn't cover (never taken below zero).
     shortfall: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

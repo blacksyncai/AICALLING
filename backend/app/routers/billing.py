@@ -158,6 +158,7 @@ async def rates(ctx: CtxDep, db: DbDep):
     """Credit rate per model (for the agent editor) and what a credit is worth to this account."""
     cfg = await settings_store.get_all(db)
     return {"model_rates": cfg["model_credit_rates"], "premium_voice_surcharge": cfg["premium_voice_surcharge"],
+            "phone_minute_fee": cfg["phone_minute_fee"], "free_test_minutes": cfg["free_test_minutes"],
             "cents_per_credit": round(await credits.cents_per_credit(db, ctx.org.id), 4)}
 
 
@@ -373,6 +374,8 @@ class BillingSettingsIn(BaseModel):
     model_credit_rates: dict[str, float] | None = None
     premium_voice_surcharge: float | None = Field(default=None, ge=0, le=10)
     included_phone_numbers: int | None = Field(default=None, ge=0, le=100)
+    phone_minute_fee: float | None = Field(default=None, ge=0, le=5)
+    free_test_minutes: int | None = Field(default=None, ge=0, le=600)
     auto_recharge_max_monthly_cents: int | None = Field(default=None, ge=0, le=10_000_000)
     reason: str = Field(default="Updated billing settings", max_length=500)
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Globe, PhoneCall, PhoneOutgoing, X } from "lucide-react";
+import { FileText, Globe, Info, MessageSquare, PhoneCall, PhoneOutgoing, PlayCircle, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
@@ -140,36 +140,50 @@ function CallLogs() {
           )
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-zinc-100 text-left text-xs text-zinc-500">
+            <table className="w-full min-w-[1080px] text-sm">
+              <thead className="border-b border-zinc-100 bg-zinc-50/60 text-left text-xs text-zinc-500">
                 <tr>
                   <th className="px-5 py-3 font-medium">Contact</th>
-                  <th className="px-5 py-3 font-medium">Agent</th>
-                  <th className="px-5 py-3 font-medium">Outcome</th>
-                  <th className="hidden px-5 py-3 font-medium lg:table-cell">Summary</th>
-                  <th className="px-5 py-3 text-right font-medium">Duration</th>
-                  <th className="px-5 py-3 text-right font-medium">When</th>
+                  <th className="px-4 py-3 font-medium">Number</th>
+                  <th className="px-4 py-3 font-medium">Duration</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Outcome</th>
+                  <th className="px-4 py-3 text-right font-medium">Credits</th>
+                  <th className="px-4 py-3 font-medium">Started</th>
+                  <th className="px-4 py-3 font-medium">Ended</th>
+                  <th className="px-5 py-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {data.items.map((c) => (
-                  <tr key={c.id} className="cursor-pointer hover:bg-zinc-50">
+                  <tr key={c.id} className="hover:bg-zinc-50/80">
                     <td className="px-5 py-3">
-                      <Link href={`/calls/${c.id}`} className="flex items-center gap-2">
-                        {c.call_type === "web" ? <Globe className="h-4 w-4 text-zinc-400" /> : <PhoneOutgoing className="h-4 w-4 text-zinc-400" />}
-                        <span>
-                          <span className="block font-medium">{c.contact_name ?? c.to_phone ?? "Unknown"}</span>
-                          <span className="block text-xs text-zinc-500">{c.campaign_name ?? (c.call_type === "web" ? "Browser test" : c.to_phone)}</span>
+                      <Link href={`/calls/${c.id}`} className="flex items-center gap-2" title={c.summary ?? undefined}>
+                        {c.call_type === "web" ? <Globe className="h-4 w-4 shrink-0 text-zinc-400" /> : <PhoneOutgoing className="h-4 w-4 shrink-0 text-zinc-400" />}
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{c.contact_name ?? (c.call_type === "web" ? "Browser test" : "Unknown")}</span>
+                          <span className="block truncate text-xs text-zinc-500">{c.agent_name ?? "—"}{c.campaign_name ? ` · ${c.campaign_name}` : ""}</span>
                         </span>
                       </Link>
                     </td>
-                    <td className="px-5 py-3 text-zinc-600">{c.agent_name ?? "—"}</td>
-                    <td className="px-5 py-3">
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-600">{c.call_type === "web" ? "Browser" : c.to_phone ?? "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{durationWords(c.duration_seconds)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-zinc-600">{humanize(c.status)}</td>
+                    <td className="px-4 py-3">
                       <OutcomeBadge outcome={c.outcome} status={c.status} />
                     </td>
-                    <td className="hidden max-w-sm truncate px-5 py-3 text-xs text-zinc-500 lg:table-cell">{c.summary ?? "—"}</td>
-                    <td className="px-5 py-3 text-right text-zinc-600">{formatDuration(c.duration_seconds)}</td>
-                    <td className="whitespace-nowrap px-5 py-3 text-right text-xs text-zinc-500">{formatDateTime(c.started_at)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <CreditsCell call={c} />
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-zinc-500">{formatDateTime(c.started_at)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-zinc-500">{c.ended_at ? formatDateTime(c.ended_at) : "—"}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex justify-end gap-1">
+                        <IconLink href={`/calls/${c.id}`} label="Open call details" icon={FileText} />
+                        <IconLink href={`/calls/${c.id}#transcript`} label="Transcript" icon={MessageSquare} />
+                        {c.has_recording && <IconLink href={`/calls/${c.id}#recording`} label="Play recording" icon={PlayCircle} />}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -189,5 +203,38 @@ function CallLogs() {
         </div>
       )}
     </>
+  );
+}
+
+function durationWords(sec: number | null | undefined): string {
+  if (!sec) return "—";
+  if (sec < 60) return `${sec} second${sec === 1 ? "" : "s"}`;
+  return formatDuration(sec);
+}
+
+function IconLink({ href, label, icon: Icon }: { href: string; label: string; icon: typeof FileText }) {
+  return (
+    <Link href={href} title={label} aria-label={label} className="flex h-8 w-8 items-center justify-center rounded-lg text-brand-600 transition hover:bg-brand-50">
+      <Icon className="h-4 w-4" />
+    </Link>
+  );
+}
+
+/** "1.083" with an ⓘ that explains how it adds up. */
+function CreditsCell({ call: c }: { call: Call }) {
+  if (c.credits_used == null) return <span className="text-zinc-300">—</span>;
+  const b = c.credit_breakdown;
+  const lines = b
+    ? [
+        `AI time: ${b.ai.toFixed(3)} (${b.rate} credit${b.rate === 1 ? "" : "s"}/min, billed per second)`,
+        c.call_type === "web" ? (b.free_seconds ? `${b.free_seconds}s covered by free test minutes` : "Browser test — no phone fee") : `Phone line: ${b.phone_fee.toFixed(3)} (per started minute)`,
+      ]
+    : [];
+  const tip = c.credits_used === 0 ? (c.call_type === "web" ? "Free test minutes" : "No charge — the call didn't connect") : lines.join("\n");
+  return (
+    <span className="inline-flex items-center gap-1.5 tabular-nums text-zinc-900" title={tip}>
+      {c.credits_used.toFixed(c.credits_used ? 3 : 0)}
+      <Info className="h-3.5 w-3.5 text-brand-500" aria-label={tip} />
+    </span>
   );
 }

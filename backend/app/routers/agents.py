@@ -307,9 +307,14 @@ async def start_web_call(agent_id: uuid.UUID, body: WebCallRequest, ctx: CtxDep,
     """Browser voice test — returns a LiveKit URL + token for livekit-client."""
     from app.services.outbound_call import CallSetupError, call_service
 
+    from app.services.billing.credits import ensure_can_test
+
     agent = await _get_agent(db, ctx, agent_id)
     try:
+        await ensure_can_test(db, ctx.org)
         return await call_service.start_web_call(agent, db, body.variables)
+    except InsufficientCredits as exc:
+        raise HTTPException(status_code=402, detail=str(exc))
     except CallSetupError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

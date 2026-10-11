@@ -89,7 +89,8 @@ def test_credits_gate_and_bill_phone_calls(client, make_client, monkeypatch):
     call = owner.get(f"/api/calls/{call_id}").json()
     assert 125 <= call["duration_seconds"] <= 127
     rate = owner.get(f"/api/billing/agents/{agent['id']}/rate").json()["credits_per_minute"]
-    used = round(call["duration_seconds"] * rate / 60, 3)
+    d = call["duration_seconds"]
+    used = round(round(d * rate * 1000 / 60) / 1000 + -(-d // 60) * 0.08, 3)  # AI time + phone fee per started minute
     assert call["credits_used"] == used
     assert credits["balance"] == round(10 - used, 3)
     assert [t["amount"] for t in credits["transactions"]] == [-used, 10]

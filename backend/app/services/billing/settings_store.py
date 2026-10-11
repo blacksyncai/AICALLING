@@ -7,9 +7,12 @@ from sqlalchemy import select
 from app.models.billing import BillingAudit, PlatformSetting
 
 # Credits per connected minute, by LLM model (1.0–1.3). Admin-editable; these are the starting values.
-DEFAULT_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.3}
-# The first defaults; a saved copy of them follows the current defaults instead.
-_LEGACY_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.4, "gpt-4o": 1.5}
+DEFAULT_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.2}
+# Earlier defaults; a saved copy of one of them follows the current defaults instead.
+_LEGACY_MODEL_RATES = [
+    {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.4, "gpt-4o": 1.5},
+    {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.3},
+]
 
 DEFAULTS: dict = {
     # None = paid lookups are OFF until an admin confirms a retail price.
@@ -25,6 +28,10 @@ DEFAULTS: dict = {
     "auto_recharge_max_monthly_cents": 200000,
     # Let account managers buy numbers themselves (off = they request one and an admin assigns it).
     "self_serve_numbers": False,
+    # Phone line (Twilio) fee: credits per started minute of a connected phone call, on top of the AI rate.
+    "phone_minute_fee": 0.08,
+    # Browser test minutes each account gets free; after that tests use credits at the AI rate (no phone fee).
+    "free_test_minutes": 10,
     # Free calling credits for a self-serve signup (no card).
     "trial_credits": 30,
     "max_numbers_per_org": 5,
@@ -41,7 +48,7 @@ async def get_all(db) -> dict:
 
 
 def _current(key: str, value):
-    return DEFAULT_MODEL_RATES if key == "model_credit_rates" and value == _LEGACY_MODEL_RATES else value
+    return DEFAULT_MODEL_RATES if key == "model_credit_rates" and value in _LEGACY_MODEL_RATES else value
 
 
 async def get(db, key: str):

@@ -250,24 +250,55 @@ async def reserved_in_flight(db: AsyncSession, org_id: uuid.UUID, exclude: uuid.
 async def reserve_for_call(db: AsyncSession, org: Organization, agent, requested_seconds: int) -> tuple[int, float, int]:
     """Before dialing: (seconds allowed, rate, credits reserved). Raises InsufficientCredits."""
     from app.services.accounts import InsufficientCredits
+    from app.services.billing import settings_store
 
     rate = await rate_for_agent(db, agent)
     if org.unlimited_credits:
         return requested_seconds, rate, 0
+    per_min = rate + float(await settings_store.get(db, "phone_minute_fee") or 0)  # AI + phone line
     await expire_due(db, org)
     await db.refresh(org, ["credits_balance"])
     available = (org.credits_balance or 0) - await reserved_in_flight(db, org.id)
-    min_needed = max(1, math.ceil(rate))  # at least one minute of talk time
+    min_needed = max(1, math.ceil(per_min))  # at least one minute of talk time
     if available < min_needed:
         raise InsufficientCredits("You're out of calling credits. Buy more under Billing & Usage.")
-    allowed = min(requested_seconds, int(available / rate * 60))
-    reserve = min(available, math.ceil(allowed * rate / 60))
+    allowed = min(requested_seconds, int(available / per_min * 60))
+    reserve = min(available, math.ceil(allowed * per_min / 60))
     return max(60, allowed), rate, reserve
 
 
+async def free_test_seconds_left(db: AsyncSession, org: Organization) -> int:
+    """Browser-test seconds still free for this account (FREE_TEST_MINUTES minus what tests already used)."""
+    from app.services.billing import settings_store
+
+    allowance = int(float(await settings_store.get(db, "free_test_minutes") or 0) * 60)
+    used = (await db.execute(select(func.coalesce(func.sum(CallUsage.free_seconds), 0))
+                             .where(CallUsage.org_id == org.id, CallUsage.call_type == "web"))).scalar_one()
+    return max(0, allowance - int(used or 0))
+
+
+async def ensure_can_test(db: AsyncSession, org: Organization) -> None:
+    """Browser tests: free minutes left, or a balance to bill them against."""
+    from app.services.accounts import InsufficientCredits
+
+    if org.unlimited_credits or await free_test_seconds_left(db, org) > 0 or exact_balance_milli(org) >= 100:
+        return
+    raise InsufficientCredits("Your free test minutes are used up and you're out of credits. Add credits under Billing & Usage.")
+
+
+def _mins(seconds: int) -> str:
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
 async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
-    """Bill a finished phone call exactly once (CallUsage.call_id is unique). Caller commits."""
-    if call.credits_charged is not None or call.call_type != "outbound" or not call.org_id:
+    """Bill a finished call exactly once (CallUsage.call_id is unique). Caller commits.
+
+    Phone calls: connected seconds × the model's rate (1.0 or 1.2 credits/min), plus the phone line fee
+    (PHONE_MINUTE_FEE credits per started minute, the way the carrier bills). Never-connected calls are free.
+    Browser tests: the account's free test minutes first, then seconds × the model's rate (no phone fee)."""
+    from app.services.billing import settings_store
+
+    if call.credits_charged is not None or call.call_type not in ("outbound", "web") or not call.org_id:
         return None
     existing = (await db.execute(select(CallUsage).where(CallUsage.call_id == call.id))).scalar_one_or_none()
     if existing:
@@ -280,16 +311,28 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
 
     agent = await db.get(Agent, call.agent_id) if call.agent_id else None
     seconds = max(0, int(call.duration_seconds or 0))
+    phone = call.call_type == "outbound"
     # Only connected talk time is billed: a call that rang out, was busy or failed costs nothing.
-    if call.outcome in UNBILLED_OUTCOMES or (call.answered_at is None and seconds == 0):
+    if call.outcome in UNBILLED_OUTCOMES or (phone and call.answered_at is None and seconds == 0):
         seconds = 0
     rate = call.credit_rate if call.credit_rate is not None else await rate_for_agent(db, agent)
     call.credit_rate = rate  # keep the rate this call was billed at
+    free = 0
+    if not phone and seconds:
+        free = min(seconds, await free_test_seconds_left(db, org))
+    billable = seconds - free
     # Per second at the model's rate, kept to a thousandth of a credit: 66s at 1.0/min = 1.100 credits.
-    exact_milli = round(seconds * rate * 1000 / 60)
-    usage = CallUsage(org_id=org.id, call_id=call.id, agent_id=call.agent_id,
+    ai_milli = round(billable * rate * 1000 / 60)
+    fee_milli = 0
+    if phone and seconds:
+        fee = float(await settings_store.get(db, "phone_minute_fee") or 0)
+        fee_milli = math.ceil(seconds / 60) * round(fee * 1000)
+    exact_milli = ai_milli + fee_milli
+    call.credits_used_milli = exact_milli
+    usage = CallUsage(org_id=org.id, call_id=call.id, agent_id=call.agent_id, call_type=call.call_type,
                       model=(agent.llm_model if agent else "") or "", voice_id=(agent.voice_id if agent else "") or "",
-                      connected_seconds=seconds, credit_rate=rate, credits_exact_milli=exact_milli)
+                      connected_seconds=seconds, credit_rate=rate, credits_exact_milli=exact_milli,
+                      phone_fee_milli=fee_milli, free_seconds=free)
     db.add(usage)
     if org.unlimited_credits or exact_milli == 0:
         call.credits_charged = 0
@@ -300,8 +343,11 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
     # Whole credits leave the lots as the used fraction adds up; the ledger row shows the exact amount.
     old_carry = org.credit_carry_milli or 0
     whole, carry = divmod(old_carry + exact_milli, 1000)
-    mins = f"{seconds // 60}:{seconds % 60:02d}"
-    note = f"Call to {call.to_phone or 'contact'} · {mins} at {rate:g} credits/min"
+    if phone:
+        note = (f"Call to {call.to_phone or 'contact'} · {_mins(seconds)} · AI {ai_milli / 1000:g} "
+                f"({rate:g}/min) + phone {fee_milli / 1000:g}")
+    else:
+        note = f"Browser test · {_mins(seconds)}" + (f" ({_mins(free)} free)" if free else "") + f" at {rate:g} credits/min"
     taken, shortfall = await consume(db, org, int(whole), kind="usage", note=note, call_id=call.id, record=False)
     if shortfall:
         carry = 0  # the balance ran out; what it couldn't cover is recorded as the shortfall

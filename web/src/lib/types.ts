@@ -147,6 +147,8 @@ export interface Call {
   credits_charged?: number | null;
   /** Exact credits this call used (per second at its rate); 0 when it never connected. */
   credits_used?: number | null;
+  /** How credits_used adds up (null when the call wasn't billed). */
+  credit_breakdown?: { rate: number; ai: number; phone_fee: number; free_seconds: number; billed_seconds: number } | null;
   lead_id?: string | null;
 }
 

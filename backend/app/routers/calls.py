@@ -30,9 +30,31 @@ def _iso(d: datetime | None) -> str | None:
     return d.isoformat()
 
 
+async def _attach_breakdown(db, items: list[dict]) -> None:
+    """How each call's credits add up: AI time, phone line fee, free browser-test seconds."""
+    from app.models.billing import CallUsage
+
+    ids = [uuid.UUID(i["id"]) for i in items]
+    if not ids:
+        return
+    rows = (await db.execute(select(CallUsage).where(CallUsage.call_id.in_(ids)))).scalars().all()
+    by_id = {str(u.call_id): u for u in rows}
+    for i in items:
+        u = by_id.get(i["id"])
+        i["credit_breakdown"] = None if u is None else {
+            "rate": u.credit_rate,
+            "ai": round((u.credits_exact_milli - (u.phone_fee_milli or 0)) / 1000, 3),
+            "phone_fee": round((u.phone_fee_milli or 0) / 1000, 3),
+            "free_seconds": u.free_seconds or 0,
+            "billed_seconds": u.connected_seconds,
+        }
+
+
 def _credits_used(c: CallLog) -> float | None:
     from app.services.billing.credits import UNBILLED_OUTCOMES
 
+    if c.credits_used_milli is not None:
+        return round(c.credits_used_milli / 1000, 3)
     if c.call_type != "outbound" or c.credits_charged is None:
         return None
     seconds = int(c.duration_seconds or 0)
@@ -121,8 +143,10 @@ async def list_calls(
     rows = await db.execute(
         stmt.order_by(CallLog.started_at.desc()).offset((page - 1) * page_size).limit(page_size)
     )
+    items = [call_to_dict(c, l, a, cp) for c, l, a, cp in rows.all()]
+    await _attach_breakdown(db, items)
     return {
-        "items": [call_to_dict(c, l, a, cp) for c, l, a, cp in rows.all()],
+        "items": items,
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -217,7 +241,9 @@ async def get_call(call_id: uuid.UUID, ctx: CtxDep, db: DbDep):
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     c, l, a, cp = row
-    return call_to_dict(c, l, a, cp, full=True)
+    d = call_to_dict(c, l, a, cp, full=True)
+    await _attach_breakdown(db, [d])
+    return d
 
 
 @router.get("/{call_id}/recording")

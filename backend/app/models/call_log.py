@@ -6,7 +6,7 @@ voice test calls, and text playground sessions alike.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Float, DateTime, ForeignKey, Index, Integer, JSON, String, Text, Uuid
+from sqlalchemy import BigInteger, Float, DateTime, ForeignKey, Index, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -92,6 +92,8 @@ class CallLog(Base):
     # Credits set aside when the call was dialed (released when it's billed), and the agent's burn rate then.
     credits_reserved: Mapped[int | None] = mapped_column(Integer, nullable=True)
     credit_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Exact credits this call used, in thousandths (AI time + phone line fee), set when it's billed.
+    credits_used_milli: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # When call.completed / meeting.booked webhooks went out (sent once per call).
     # Recording (LiveKit egress): object key in the recordings bucket.
     recording_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
