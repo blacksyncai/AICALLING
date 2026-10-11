@@ -39,6 +39,8 @@ class Organization(Base):
     # Lead-lookup credits — separate from calling credits. 1 credit = 1 property owner found.
     lead_credits_balance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     lead_credits_unlimited: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    # Lead-lookup prepaid balance in cents (restricted to lead data; separate from calling credits).
+    lookup_balance_cents: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
@@ -118,6 +120,10 @@ class CreditTransaction(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     call_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("call_logs.id", ondelete="SET NULL"), nullable=True)
+    # Where the credits came from / went: purchase, lot and Stripe reference (NULL for older rows).
+    purchase_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    lot_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    stripe_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)
 
