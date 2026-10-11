@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { ChatPanel } from "@/components/agent/ChatPanel";
+import { CallFromSettings } from "@/components/agent/CallFromSettings";
 import { PhonePanel } from "@/components/agent/PhonePanel";
 import { VoiceModelSettings } from "@/components/agent/VoiceModelSettings";
 import { WebCallPanel } from "@/components/agent/WebCallPanel";
@@ -40,7 +41,7 @@ const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
   "llm_model", "temperature", "voice_id", "voice_speed", "background_audio", "enable_booking",
   "calcom_event_type_id", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
-  "ai_disclosure", "builder",
+  "ai_disclosure", "builder", "caller_number", "record_calls",
 ];
 
 function pickEditable(a: Agent) {
@@ -464,6 +465,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                   <Input value={draft.calcom_event_type_id} onChange={(e) => set("calcom_event_type_id", e.target.value.trim())} placeholder="e.g. 1234567" />
                 </Field>
               )}
+              <CallFromSettings draft={draft} set={set} />
               <Field label="Transfer to human (phone calls)" hint="If set, the agent can warm-transfer the caller to this number. E.164, e.g. +14155550123.">
                 <Input value={draft.transfer_number} onChange={(e) => set("transfer_number", e.target.value.trim())} placeholder="+14155550123" />
               </Field>

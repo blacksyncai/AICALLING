@@ -1,12 +1,13 @@
 "use client";
 
-import { BookOpen, Building2, Lock, LogIn, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
+import { BookOpen, Building2, Hash, Lock, LogIn, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { NewAccountModal } from "@/components/admin/NewAccountModal";
 import { PlaybooksTab } from "@/components/admin/playbooks";
+import { TelephonyTab } from "@/components/admin/TelephonyTab";
 import { AdminGuard, Avatar, StatTile, fmt } from "@/components/admin/shared";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Spinner, Tabs } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -27,7 +28,7 @@ type AdminUser = {
   accounts: { org_id: string; org_name: string; role: string }[];
 };
 
-type Tab = "accounts" | "users" | "playbooks";
+type Tab = "accounts" | "users" | "playbooks" | "numbers";
 
 export default function AdminPage() {
   return (
@@ -91,7 +92,7 @@ function AdminPortal() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="w-full sm:w-96">
+        <div className="w-full overflow-x-auto sm:w-[30rem]">
           <Tabs<Tab>
             value={tab}
             onChange={setTab}
@@ -99,6 +100,7 @@ function AdminPortal() {
               { value: "accounts", label: "Accounts", icon: <Building2 className="h-3.5 w-3.5" /> },
               { value: "users", label: "Users", icon: <Users className="h-3.5 w-3.5" /> },
               { value: "playbooks", label: "Playbooks", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { value: "numbers", label: "Numbers", icon: <Hash className="h-3.5 w-3.5" /> },
             ]}
           />
         </div>
@@ -137,6 +139,8 @@ function AdminPortal() {
         </Card>
       ) : tab === "users" ? (
         <UsersTable />
+      ) : tab === "numbers" ? (
+        <TelephonyTab />
       ) : (
         <PlaybooksTab />
       )}

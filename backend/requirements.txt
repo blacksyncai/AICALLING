@@ -13,3 +13,4 @@ pyjwt[crypto]==2.15.1
 tzdata==2025.2
 pypdf==5.1.0
 stripe==11.4.1
+boto3==1.35.99

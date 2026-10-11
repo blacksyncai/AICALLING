@@ -176,7 +176,7 @@ class AutoRecharge(Base):
 
 
 class PhoneNumber(Base):
-    """A phone number assigned to an organization (provisioned outside the app, assigned by an admin)."""
+    """A phone number assigned to an organization — bought through Twilio or imported from it."""
 
     __tablename__ = "phone_numbers"
 
@@ -186,6 +186,11 @@ class PhoneNumber(Base):
     label: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     # active | released
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    # Twilio IncomingPhoneNumber SID (PN…); "purchased" numbers are released back to
+    # Twilio on removal, "imported" ones (already owned) are only unassigned.
+    provider_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    is_default: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

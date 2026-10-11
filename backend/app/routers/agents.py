@@ -26,7 +26,7 @@ _EDITABLE = (
     "name", "description", "status", "system_prompt", "first_message", "knowledge_base",
     "language", "llm_model", "temperature", "voice_id", "voice_speed", "background_audio",
     "enable_booking", "calcom_event_type_id", "transfer_number", "max_duration_seconds",
-    "extraction_fields", "success_criteria", "builder", "ai_disclosure",
+    "extraction_fields", "success_criteria", "builder", "ai_disclosure", "caller_number", "record_calls",
 )
 
 
@@ -64,6 +64,8 @@ class AgentUpdate(BaseModel):
     success_criteria: str | None = None
     builder: dict | None = None
     ai_disclosure: bool | None = None
+    caller_number: str | None = None
+    record_calls: bool | None = None
 
 
 class ChatMessage(BaseModel):
@@ -93,6 +95,8 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         **{k: getattr(a, k) for k in _EDITABLE},
         "extraction_fields": a.extraction_fields or [],
         "ai_disclosure": a.ai_disclosure is not False,
+        "caller_number": a.caller_number or "",
+        "record_calls": a.record_calls is not False,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
     }
@@ -181,6 +185,15 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
         for key in ("schema", "spec", "quality", "generation"):
             if key in agent.builder:
                 changes["builder"][key] = agent.builder[key]
+    if "caller_number" in changes:
+        from app.services import telephony
+
+        if changes["caller_number"]:
+            owned = {n.number for n in await telephony.active_numbers(db, ctx.org.id)}
+            if changes["caller_number"] not in owned:
+                raise HTTPException(status_code=400, detail="That number isn't on this account.")
+        else:
+            changes["caller_number"] = None
     for key, value in changes.items():
         setattr(agent, key, value)
     if _prompt_state(agent) != before:

@@ -59,6 +59,8 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         d["metrics"] = c.metrics or None
         d["prospect_email"] = c.prospect_email
         d["livekit_room_name"] = c.livekit_room_name
+        d["from_phone"] = c.from_phone
+        d["has_recording"] = bool(c.recording_key)
     return d
 
 
@@ -202,6 +204,21 @@ async def get_call(call_id: uuid.UUID, ctx: CtxDep, db: DbDep):
         raise HTTPException(status_code=404, detail="Call not found")
     c, l, a, cp = row
     return call_to_dict(c, l, a, cp, full=True)
+
+
+@router.get("/{call_id}/recording")
+async def get_recording(call_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    """A short-lived link to the call's audio (status "processing" until the file lands)."""
+    from app.services import recordings
+
+    call = await db.get(CallLog, call_id)
+    if not call or call.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if not call.recording_key:
+        return {"status": "none", "url": None}
+    url = await recordings.playback_url(call.recording_key)
+    return {"status": "ready" if url else "processing", "url": url,
+            "expires_in": recordings.URL_TTL_SECONDS if url else None}
 
 
 @router.post("/{call_id}/analyze")

@@ -53,6 +53,10 @@ class Agent(Base):
     calcom_event_type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     transfer_number: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
+    # Caller ID for this agent's calls (one of the account's numbers); blank = account default.
+    caller_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Record phone calls (None = on when recording storage is configured).
+    record_calls: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # ── Post-call analysis ────────────────────────────────────────────────────
     # Fields the analyzer extracts from every transcript, e.g.

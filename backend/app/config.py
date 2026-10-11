@@ -40,6 +40,21 @@ class Settings(BaseSettings):
     livekit_api_secret: str = ""
     livekit_sip_outbound_trunk_id: str = ""
     livekit_agent_name: str = "closer"
+
+    # ── Phone numbers (Twilio, bought into the account behind the LiveKit trunk) ──
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    # Twilio Elastic SIP trunk the numbers attach to. Blank = found automatically by
+    # matching the LiveKit outbound trunk's address (e.g. xyz.pstn.twilio.com).
+    twilio_trunk_sid: str = ""
+
+    # ── Call recordings (LiveKit egress → any S3-compatible bucket) ──
+    recordings_s3_bucket: str = ""
+    recordings_s3_endpoint: str = ""  # blank for AWS; e.g. https://storage.railway.app or an R2 endpoint
+    recordings_s3_region: str = "auto"
+    recordings_s3_access_key: str = ""
+    recordings_s3_secret_key: str = ""
+    recordings_s3_force_path_style: bool = False
     # Small hosts (e.g. a 512 MB free instance): no pre-warmed job processes,
     # no turn-detector model (VAD-only end-of-turn), never report as "busy".
     low_resource_mode: bool = False
@@ -129,6 +144,14 @@ class Settings(BaseSettings):
         if url and "://" not in url:
             self.livekit_url = f"wss://{url}"
         return self
+
+    @property
+    def twilio_ready(self) -> bool:
+        return bool(self.twilio_account_sid and self.twilio_auth_token)
+
+    @property
+    def recordings_ready(self) -> bool:
+        return bool(self.recordings_s3_bucket and self.recordings_s3_access_key and self.recordings_s3_secret_key)
 
     @property
     def livekit_http_url(self) -> str:

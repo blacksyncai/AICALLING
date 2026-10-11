@@ -31,6 +31,34 @@ export interface Agent {
   stats?: { calls: number; seconds: number };
   builder?: BuilderInfo | null;
   ai_disclosure?: boolean;
+  caller_number?: string;
+  record_calls?: boolean;
+}
+
+export interface PhoneNumberItem {
+  id: string;
+  number: string;
+  label: string;
+  source: "purchased" | "imported" | "assigned";
+  is_default: boolean;
+  status: string;
+  created_at: string | null;
+}
+
+export interface PhoneNumberRequestItem {
+  id: string;
+  area_code: string;
+  note: string;
+  status: "open" | "fulfilled" | "declined";
+  created_at: string | null;
+}
+
+export interface MyPhoneNumbers {
+  numbers: PhoneNumberItem[];
+  requests: PhoneNumberRequestItem[];
+  self_serve: boolean;
+  max_numbers: number;
+  recordings_enabled: boolean;
 }
 
 export interface AgentTemplate {
@@ -109,6 +137,8 @@ export interface Call {
   transcript?: TranscriptTurn[];
   extracted_data?: Record<string, unknown>;
   metrics?: { turns: number; avg_response: number; avg_eou: number | null; avg_llm_ttft: number | null; avg_tts_ttfb: number | null } | null;
+  from_phone?: string | null;
+  has_recording?: boolean;
   prospect_email?: string | null;
   credits_charged?: number | null;
   lead_id?: string | null;

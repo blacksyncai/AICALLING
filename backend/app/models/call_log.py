@@ -54,6 +54,8 @@ class CallLog(Base):
     # outbound (phone) | web (browser voice test)
     call_type: Mapped[str | None] = mapped_column(String(16), nullable=True, default="outbound")
     to_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Caller ID the call went out from (blank = the trunk's default number).
+    from_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # ── LiveKit ───────────────────────────────────────────────────────────────
     livekit_room_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -91,6 +93,9 @@ class CallLog(Base):
     credits_reserved: Mapped[int | None] = mapped_column(Integer, nullable=True)
     credit_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     # When call.completed / meeting.booked webhooks went out (sent once per call).
+    # Recording (LiveKit egress): object key in the recordings bucket.
+    recording_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    egress_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     events_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { use } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
+import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
@@ -55,7 +56,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" /> {formatDuration(call.duration_seconds)}
             </span>
-            <span>{call.call_type === "web" ? "Browser test" : `Phone · ${call.to_phone ?? ""}`}</span>
+            <span>{call.call_type === "web" ? "Browser test" : `Phone · ${call.to_phone ?? ""}${call.from_phone ? ` (from ${call.from_phone})` : ""}`}</span>
             {call.agent_id && (
               <Link href={`/agents/${call.agent_id}`} className="text-brand-600 hover:underline">
                 {call.agent_name}
@@ -115,6 +116,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
 
         <div className="space-y-6">
+          {call.has_recording && <RecordingPlayer callId={id} live={live} />}
           <Card>
             <CardHeader title={<span className="flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-brand-600" /> AI summary</span>} />
             <div className="p-5 text-sm leading-relaxed text-zinc-700">

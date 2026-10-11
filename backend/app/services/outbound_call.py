@@ -128,17 +128,35 @@ async def _mark_call_failed(call_id: uuid.UUID, lead_id: uuid.UUID | None, outco
     await emit_call_events(call_id)
 
 
-async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, room_name: str) -> None:
+async def _start_recording(call_id: uuid.UUID, room_name: str, key: str) -> None:
+    from app.database import AsyncSessionLocal
+    from app.services import recordings
+
+    try:
+        egress_id = await recordings.start(room_name, key)
+    except Exception as exc:  # a recording problem must never drop the call
+        log.error("recording_start_failed", room=room_name, error=str(exc))
+        return
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(CallLog).where(CallLog.id == call_id)
+                         .values(recording_key=key, egress_id=egress_id))
+        await db.commit()
+
+
+async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, room_name: str,
+                          recording_key: str | None = None) -> None:
     lk = _lk()
     try:
         resp = await lk.sip.create_sip_participant(req, timeout=60)
-        log.info("livekit_sip_answered", room=room_name, to=req.sip_call_to,
+        log.info("livekit_sip_answered", room=room_name, to=req.sip_call_to, from_number=req.sip_number,
                  sip_call_id=getattr(resp, "sip_call_id", ""))
         from app.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             await db.execute(update(CallLog).where(CallLog.id == call_id, CallLog.answered_at.is_(None))
                              .values(answered_at=datetime.now(timezone.utc), status="connected"))
             await db.commit()
+        if recording_key:
+            await _start_recording(call_id, room_name, recording_key)
     except api.SipCallError as exc:
         code = exc.sip_status_code or 0
         status = exc.metadata.get("sip_status", "") if exc.metadata else ""
@@ -238,7 +256,10 @@ class CallService:
         await db.refresh(org, ["credits_balance", "status", "unlimited_credits"])
         ensure_can_call(org)  # raises InsufficientCredits
 
+        from app.services import recordings, telephony
+
         room_name = f"call-{uuid.uuid4()}"
+        from_number = await telephony.caller_id_for(db, org.id, agent)
         call_log = CallLog(
             id=uuid.uuid4(),
             org_id=org.id,
@@ -247,6 +268,7 @@ class CallService:
             agent_id=agent.id if agent else None,
             call_type="outbound",
             to_phone=phone,
+            from_phone=from_number or None,
             livekit_room_name=room_name,
             status="initiated",
             started_at=datetime.now(timezone.utc),
@@ -281,6 +303,7 @@ class CallService:
         sip_req = api.CreateSIPParticipantRequest(
             sip_trunk_id=settings.livekit_sip_outbound_trunk_id,
             sip_call_to=phone,
+            sip_number=from_number,
             room_name=room_name,
             participant_identity=f"sip_{phone.lstrip('+')}",
             participant_name=(lead.name if lead else phone) or phone,
@@ -289,8 +312,11 @@ class CallService:
             wait_until_answered=True,
             krisp_enabled=True,
         )
-        log.info("livekit_sip_dialing", room=room_name, to=phone, trunk=settings.livekit_sip_outbound_trunk_id)
-        task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name))
+        log.info("livekit_sip_dialing", room=room_name, to=phone, from_number=from_number or "trunk default",
+                 trunk=settings.livekit_sip_outbound_trunk_id)
+        recording_key = recordings.key_for(org.id, call_log.id) if recordings.enabled_for(agent) else None
+        task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name,
+                                                   recording_key))
         _BACKGROUND.add(task)
         task.add_done_callback(_BACKGROUND.discard)
         return call_log
