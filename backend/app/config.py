@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     # ── Orange Slice ──────────────────────────────────────────────────────────
     orange_slice_api_key: str = ""
 
+    # ── Google Calendar (OAuth client from Google Cloud Console) ─────────────
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
     # ── Deployment ────────────────────────────────────────────────────────────
     webhook_base_url: str = "http://localhost:8000"
     # Public URL of the web app — used in invite links (falls back to the request's host).

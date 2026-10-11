@@ -15,7 +15,23 @@ export type Meeting = {
   summary: string | null;
   booked_at: string | null;
   follow_up_status: MeetingStatus;
+  /** ISO start, when known: "set" in BlackSync, or "parsed" from what the agent agreed on the call. */
+  start: string | null;
+  start_source: "set" | "parsed" | null;
+  duration_minutes: number;
+  calendar_synced: boolean;
+  calendar_error?: string;
 };
+
+export type GoogleStatus = { configured: boolean; connected: boolean; email: string | null; connected_at: string | null; can_manage: boolean };
+
+export type BusyEvent = { id: string; title: string; start: string; end: string | null; link?: string };
+
+/** "Tue, Oct 13 · 2:00 PM" in the viewer's time zone. */
+export function formatStart(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
 
 export type MeetingsResponse = {
   items: Meeting[];

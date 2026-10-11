@@ -1,13 +1,23 @@
 "use client";
 
-import { Bot, CalendarClock, Copy, Mail, Megaphone, PhoneCall, UserRound } from "lucide-react";
+import { Bot, CalendarCheck2, CalendarClock, Copy, Mail, Megaphone, PhoneCall, UserRound } from "lucide-react";
 import Link from "next/link";
 import { Badge, Button, Card, Select } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { cn, timeAgo } from "@/lib/utils";
-import { MEETING_STATUS, type Meeting, type MeetingStatus } from "./types";
+import { MEETING_STATUS, formatStart, type Meeting, type MeetingStatus } from "./types";
 
-export function MeetingCard({ meeting: m, onStatus, saving }: { meeting: Meeting; onStatus: (s: MeetingStatus) => void; saving?: boolean }) {
+export function MeetingCard({
+  meeting: m,
+  onStatus,
+  onSetTime,
+  saving,
+}: {
+  meeting: Meeting;
+  onStatus: (s: MeetingStatus) => void;
+  onSetTime?: () => void;
+  saving?: boolean;
+}) {
   const toast = useToast();
   const name = m.contact?.name || m.to_phone || (m.call_type === "web" ? "Browser test" : "Unknown contact");
   const email = m.prospect_email || m.contact?.email || null;
@@ -33,10 +43,22 @@ export function MeetingCard({ meeting: m, onStatus, saving }: { meeting: Meeting
           </div>
           {m.contact?.company && <p className="truncate text-sm text-zinc-500">{m.contact.company}</p>}
         </div>
-        <div className="flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700">
+        <button
+          type="button"
+          onClick={onSetTime}
+          disabled={!onSetTime}
+          title={m.start_source === "parsed" ? `Read from the call: "${m.meeting_time}". Click to confirm or change.` : onSetTime ? "Change the time" : undefined}
+          className={cn(
+            "flex items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-medium transition",
+            m.start ? "bg-brand-50 text-brand-700" : "bg-amber-50 text-amber-800",
+            onSetTime && "hover:ring-2 hover:ring-brand-200",
+          )}
+        >
           <CalendarClock className="h-4 w-4 shrink-0" />
-          <span className="break-words">{m.meeting_time || "Time not confirmed"}</span>
-        </div>
+          <span className="break-words">{m.start ? formatStart(m.start) : m.meeting_time || "Time not confirmed"}</span>
+          {!m.start && onSetTime && <span className="text-xs font-semibold underline underline-offset-2">Set time</span>}
+          {m.calendar_synced && <CalendarCheck2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="On Google Calendar" />}
+        </button>
       </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-zinc-500">
