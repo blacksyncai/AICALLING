@@ -208,7 +208,7 @@ async def phone_summary(db: AsyncSession, org_id: uuid.UUID) -> dict:
 async def sync_phone_quantity(db: AsyncSession, org_id: uuid.UUID) -> None:
     """Bill max(0, active numbers − included) on the subscription. No subscription = nothing billed."""
     row = await db.get(BillingSubscription, org_id)
-    if row is None or row.status not in LIVE or not settings.stripe_secret_key:
+    if row is None or row.status not in LIVE or not stripe_api.ready():
         return
     summary = await phone_summary(db, org_id)
     if summary["billable"] == row.phone_quantity:

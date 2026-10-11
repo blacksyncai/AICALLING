@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     # Secret key (sk_live_… / sk_test_…) and webhook signing secret — backend only.
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    # Fernet key that encrypts secrets pasted into the admin portal (e.g. the Stripe key).
+    secrets_encryption_key: str = ""
     # Optional explicit price ids for plans (otherwise looked up by lookup key — see billing/catalog.py).
     stripe_price_solo: str = ""
     stripe_price_teams: str = ""

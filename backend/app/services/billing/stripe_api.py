@@ -20,12 +20,29 @@ class StripeNotConfigured(RuntimeError):
     pass
 
 
+def secret_key() -> str:
+    """STRIPE_SECRET_KEY from the environment, else the key an admin connected in the portal."""
+    from app.services import secret_store
+
+    return settings.stripe_secret_key or secret_store.get("stripe_secret_key")
+
+
+def webhook_secret() -> str:
+    from app.services import secret_store
+
+    return settings.stripe_webhook_secret or secret_store.get("stripe_webhook_secret")
+
+
+def ready() -> bool:
+    return bool(secret_key())
+
+
 def _client():
     import stripe
 
-    if not settings.stripe_secret_key:
+    if not secret_key():
         raise StripeNotConfigured("Stripe isn't connected yet.")
-    stripe.api_key = settings.stripe_secret_key
+    stripe.api_key = secret_key()
     stripe.max_network_retries = 2  # safe: the SDK sends idempotency keys on retried POSTs
     return stripe
 
@@ -197,6 +214,43 @@ async def retrieve_charge(charge_id: str) -> dict:
 
 def construct_event(payload: bytes, signature: str) -> dict:
     s = _client()
-    if not settings.stripe_webhook_secret:
-        raise StripeNotConfigured("STRIPE_WEBHOOK_SECRET isn't set.")
-    return _plain(s.Webhook.construct_event(payload, signature, settings.stripe_webhook_secret))
+    if not webhook_secret():
+        raise StripeNotConfigured("The Stripe webhook isn't set up yet.")
+    return _plain(s.Webhook.construct_event(payload, signature, webhook_secret()))
+
+
+# ── Connecting an account from the admin portal ───────────────────────────────
+
+
+async def inspect_key(key: str) -> dict:
+    """Validate a secret key against Stripe without touching the configured one."""
+    import stripe
+
+    acct = await _run(stripe.Account.retrieve, api_key=key)
+    acct = _plain(acct)
+    settings_ = acct.get("settings") or {}
+    name = ((settings_.get("dashboard") or {}).get("display_name")
+            or (acct.get("business_profile") or {}).get("name") or acct.get("email") or acct.get("id"))
+    return {"id": acct.get("id"), "name": name, "charges_enabled": acct.get("charges_enabled")}
+
+
+async def ensure_webhook(key: str, url: str, events: list[str]) -> dict:
+    """Create our webhook endpoint (replacing one we created before for the same URL). Returns id + secret."""
+    import stripe
+
+    existing = await _run(stripe.WebhookEndpoint.list, api_key=key, limit=100)
+    for ep in existing.auto_paging_iter():
+        if ep["url"] == url and (ep.get("metadata") or {}).get("blacksync") == "true":
+            await _run(stripe.WebhookEndpoint.delete, ep["id"], api_key=key)
+    ep = await _run(stripe.WebhookEndpoint.create, api_key=key, url=url, enabled_events=events,
+                    description="BlackSync billing", metadata={"blacksync": "true"})
+    return {"id": ep["id"], "secret": ep["secret"]}
+
+
+async def delete_webhook(key: str, endpoint_id: str) -> None:
+    import stripe
+
+    try:
+        await _run(stripe.WebhookEndpoint.delete, endpoint_id, api_key=key)
+    except Exception as exc:  # already gone is fine
+        log.warning("stripe_webhook_delete_failed", error=str(exc))

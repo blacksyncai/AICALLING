@@ -41,6 +41,9 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await load_signing_key(db)
         await bootstrap(db)
+    from app.services import secret_store
+    async with AsyncSessionLocal() as db:
+        await secret_store.load_all(db)
     from app.services.playbooks import seed_playbooks
     async with AsyncSessionLocal() as db:
         try:

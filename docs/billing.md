@@ -113,8 +113,9 @@ Events to enable on the Stripe endpoint: all of the above.
 
 | Variable | |
 |---|---|
-| `STRIPE_SECRET_KEY` | Secret key (backend only; never sent to the browser) |
-| `STRIPE_WEBHOOK_SECRET` | Signing secret of the webhook endpoint above |
+| `STRIPE_SECRET_KEY` | Optional — or paste the key in Admin → Billing → Stripe, which checks it, creates the webhook and stores both encrypted |
+| `STRIPE_WEBHOOK_SECRET` | Optional — set automatically when the key is connected from the admin portal |
+| `SECRETS_ENCRYPTION_KEY` | Fernet key that encrypts secrets pasted into the admin portal (required for that) |
 | `STRIPE_PRICE_SOLO`, `STRIPE_PRICE_TEAMS` | Optional: existing plan price IDs, used if the lookup keys aren't set in Stripe |
 | `INCLUDED_CREDITS_ROLLOVER` | Optional, default `false` |
 | `APP_URL` | Where Checkout and the portal return to (`https://blacksync.si`) |

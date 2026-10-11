@@ -3,11 +3,11 @@
 import { CheckCircle2, CircleAlert, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { usd, fmtDateTime } from "@/components/billing/types";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Spinner } from "@/components/ui";
 import { useToast } from "@/components/toast";
-import { fetcher, patch, post } from "@/lib/api";
+import { api, fetcher, patch, post } from "@/lib/api";
 
 interface BillingSettings {
   property_lookup_price_cents: number | null;
@@ -45,15 +45,139 @@ const STATUS_TONE = { ok: "green", missing: "red", mismatch: "amber", unconfigur
 /** Admin portal → Billing: pricing & policies, the Stripe catalog check, and payment/webhook failures. */
 export function BillingAdminTab() {
   return (
-    <div className="grid min-w-0 gap-6 lg:grid-cols-2">
-      <div className="flex min-w-0 flex-col gap-6">
-        <PricingCard />
-      </div>
-      <div className="flex min-w-0 flex-col gap-6">
-        <CatalogCard />
-        <FailuresCard />
+    <div className="flex min-w-0 flex-col gap-6">
+      <StripeConnectCard />
+      <div className="grid min-w-0 gap-6 lg:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-6">
+          <PricingCard />
+        </div>
+        <div className="flex min-w-0 flex-col gap-6">
+          <CatalogCard />
+          <FailuresCard />
+        </div>
       </div>
     </div>
+  );
+}
+
+interface StripeConnection {
+  connected: boolean;
+  source: "environment" | "portal" | null;
+  mode: "live" | "test" | null;
+  key_hint: string;
+  account_name: string | null;
+  webhook_ready: boolean;
+  webhook_url: string;
+  can_store: boolean;
+  warning?: string | null;
+}
+
+function StripeConnectCard() {
+  const toast = useToast();
+  const { data, mutate } = useSWR<StripeConnection>("/api/admin/billing/stripe", fetcher);
+  const { mutate: refreshAll } = useSWRConfig();
+  const [key, setKey] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  if (!data) return null;
+
+  async function connect(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await post<StripeConnection>("/api/admin/billing/stripe", { secret_key: key.trim() });
+      setKey("");
+      setEditing(false);
+      await mutate(r, { revalidate: false });
+      void refreshAll((k) => typeof k === "string" && k.startsWith("/api/admin/billing"));
+      toast(r.warning ?? `Stripe connected${r.account_name ? ` — ${r.account_name}` : ""}`, r.warning ? "error" : undefined);
+    } catch (err) {
+      toast((err as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    if (!window.confirm("Disconnect Stripe? Purchases stop working until a key is connected again.")) return;
+    setBusy(true);
+    try {
+      await mutate(await api<StripeConnection>("/api/admin/billing/stripe", { method: "DELETE" }), { revalidate: false });
+      void refreshAll((k) => typeof k === "string" && k.startsWith("/api/admin/billing"));
+      toast("Stripe disconnected");
+    } catch (err) {
+      toast((err as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const showForm = !data.connected || editing;
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-4 p-5">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#635bff] text-lg font-bold text-white shadow-[0_6px_16px_-6px_rgba(99,91,255,0.8)]">S</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-semibold text-zinc-900">Stripe</h3>
+            {data.connected ? (
+              <>
+                <Badge tone="green">Connected</Badge>
+                <Badge tone={data.mode === "live" ? "violet" : "amber"}>{data.mode === "live" ? "Live mode" : "Test mode"}</Badge>
+              </>
+            ) : (
+              <Badge tone="gray">Not connected</Badge>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            {data.connected
+              ? `${data.account_name ? `${data.account_name} · ` : ""}key ${data.key_hint} · ${data.webhook_ready ? "webhook active" : "webhook not set up"}`
+              : "Paste your secret key to turn on payments. It's checked with Stripe, stored encrypted and never shown again."}
+          </p>
+        </div>
+        {data.connected && data.source === "portal" && !editing && (
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => setEditing(true)}>Replace key</Button>
+            <Button size="sm" variant="ghost" onClick={() => void disconnect()} loading={busy}>Disconnect</Button>
+          </div>
+        )}
+      </div>
+      {data.connected && data.source === "environment" && (
+        <div className="border-t border-zinc-100 px-5 py-3 text-xs text-zinc-500">Set by the STRIPE_SECRET_KEY environment variable on the server.</div>
+      )}
+      {showForm && data.source !== "environment" && (
+        <form onSubmit={connect} className="flex flex-col gap-3 border-t border-zinc-100 bg-zinc-50/60 p-5">
+          {!data.can_store ? (
+            <Notice>Secure storage isn&apos;t set up on the server yet (SECRETS_ENCRYPTION_KEY).</Notice>
+          ) : (
+            <>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  placeholder="sk_live_…"
+                  className="font-mono"
+                  aria-label="Stripe secret key"
+                />
+                <div className="flex gap-2">
+                  <Button variant="primary" className="shrink-0 whitespace-nowrap" loading={busy} disabled={key.trim().length < 20}>
+                    Connect Stripe
+                  </Button>
+                  {editing && <Button type="button" variant="ghost" onClick={() => { setEditing(false); setKey(""); }}>Cancel</Button>}
+                </div>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Stripe Dashboard → Developers → API keys → Secret key. We also create the webhook at <span className="font-mono">{data.webhook_url}</span> automatically.
+              </p>
+            </>
+          )}
+        </form>
+      )}
+    </Card>
   );
 }
 
@@ -200,8 +324,8 @@ function CatalogCard() {
       />
       {settings && (
         <div className="flex flex-wrap gap-4 border-b border-zinc-100 px-5 py-3 text-xs">
-          <Status ok={settings.stripe_ready} label={settings.stripe_ready ? "Stripe connected" : "STRIPE_SECRET_KEY not set"} />
-          <Status ok={settings.webhook_ready} label={settings.webhook_ready ? "Webhook secret set" : "STRIPE_WEBHOOK_SECRET not set"} />
+          <Status ok={settings.stripe_ready} label={settings.stripe_ready ? "Stripe connected" : "Stripe not connected"} />
+          <Status ok={settings.webhook_ready} label={settings.webhook_ready ? "Webhook active" : "Webhook not set up"} />
         </div>
       )}
       {!data ? (

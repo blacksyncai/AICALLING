@@ -100,7 +100,7 @@ async def _catalog_payload() -> dict:
         return prices.get(key, {}).get("status") == "ok"
 
     return {
-        "stripe_ready": bool(settings.stripe_secret_key),
+        "stripe_ready": stripe_api.ready(),
         "plans": [{**{k: v for k, v in catalog.PLANS[k].items() if k not in ("price_env",)}, "available": ok(k)}
                   for k in catalog.PLAN_ORDER],
         "packs": [{**catalog.CREDIT_PACKS[k], "available": ok(k),
@@ -140,7 +140,7 @@ async def overview(ctx: CtxDep, db: DbDep):
         "auto_recharge": {"enabled": bool(ar and ar.enabled), "threshold": ar.threshold if ar else None,
                           "pack_key": ar.pack_key if ar else None, "last_error": ar.last_error if ar else None},
         "activity": activity,
-        "stripe_ready": bool(settings.stripe_secret_key),
+        "stripe_ready": stripe_api.ready(),
         "can_manage": ctx.can_manage,
     }
 
@@ -260,7 +260,7 @@ class AutoRechargeIn(BaseModel):
 
 async def _card(db, org_id) -> dict | None:
     cid = await purchases.customer_id(db, org_id)
-    if not cid or not settings.stripe_secret_key:
+    if not cid or not stripe_api.ready():
         return None
     try:
         return await stripe_api.default_payment_method(cid)
@@ -309,9 +309,9 @@ async def invoices(ctx: CtxDep, db: DbDep):
     ours = (await db.execute(select(Purchase).where(Purchase.org_id == ctx.org.id)
                              .order_by(Purchase.created_at.desc()).limit(50))).scalars().all()
     out: dict = {"purchases": [_purchase(p) for p in ours], "invoices": [], "card": None,
-                 "has_billing_profile": False, "stripe_ready": bool(settings.stripe_secret_key)}
+                 "has_billing_profile": False, "stripe_ready": stripe_api.ready()}
     cid = await purchases.customer_id(db, ctx.org.id)
-    if not cid or not settings.stripe_secret_key:
+    if not cid or not stripe_api.ready():
         return out
     out["has_billing_profile"] = True
     try:
@@ -429,8 +429,8 @@ async def admin_lookup_adjust(org_id: uuid.UUID, body: LookupAdjust, admin: Admi
 
 @admin_router.get("/billing/settings")
 async def admin_billing_settings(_: AdminDep, db: DbDep):
-    return {**await settings_store.get_all(db), "stripe_ready": bool(settings.stripe_secret_key),
-            "webhook_ready": bool(settings.stripe_webhook_secret),
+    return {**await settings_store.get_all(db), "stripe_ready": stripe_api.ready(),
+            "webhook_ready": bool(stripe_api.webhook_secret()),
             "included_credits_rollover": settings.included_credits_rollover}
 
 
@@ -453,7 +453,7 @@ async def admin_update_billing_settings(body: BillingSettingsIn, admin: AdminDep
 @admin_router.get("/billing/catalog")
 async def admin_catalog(_: AdminDep):
     prices = await _guard(catalog.resolve_prices(force=True))
-    return {"stripe_ready": bool(settings.stripe_secret_key), "items": [
+    return {"stripe_ready": stripe_api.ready(), "items": [
         {"kind": kind, "key": item["key"], "name": item["name"], "amount_cents": item["amount_cents"],
          "lookup_key": item["lookup_key"], "type": expected, **prices.get(item["key"], {})}
         for kind, item, expected in catalog.all_items()]}
@@ -483,3 +483,84 @@ async def admin_create_price(key: str, body: CreatePriceIn, admin: AdminDep):
 @admin_router.get("/billing/failures")
 async def admin_failures(_: AdminDep, db: DbDep):
     return await webhooks.recent_failures(db)
+
+
+# ── Admin: connect Stripe from the portal ─────────────────────────────────────
+
+
+class StripeConnectIn(BaseModel):
+    secret_key: str = Field(min_length=20, max_length=300)
+
+
+def _mask(key: str) -> str:
+    return f"{key[:8]}…{key[-4:]}" if key else ""
+
+
+@admin_router.get("/billing/stripe")
+async def stripe_connection(_: AdminDep):
+    from app.services import secret_store
+
+    key = stripe_api.secret_key()
+    return {
+        "connected": bool(key),
+        "source": "environment" if settings.stripe_secret_key else ("portal" if key else None),
+        "mode": "live" if "_live_" in key else ("test" if key else None),
+        "key_hint": _mask(key),
+        "account_name": secret_store.get("stripe_account_name") or None,
+        "webhook_ready": bool(stripe_api.webhook_secret()),
+        "webhook_url": purchases.app_url("/api/billing/webhook"),
+        "can_store": secret_store.available(),
+    }
+
+
+@admin_router.post("/billing/stripe")
+async def connect_stripe(body: StripeConnectIn, admin: AdminDep, db: DbDep):
+    """Check the key with Stripe, create the webhook endpoint, then store both encrypted."""
+    from app.services import secret_store
+
+    key = body.secret_key.strip()
+    if not key.startswith(("sk_live_", "sk_test_", "rk_live_", "rk_test_")):
+        raise HTTPException(status_code=400, detail="That doesn't look like a Stripe secret key (it starts with sk_live_ or sk_test_).")
+    if settings.stripe_secret_key:
+        raise HTTPException(status_code=409, detail="Stripe is set by the STRIPE_SECRET_KEY environment variable — change it there.")
+    if not secret_store.available():
+        raise HTTPException(status_code=503, detail="Secure storage isn't set up on the server (SECRETS_ENCRYPTION_KEY).")
+    try:
+        account = await stripe_api.inspect_key(key)
+    except Exception as exc:
+        log.warning("stripe_connect_rejected", error_type=exc.__class__.__name__)
+        raise HTTPException(status_code=400, detail="Stripe rejected that key. Copy the secret key again from Developers → API keys.")
+    webhook_note = None
+    try:
+        hook = await stripe_api.ensure_webhook(key, purchases.app_url("/api/billing/webhook"), sorted(webhooks.HANDLED))
+        await secret_store.put(db, "stripe_webhook_secret", hook["secret"])
+        await secret_store.put(db, "stripe_webhook_id", hook["id"])
+    except Exception as exc:
+        log.warning("stripe_webhook_create_failed", error=str(exc))
+        webhook_note = "The key works, but the webhook couldn't be created automatically (the key may lack webhook permission)."
+    await secret_store.put(db, "stripe_secret_key", key)
+    await secret_store.put(db, "stripe_account_name", str(account.get("name") or ""))
+    db.add(BillingAudit(admin_id=admin.id, target="pricing", previous="", adjustment="stripe_connected",
+                        new=_mask(key)[:64], reason=f"Stripe connected ({account.get('id')})"))
+    await db.commit()
+    catalog.invalidate()
+    log.info("stripe_connected", account=account.get("id"), mode="live" if "_live_" in key else "test", by=str(admin.id))
+    return {**await stripe_connection(admin), "warning": webhook_note}
+
+
+@admin_router.delete("/billing/stripe")
+async def disconnect_stripe(admin: AdminDep, db: DbDep):
+    from app.services import secret_store
+
+    if settings.stripe_secret_key:
+        raise HTTPException(status_code=409, detail="Stripe is set by the STRIPE_SECRET_KEY environment variable — remove it there.")
+    key, hook_id = secret_store.get("stripe_secret_key"), secret_store.get("stripe_webhook_id")
+    if key and hook_id:
+        await stripe_api.delete_webhook(key, hook_id)
+    for name in ("stripe_secret_key", "stripe_webhook_secret", "stripe_webhook_id", "stripe_account_name"):
+        await secret_store.remove(db, name)
+    db.add(BillingAudit(admin_id=admin.id, target="pricing", previous=_mask(key)[:64], adjustment="stripe_disconnected",
+                        new="", reason="Stripe disconnected"))
+    await db.commit()
+    catalog.invalidate()
+    return await stripe_connection(admin)

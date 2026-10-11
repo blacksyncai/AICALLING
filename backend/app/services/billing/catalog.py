@@ -77,7 +77,7 @@ async def resolve_prices(force: bool = False) -> dict[str, dict]:
     """item key → {"price_id", "status": ok|missing|mismatch|unconfigured, "detail", "active"}."""
     from app.services.billing import stripe_api
 
-    if not settings.stripe_secret_key:
+    if not stripe_api.ready():
         return {item["key"]: {"price_id": None, "status": "unconfigured", "detail": "Stripe isn't connected yet."}
                 for _, item, _ in all_items()}
     if not force and _CACHE["prices"] and time.time() - _CACHE["at"] < _TTL:

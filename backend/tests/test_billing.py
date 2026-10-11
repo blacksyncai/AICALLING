@@ -546,3 +546,65 @@ def test_phone_addon_quantity_tracks_numbers(client, make_client, stripe):
     assert stripe.quantity_calls == [2]
     ph = c.get("/api/billing/overview").json()["phones"]
     assert ph == {**ph, "active": 3, "included": 1, "billable": 2, "billed_quantity": 2, "unit_cents": 350}
+
+
+# ── Connecting Stripe from the admin portal ───────────────────────────────────
+
+
+def test_admin_connects_stripe_key_encrypted_and_never_returned(client, make_client, monkeypatch):
+    from cryptography.fernet import Fernet
+
+    from app.models.account import AppSecret
+    from app.services import secret_store
+
+    monkeypatch.setattr(settings, "stripe_secret_key", "")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "")
+    monkeypatch.setattr(settings, "secrets_encryption_key", Fernet.generate_key().decode())
+    made = []
+
+    async def inspect_key(key):
+        if key.endswith("bad"):
+            raise ValueError("invalid")
+        return {"id": "acct_1", "name": "BlackSync LLC", "charges_enabled": True}
+
+    async def ensure_webhook(key, url, events):
+        made.append((url, events))
+        return {"id": "we_1", "secret": "whsec_from_stripe"}
+
+    async def delete_webhook(key, endpoint_id):
+        made.append(("deleted", endpoint_id))
+
+    monkeypatch.setattr(stripe_api, "inspect_key", inspect_key)
+    monkeypatch.setattr(stripe_api, "ensure_webhook", ensure_webhook)
+    monkeypatch.setattr(stripe_api, "delete_webhook", delete_webhook)
+    key = "sk_test_" + "a" * 30 + "wxyz"
+    try:
+        assert client.get("/api/admin/billing/stripe").json()["connected"] is False
+        assert client.post("/api/admin/billing/stripe", json={"secret_key": "pk_test_" + "a" * 30}).status_code == 400
+        assert client.post("/api/admin/billing/stripe", json={"secret_key": "sk_test_" + "a" * 30 + "bad"}).status_code == 400
+
+        r = client.post("/api/admin/billing/stripe", json={"secret_key": key})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert key not in r.text and body["key_hint"].endswith("wxyz") and body["mode"] == "test"
+        assert body["connected"] and body["webhook_ready"] and body["account_name"] == "BlackSync LLC"
+        assert made[0][0].endswith("/api/billing/webhook") and "checkout.session.completed" in made[0][1]
+        assert stripe_api.secret_key() == key and stripe_api.webhook_secret() == "whsec_from_stripe"
+
+        async def stored():
+            from app.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                return (await db.get(AppSecret, "enc:stripe_secret_key")).value
+
+        assert key not in asyncio.run(stored())  # encrypted at rest
+
+        _, c = _account(client, make_client, "Peeker Co")
+        assert c.get("/api/admin/billing/stripe").status_code in (401, 403)
+        assert c.post("/api/admin/billing/stripe", json={"secret_key": key}).status_code in (401, 403)
+
+        assert client.delete("/api/admin/billing/stripe").json()["connected"] is False
+        assert ("deleted", "we_1") in made and stripe_api.secret_key() == ""
+    finally:
+        for name in ("stripe_secret_key", "stripe_webhook_secret", "stripe_webhook_id", "stripe_account_name"):
+            secret_store._cache.pop(name, None)
