@@ -1259,7 +1259,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
 if __name__ == "__main__":
     # Explicit-dispatch mode (hevox-prod style). The worker registers under
-    # agent_name="pounce" and only runs in rooms it was explicitly dispatched to
+    # agent_name="closer" (LIVEKIT_AGENT_NAME) and only runs in rooms it was explicitly dispatched to
     # via agent_dispatch.create_dispatch (see OutboundCallService.dispatch_call).
     # This pairs with LiveKit SIP outbound — no auto-dispatch, no Twilio bridge.
     extra: dict = {}
@@ -1276,7 +1276,7 @@ if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name=settings.livekit_agent_name or "pounce",
+            agent_name=settings.livekit_agent_name or "closer",
             **extra,
         )
     )

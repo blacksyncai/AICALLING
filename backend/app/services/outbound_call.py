@@ -8,7 +8,7 @@ Three entry points share one flow:
 
 Call flow (phone):
 1. Create the LiveKit room carrying call metadata (read by the agent worker).
-2. Explicitly dispatch the agent worker (agent_name=pounce) to that room —
+2. Explicitly dispatch the agent worker (agent_name=closer) to that room —
    agent_name workers do NOT auto-join rooms.
 3. `create_sip_participant` dials the number via the outbound trunk. The worker
    waits for sip.callStatus="active" before speaking so the opener isn't lost.
@@ -50,18 +50,27 @@ def _lk() -> api.LiveKitAPI:
     if not settings.livekit_ready:
         raise CallSetupError("LiveKit is not configured (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET).")
     return api.LiveKitAPI(
-        url=settings.livekit_url,
+        url=settings.livekit_http_url,
         api_key=settings.livekit_api_key,
         api_secret=settings.livekit_api_secret,
     )
 
 
 def validate_e164(phone: str) -> str:
-    phone = (phone or "").strip().replace(" ", "").replace("-", "")
-    digits = phone.lstrip("+")
-    if not phone.startswith("+") or not digits.isdigit() or len(digits) < 10 or set(digits) == {"0"}:
+    """Normalize to E.164: strips formatting, and assumes US/Canada (+1) for bare 10-digit numbers."""
+    raw = (phone or "").strip()
+    has_plus = raw.startswith("+") or raw.startswith("00")
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if raw.startswith("00"):
+        digits = digits[2:]
+    if not has_plus:
+        if len(digits) == 10:
+            digits = "1" + digits
+        elif not (len(digits) == 11 and digits.startswith("1")):
+            digits = ""
+    if not (10 <= len(digits) <= 15) or set(digits) == {"0"} or digits.startswith("0"):
         raise ValueError(f"{phone!r} is not a valid E.164 phone number (e.g. +14155550123).")
-    return phone
+    return "+" + digits
 
 
 def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, call_type: str,
@@ -71,6 +80,7 @@ def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, cal
         "call_type": call_type,
         "lead_id": str(lead.id) if lead else "",
         "variables": variables,
+        "phone_number": variables.get("phone", "") or (lead.phone if lead else ""),
         # Legacy fields read by the original Paul agent.
         "name": (lead.name if lead else variables.get("name", "")) or "there",
         "company": (lead.company if lead else variables.get("company", "")) or "",
@@ -136,14 +146,17 @@ async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, ro
         hint = _SIP_HINTS.get(code, "")
         reason = (f"Not answered ({code} {status})." if outcome == "no_answer"
                   else f"Call failed: {code} {status}" + (f" — {hint}." if hint else "."))
-        log.warning("livekit_sip_failed", room=room_name, to=req.sip_call_to, sip_code=code, sip_status=status)
+        log.error("livekit_sip_failed", room=room_name, to=req.sip_call_to, trunk=req.sip_trunk_id,
+                  sip_code=code, sip_status=status, error=str(exc),
+                  metadata=dict(exc.metadata) if exc.metadata else {})
         await _mark_call_failed(call_id, lead_id, outcome, reason)
         try:
             await lk.room.delete_room(api.DeleteRoomRequest(room=room_name))
         except Exception:
             pass
     except Exception as exc:
-        log.warning("livekit_sip_error", room=room_name, error=str(exc))
+        log.exception("livekit_sip_error", room=room_name, to=req.sip_call_to, trunk=req.sip_trunk_id,
+                      error=str(exc), error_type=exc.__class__.__name__)
         await _mark_call_failed(call_id, lead_id, "failed", f"Call failed: {exc}")
     finally:
         await lk.aclose()
@@ -155,7 +168,7 @@ class CallService:
         await lk.room.create_room(api.CreateRoomRequest(
             name=room_name, metadata=metadata, empty_timeout=120, max_participants=5,
         ))
-        agent_name = settings.livekit_agent_name or "pounce"
+        agent_name = settings.livekit_agent_name or "closer"
         dispatch = await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
             agent_name=agent_name, room=room_name, metadata=metadata,
         ))
@@ -225,7 +238,7 @@ class CallService:
         await db.refresh(org, ["credits_balance", "status", "unlimited_credits"])
         ensure_can_call(org)  # raises InsufficientCredits
 
-        room_name = f"call-{(lead.id.hex[:8] if lead else 'test')}-{int(time.time())}"
+        room_name = f"call-{uuid.uuid4()}"
         call_log = CallLog(
             id=uuid.uuid4(),
             org_id=org.id,
@@ -241,7 +254,7 @@ class CallService:
         db.add(call_log)
         await db.flush()
 
-        variables = lead_variables(lead) if lead else {"phone": phone}
+        variables = {**(lead_variables(lead) if lead else {}), "phone": phone}
         metadata = _build_metadata(call_log, agent, variables, "outbound", lead)
 
         if lead:
@@ -276,6 +289,7 @@ class CallService:
             wait_until_answered=True,
             krisp_enabled=True,
         )
+        log.info("livekit_sip_dialing", room=room_name, to=phone, trunk=settings.livekit_sip_outbound_trunk_id)
         task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name))
         _BACKGROUND.add(task)
         task.add_done_callback(_BACKGROUND.discard)

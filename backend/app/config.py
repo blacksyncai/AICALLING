@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_sip_outbound_trunk_id: str = ""
-    livekit_agent_name: str = "pounce"
+    livekit_agent_name: str = "closer"
     # Small hosts (e.g. a 512 MB free instance): no pre-warmed job processes,
     # no turn-detector model (VAD-only end-of-turn), never report as "busy".
     low_resource_mode: bool = False
@@ -81,6 +81,16 @@ class Settings(BaseSettings):
     # Lookup results (contact details) are scrubbed after this many days.
     lead_finder_retention_days: int = 90
 
+    # ── Billing (Stripe) ─────────────────────────────────────────────────────
+    # Secret key (sk_live_… / sk_test_…) and webhook signing secret — backend only.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    # Optional explicit price ids for plans (otherwise looked up by lookup key — see billing/catalog.py).
+    stripe_price_solo: str = ""
+    stripe_price_teams: str = ""
+    # Included credits expire at the end of each billing cycle unless this is on.
+    included_credits_rollover: bool = False
+
     # ── Orange Slice ──────────────────────────────────────────────────────────
     orange_slice_api_key: str = ""
 
@@ -119,6 +129,16 @@ class Settings(BaseSettings):
         if url and "://" not in url:
             self.livekit_url = f"wss://{url}"
         return self
+
+    @property
+    def livekit_http_url(self) -> str:
+        """Server-side API calls (rooms, SIP, dispatch) go over http(s), not ws(s)."""
+        url = self.livekit_url
+        if url.startswith("wss://"):
+            return "https://" + url[len("wss://"):]
+        if url.startswith("ws://"):
+            return "http://" + url[len("ws://"):]
+        return url
 
     @property
     def api_base_url(self) -> str:
