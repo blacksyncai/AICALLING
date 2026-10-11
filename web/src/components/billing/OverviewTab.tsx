@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowRight, Coins, CreditCard, Hash, UserSearch } from "lucide-react";
+import { Coins, CreditCard, Hash, UserSearch } from "lucide-react";
 import type { ReactNode } from "react";
-import { Badge, Card, CardHeader } from "@/components/ui";
+import { Badge } from "@/components/ui";
+import { Card, CardHeader, PillAction, emptyCls, listCls, rowCls } from "./surface";
 import { cn } from "@/lib/utils";
 import { type Overview, fmtDate, fmtDateTime, usd } from "./types";
 import { UnitsToggle, amount, useUnits } from "./units";
@@ -13,18 +14,20 @@ function SummaryCard({ icon, title, value, sub, action, children }: {
   icon: ReactNode; title: string; value: ReactNode; sub?: ReactNode; action?: { label: string; onClick: () => void }; children?: ReactNode;
 }) {
   return (
-    <Card className="flex min-w-0 flex-col p-5">
-      <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
-        {icon}
+    <Card className="flex min-w-0 flex-col p-6">
+      <div className="flex items-center gap-2 text-sm font-medium text-zinc-500">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-brand-600">{icon}</span>
         {title}
       </div>
-      <div className="mt-2 font-display text-2xl font-semibold tabular-nums tracking-tight text-zinc-900">{value}</div>
-      {sub && <div className="mt-1 text-xs text-zinc-500">{sub}</div>}
+      <div className="mt-4 font-display text-3xl font-semibold tabular-nums tracking-tight text-zinc-900">{value}</div>
+      {sub && <div className="mt-1.5 text-xs text-zinc-500">{sub}</div>}
       {children}
       {action && (
-        <button type="button" onClick={action.onClick} className="mt-auto inline-flex items-center gap-1 pt-4 text-sm font-medium text-brand-700 hover:text-brand-800">
-          {action.label} <ArrowRight className="h-3.5 w-3.5" />
-        </button>
+        <div className="mt-auto pt-5">
+          <PillAction onClick={action.onClick} tone="light">
+            {action.label}
+          </PillAction>
+        </div>
       )}
     </Card>
   );
@@ -91,7 +94,7 @@ export function OverviewTab({ overview: o, go }: { overview: Overview; go: Go })
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <Card className="min-w-0">
           <CardHeader title="Subscription breakdown" description="What renews each month" />
-          <dl className="divide-y divide-zinc-100 text-sm">
+          <dl className={listCls}>
             <Row label={plan.status === "none" ? "Plan" : `${plan.name} plan`} value={plan.status === "none" ? "—" : planCents ? usd(planCents) : "Custom"} />
             {plan.included_credits ? <Row label="Included credits" value={`${plan.included_credits.toLocaleString()} / month`} /> : null}
             <Row
@@ -103,27 +106,30 @@ export function OverviewTab({ overview: o, go }: { overview: Overview; go: Go })
               }
             />
             {phonesCents > 0 && <Row label="Additional numbers" value={usd(phonesCents)} />}
-            <Row label={<span className="font-medium text-zinc-900">Monthly total</span>} value={<span className="font-semibold">{usd(planCents + phonesCents)}</span>} />
+            <div className="my-1 flex items-center justify-between gap-4 rounded-xl bg-zinc-50 px-3 py-3">
+              <dt className="font-medium text-zinc-900">Monthly total</dt>
+              <dd className="font-display text-lg font-semibold tabular-nums text-zinc-900">{usd(planCents + phonesCents)}</dd>
+            </div>
             <Row
               label="Auto-recharge"
               value={o.auto_recharge.enabled ? `On — below ${o.auto_recharge.threshold} credits` : "Off"}
               tone={o.auto_recharge.last_error ? "amber" : undefined}
             />
           </dl>
-          {o.auto_recharge.last_error && <p className="px-5 pb-4 text-xs text-amber-700">{o.auto_recharge.last_error}</p>}
+          {o.auto_recharge.last_error && <p className="px-6 pb-5 text-xs text-amber-700">{o.auto_recharge.last_error}</p>}
         </Card>
 
         <Card className="min-w-0">
           <CardHeader title="Recent activity" />
           {o.activity.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-zinc-500">No billing activity yet.</p>
+            <p className={emptyCls}>No billing activity yet.</p>
           ) : (
-            <ul className="divide-y divide-zinc-100">
+            <ul className={listCls}>
               {o.activity.map((a) => {
                 const value = a.type === "credits" ? a.amount ?? 0 : a.amount_cents ?? 0;
                 const positive = value > 0;
                 return (
-                  <li key={`${a.type}-${a.id}`} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                  <li key={`${a.type}-${a.id}`} className={cn("flex items-center gap-3", rowCls)}>
                     <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full", a.type === "credits" ? "bg-brand-50 text-brand-600" : "bg-sky-50 text-sky-600")}>
                       {a.type === "credits" ? <Coins className="h-3.5 w-3.5" /> : <UserSearch className="h-3.5 w-3.5" />}
                     </span>
@@ -148,7 +154,7 @@ export function OverviewTab({ overview: o, go }: { overview: Overview; go: Go })
 
 function Row({ label, value, tone }: { label: ReactNode; value: ReactNode; tone?: "amber" }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-3">
+    <div className="flex items-center justify-between gap-4 rounded-xl px-3 py-2.5">
       <dt className="text-zinc-500">{label}</dt>
       <dd className={cn("text-right tabular-nums text-zinc-800", tone === "amber" && "text-amber-700")}>{value}</dd>
     </div>

@@ -309,11 +309,11 @@ def test_included_credits_spent_first_and_expire_purchased_never(client, make_cl
 
     # Plan change: preview first, explicit confirm, upgrade tops up included credits.
     pv = c.post("/api/billing/plans/teams/preview").json()
-    assert pv["upgrade"] is True and pv["amount_due_now_cents"] == 15000 and pv["included_credits_now"] == 550
+    assert pv["upgrade"] is True and pv["amount_due_now_cents"] == 15000 and pv["included_credits_now"] == 350
     assert c.post("/api/billing/plans/teams/change", json={}).status_code == 400
     stripe.prices["plan_teams_monthly"]["id"] = "price_teams"
     assert c.post("/api/billing/plans/teams/change", json={"confirm": True}).status_code == 200
-    assert c.get("/api/billing/overview").json()["credits"]["included"] == 700
+    assert c.get("/api/billing/overview").json()["credits"]["included"] == 500
 
 
 def test_unknown_plan_is_preserved_read_only(client, make_client, stripe):

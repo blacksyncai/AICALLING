@@ -17,14 +17,20 @@ PLANS: dict[str, dict] = {
     "solo": {
         "key": "solo", "name": "Solo", "amount_cents": 9800, "interval": "month", "included_credits": 150,
         "lookup_key": "plan_solo_monthly", "price_env": "stripe_price_solo",
-        "features": ["150 calling credits included every billing cycle", "AI calling agents", "Agent configuration and management",
-                     "Calling campaigns", "Usage reporting", "Buy additional credits any time"],
+        "tagline": "For one person getting started with AI calling.",
+        "features_title": "What's included",
+        "features": ["150 AI calling credits every month", "Up to 2 AI calling agents", "1 phone number included",
+                     "Build agents with AI from your website", "Calling campaigns and call recordings",
+                     "Usage reporting", "Buy more credits any time"],
     },
     "teams": {
-        "key": "teams", "name": "Teams", "amount_cents": 29600, "interval": "month", "included_credits": 700,
+        "key": "teams", "name": "Teams", "amount_cents": 29600, "interval": "month", "included_credits": 500,
         "lookup_key": "plan_teams_monthly", "price_env": "stripe_price_teams",
-        "features": ["700 calling credits included every billing cycle", "Team agent management", "Invite team members",
-                     "Calling campaigns", "Usage reporting", "Buy additional credits any time"],
+        "tagline": "For teams running calling campaigns together.",
+        "features_title": "Everything in Solo, plus",
+        "features": ["500 AI calling credits every month", "Invite up to 10 team members",
+                     "More AI calling agents for every role", "Shared agents, contacts and campaigns",
+                     "Usage and results by agent", "Lower cost per included credit"],
     },
 }
 PLAN_ORDER = ["solo", "teams"]

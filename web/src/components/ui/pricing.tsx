@@ -41,24 +41,29 @@ export function PricingHeading({ title, description, action }: { title: string; 
 }
 
 /** "$98" that counts to its value (USD, whole or cents). */
-export function Price({ cents, className }: { cents: number; className?: string }) {
+export function Price({ cents, className, dark }: { cents: number; className?: string; dark?: boolean }) {
   const value = cents / 100;
   return (
     <NumberFlow
       value={value}
       format={{ style: "currency", currency: "USD", maximumFractionDigits: Number.isInteger(value) ? 0 : 2 }}
-      className={cn("font-display font-semibold tabular-nums tracking-tight text-zinc-900", className)}
+      className={cn("font-display font-semibold tabular-nums tracking-tight", dark ? "text-white" : "text-zinc-900", className)}
     />
   );
 }
 
-export function CheckItem({ children }: { children: ReactNode }) {
+export function CheckItem({ children, dark }: { children: ReactNode; dark?: boolean }) {
   return (
     <li className="flex items-start gap-3">
-      <span className="mt-0.5 grid h-5 w-5 shrink-0 place-content-center rounded-full border border-brand-500 bg-white">
-        <Check className="h-3 w-3 text-brand-600" strokeWidth={3} />
+      <span
+        className={cn(
+          "mt-0.5 grid h-5 w-5 shrink-0 place-content-center rounded-full border",
+          dark ? "border-brand-400/60 bg-brand-500/15" : "border-brand-500 bg-white",
+        )}
+      >
+        <Check className={cn("h-3 w-3", dark ? "text-brand-300" : "text-brand-600")} strokeWidth={3} />
       </span>
-      <span className="text-sm text-zinc-700">{children}</span>
+      <span className={cn("text-sm", dark ? "text-zinc-200" : "text-zinc-700")}>{children}</span>
     </li>
   );
 }
@@ -83,7 +88,7 @@ export function PricingButton({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "flex h-12 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500",
+        "flex h-12 w-full items-center justify-center gap-2 rounded-full text-sm font-semibold transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500",
         tone === "brand" && "border border-brand-400 bg-gradient-to-t from-brand-600 to-brand-500 text-white shadow-lg shadow-brand-500/30 hover:from-brand-700 hover:to-brand-600",
         tone === "dark" && "border border-zinc-700 bg-gradient-to-t from-zinc-950 to-zinc-700 text-white shadow-lg shadow-zinc-900/20 hover:to-zinc-800",
         tone === "muted" && "border border-zinc-200 bg-white text-zinc-500",
@@ -107,7 +112,11 @@ export function PricingCard({
   features,
   featuresTitle,
   footer,
+  sub,
+  variant = "light",
 }: {
+  /** "dark": the premium card (near-black with an orange glow). */
+  variant?: "light" | "dark";
   index?: number;
   name: string;
   description?: ReactNode;
@@ -119,31 +128,49 @@ export function PricingCard({
   features?: ReactNode[];
   featuresTitle?: string;
   footer: ReactNode;
+  /** A line under the price, e.g. "500 AI calling credits every month". */
+  sub?: ReactNode;
 }) {
+  const dark = variant === "dark";
   return (
     <Reveal index={index} className="h-full">
       <div
         className={cn(
-          "relative flex h-full flex-col rounded-2xl border p-6 transition-shadow",
-          highlighted ? "border-brand-200 bg-brand-50/60 shadow-sm ring-2 ring-brand-500" : "border-zinc-200 bg-white hover:shadow-md",
+          "relative flex h-full flex-col overflow-hidden rounded-3xl p-7 transition-shadow",
+          dark
+            ? "bg-zinc-950 text-white shadow-xl shadow-brand-900/20 ring-1 ring-brand-500/40"
+            : highlighted
+              ? "bg-brand-50/60 shadow-sm ring-2 ring-brand-500"
+              : "bg-white shadow-[0_1px_3px_rgba(33,27,24,0.05),0_8px_24px_-12px_rgba(33,27,24,0.08)] ring-1 ring-zinc-900/[0.06] hover:shadow-md",
         )}
       >
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="text-xl font-semibold text-zinc-900">{name}</h3>
+        {dark && (
+          <>
+            <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-brand-500/30 blur-3xl" />
+            <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(45deg,#a1a1aa_0px_1px,transparent_1px_12px)] opacity-[0.07] mask-[radial-gradient(ellipse_70%_50%_at_100%_0%,#000_60%,transparent_100%)]" />
+          </>
+        )}
+        <div className="relative flex items-start justify-between gap-2">
+          <h3 className={cn("text-xl font-semibold", dark ? "text-white" : "text-zinc-900")}>{name}</h3>
           {badge}
         </div>
-        {description && <p className="mt-1 text-sm text-zinc-600">{description}</p>}
-        <div className="mt-4 flex items-baseline gap-1">
-          <Price cents={cents} className="text-4xl" />
-          {period && <span className="text-sm text-zinc-500">/{period}</span>}
+        {description && <p className={cn("relative mt-1 text-sm", dark ? "text-zinc-400" : "text-zinc-600")}>{description}</p>}
+        <div className="relative mt-5 flex items-baseline gap-1">
+          <Price cents={cents} className="text-5xl" dark={dark} />
+          {period && <span className={cn("text-sm", dark ? "text-zinc-400" : "text-zinc-500")}>/{period}</span>}
         </div>
-        <div className="mt-5">{footer}</div>
+        {sub && <div className={cn("relative mt-1 text-sm font-medium", dark ? "text-brand-300" : "text-brand-700")}>{sub}</div>}
+        <div className="relative mt-6">{footer}</div>
         {features && features.length > 0 && (
-          <div className="mt-6 flex-1 border-t border-zinc-200/80 pt-5">
-            {featuresTitle && <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">{featuresTitle}</p>}
-            <ul className="space-y-2.5">
+          <div className={cn("relative mt-7 flex-1 border-t pt-6", dark ? "border-white/10" : "border-zinc-200/80")}>
+            {featuresTitle && (
+              <p className={cn("mb-4 text-xs font-semibold uppercase tracking-widest", dark ? "text-zinc-400" : "text-zinc-500")}>{featuresTitle}</p>
+            )}
+            <ul className="space-y-3">
               {features.map((f, i) => (
-                <CheckItem key={i}>{f}</CheckItem>
+                <CheckItem key={i} dark={dark}>
+                  {f}
+                </CheckItem>
               ))}
             </ul>
           </div>
@@ -153,9 +180,16 @@ export function PricingCard({
   );
 }
 
-export function PillBadge({ children, tone = "brand" }: { children: ReactNode; tone?: "brand" | "dark" }) {
+export function PillBadge({ children, tone = "brand" }: { children: ReactNode; tone?: "brand" | "dark" | "light" }) {
   return (
-    <span className={cn("shrink-0 rounded-full px-3 py-1 text-xs font-semibold", tone === "brand" ? "bg-brand-500 text-white" : "bg-zinc-900 text-white")}>
+    <span
+      className={cn(
+        "shrink-0 rounded-full px-3 py-1 text-xs font-semibold",
+        tone === "brand" && "bg-brand-500 text-white shadow-sm shadow-brand-500/40",
+        tone === "dark" && "bg-zinc-900 text-white",
+        tone === "light" && "bg-white/10 text-white ring-1 ring-white/20",
+      )}
+    >
       {children}
     </span>
   );

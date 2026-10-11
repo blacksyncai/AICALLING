@@ -29,14 +29,14 @@ export function useUnits(): [Units, (u: Units) => void] {
 
 export function UnitsToggle({ units, onChange }: { units: Units; onChange: (u: Units) => void }) {
   return (
-    <div className="inline-flex rounded-lg bg-zinc-100 p-0.5 text-xs font-medium" role="group" aria-label="Show amounts in">
+    <div className="inline-flex rounded-full bg-zinc-100 p-0.5 text-xs font-medium" role="group" aria-label="Show amounts in">
       {(["credits", "usd"] as const).map((u) => (
         <button
           key={u}
           type="button"
           onClick={() => onChange(u)}
           aria-pressed={units === u}
-          className={cn("rounded-md px-2.5 py-1 transition-colors", units === u ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+          className={cn("rounded-full px-3 py-1 transition-colors", units === u ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
         >
           {u === "credits" ? "Credits" : "$ estimate"}
         </button>

@@ -4,7 +4,8 @@ import { Coins, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Spinner, Toggle } from "@/components/ui";
+import { Badge, Button, Field, Input, Notice, Select, Spinner, Toggle } from "@/components/ui";
+import { Card, CardHeader, emptyCls, listCls, rowCls } from "./surface";
 import { fetcher, post, put } from "@/lib/api";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { cn } from "@/lib/utils";
@@ -110,11 +111,11 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
         <Card className="min-w-0">
           <CardHeader title="Usage by agent" description="Last 30 days" />
           {data.usage_by_agent.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-zinc-500">No calls billed yet.</p>
+            <p className={emptyCls}>No calls billed yet.</p>
           ) : (
-            <ul className="divide-y divide-zinc-100 text-sm">
+            <ul className={listCls}>
               {data.usage_by_agent.map((u) => (
-                <li key={u.agent_id ?? "none"} className="flex items-center justify-between gap-3 px-5 py-2.5">
+                <li key={u.agent_id ?? "none"} className={cn("flex items-center justify-between gap-3", rowCls)}>
                   <span className="min-w-0">
                     <span className="block truncate font-medium text-zinc-800">{u.agent_name}</span>
                     <span className="text-xs text-zinc-500">{u.calls} calls · {u.minutes} min</span>
@@ -128,22 +129,22 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
         <Card className="min-w-0">
           <CardHeader title="Credit history" />
           {data.ledger.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-zinc-500">No credit activity yet.</p>
+            <p className={emptyCls}>No credit activity yet.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[480px] text-sm">
                 <thead>
-                  <tr className="border-b border-zinc-100 text-left text-xs text-zinc-500">
-                    <th className="px-5 py-2 font-medium">When</th>
+                  <tr className="text-left text-xs text-zinc-400">
+                    <th className="px-6 py-2.5 font-medium">When</th>
                     <th className="px-3 py-2 font-medium">What</th>
                     <th className="px-3 py-2 text-right font-medium">Change</th>
-                    <th className="px-5 py-2 text-right font-medium">Balance</th>
+                    <th className="px-6 py-2.5 text-right font-medium">Balance</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100">
+                <tbody>
                   {data.ledger.map((t) => (
-                    <tr key={t.id}>
-                      <td className="whitespace-nowrap px-5 py-2 text-xs text-zinc-500">{fmtDateTime(t.created_at)}</td>
+                    <tr key={t.id} className="transition-colors hover:bg-zinc-50">
+                      <td className="whitespace-nowrap px-6 py-2.5 text-xs text-zinc-500">{fmtDateTime(t.created_at)}</td>
                       <td className="px-3 py-2">
                         <span className="text-xs font-medium text-zinc-500">{KIND_LABEL[t.kind] ?? t.kind}</span>
                         <span className="block text-zinc-800">{t.note}</span>
@@ -152,7 +153,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
                         {t.amount > 0 ? "+" : ""}
                         {t.amount.toLocaleString()}
                       </td>
-                      <td className="px-5 py-2 text-right font-mono tabular-nums text-zinc-500">{t.balance_after.toLocaleString()}</td>
+                      <td className="px-6 py-2.5 text-right font-mono tabular-nums text-zinc-500">{t.balance_after.toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -275,16 +276,16 @@ function AutoRecharge({ canManage, packs }: { canManage: boolean; packs: Catalog
             <div className="flex flex-wrap gap-2">
               {data.enabled ? (
                 <>
-                  <Button variant="primary" loading={saving} onClick={() => void save(true)} disabled={!form.consent}>
+                  <Button className="rounded-full!" variant="primary" loading={saving} onClick={() => void save(true)} disabled={!form.consent}>
                     Save changes
                   </Button>
-                  <Button loading={saving} onClick={() => void save(false)}>
+                  <Button className="rounded-full!" loading={saving} onClick={() => void save(false)}>
                     Turn off
                   </Button>
                   {!form.consent && <span className="self-center text-xs text-zinc-500">Changing settings needs your authorization again — tick below.</span>}
                 </>
               ) : (
-                <Button variant="primary" loading={saving} onClick={() => void save(true)} disabled={!form.consent || !data.card}>
+                <Button className="rounded-full!" variant="primary" loading={saving} onClick={() => void save(true)} disabled={!form.consent || !data.card}>
                   Turn on auto-recharge
                 </Button>
               )}

@@ -4,7 +4,8 @@ import { ExternalLink } from "lucide-react";
 import { useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Button, Card, Modal, Notice, Spinner } from "@/components/ui";
+import { Button, Modal, Notice, Spinner } from "@/components/ui";
+import { Card } from "./surface";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
 import { type Catalog, type Plan, fmtDate, usd } from "./types";
@@ -104,18 +105,22 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
       <div className="grid gap-4 md:grid-cols-2">
         {data.plans.map((p, i) => {
           const isCurrent = live && current.plan_key === p.key;
-          const featured = isCurrent || (!live && i === data.plans.length - 1);
+          const premium = p.key === "teams";
           return (
             <PricingCard
               key={p.key}
               index={i}
               name={p.name}
-              description={`${p.included_credits.toLocaleString()} calling credits included every month`}
+              description={p.tagline}
               cents={p.amount_cents}
               period={p.interval}
-              highlighted={featured}
-              badge={isCurrent ? <PillBadge tone="dark">Current plan</PillBadge> : featured ? <PillBadge>Best value</PillBadge> : null}
-              featuresTitle="Includes"
+              sub={`${p.included_credits.toLocaleString()} AI calling credits every month`}
+              variant={premium ? "dark" : "light"}
+              highlighted={isCurrent && !premium}
+              badge={
+                isCurrent ? <PillBadge tone={premium ? "light" : "dark"}>Current plan</PillBadge> : premium ? <PillBadge>Most popular</PillBadge> : null
+              }
+              featuresTitle={p.features_title ?? "Includes"}
               features={p.features}
               footer={
                 isCurrent ? (
@@ -124,12 +129,12 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
                   </PricingButton>
                 ) : (
                   <PricingButton
-                    tone={featured ? "brand" : "dark"}
+                    tone={premium ? "brand" : "dark"}
                     loading={busy === p.key}
                     disabled={!canManage || !p.available || !!busy || (live && current.managed === false)}
                     onClick={() => void choose(p)}
                   >
-                    {!p.available ? "Not available yet" : live ? `Switch to ${p.name}` : `Choose ${p.name}`}
+                    {!p.available ? "Not available yet" : live ? `Switch to ${p.name}` : `Get ${p.name}`}
                   </PricingButton>
                 )
               }
@@ -151,15 +156,15 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => void portal()} loading={busy === "portal"}>
+            <Button className="rounded-full!" onClick={() => void portal()} loading={busy === "portal"}>
               <ExternalLink className="h-4 w-4" /> Manage in Stripe
             </Button>
             {current.cancel_at_period_end ? (
-              <Button variant="primary" onClick={() => void cancel(true)} loading={busy === "cancel"}>
+              <Button className="rounded-full!" variant="primary" onClick={() => void cancel(true)} loading={busy === "cancel"}>
                 Keep my plan
               </Button>
             ) : (
-              <Button onClick={() => void cancel(false)} loading={busy === "cancel"}>
+              <Button className="rounded-full!" onClick={() => void cancel(false)} loading={busy === "cancel"}>
                 Cancel plan
               </Button>
             )}
@@ -197,8 +202,8 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
               </div>
             </dl>
             <div className="flex justify-end gap-2">
-              <Button onClick={() => setPreview(null)}>Keep current plan</Button>
-              <Button variant="primary" loading={confirming} onClick={() => void confirmChange()}>
+              <Button className="rounded-full!" onClick={() => setPreview(null)}>Keep current plan</Button>
+              <Button className="rounded-full!" variant="primary" loading={confirming} onClick={() => void confirmChange()}>
                 Confirm and switch
               </Button>
             </div>

@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Card, CardHeader, Notice, Spinner } from "@/components/ui";
+import { Notice, Spinner } from "@/components/ui";
+import { Card, CardHeader, emptyCls, listCls, rowCls } from "./surface";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -104,11 +105,11 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
       <Card>
         <CardHeader title="Lookup balance history" />
         {data.ledger.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">No activity yet.</p>
+          <p className={emptyCls}>No activity yet.</p>
         ) : (
-          <ul className="divide-y divide-zinc-100 text-sm">
+          <ul className={listCls}>
             {data.ledger.map((t) => (
-              <li key={t.id} className="flex items-center justify-between gap-3 px-5 py-2.5">
+              <li key={t.id} className={cn("flex items-center justify-between gap-3", rowCls)}>
                 <span className="min-w-0">
                   <span className="block truncate text-zinc-800">{t.note || t.kind}</span>
                   <span className="text-xs text-zinc-400">{fmtDateTime(t.created_at)}</span>

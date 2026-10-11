@@ -80,6 +80,8 @@ export interface Plan {
   interval: string;
   included_credits: number;
   features: string[];
+  tagline?: string;
+  features_title?: string;
   available: boolean;
 }
 

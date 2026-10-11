@@ -4,7 +4,9 @@ import { CreditCard, Download, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
+import { Badge, Button, Notice, Spinner } from "@/components/ui";
+import { Card, CardHeader, emptyCls, listCls, rowCls } from "./surface";
+import { cn } from "@/lib/utils";
 import { fetcher, post } from "@/lib/api";
 import { type Card as CardInfo, type Purchase, fmtDate, fmtDateTime, usd } from "./types";
 
@@ -50,9 +52,9 @@ export function InvoicesTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <Card className="flex flex-wrap items-center justify-between gap-4 p-5">
+      <Card className="flex flex-wrap items-center justify-between gap-4 p-6">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-100">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-100">
             <CreditCard className="h-5 w-5 text-zinc-500" />
           </span>
           <div>
@@ -65,7 +67,7 @@ export function InvoicesTab({ canManage }: { canManage: boolean }) {
           </div>
         </div>
         {canManage && data.has_billing_profile && (
-          <Button onClick={() => void portal()} loading={opening}>
+          <Button className="rounded-full!" onClick={() => void portal()} loading={opening}>
             <ExternalLink className="h-4 w-4" /> Update payment method
           </Button>
         )}
@@ -77,11 +79,11 @@ export function InvoicesTab({ canManage }: { canManage: boolean }) {
       <Card className="min-w-0">
         <CardHeader title="Invoices" description="Subscription and add-on invoices" />
         {data.invoices.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">No invoices yet.</p>
+          <p className={emptyCls}>No invoices yet.</p>
         ) : (
-          <ul className="divide-y divide-zinc-100 text-sm">
+          <ul className={listCls}>
             {data.invoices.map((i) => (
-              <li key={i.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+              <li key={i.id} className={cn("flex flex-wrap items-center gap-3", rowCls)}>
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium text-zinc-800">{i.number ?? i.id}</span>
                   <span className="text-xs text-zinc-500">{fmtDate(i.created)}</span>
@@ -109,11 +111,11 @@ export function InvoicesTab({ canManage }: { canManage: boolean }) {
       <Card className="min-w-0">
         <CardHeader title="One-time purchases" description="Credit packs, lookup funds and auto-recharges" />
         {data.purchases.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">No purchases yet.</p>
+          <p className={emptyCls}>No purchases yet.</p>
         ) : (
-          <ul className="divide-y divide-zinc-100 text-sm">
+          <ul className={listCls}>
             {data.purchases.map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+              <li key={p.id} className={cn("flex flex-wrap items-center gap-3", rowCls)}>
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium text-zinc-800">
                     {PURCHASE_LABEL[p.kind]}
