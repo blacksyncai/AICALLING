@@ -20,12 +20,13 @@ export function Button({
     <button
       disabled={disabled || loading}
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500",
+        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-[background-color,box-shadow,transform,color] duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500",
         size === "sm" ? "h-8 px-3 text-xs" : "h-9 px-4 text-sm",
-        variant === "primary" && "bg-brand-600 text-white hover:bg-brand-700",
-        variant === "secondary" && "border border-zinc-200 bg-white text-zinc-800 hover:bg-zinc-50",
+        variant === "primary" &&
+          "bg-gradient-to-b from-brand-500 to-brand-600 text-white shadow-[0_1px_2px_rgba(185,58,20,0.35),inset_0_1px_0_rgba(255,255,255,0.18)] hover:from-brand-600 hover:to-brand-700",
+        variant === "secondary" && "border border-zinc-200 bg-white text-zinc-800 shadow-xs hover:border-zinc-300 hover:bg-zinc-50",
         variant === "ghost" && "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
-        variant === "danger" && "bg-red-600 text-white hover:bg-red-700",
+        variant === "danger" && "bg-red-600 text-white shadow-[0_1px_2px_rgba(185,28,28,0.3)] hover:bg-red-700",
         className,
       )}
       {...props}
@@ -37,7 +38,11 @@ export function Button({
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cn("rounded-xl border border-zinc-200 bg-white shadow-xs", className)}>{children}</div>;
+  return (
+    <div className={cn("rounded-xl border border-zinc-200/80 bg-white shadow-[0_1px_2px_rgba(33,27,24,0.04),0_2px_8px_-2px_rgba(33,27,24,0.05)]", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function CardHeader({ title, description, action }: { title: ReactNode; description?: ReactNode; action?: ReactNode }) {
@@ -56,8 +61,8 @@ export function PageHeader({ title, description, action }: { title: string; desc
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">{title}</h1>
-        {description && <p className="mt-1 text-sm text-zinc-500">{description}</p>}
+        <h1 className="font-display text-[26px] font-semibold leading-tight tracking-tight text-zinc-900">{title}</h1>
+        {description && <p className="mt-1.5 text-sm text-zinc-500">{description}</p>}
       </div>
       {action}
     </div>
@@ -65,7 +70,7 @@ export function PageHeader({ title, description, action }: { title: string; desc
 }
 
 const fieldBase =
-  "w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100";
+  "w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 shadow-xs transition-[border-color,box-shadow] placeholder:text-zinc-400 hover:border-zinc-300 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10 disabled:bg-zinc-50 disabled:text-zinc-500";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...props },
@@ -101,14 +106,14 @@ export function Toggle({ checked, onChange, label, description }: { checked: boo
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className="flex w-full items-start justify-between gap-4 rounded-lg border border-zinc-200 p-3 text-left hover:bg-zinc-50"
+      className="flex w-full items-start justify-between gap-4 rounded-lg border border-zinc-200 p-3 text-left transition-colors hover:border-zinc-300 hover:bg-zinc-50/60"
     >
       <span>
         <span className="block text-sm font-medium text-zinc-900">{label}</span>
         {description && <span className="mt-0.5 block text-xs text-zinc-500">{description}</span>}
       </span>
-      <span className={cn("relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors", checked ? "bg-brand-600" : "bg-zinc-300")}>
-        <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all", checked ? "left-[18px]" : "left-0.5")} />
+      <span className={cn("relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors duration-200", checked ? "bg-brand-600" : "bg-zinc-300")}>
+        <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all duration-200", checked ? "left-[18px]" : "left-0.5")} />
       </span>
     </button>
   );
@@ -126,7 +131,7 @@ const tones = {
 
 export function Badge({ tone = "gray", children, className }: { tone?: keyof typeof tones; children: ReactNode; className?: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-transparent", tones[tone], className)}>
+    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-transparent", tones[tone], className)}>
       {children}
     </span>
   );
@@ -141,15 +146,21 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-zinc-900/40 p-4 pt-[10vh]" onMouseDown={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-zinc-950/40 p-4 pt-[10vh] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0"
+      onMouseDown={onClose}
+    >
       <div
-        className={cn("w-full rounded-2xl bg-white shadow-2xl", wide ? "max-w-3xl" : "max-w-lg")}
+        className={cn(
+          "w-full rounded-2xl bg-white shadow-2xl ring-1 ring-zinc-900/5 transition duration-200 ease-out starting:translate-y-2 starting:scale-[0.98] starting:opacity-0",
+          wide ? "max-w-3xl" : "max-w-lg",
+        )}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal
       >
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
-          <h2 className="text-base font-semibold">{title}</h2>
+          <h2 className="font-display text-base font-semibold">{title}</h2>
           <button onClick={onClose} className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
@@ -162,14 +173,14 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 
 export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (v: T) => void; tabs: { value: T; label: string; icon?: ReactNode }[] }) {
   return (
-    <div className="flex gap-1 rounded-lg bg-zinc-100 p-1">
+    <div className="flex gap-1 rounded-xl bg-zinc-100/80 p-1 ring-1 ring-inset ring-zinc-200/60">
       {tabs.map((t) => (
         <button
           key={t.value}
           onClick={() => onChange(t.value)}
           className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-            value === t.value ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800",
+            "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-150",
+            value === t.value ? "bg-white text-zinc-900 shadow-[0_1px_2px_rgba(33,27,24,0.08),0_1px_1px_rgba(33,27,24,0.04)]" : "text-zinc-500 hover:text-zinc-800",
           )}
         >
           {t.icon}
@@ -183,7 +194,7 @@ export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; on
 export function EmptyState({ icon, title, description, action }: { icon: ReactNode; title: string; description: string; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-50 text-brand-600">{icon}</div>
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-b from-brand-50 to-brand-100/70 text-brand-600 ring-1 ring-inset ring-brand-200/60">{icon}</div>
       <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
       <p className="mt-1 max-w-sm text-sm text-zinc-500">{description}</p>
       {action && <div className="mt-5">{action}</div>}

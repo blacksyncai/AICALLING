@@ -13,19 +13,41 @@ import { cn } from "@/lib/utils";
 import { SearchButton } from "./CommandPalette";
 import { Logo } from "./Logo";
 
-const NAV = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
-  { href: "/contacts", label: "Contacts", icon: Contact },
-  { href: "/lead-finder", label: "Lead Finder", icon: UserSearch },
-  { href: "/campaigns", label: "Campaigns", icon: Megaphone },
-  { href: "/meetings", label: "Meetings", icon: CalendarCheck },
-  { href: "/calls", label: "Call Logs", icon: PhoneCall },
-  { href: "/phone-numbers", label: "Phone Numbers", icon: Hash },
-  { href: "/billing", label: "Billing & Usage", icon: CreditCard },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true },
+type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean };
+
+const NAV: { title: string | null; items: NavItem[] }[] = [
+  { title: null, items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] },
+  {
+    title: "Build",
+    items: [
+      { href: "/agents", label: "Agents", icon: Bot },
+      { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+      { href: "/phone-numbers", label: "Phone Numbers", icon: Hash },
+    ],
+  },
+  {
+    title: "Reach",
+    items: [
+      { href: "/contacts", label: "Contacts", icon: Contact },
+      { href: "/lead-finder", label: "Lead Finder", icon: UserSearch },
+      { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+    ],
+  },
+  {
+    title: "Results",
+    items: [
+      { href: "/calls", label: "Call Logs", icon: PhoneCall },
+      { href: "/meetings", label: "Meetings", icon: CalendarCheck },
+      { href: "/analytics", label: "Analytics", icon: BarChart3 },
+    ],
+  },
+  {
+    title: "Account",
+    items: [
+      { href: "/billing", label: "Billing & Usage", icon: CreditCard },
+      { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true },
+    ],
+  },
 ];
 
 function NavLink({ href, label, icon: Icon, onClick }: { href: string; label: string; icon: typeof Bot; onClick: () => void }) {
@@ -35,12 +57,16 @@ function NavLink({ href, label, icon: Icon, onClick }: { href: string; label: st
     <Link
       href={href}
       onClick={onClick}
+      aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white",
+        "group relative flex items-center gap-3 rounded-lg px-3 py-[7px] text-[13px] font-medium transition-colors",
+        active
+          ? "bg-gradient-to-r from-white/[0.11] to-white/[0.04] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+          : "text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-100",
       )}
     >
-      <Icon className="h-4 w-4" />
+      {active && <span className="absolute inset-y-1.5 left-0 w-[3px] rounded-full bg-brand-500 shadow-[0_0_10px_rgba(236,101,60,0.7)]" />}
+      <Icon className={cn("h-4 w-4 transition-colors", active ? "text-brand-400" : "text-zinc-500 group-hover:text-zinc-300")} />
       {label}
     </Link>
   );
@@ -55,7 +81,7 @@ function CreditsPill({ onClick }: { onClick: () => void }) {
     <Link
       href="/billing"
       onClick={onClick}
-      className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5 text-xs hover:bg-white/10"
+      className="flex items-center justify-between rounded-lg bg-white/[0.04] px-3 py-2.5 text-xs ring-1 ring-inset ring-white/[0.06] transition-colors hover:bg-white/[0.08]"
     >
       <span className="flex items-center gap-2 text-zinc-400">
         <Coins className={cn("h-4 w-4", low ? "text-amber-400" : "text-brand-400")} />
@@ -157,10 +183,23 @@ export function Sidebar() {
       <div className="px-3 pb-2">
         <SearchButton className="w-full" />
       </div>
-      <div className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
-        {NAV.filter((n) => !n.managersOnly || manager).map((n) => (
-          <NavLink key={n.href} {...n} onClick={close} />
-        ))}
+      <div className="scroll-thin flex-1 overflow-y-auto px-3 py-2">
+        {NAV.map((section, i) => {
+          const items = section.items.filter((n) => !n.managersOnly || manager);
+          if (!items.length) return null;
+          return (
+            <div key={section.title ?? i} className={cn(i > 0 && "mt-4")}>
+              {section.title && (
+                <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-600">{section.title}</div>
+              )}
+              <div className="space-y-0.5">
+                {items.map((n) => (
+                  <NavLink key={n.href} href={n.href} label={n.label} icon={n.icon} onClick={close} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
       <div className="space-y-2 border-t border-white/10 p-3">
         <CreditsPill onClick={close} />
@@ -181,7 +220,7 @@ export function Sidebar() {
       {open && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={close} />}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 w-60 bg-zinc-950 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 w-60 border-r border-white/[0.06] bg-zinc-950 bg-[radial-gradient(420px_220px_at_0%_0%,rgba(236,101,60,0.10),transparent_70%)] transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >

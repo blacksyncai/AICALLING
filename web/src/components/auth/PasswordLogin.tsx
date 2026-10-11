@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { Logo } from "@/components/Logo";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { Button, Field, Input, Notice } from "@/components/ui";
 
 function LoginForm() {
@@ -28,12 +28,7 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
-      <Logo />
-      <div>
-        <h1 className="text-lg font-semibold">Sign in</h1>
-        <p className="text-sm text-zinc-500">Sign in to your BlackSync workspace.</p>
-      </div>
+    <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-2xl border border-zinc-200/80 bg-white p-7 shadow-[0_1px_2px_rgba(33,27,24,0.04),0_12px_32px_-12px_rgba(33,27,24,0.12)]">
       {error && <Notice tone="red">{error}</Notice>}
       <Field label="Email">
         <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
@@ -51,10 +46,10 @@ function LoginForm() {
 /** Built-in email/password sign-in, used until Clerk is configured (CLERK_SECRET_KEY). */
 export function PasswordLogin() {
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
+    <AuthShell title="Welcome back" subtitle="Sign in to your BlackSync workspace.">
       <Suspense>
         <LoginForm />
       </Suspense>
-    </main>
+    </AuthShell>
   );
 }

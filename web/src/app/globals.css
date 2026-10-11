@@ -11,9 +11,12 @@
   --color-brand-50: #fceee8;
   --color-brand-100: #fadccf;
   --color-brand-200: #f5bba3;
+  --color-brand-300: #f19a77;
+  --color-brand-400: #ee7f55;
   --color-brand-500: #ec653c;
   --color-brand-600: #dc4a1e;
   --color-brand-700: #b93a14;
+  --color-brand-800: #932f12;
 
   /* Warm neutral scale (replaces the cool default grays app-wide). */
   --color-zinc-50: #faf8f6;
@@ -31,7 +34,7 @@
 
 html,
 body {
-  background: #faf8f6;
+  background: #f8f6f3;
   color: #211b18;
   -webkit-font-smoothing: antialiased;
 }
@@ -64,4 +67,15 @@ h2,
   border-radius: 9999px;
   background: currentColor;
   animation: pulse-ring 1.4s ease-out infinite;
+}
+
+/* Soft warm light at the top of the workspace. */
+.app-canvas {
+  background:
+    radial-gradient(1200px 380px at 50% -120px, rgba(236, 101, 60, 0.07), transparent 70%),
+    #f8f6f3;
+}
+
+::selection {
+  background: rgba(236, 101, 60, 0.18);
 }
