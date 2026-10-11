@@ -918,7 +918,7 @@ def specialty_label(agent) -> str | None:
     return _TEMPLATE_SPECIALTY.get(getattr(agent, "template", "") or "")
 
 
-_TEMPLATE_SPECIALTY = {"sales_sdr": "Sales SDR", "appointment_setter": "Appointment Setter",
+_TEMPLATE_SPECIALTY = {"welcome_demo": "Welcome Demo", "sales_sdr": "Sales SDR", "appointment_setter": "Appointment Setter",
                        "real_estate": "Real Estate", "receptionist": "Receptionist"}
 
 

@@ -88,7 +88,7 @@ function CreditsPill({ onClick }: { onClick: () => void }) {
         Calling credits
       </span>
       <span className={cn("font-mono font-medium tabular-nums", low ? "text-amber-300" : "text-white")}>
-        {org.unlimited_credits ? "Unlimited" : org.credits_balance.toLocaleString()}
+        {org.unlimited_credits ? "Unlimited" : org.credits_balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </span>
     </Link>
   );

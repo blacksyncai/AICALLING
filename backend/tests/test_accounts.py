@@ -66,8 +66,8 @@ def test_credits_gate_and_bill_phone_calls(client, make_client, monkeypatch):
     r = client.post(f"/api/admin/orgs/{org['id']}/credits", json={"amount": 10, "note": "Trial"})
     assert r.status_code == 200 and r.json()["balance"] == 10
 
-    # A 2m05s answered call (after 20s of ringing) at 1 credit/min bills 2 whole credits, once;
-    # the remaining 0.08 credit carries to the account's next call.
+    # A 2m05s answered call (after 20s of ringing) bills exactly 2m05s at the agent's rate, once
+    # (ringing isn't billed).
     call_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
 
@@ -86,10 +86,13 @@ def test_credits_gate_and_bill_phone_calls(client, make_client, monkeypatch):
                            json={"outcome": "completed", "transcript": transcript}).status_code == 200
 
     credits = owner.get("/api/account/credits").json()
-    assert credits["balance"] == 8
-    assert [t["amount"] for t in credits["transactions"]] == [-2, 10]
     call = owner.get(f"/api/calls/{call_id}").json()
-    assert call["credits_charged"] == 2 and 120 <= call["duration_seconds"] <= 130
+    assert 125 <= call["duration_seconds"] <= 127
+    rate = owner.get(f"/api/billing/agents/{agent['id']}/rate").json()["credits_per_minute"]
+    used = round(call["duration_seconds"] * rate / 60, 3)
+    assert call["credits_used"] == used
+    assert credits["balance"] == round(10 - used, 3)
+    assert [t["amount"] for t in credits["transactions"]] == [-used, 10]
 
 
 def test_team_invites_roles_and_password(client, make_client):
@@ -232,3 +235,16 @@ def test_admin_portal_needs_its_password(client, make_client):
     _, email = _new_account(client, name="Nosy Co")
     owner = _login(make_client, email)
     assert owner.post("/api/admin/unlock", json={"password": "portal-pass-456"}).status_code == 403
+
+
+def test_new_accounts_start_with_the_welcome_demo(client, make_client):
+    org, email = _new_account(client, name="Fresh Co")
+    owner = _login(make_client, email)
+    agents = owner.get("/api/agents/").json()
+    assert len(agents) == 1
+    demo = agents[0]
+    assert demo["template"] == "welcome_demo" and demo["name"] == "Marissa"
+    assert demo["voice_id"] == "97f03c16-fab2-4747-b655-9caefbd68fcf" and demo["max_duration_seconds"] == 180
+    assert demo["first_message"].startswith("Hey, welcome to BlackSync AI!")
+    assert demo["specialty"] == "Welcome Demo"
+    assert "welcome_demo" not in [t["template"] for t in owner.get("/api/agents/templates/list").json()]

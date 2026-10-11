@@ -9,7 +9,7 @@ can belong to several, and a platform super-admin can open any of them.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import BigInteger, JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -118,6 +118,9 @@ class CreditTransaction(Base):
     # Positive adds credits, negative spends them.
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Exact values in thousandths of a credit (per-second call billing). NULL on older rows.
+    amount_milli: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    balance_after_milli: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # grant | usage | adjustment
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")

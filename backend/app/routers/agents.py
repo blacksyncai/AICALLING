@@ -135,7 +135,8 @@ def new_agent_from_template(key: str, name: str | None = None) -> Agent:
         success_criteria=t["success_criteria"],
         enable_booking=t["enable_booking"],
         llm_model=t.get("llm_model", "gpt-4.1-mini"),
-        voice_id=DEFAULT_VOICE_ID,
+        voice_id=t.get("voice_id", DEFAULT_VOICE_ID),
+        **({"max_duration_seconds": t["max_duration_seconds"]} if t.get("max_duration_seconds") else {}),
     )
 
 
@@ -144,7 +145,7 @@ def new_agent_from_template(key: str, name: str | None = None) -> Agent:
 
 @router.get("/templates/list")
 async def list_templates(_: CtxDep):
-    return [{k: t[k] for k in ("template", "name", "description", "enable_booking")} for t in TEMPLATES]
+    return [{k: t[k] for k in ("template", "name", "description", "enable_booking")} for t in TEMPLATES if not t.get("hidden")]
 
 
 @router.get("/")

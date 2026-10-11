@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Calendar, Clock, ExternalLink, RefreshCw, Sparkles, Wrench } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, Coins, ExternalLink, RefreshCw, Sparkles, Wrench } from "lucide-react";
 import Link from "next/link";
 import { use } from "react";
 import useSWR from "swr";
@@ -10,7 +10,7 @@ import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import type { Call } from "@/lib/types";
-import { cn, formatDateTime, formatDuration, humanize } from "@/lib/utils";
+import { cn, formatCredits, formatDateTime, formatDuration, humanize } from "@/lib/utils";
 
 function fmtTs(ts?: number) {
   if (ts === undefined) return "";
@@ -56,6 +56,11 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" /> {formatDuration(call.duration_seconds)}
             </span>
+            {call.credits_used != null && (
+              <span className="flex items-center gap-1" title="Billed per second of connected talk time at the agent's rate">
+                <Coins className="h-3 w-3" /> {call.credits_used ? `${formatCredits(call.credits_used)} credits` : "No charge (didn't connect)"}
+              </span>
+            )}
             <span>{call.call_type === "web" ? "Browser test" : `Phone · ${call.to_phone ?? ""}${call.from_phone ? ` (from ${call.from_phone})` : ""}`}</span>
             {call.agent_id && (
               <Link href={`/agents/${call.agent_id}`} className="text-brand-600 hover:underline">

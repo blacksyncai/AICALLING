@@ -43,6 +43,19 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt is not None and dt.tzinfo is None else dt
 
 
+def exact_balance_milli(org: Organization) -> int:
+    """The true balance in thousandths of a credit: whole credits minus the fraction already used."""
+    return max(0, (org.credits_balance or 0) * 1000 - (org.credit_carry_milli or 0))
+
+
+def exact(milli: int | None) -> float:
+    return round((milli or 0) / 1000, 3)
+
+
+# Calls that never connected (no answer, busy, failed dial) are never billed.
+UNBILLED_OUTCOMES = {"no_answer", "failed"}
+
+
 async def _live_lots(db: AsyncSession, org_id: uuid.UUID) -> list[CreditLot]:
     lots = (await db.execute(select(CreditLot).where(CreditLot.org_id == org_id, CreditLot.credits_remaining > 0)
                              .with_for_update())).scalars().all()
@@ -98,14 +111,16 @@ async def add_lot(db: AsyncSession, org: Organization, credits: int, *, source: 
     await db.flush()
     balance = await _change_balance(db, org, credits)
     db.add(CreditTransaction(org_id=org.id, amount=credits, balance_after=balance, kind=kind, note=note,
+                             amount_milli=credits * 1000, balance_after_milli=exact_balance_milli(org),
                              purchase_id=purchase_id, lot_id=lot.id, stripe_ref=stripe_ref, created_by=created_by))
     return lot
 
 
 async def consume(db: AsyncSession, org: Organization, amount: int, *, kind: str, note: str,
                   call_id: uuid.UUID | None = None, created_by: uuid.UUID | None = None,
-                  stripe_ref: str | None = None) -> tuple[int, int]:
-    """Spend up to `amount` credits, never below zero. Returns (taken, shortfall). Caller commits."""
+                  stripe_ref: str | None = None, record: bool = True) -> tuple[int, int]:
+    """Spend up to `amount` credits, never below zero. Returns (taken, shortfall). Caller commits.
+    record=False leaves the ledger row to the caller (calls write one exact row themselves)."""
     if amount <= 0:
         return 0, 0
     await reconcile(db, org)
@@ -113,8 +128,10 @@ async def consume(db: AsyncSession, org: Organization, amount: int, *, kind: str
     if taken:
         await _take_from_lots(db, org.id, taken)
         balance = await _change_balance(db, org, -taken)
-        db.add(CreditTransaction(org_id=org.id, amount=-taken, balance_after=balance, kind=kind, note=note,
-                                 call_id=call_id, stripe_ref=stripe_ref, created_by=created_by))
+        if record:
+            db.add(CreditTransaction(org_id=org.id, amount=-taken, balance_after=balance, kind=kind, note=note,
+                                     amount_milli=-taken * 1000, balance_after_milli=exact_balance_milli(org),
+                                     call_id=call_id, stripe_ref=stripe_ref, created_by=created_by))
     return taken, amount - taken
 
 
@@ -129,6 +146,7 @@ async def take_from_lot(db: AsyncSession, org: Organization, lot: CreditLot, amo
         await db.flush()
         balance = await _change_balance(db, org, -n)
         db.add(CreditTransaction(org_id=org.id, amount=-n, balance_after=balance, kind=kind, note=note,
+                                 amount_milli=-n * 1000, balance_after_milli=exact_balance_milli(org),
                                  lot_id=lot.id, purchase_id=lot.purchase_id, stripe_ref=stripe_ref))
     return n
 
@@ -150,7 +168,8 @@ async def expire_included(db: AsyncSession, org: Organization, *, before: dateti
     await db.flush()
     if total:
         balance = await _change_balance(db, org, -total)
-        db.add(CreditTransaction(org_id=org.id, amount=-total, balance_after=balance, kind="expired", note=note))
+        db.add(CreditTransaction(org_id=org.id, amount=-total, balance_after=balance, kind="expired", note=note,
+                                 amount_milli=-total * 1000, balance_after_milli=exact_balance_milli(org)))
     return total
 
 
@@ -199,7 +218,9 @@ async def breakdown(db: AsyncSession, org: Organization) -> dict:
         .scalars().all()
     included = [l for l in lots if l.source == "included"]
     return {
-        "balance": org.credits_balance or 0,
+        # What's really left after per-second usage (e.g. 148.92).
+        "balance": exact(exact_balance_milli(org)),
+        "balance_whole": org.credits_balance or 0,
         "included": sum(l.credits_remaining for l in included),
         "included_expires_at": min((_aware(l.expires_at) for l in included if l.expires_at), default=None),
         "purchased": sum(l.credits_remaining for l in lots if l.source in ("purchased", "auto_recharge")),
@@ -259,7 +280,12 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
 
     agent = await db.get(Agent, call.agent_id) if call.agent_id else None
     seconds = max(0, int(call.duration_seconds or 0))
+    # Only connected talk time is billed: a call that rang out, was busy or failed costs nothing.
+    if call.outcome in UNBILLED_OUTCOMES or (call.answered_at is None and seconds == 0):
+        seconds = 0
     rate = call.credit_rate if call.credit_rate is not None else await rate_for_agent(db, agent)
+    call.credit_rate = rate  # keep the rate this call was billed at
+    # Per second at the model's rate, kept to a thousandth of a credit: 66s at 1.0/min = 1.100 credits.
     exact_milli = round(seconds * rate * 1000 / 60)
     usage = CallUsage(org_id=org.id, call_id=call.id, agent_id=call.agent_id,
                       model=(agent.llm_model if agent else "") or "", voice_id=(agent.voice_id if agent else "") or "",
@@ -270,13 +296,21 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
         await db.flush()
         return usage
     await expire_due(db, org)
-    carry = (org.credit_carry_milli or 0) + exact_milli
-    whole, carry = divmod(carry, 1000)
+    await reconcile(db, org)
+    # Whole credits leave the lots as the used fraction adds up; the ledger row shows the exact amount.
+    old_carry = org.credit_carry_milli or 0
+    whole, carry = divmod(old_carry + exact_milli, 1000)
     mins = f"{seconds // 60}:{seconds % 60:02d}"
-    taken, shortfall = await consume(db, org, int(whole), kind="usage",
-                                     note=f"Call to {call.to_phone or 'contact'} · {mins} at {rate:g} credits/min",
-                                     call_id=call.id)
+    note = f"Call to {call.to_phone or 'contact'} · {mins} at {rate:g} credits/min"
+    taken, shortfall = await consume(db, org, int(whole), kind="usage", note=note, call_id=call.id, record=False)
+    if shortfall:
+        carry = 0  # the balance ran out; what it couldn't cover is recorded as the shortfall
     await db.execute(update(Organization).where(Organization.id == org.id).values(credit_carry_milli=carry))
+    org.credit_carry_milli = carry
+    billed_milli = taken * 1000 + carry - old_carry  # = exact_milli unless the balance ran out
+    db.add(CreditTransaction(org_id=org.id, amount=-taken, balance_after=org.credits_balance or 0, kind="usage", note=note,
+                             amount_milli=-max(0, billed_milli), balance_after_milli=exact_balance_milli(org),
+                             call_id=call.id))
     usage.credits_deducted, usage.shortfall = taken, shortfall
     call.credits_charged = taken
     await db.flush()

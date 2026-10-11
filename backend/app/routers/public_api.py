@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.services.billing.credits import exact, exact_balance_milli
 from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
@@ -66,7 +67,7 @@ async def _place_call(db, org, agent: Agent, lead: Lead | None, to_phone: str | 
 @router.get("/me")
 async def whoami(org: ApiOrgDep):
     """Check a key works (used by Zapier's connection test)."""
-    return {"account_id": str(org.id), "account_name": org.name, "credits_balance": org.credits_balance,
+    return {"account_id": str(org.id), "account_name": org.name, "credits_balance": exact(exact_balance_milli(org)),
             "unlimited_credits": org.unlimited_credits}
 
 

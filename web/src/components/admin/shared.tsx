@@ -130,4 +130,4 @@ export function CopyField({ label, value, mono = true }: { label: string; value:
   );
 }
 
-export const fmt = (n: number | null | undefined) => (n ?? 0).toLocaleString();
+export const fmt = (n: number | null | undefined) => (n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.billing.credits import exact, exact_balance_milli
 from app.config import settings
 from app.database import get_db
 from app.models.account import Invite, Membership, Organization, User
@@ -60,7 +61,7 @@ def org_to_dict(o: Organization) -> dict:
         "id": str(o.id),
         "name": o.name,
         "status": o.status,
-        "credits_balance": o.credits_balance,
+        "credits_balance": exact(exact_balance_milli(o)),
         "unlimited_credits": o.unlimited_credits,
         "timezone": o.timezone or DEFAULT_TIMEZONE,
         "lead_finder_enabled": o.lead_finder_enabled is not False,

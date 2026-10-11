@@ -151,9 +151,9 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
                       </td>
                       <td className={cn("px-3 py-2 text-right font-mono tabular-nums", t.amount > 0 ? "text-emerald-700" : "text-zinc-700")}>
                         {t.amount > 0 ? "+" : ""}
-                        {t.amount.toLocaleString()}
+                        {t.amount.toLocaleString(undefined, { maximumFractionDigits: 3 })}
                       </td>
-                      <td className="px-6 py-2.5 text-right font-mono tabular-nums text-zinc-500">{t.balance_after.toLocaleString()}</td>
+                      <td className="px-6 py-2.5 text-right font-mono tabular-nums text-zinc-500">{t.balance_after.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                     </tr>
                   ))}
                 </tbody>

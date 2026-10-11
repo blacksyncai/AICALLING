@@ -11,6 +11,7 @@ from datetime import date as Date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import func, select
 
+from app.services.billing.credits import exact, exact_balance_milli
 from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
@@ -27,6 +28,17 @@ def _iso(d: datetime | None) -> str | None:
     if d.tzinfo is None:
         d = d.replace(tzinfo=timezone.utc)
     return d.isoformat()
+
+
+def _credits_used(c: CallLog) -> float | None:
+    from app.services.billing.credits import UNBILLED_OUTCOMES
+
+    if c.call_type != "outbound" or c.credits_charged is None:
+        return None
+    seconds = int(c.duration_seconds or 0)
+    if c.outcome in UNBILLED_OUTCOMES or (c.answered_at is None and seconds == 0) or c.credit_rate is None:
+        return 0.0
+    return round(round(seconds * c.credit_rate * 1000 / 60) / 1000, 3)
 
 
 def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: Campaign | None,
@@ -51,6 +63,8 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         "started_at": _iso(c.started_at),
         "ended_at": _iso(c.ended_at),
         "credits_charged": c.credits_charged,
+        # Exact credits this call used (per second at its rate); 0 when it never connected.
+        "credits_used": _credits_used(c),
         "lead_id": str(c.lead_id) if c.lead_id else None,
     }
     if full:
@@ -191,7 +205,7 @@ async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, l
         "total_leads": len(lead_dates),
         "new_leads": new_leads,
         "previous_new_leads": prev_new_leads,
-        "credits_balance": ctx.org.credits_balance,
+        "credits_balance": exact(exact_balance_milli(ctx.org)),
         "unlimited_credits": ctx.org.unlimited_credits,
         "days": days,
     }

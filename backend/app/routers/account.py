@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+from app.services.billing.credits import exact, exact_balance_milli
 from app.config import settings
 from app.models.account import ROLES, CreditTransaction, Invite, Membership, User
 from app.routers.auth import org_to_dict, user_to_dict
@@ -250,12 +251,14 @@ async def credit_history(ctx: CtxDep, db: DbDep, limit: int = 50):
         .order_by(CreditTransaction.created_at.desc()).limit(min(limit, 200))
     )).scalars().all()
     return {
-        "balance": ctx.org.credits_balance,
+        "balance": exact(exact_balance_milli(ctx.org)),
         "unlimited": ctx.org.unlimited_credits,
         "transactions": [credit_tx_to_dict(t) for t in rows],
     }
 
 
 def credit_tx_to_dict(t: CreditTransaction) -> dict:
-    return {"id": str(t.id), "amount": t.amount, "balance_after": t.balance_after, "kind": t.kind,
+    amount = t.amount_milli / 1000 if t.amount_milli is not None else t.amount
+    after = t.balance_after_milli / 1000 if t.balance_after_milli is not None else t.balance_after
+    return {"id": str(t.id), "amount": amount, "balance_after": after, "kind": t.kind,
             "note": t.note, "call_id": str(t.call_id) if t.call_id else None, "created_at": _iso(t.created_at)}

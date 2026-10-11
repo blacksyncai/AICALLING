@@ -80,7 +80,7 @@ async def create_organization(db: AsyncSession, name: str, *, credits: int = 0,
     org = Organization(id=uuid.uuid4(), name=name.strip() or "New account")
     db.add(org)
     await db.flush()
-    agent = new_agent_from_template("sales_sdr")
+    agent = new_agent_from_template("welcome_demo")  # Marissa, the BlackSync welcome guide
     agent.org_id = org.id
     db.add(agent)
     if credits:
@@ -118,6 +118,8 @@ async def adjust_credits(db: AsyncSession, org: Organization, amount: int, *, ki
     await db.refresh(org, ["credits_balance"])
     tx = CreditTransaction(
         org_id=org.id, amount=amount, balance_after=org.credits_balance, kind=kind, note=note,
+        amount_milli=amount * 1000,
+        balance_after_milli=max(0, (org.credits_balance or 0) * 1000 - (org.credit_carry_milli or 0)),
         call_id=call_id, created_by=created_by,
     )
     db.add(tx)

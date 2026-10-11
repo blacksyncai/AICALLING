@@ -78,7 +78,10 @@ async def _plan_payload(db, org_id: uuid.UUID) -> dict:
 
 
 def _tx(t: CreditTransaction) -> dict:
-    return {"id": str(t.id), "amount": t.amount, "balance_after": t.balance_after, "kind": t.kind, "note": t.note,
+    # Exact amounts (thousandths of a credit) when recorded; whole credits on older rows.
+    amount = t.amount_milli / 1000 if t.amount_milli is not None else t.amount
+    after = t.balance_after_milli / 1000 if t.balance_after_milli is not None else t.balance_after
+    return {"id": str(t.id), "amount": amount, "balance_after": after, "kind": t.kind, "note": t.note,
             "call_id": str(t.call_id) if t.call_id else None, "created_at": _iso(t.created_at)}
 
 

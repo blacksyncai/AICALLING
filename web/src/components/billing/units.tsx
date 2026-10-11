@@ -47,7 +47,7 @@ export function UnitsToggle({ units, onChange }: { units: Units; onChange: (u: U
 
 /** "1,234 credits" or "≈ $321" — dollars are an estimate from what was paid, never a cash balance. */
 export function amount(credits: number, units: Units, centsPerCredit: number): string {
-  if (units === "credits") return `${credits.toLocaleString()} credit${credits === 1 ? "" : "s"}`;
+  if (units === "credits") return `${credits.toLocaleString(undefined, { maximumFractionDigits: 2 })} credit${credits === 1 ? "" : "s"}`;
   const dollars = (credits * centsPerCredit) / 100;
   return `≈ $${dollars.toLocaleString(undefined, { maximumFractionDigits: dollars < 100 ? 2 : 0 })}`;
 }

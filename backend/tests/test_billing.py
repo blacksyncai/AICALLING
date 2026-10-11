@@ -238,7 +238,7 @@ def test_refund_and_dispute_claw_back_unused_credits(client, make_client, stripe
 # ── Credits engine ────────────────────────────────────────────────────────────
 
 
-def _finish_call(client, org_id, agent_id, seconds, call_id=None):
+def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="completed"):
     from app.database import AsyncSessionLocal
     from app.models.call_log import CallLog
 
@@ -255,7 +255,7 @@ def _finish_call(client, org_id, agent_id, seconds, call_id=None):
     asyncio.run(make())
     transcript = [{"role": "user", "text": "hi"}]
     for _ in range(2):  # duplicate outcome reports must not double-bill
-        client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": "completed", "transcript": transcript})
+        client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": outcome, "transcript": transcript})
     return call_id
 
 
@@ -266,14 +266,24 @@ def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     rate = c.get(f"/api/billing/agents/{agent['id']}/rate").json()
     assert rate["credits_per_minute"] == 1.2
 
-    _finish_call(client, org["id"], agent["id"], 90)        # 90s × 1.2/60 = 1.8 → 1 now, 0.8 carried
-    assert _balance(c) == 9
-    _finish_call(client, org["id"], agent["id"], 61)        # 1.22 + 0.8 carried = 2.02 → 2
-    assert _balance(c) == 7
-    _finish_call(client, org["id"], agent["id"], 600)       # owes 12, only 7 left → 0, shortfall 5
+    _finish_call(client, org["id"], agent["id"], 90)        # 90s × 1.2/60 = exactly 1.8 credits
+    assert _balance(c) == 8.2
+    _finish_call(client, org["id"], agent["id"], 61)        # 1.22 credits
+    assert _balance(c) == 6.98
+    _finish_call(client, org["id"], agent["id"], 5)         # 5 seconds = 0.1 credit
+    assert _balance(c) == 6.88
+    _finish_call(client, org["id"], agent["id"], 600)       # owes 12, only 6.88 left → 0 (never negative)
     assert _balance(c) == 0
     ledger = c.get("/api/billing/credits").json()["ledger"]
-    assert [t["amount"] for t in ledger[:3]] == [-7, -2, -1] and all(t["balance_after"] >= 0 for t in ledger)
+    assert [t["amount"] for t in ledger[1:4]] == [-0.1, -1.22, -1.8] and all(t["balance_after"] >= 0 for t in ledger)
+
+    # Calls that never connect cost nothing, even with a stray duration.
+    org2, c2 = _account(client, make_client, "No Answer Co", credits=5)
+    agent2 = c2.get("/api/agents/").json()[0]
+    for outcome in ("no_answer", "failed"):
+        cid = _finish_call(client, org2["id"], agent2["id"], 40, outcome=outcome)
+        assert c2.get(f"/api/calls/{cid}").json()["credits_used"] == 0
+    assert _balance(c2) == 5
 
 
 def test_included_credits_spent_first_and_expire_purchased_never(client, make_client, stripe):

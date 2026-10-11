@@ -6,6 +6,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { ActivityHeatmap } from "@/components/dashboard/ActivityHeatmap";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
+import { WelcomeDemo } from "@/components/dashboard/WelcomeDemo";
 import { ScoreCards } from "@/components/ui/score-gauge";
 import { StatsBento } from "@/components/ui/stats-bento";
 import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
@@ -137,7 +138,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Getting started (new accounts) */}
+      {/* New accounts: talk to the welcome demo agent, then the getting-started checklist */}
+      <WelcomeDemo />
       <GettingStarted />
 
       {/* Setup strip */}
@@ -163,7 +165,7 @@ export default function DashboardPage() {
             <Coins className="h-4 w-4 shrink-0" />
             {overview.credits_balance <= 0
               ? "You're out of calling credits — phone calls and campaigns are paused until more are added."
-              : `Only ${overview.credits_balance} calling credit${overview.credits_balance === 1 ? "" : "s"} left (1 credit = 1 minute).`}{" "}
+              : `Only ${overview.credits_balance.toLocaleString(undefined, { maximumFractionDigits: 2 })} calling credit${overview.credits_balance === 1 ? "" : "s"} left.`}{" "}
             <Link href="/billing?tab=credits" className="font-medium underline">View credits</Link>
           </span>
         </Notice>

@@ -26,6 +26,11 @@ export function formatDateTime(s: string | null | undefined): string {
   return d ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
 }
 
+/** Credits with up to two decimals: 148.92, 1.1, 0.08. */
+export function formatCredits(n: number | null | undefined): string {
+  return (n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 export function formatDuration(sec: number | null | undefined): string {
   if (!sec) return "0:00";
   const m = Math.floor(sec / 60);

@@ -145,6 +145,8 @@ export interface Call {
   has_recording?: boolean;
   prospect_email?: string | null;
   credits_charged?: number | null;
+  /** Exact credits this call used (per second at its rate); 0 when it never connected. */
+  credits_used?: number | null;
   lead_id?: string | null;
 }
 
