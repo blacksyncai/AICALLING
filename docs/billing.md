@@ -17,7 +17,7 @@ where an admin can create it after an explicit confirmation.
 |---|---|---|
 | Solo plan | $98 / month, 150 included credits | lookup key `plan_solo_monthly` (or `STRIPE_PRICE_SOLO`) |
 | Teams plan | $296 / month, 700 included credits | lookup key `plan_teams_monthly` (or `STRIPE_PRICE_TEAMS`) |
-| Quick Top-Up | 100 credits, $29 | `price_1UPKcKR0Rid8tnhHK5Hgkfc5` / `credits_100_one_time` |
+| Quick Top-Up | 75 credits, $29 | `price_1UPKcKR0Rid8tnhHK5Hgkfc5` / `credits_75_one_time` |
 | Standard (suggested) | 500 credits, $139 | `price_1UPKcPR0Rid8tnhHKkgMDP69` / `credits_500_one_time` |
 | Volume | 1,000 credits, $260 | `price_1UPKcRR0Rid8tnhHrol6d9g3` / `credits_1000_one_time` |
 | Lookup funds | $5 / $10 / $25 | `lookup_funds_{5,10,25}_one_time` |

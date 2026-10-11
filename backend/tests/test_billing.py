@@ -146,11 +146,11 @@ def _balance(c):
 def test_catalog_verifies_against_stripe(client, stripe):
     items = {i["key"]: i for i in client.get("/api/admin/billing/catalog").json()["items"]}
     assert items["credits_500"]["status"] == "ok" and items["credits_500"]["price_id"] == "price_1UPKcPR0Rid8tnhHKkgMDP69"
-    stripe.prices["credits_100_one_time"]["unit_amount"] = 2500
+    stripe.prices["credits_75_one_time"]["unit_amount"] = 2500
     catalog.invalidate()
     items = {i["key"]: i for i in client.get("/api/admin/billing/catalog").json()["items"]}
-    assert items["credits_100"]["status"] == "mismatch" and "expected 2900" in items["credits_100"]["detail"]
-    stripe.prices["credits_100_one_time"]["unit_amount"] = 2900
+    assert items["credits_75"]["status"] == "mismatch" and "expected 2900" in items["credits_75"]["detail"]
+    stripe.prices["credits_75_one_time"]["unit_amount"] = 2900
     del stripe.prices["lookup_funds_5_one_time"]
     catalog.invalidate()
     items = {i["key"]: i for i in client.get("/api/admin/billing/catalog").json()["items"]}
@@ -198,9 +198,9 @@ def test_credits_only_after_verified_webhook_and_once(client, make_client, strip
 def test_webhook_cannot_grant_to_another_org(client, make_client, stripe):
     _, a = _account(client, make_client, "Victim Co")
     other, b = _account(client, make_client, "Attacker Co")
-    a.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    a.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     session = _paid_session(stripe)
-    b.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    b.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     # Tampered metadata pointing A's purchase at B's customer is ignored.
     _hook(client, "checkout.session.completed", {**session, "customer": stripe.sessions[-1]["customer"]})
     assert _balance(a) == 0 and _balance(b) == 0
@@ -208,30 +208,31 @@ def test_webhook_cannot_grant_to_another_org(client, make_client, stripe):
 
 def test_delayed_payment_waits_for_async_success(client, make_client, stripe):
     _, c = _account(client, make_client, "Bank Co")
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     _hook(client, "checkout.session.completed", _paid_session(stripe, payment_status="unpaid"))
     assert _balance(c) == 0
     _hook(client, "checkout.session.async_payment_succeeded", _paid_session(stripe))
-    assert _balance(c) == 100
+    assert _balance(c) == 75
 
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     _hook(client, "checkout.session.async_payment_failed", _paid_session(stripe, payment_status="unpaid"))
     pid = stripe.sessions[-1]["metadata"]["purchase_id"]
-    assert c.get(f"/api/billing/purchases/{pid}").json()["status"] == "failed" and _balance(c) == 100
+    assert c.get(f"/api/billing/purchases/{pid}").json()["status"] == "failed" and _balance(c) == 75
 
 
 def test_refund_and_dispute_claw_back_unused_credits(client, make_client, stripe):
     _, c = _account(client, make_client, "Refund Co")
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     s = _paid_session(stripe)
     _hook(client, "checkout.session.completed", s)
-    assert _balance(c) == 100
+    assert _balance(c) == 75
+    # Half the money back takes back half the credits (37.5 → 38).
     _hook(client, "charge.refunded", {"id": "ch_1", "payment_intent": s["payment_intent"], "amount": 2900, "amount_refunded": 1450})
-    assert _balance(c) == 50
+    assert _balance(c) == 37
     _hook(client, "charge.dispute.created", {"id": "dp_1", "payment_intent": s["payment_intent"], "amount": 1450})
     assert _balance(c) == 0
     _hook(client, "charge.dispute.closed", {"id": "dp_1", "payment_intent": s["payment_intent"], "status": "won"})
-    assert _balance(c) == 50
+    assert _balance(c) == 37
 
 
 # ── Credits engine ────────────────────────────────────────────────────────────
@@ -293,18 +294,18 @@ def test_included_credits_spent_first_and_expire_purchased_never(client, make_cl
     ov = c.get("/api/billing/overview").json()
     assert ov["plan"]["plan_key"] == "solo" and ov["credits"]["included"] == 150 and ov["credits"]["balance"] == 150
 
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     _hook(client, "checkout.session.completed", _paid_session(stripe))
     agent = c.get("/api/agents/").json()[0]
     _finish_call(client, org["id"], agent["id"], 60 * 20)
     cr = c.get("/api/billing/overview").json()["credits"]
-    assert cr["included"] == 130 and cr["purchased"] == 100
+    assert cr["included"] == 130 and cr["purchased"] == 75
 
     # Next cycle: leftover included credits are replaced; purchased credits stay.
     _hook(client, "invoice.paid", {"id": "in_2", "customer": sess["customer"], "subscription": "sub_plan",
                                    "billing_reason": "subscription_cycle"})
     cr = c.get("/api/billing/overview").json()["credits"]
-    assert cr["included"] == 150 and cr["purchased"] == 100 and cr["balance"] == 250
+    assert cr["included"] == 150 and cr["purchased"] == 75 and cr["balance"] == 225
 
     # Plan change: preview first, explicit confirm, upgrade tops up included credits.
     pv = c.post("/api/billing/plans/teams/preview").json()
@@ -317,7 +318,7 @@ def test_included_credits_spent_first_and_expire_purchased_never(client, make_cl
 
 def test_unknown_plan_is_preserved_read_only(client, make_client, stripe):
     _, c = _account(client, make_client, "Legacy Plan Co")
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})  # creates the customer
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})  # creates the customer
     cid = stripe.sessions[-1]["customer"]
     sub = {"id": "sub_legacy", "customer": cid, "status": "active", "current_period_end": int(time.time()) + 86400,
            "items": {"data": [{"id": "si_x", "price": {"id": "price_front_desk_starter", "lookup_key": None}}]}}
@@ -362,10 +363,10 @@ def test_auto_recharge_consent_threshold_limit_and_failures(client, make_client,
     org, c = _account(client, make_client, "Recharge Co")
     cfg = c.get("/api/billing/auto-recharge").json()
     assert cfg["enabled"] is False
-    body = {"enabled": True, "pack_key": "credits_100", "threshold": 50, "monthly_limit_cents": 5800}
+    body = {"enabled": True, "pack_key": "credits_75", "threshold": 50, "monthly_limit_cents": 5800}
     assert c.put("/api/billing/auto-recharge", json=body).status_code == 400  # no consent
     assert c.put("/api/billing/auto-recharge", json={**body, "consent": True}).status_code == 409  # no saved card yet
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     _hook(client, "checkout.session.completed", _paid_session(stripe))
     assert c.put("/api/billing/auto-recharge", json={**body, "consent": True}).status_code == 200
 
@@ -375,7 +376,7 @@ def test_auto_recharge_consent_threshold_limit_and_failures(client, make_client,
         async with AsyncSessionLocal() as db:
             return await recharge.maybe_recharge(db, uuid.UUID(org["id"]))
 
-    assert asyncio.run(run()) is None  # 100 ≥ threshold 50
+    assert asyncio.run(run()) is None  # 75 ≥ threshold 50
     agent = c.get("/api/agents/").json()[0]
 
     def spend_and_settle(minutes):
@@ -383,22 +384,22 @@ def test_auto_recharge_consent_threshold_limit_and_failures(client, make_client,
         time.sleep(0.3)
         asyncio.run(run())  # and a direct one — still at most one charge per drop
 
-    spend_and_settle(60)  # 40 left → one recharge of 100
-    assert len(stripe.charges) == 1 and _balance(c) == 140
+    spend_and_settle(60)  # 15 left → one recharge of 75
+    assert len(stripe.charges) == 1 and _balance(c) == 90
     assert stripe.charges[0]["idempotency_key"].startswith("bs-recharge-")
-    spend_and_settle(100)  # 40 left → second recharge ($58 so far)
-    assert len(stripe.charges) == 2 and _balance(c) == 140
-    spend_and_settle(100)  # 40 left, but a third pack would pass the $58 monthly limit
-    assert len(stripe.charges) == 2 and _balance(c) == 40
+    spend_and_settle(100)  # 0 left → second recharge ($58 so far)
+    assert len(stripe.charges) == 2 and _balance(c) == 75
+    spend_and_settle(100)  # 0 left, but a third pack would pass the $58 monthly limit
+    assert len(stripe.charges) == 2 and _balance(c) == 0
     assert "limit" in c.get("/api/billing/auto-recharge").json()["last_error"]
     assert c.get("/api/billing/auto-recharge").json()["month_to_date_cents"] == 5800
 
 
 def test_auto_recharge_turns_off_after_three_failures(client, make_client, stripe):
     org, c = _account(client, make_client, "Declined Co")
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     _hook(client, "checkout.session.completed", _paid_session(stripe))
-    c.put("/api/billing/auto-recharge", json={"enabled": True, "pack_key": "credits_100", "threshold": 500,
+    c.put("/api/billing/auto-recharge", json={"enabled": True, "pack_key": "credits_75", "threshold": 500,
                                                "monthly_limit_cents": 100000, "consent": True})
     stripe.charge_status = "failed"
 
@@ -412,7 +413,7 @@ def test_auto_recharge_turns_off_after_three_failures(client, make_client, strip
         asyncio.run(run())
     cfg = c.get("/api/billing/auto-recharge").json()
     assert cfg["enabled"] is False and cfg["consecutive_failures"] == 3 and len(stripe.charges) == 3
-    assert _balance(c) == 100
+    assert _balance(c) == 75
 
 
 # ── Lead lookups ──────────────────────────────────────────────────────────────
@@ -504,7 +505,7 @@ def test_admin_adjustments_are_audited_and_admin_only(client, make_client):
 def test_billing_data_is_tenant_isolated(client, make_client, stripe):
     _, a = _account(client, make_client, "Iso A")
     _, b = _account(client, make_client, "Iso B")
-    a.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    a.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     pid = stripe.sessions[-1]["metadata"]["purchase_id"]
     assert b.get(f"/api/billing/purchases/{pid}").status_code == 404
     assert b.get("/api/billing/invoices").json()["purchases"] == []
@@ -517,14 +518,14 @@ def test_members_cannot_spend(client, make_client, stripe):
     m = make_client()
     m.post(f"/api/auth/invites/{token}/accept", json={"first_name": "M", "password": "member-pass-1"})
     assert m.get("/api/billing/overview").status_code == 200
-    assert m.post("/api/billing/credits/checkout", json={"pack": "credits_100"}).status_code == 403
+    assert m.post("/api/billing/credits/checkout", json={"pack": "credits_75"}).status_code == 403
 
 
 def test_phone_addon_quantity_tracks_numbers(client, make_client, stripe):
     from app.services.billing import subscriptions
 
     org, c = _account(client, make_client, "Phones Bill Co")
-    c.post("/api/billing/credits/checkout", json={"pack": "credits_100"})
+    c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     cid = stripe.sessions[-1]["customer"]
     stripe.subs["sub_ph"] = {"id": "sub_ph", "customer": cid, "status": "active", "current_period_end": int(time.time()) + 86400,
                             "items": {"data": [{"id": "si_p", "price": {"id": "price_solo", "lookup_key": "plan_solo_monthly"}}]}}

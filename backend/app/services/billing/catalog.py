@@ -31,8 +31,8 @@ PLAN_ORDER = ["solo", "teams"]
 
 # One-time calling-credit packs (these exist in the live Stripe account).
 CREDIT_PACKS: dict[str, dict] = {
-    "credits_100": {"key": "credits_100", "name": "Quick Top-Up", "credits": 100, "amount_cents": 2900,
-                    "lookup_key": "credits_100_one_time", "price_id": "price_1UPKcKR0Rid8tnhHK5Hgkfc5",
+    "credits_75": {"key": "credits_75", "name": "Quick Top-Up", "credits": 75, "amount_cents": 2900,
+                   "lookup_key": "credits_75_one_time", "price_id": "price_1UPKcKR0Rid8tnhHK5Hgkfc5",
                     "blurb": "For occasional use and inbound agents."},
     "credits_500": {"key": "credits_500", "name": "Standard", "credits": 500, "amount_cents": 13900,
                     "lookup_key": "credits_500_one_time", "price_id": "price_1UPKcPR0Rid8tnhHKkgMDP69",
@@ -41,7 +41,7 @@ CREDIT_PACKS: dict[str, dict] = {
                      "lookup_key": "credits_1000_one_time", "price_id": "price_1UPKcRR0Rid8tnhHrol6d9g3",
                      "blurb": "For higher-volume campaigns."},
 }
-PACK_ORDER = ["credits_100", "credits_500", "credits_1000"]
+PACK_ORDER = ["credits_75", "credits_500", "credits_1000"]
 
 # One-time lead-lookup balance top-ups. These need matching Stripe prices before they can be sold.
 LOOKUP_FUNDS: dict[str, dict] = {
