@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CalendarCheck, CheckCircle2, Circle, Clock, Coins, Megaphone, MessagesSquare, PhoneCall, PhoneIncoming, Users } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CheckCircle2, Circle, Clock, Coins, Megaphone, MessagesSquare, PhoneCall, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { ActivityHeatmap } from "@/components/dashboard/ActivityHeatmap";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
 import { ScoreCards } from "@/components/ui/score-gauge";
+import { StatsBento } from "@/components/ui/stats-bento";
 import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -41,19 +42,11 @@ function Trend({ now, before, days, invert = false, format = "pct" }: { now: num
   );
 }
 
-function StatCard({ label, value, icon: Icon, children }: { label: string; value: string; icon: typeof PhoneCall; children: React.ReactNode }) {
-  return (
-    <Card className="p-5">
-      <div className="flex items-start justify-between">
-        <span className="text-sm font-medium text-zinc-600">{label}</span>
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-      <div className="mt-3 font-display text-3xl font-semibold tabular-nums tracking-tight">{value}</div>
-      <div className="mt-1 text-xs">{children}</div>
-    </Card>
-  );
+/** Plain-language change for the dark hero card. */
+function heroDelta(now: number, before: number, days: number) {
+  if (!before) return now ? "new this period" : "no calls yet";
+  const d = Math.round(((now - before) / before) * 100);
+  return d === 0 ? `flat vs previous ${days}d` : `${d > 0 ? "+" : ""}${d}% vs previous ${days}d`;
 }
 
 const ACTIVITY_VERB: Record<string, string> = {
@@ -183,37 +176,63 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <StatCard label="Total leads" value={overview.total_leads.toLocaleString()} icon={Users}>
-              {overview.new_leads ? (
-                <span className="text-zinc-500">
-                  <span className="font-medium text-emerald-700">+{overview.new_leads.toLocaleString()}</span> added in the last {days}d
-                </span>
-              ) : (
-                <Link href="/contacts" className="text-zinc-500 hover:text-brand-700">Import contacts →</Link>
-              )}
-            </StatCard>
-            <StatCard label="Calls placed" value={overview.total_calls.toLocaleString()} icon={PhoneCall}>
-              <Trend now={overview.total_calls} before={prev.total_calls} days={days} />
-            </StatCard>
-            <StatCard label="Connect rate" value={`${Math.round(overview.connect_rate * 100)}%`} icon={PhoneIncoming}>
-              <Trend now={overview.connect_rate} before={prev.connect_rate} days={days} format="pts" />
-            </StatCard>
-            <StatCard label="Meaningful conversations" value={overview.meaningful_calls.toLocaleString()} icon={MessagesSquare}>
-              <span className="text-zinc-500">
-                <Link href="/contacts?status=callback" className="font-medium text-zinc-900 hover:text-brand-700">
-                  {overview.follow_ups.toLocaleString()} follow-up{overview.follow_ups === 1 ? "" : "s"}
-                </Link>{" "}
-                to work · <Trend now={overview.meaningful_calls} before={prev.meaningful_calls} days={days} />
-              </span>
-            </StatCard>
-            <StatCard label="Meetings booked" value={overview.meetings_booked.toLocaleString()} icon={CalendarCheck}>
-              <Trend now={overview.meetings_booked} before={prev.meetings_booked} days={days} />
-            </StatCard>
-            <StatCard label="Talk time" value={`${overview.total_minutes.toLocaleString()} min`} icon={Clock}>
-              <span className="text-zinc-500">avg {formatDuration(overview.avg_duration_seconds)} per connected call</span>
-            </StatCard>
-          </div>
+          <StatsBento
+            hero={{
+              label: "Calls placed",
+              badge: `Last ${days} days`,
+              value: overview.total_calls.toLocaleString(),
+              note: (
+                <>
+                  {overview.connected_calls.toLocaleString()} connected · {heroDelta(overview.total_calls, prev.total_calls, days)}
+                </>
+              ),
+            }}
+            trend={{
+              label: "Connect rate",
+              value: `${Math.round(overview.connect_rate * 100)}%`,
+              note: <Trend now={overview.connect_rate} before={prev.connect_rate} days={days} format="pts" />,
+              bars: overview.calls_per_day.slice(-14).map((d) => d.calls),
+              barsLabel: "Calls per day",
+            }}
+            compact={{
+              label: "Meetings",
+              value: overview.meetings_booked.toLocaleString(),
+              note: <Trend now={overview.meetings_booked} before={prev.meetings_booked} days={days} />,
+            }}
+            feature={{
+              label: "Talk time",
+              value: `${overview.total_minutes.toLocaleString()} min`,
+              note: `avg ${formatDuration(overview.avg_duration_seconds)} per connected call`,
+              icon: Clock,
+            }}
+            extras={[
+              {
+                label: "Total leads",
+                value: overview.total_leads.toLocaleString(),
+                icon: Users,
+                note: overview.new_leads ? (
+                  <span className="text-zinc-500">
+                    <span className="font-medium text-emerald-700">+{overview.new_leads.toLocaleString()}</span> added in the last {days}d
+                  </span>
+                ) : (
+                  <Link href="/contacts" className="text-zinc-500 hover:text-brand-700">Import contacts →</Link>
+                ),
+              },
+              {
+                label: "Meaningful conversations",
+                value: overview.meaningful_calls.toLocaleString(),
+                icon: MessagesSquare,
+                note: (
+                  <span className="text-zinc-500">
+                    <Link href="/contacts?status=callback" className="font-medium text-zinc-900 hover:text-brand-700">
+                      {overview.follow_ups.toLocaleString()} follow-up{overview.follow_ups === 1 ? "" : "s"}
+                    </Link>{" "}
+                    to work
+                  </span>
+                ),
+              },
+            ]}
+          />
 
           <CallPerformance overview={overview} days={days} />
 
