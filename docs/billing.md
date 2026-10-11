@@ -34,9 +34,9 @@ Starter" plan) is shown read-only as a custom plan and is never changed by the a
   credits (oldest first). Purchased credits never expire. Included credits expire at the
   end of their billing cycle, unless `INCLUDED_CREDITS_ROLLOVER=true`.
 - **Rates.** Each LLM model has a rate in credits per connected minute (defaults:
-  gpt-4.1-mini, gpt-4.1-nano and gpt-4o-mini 1.0; gpt-4.1 1.4; gpt-4o 1.5). A premium
+  gpt-4.1-mini, gpt-4.1-nano and gpt-4o-mini 1.0; gpt-4.1 1.2; gpt-4o 1.3). A premium
   (cloned or custom) voice can add a surcharge, which defaults to 0. Admins edit these in
-  Admin → Billing. The agent editor shows e.g. "1.4 credits/min • Approx $0.36/min".
+  Admin → Billing. The agent editor shows e.g. "Uses 1.2 credits per minute of talk time" (no dollar estimate).
 - **Billing a call (rounding).** Usage is connected seconds × rate ÷ 60, kept in
   thousandths of a credit. Whole credits are deducted, and the leftover fraction carries
   over to the account's next call, so short calls add up exactly. Every call is billed
@@ -128,3 +128,11 @@ Events to enable on the Stripe endpoint: all of the above.
   `lookup_balance_transactions`.
 - Admin adjustments write to `billing_audit`: who, which account, previous value, change,
   new value, reason and time.
+
+## Emails
+
+Sign-in emails (verification codes, sign-in/sign-up links, password reset, invitations) are
+sent by Clerk using BlackSync-branded templates from `backend/app/services/email_templates.py`.
+After changing them run `CLERK_SECRET_KEY=… python -m scripts.sync_clerk_email_templates`
+(from `backend/`; `--check` previews only, `--revert` restores Clerk's defaults). Team
+invites sent by BlackSync itself (Resend) use the same layout.

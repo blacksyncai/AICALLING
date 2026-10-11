@@ -6,8 +6,10 @@ from sqlalchemy import select
 
 from app.models.billing import BillingAudit, PlatformSetting
 
-# Credits per connected minute, by LLM model. Admin-editable; these are the starting values.
-DEFAULT_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.4, "gpt-4o": 1.5}
+# Credits per connected minute, by LLM model (1.0–1.3). Admin-editable; these are the starting values.
+DEFAULT_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.3}
+# The first defaults; a saved copy of them follows the current defaults instead.
+_LEGACY_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.4, "gpt-4o": 1.5}
 
 DEFAULTS: dict = {
     # None = paid lookups are OFF until an admin confirms a retail price.
@@ -32,13 +34,17 @@ async def get_all(db) -> dict:
     out = dict(DEFAULTS)
     for r in rows:
         if r.key in DEFAULTS:
-            out[r.key] = r.value
+            out[r.key] = _current(r.key, r.value)
     return out
+
+
+def _current(key: str, value):
+    return DEFAULT_MODEL_RATES if key == "model_credit_rates" and value == _LEGACY_MODEL_RATES else value
 
 
 async def get(db, key: str):
     row = await db.get(PlatformSetting, key)
-    return row.value if row is not None else DEFAULTS.get(key)
+    return _current(key, row.value) if row is not None else DEFAULTS.get(key)
 
 
 async def set_value(db, key: str, value, admin_id, reason: str) -> None:

@@ -262,18 +262,18 @@ def _finish_call(client, org_id, agent_id, seconds, call_id=None):
 def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     org, c = _account(client, make_client, "Meter Co", credits=10)
     agent = c.get("/api/agents/").json()[0]
-    c.patch(f"/api/agents/{agent['id']}", json={"llm_model": "gpt-4.1"})  # 1.4 credits/min by default
+    c.patch(f"/api/agents/{agent['id']}", json={"llm_model": "gpt-4.1"})  # 1.2 credits/min by default
     rate = c.get(f"/api/billing/agents/{agent['id']}/rate").json()
-    assert rate["credits_per_minute"] == 1.4 and rate["approx_cents_per_minute"] > 0
+    assert rate["credits_per_minute"] == 1.2
 
-    _finish_call(client, org["id"], agent["id"], 90)        # 90s × 1.4/60 = 2.1 → 2 now, 0.1 carried
-    assert _balance(c) == 8
-    _finish_call(client, org["id"], agent["id"], 39)        # 0.91 + 0.1 carried = 1.01 → 1
+    _finish_call(client, org["id"], agent["id"], 90)        # 90s × 1.2/60 = 1.8 → 1 now, 0.8 carried
+    assert _balance(c) == 9
+    _finish_call(client, org["id"], agent["id"], 61)        # 1.22 + 0.8 carried = 2.02 → 2
     assert _balance(c) == 7
-    _finish_call(client, org["id"], agent["id"], 600)       # owes 14, only 7 left → 0, shortfall 7
+    _finish_call(client, org["id"], agent["id"], 600)       # owes 12, only 7 left → 0, shortfall 5
     assert _balance(c) == 0
     ledger = c.get("/api/billing/credits").json()["ledger"]
-    assert [t["amount"] for t in ledger[:3]] == [-7, -1, -2] and all(t["balance_after"] >= 0 for t in ledger)
+    assert [t["amount"] for t in ledger[:3]] == [-7, -2, -1] and all(t["balance_after"] >= 0 for t in ledger)
 
 
 def test_included_credits_spent_first_and_expire_purchased_never(client, make_client, stripe):

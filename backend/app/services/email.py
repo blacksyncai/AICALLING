@@ -39,14 +39,16 @@ async def send_email(to: str, subject: str, html_body: str) -> bool:
 
 
 async def send_invite_email(to: str, org_name: str, inviter: str, link: str) -> bool:
-    org, who = html.escape(org_name), html.escape(inviter)
-    body = f"""
-    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#1c1917">
-      <h2 style="margin:0 0 12px">Join {org} on BlackSync</h2>
-      <p style="color:#57534e;line-height:1.5">{who} invited you to {org}'s workspace, where AI voice agents
-      call, qualify and book meetings with your leads.</p>
-      <p style="margin:24px 0"><a href="{html.escape(link)}" style="background:#dc4a1e;color:#fff;
-      padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Accept invite</a></p>
-      <p style="color:#a8a29e;font-size:12px">This link expires in 7 days.</p>
-    </div>"""
+    from app.services import email_templates as t
+
+    org, who, href = html.escape(org_name), html.escape(inviter), html.escape(link, quote=True)
+    body = t.layout(
+        title=f"Join {org} on BlackSync",
+        preheader=f"{who} invited you to {org}'s workspace on BlackSync.",
+        heading=f"Join {org} on BlackSync",
+        body_html=t.p(f"<strong style=\"color:{t.INK};\">{who}</strong> invited you to {org}'s workspace, where AI voice "
+                      "agents call, qualify and book meetings with your leads.")
+        + t.button(href, "Accept invite") + t.link_fallback(href) + t.divider()
+        + t.p("This invite expires in 7 days. Not expecting it? You can ignore this email.", size=12, margin="0"),
+    )
     return await send_email(to, f"{inviter} invited you to {org_name} on BlackSync", body)
