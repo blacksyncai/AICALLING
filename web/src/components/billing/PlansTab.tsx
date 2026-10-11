@@ -1,12 +1,12 @@
 "use client";
 
-import { Check, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, Modal, Notice, Spinner } from "@/components/ui";
+import { Button, Card, Modal, Notice, Spinner } from "@/components/ui";
+import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import { type Catalog, type Plan, fmtDate, usd } from "./types";
 
 interface Preview {
@@ -100,46 +100,40 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
           You&apos;re on <strong>{current.name}</strong>, a plan set up specially for your account. It stays as it is — contact us to make changes.
         </Notice>
       )}
+      <PricingHeading title="A plan that fits your team" description="Every plan includes calling credits each month. Buy more any time — they never expire." />
       <div className="grid gap-4 md:grid-cols-2">
-        {data.plans.map((p) => {
+        {data.plans.map((p, i) => {
           const isCurrent = live && current.plan_key === p.key;
+          const featured = isCurrent || (!live && i === data.plans.length - 1);
           return (
-            <Card key={p.key} className={cn("flex flex-col p-6", isCurrent && "ring-2 ring-brand-500")}>
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-lg font-semibold text-zinc-900">{p.name}</h3>
-                {isCurrent && <Badge tone="violet">Current plan</Badge>}
-              </div>
-              <div className="mt-3 flex items-baseline gap-1">
-                <span className="font-display text-4xl font-semibold tracking-tight">{usd(p.amount_cents, 0)}</span>
-                <span className="text-sm text-zinc-500">/ {p.interval}</span>
-              </div>
-              <p className="mt-1 text-sm text-zinc-600">{p.included_credits.toLocaleString()} calling credits included every month</p>
-              <ul className="mt-5 flex-1 space-y-2 text-sm text-zinc-700">
-                {p.features.map((f) => (
-                  <li key={f} className="flex gap-2">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-6">
-                {isCurrent ? (
-                  <Button className="w-full" disabled>
+            <PricingCard
+              key={p.key}
+              index={i}
+              name={p.name}
+              description={`${p.included_credits.toLocaleString()} calling credits included every month`}
+              cents={p.amount_cents}
+              period={p.interval}
+              highlighted={featured}
+              badge={isCurrent ? <PillBadge tone="dark">Current plan</PillBadge> : featured ? <PillBadge>Best value</PillBadge> : null}
+              featuresTitle="Includes"
+              features={p.features}
+              footer={
+                isCurrent ? (
+                  <PricingButton tone="muted" disabled>
                     Current plan
-                  </Button>
+                  </PricingButton>
                 ) : (
-                  <Button
-                    variant="primary"
-                    className="w-full"
+                  <PricingButton
+                    tone={featured ? "brand" : "dark"}
                     loading={busy === p.key}
                     disabled={!canManage || !p.available || !!busy || (live && current.managed === false)}
                     onClick={() => void choose(p)}
                   >
                     {!p.available ? "Not available yet" : live ? `Switch to ${p.name}` : `Choose ${p.name}`}
-                  </Button>
-                )}
-              </div>
-            </Card>
+                  </PricingButton>
+                )
+              }
+            />
           );
         })}
       </div>
@@ -148,7 +142,7 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
       </p>
 
       {live && canManage && (
-        <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+        <Card className="flex flex-wrap items-center justify-between gap-3 rounded-2xl p-5">
           <div className="text-sm text-zinc-600">
             {current.cancel_at_period_end ? (
               <>Your plan ends on <strong>{fmtDate(current.current_period_end)}</strong>.</>

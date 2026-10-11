@@ -11,15 +11,15 @@ import { OverviewTab } from "@/components/billing/OverviewTab";
 import { PlansTab } from "@/components/billing/PlansTab";
 import type { Overview, Purchase } from "@/components/billing/types";
 import { Notice, PageHeader, Spinner } from "@/components/ui";
+import { PillTabs } from "@/components/ui/pricing";
 import { api, fetcher } from "@/lib/api";
-import { cn } from "@/lib/utils";
 
 const TABS = [
   { value: "overview", label: "Overview", icon: LayoutGrid },
   { value: "plans", label: "Plans", icon: CreditCard },
   { value: "credits", label: "Calling Credits", icon: Coins },
   { value: "lookups", label: "Lead Lookup Balance", icon: UserSearch },
-  { value: "invoices", label: "Invoices & Payment Methods", icon: Receipt },
+  { value: "invoices", label: "Invoices & Payments", icon: Receipt },
 ] as const;
 
 type Tab = (typeof TABS)[number]["value"];
@@ -121,28 +121,13 @@ function BillingContent() {
     <>
       <PageHeader title="Billing & Usage" description="Your plan, calling credits, lead lookup balance and invoices." />
       <CheckoutReturn />
-      <div className="-mx-4 mb-6 overflow-x-auto border-b border-zinc-200 px-4 sm:mx-0 sm:px-0">
-        <nav className="flex min-w-max gap-1" role="tablist">
-          {TABS.map((t) => {
-            const active = t.value === tab;
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.value}
-                role="tab"
-                aria-selected={active}
-                onClick={() => select(t.value)}
-                className={cn(
-                  "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors",
-                  active ? "border-brand-600 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800",
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {t.label}
-              </button>
-            );
-          })}
-        </nav>
+      <div className="mb-6">
+        <PillTabs
+          value={tab}
+          onChange={select}
+          layoutId="billing-tab"
+          tabs={TABS.map((t) => ({ value: t.value, label: t.label, icon: <t.icon className="h-4 w-4" /> }))}
+        />
       </div>
       {error ? (
         <Notice tone="red">{error.message}</Notice>

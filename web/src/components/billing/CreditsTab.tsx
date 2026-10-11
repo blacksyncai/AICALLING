@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Spinner, Toggle } from "@/components/ui";
 import { fetcher, post, put } from "@/lib/api";
+import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { cn } from "@/lib/utils";
 import { type AutoRechargeCfg, type Catalog, type CreditBreakdown, type LedgerRow, fmtDate, fmtDateTime, usd } from "./types";
 import { UnitsToggle, amount, useUnits } from "./units";
@@ -47,10 +48,10 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <Card className="p-5">
+      <Card className="rounded-2xl p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="text-xs font-medium text-zinc-500">Available calling credits</div>
+            <div className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Available calling credits</div>
             <div className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">
               {data.unlimited ? "Unlimited" : amount(data.balance, units, cpc)}
             </div>
@@ -72,27 +73,29 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
       </Card>
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-900">Buy credits</h2>
+        <PricingHeading title="Top up your calling credits" description="One-time packs. Purchased credits never expire." />
         <div className="grid gap-4 md:grid-cols-3">
-          {cat.packs.map((p) => (
-            <Card key={p.key} className={cn("flex flex-col p-5", p.suggested && "ring-2 ring-brand-500")}>
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-semibold text-zinc-900">{p.name}</h3>
-                {p.suggested && <Badge tone="violet">Suggested</Badge>}
-              </div>
-              <div className="mt-2 font-display text-3xl font-semibold tabular-nums">{usd(p.amount_cents, 0)}</div>
-              <div className="text-sm text-zinc-600">{p.credits.toLocaleString()} credits · {p.cents_per_credit.toFixed(1)}¢ each</div>
-              <p className="mt-2 flex-1 text-xs text-zinc-500">{p.blurb} Never expire.</p>
-              <Button
-                variant={p.suggested ? "primary" : "secondary"}
-                className="mt-4 w-full"
-                loading={buying === p.key}
-                disabled={!canManage || !p.available || !!buying}
-                onClick={() => void buy(p.key)}
-              >
-                {p.available ? `Buy ${p.credits.toLocaleString()} credits` : "Not available yet"}
-              </Button>
-            </Card>
+          {cat.packs.map((p, i) => (
+            <PricingCard
+              key={p.key}
+              index={i}
+              name={p.name}
+              description={`${p.credits.toLocaleString()} credits · ${p.cents_per_credit.toFixed(1)}¢ each`}
+              cents={p.amount_cents}
+              highlighted={p.suggested}
+              badge={p.suggested ? <PillBadge>Popular</PillBadge> : null}
+              features={[p.blurb, "Never expire", "Used after your included credits"]}
+              footer={
+                <PricingButton
+                  tone={p.suggested ? "brand" : "dark"}
+                  loading={buying === p.key}
+                  disabled={!canManage || !p.available || !!buying}
+                  onClick={() => void buy(p.key)}
+                >
+                  {p.available ? `Buy ${p.credits.toLocaleString()} credits` : "Not available yet"}
+                </PricingButton>
+              }
+            />
           ))}
         </div>
         {!canManage && <p className="mt-2 text-xs text-zinc-500">Only account owners and admins can buy credits.</p>}
@@ -164,7 +167,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
 
 function Part({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="rounded-lg bg-zinc-50 px-4 py-3">
+    <div className="rounded-xl bg-zinc-50 px-4 py-3 ring-1 ring-inset ring-zinc-100">
       <div className="text-xs text-zinc-500">{label}</div>
       <div className="mt-0.5 font-semibold tabular-nums text-zinc-900">{value}</div>
       <div className="text-[11px] text-zinc-400">{sub}</div>

@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
+import { Card, CardHeader, Notice, Spinner } from "@/components/ui";
+import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { type Catalog, type LookupStatus, fmtDateTime, usd } from "./types";
@@ -41,7 +42,7 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="grid gap-4 md:grid-cols-3">
-        <Card className="p-5 md:col-span-2">
+        <Card className="rounded-2xl p-6 md:col-span-2">
           <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
             <UserSearch className="h-4 w-4" /> Lead lookup balance
           </div>
@@ -54,7 +55,7 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
           <p className="mt-2 text-xs text-zinc-500">This balance can only be used for lead data. It&apos;s separate from calling credits and isn&apos;t refundable as cash.</p>
           {data.prepaid_credits > 0 && <p className="mt-2 text-xs text-zinc-600">You also have {data.prepaid_credits.toLocaleString()} prepaid lookups — they&apos;re used before your balance.</p>}
         </Card>
-        <Card className="p-5">
+        <Card className="rounded-2xl p-6">
           <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
             <Gift className="h-4 w-4" /> Free lookups today
           </div>
@@ -70,16 +71,31 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
       </div>
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-900">Add funds</h2>
-        <div className="grid grid-cols-3 gap-3 sm:max-w-md">
-          {cat.lookup_funds.map((f) => (
-            <Button key={f.key} className="h-14 text-base" loading={busy === f.key} disabled={!canManage || !f.available || !!busy} onClick={() => void add(f.key)}>
-              {usd(f.amount_cents, 0)}
-            </Button>
-          ))}
+        <PricingHeading title="Add lookup funds" description="Prepaid balance for lead data only. Separate from calling credits." />
+        <div className="grid gap-4 sm:grid-cols-3">
+          {cat.lookup_funds.map((f, i) => {
+            const n = price ? Math.floor(f.amount_cents / price) : null;
+            const featured = i === 1;
+            return (
+              <PricingCard
+                key={f.key}
+                index={i}
+                name={["Starter", "Standard", "Bulk"][i] ?? "Top-up"}
+                description={n != null ? `About ${n.toLocaleString()} paid lookups at today's price` : "Added to your lookup balance"}
+                cents={f.amount_cents}
+                highlighted={featured}
+                badge={featured ? <PillBadge>Popular</PillBadge> : null}
+                footer={
+                  <PricingButton tone={featured ? "brand" : "dark"} loading={busy === f.key} disabled={!canManage || !f.available || !!busy} onClick={() => void add(f.key)}>
+                    Add {usd(f.amount_cents, 0)}
+                  </PricingButton>
+                }
+              />
+            );
+          })}
         </div>
         {!cat.lookup_funds.some((f) => f.available) && (
-          <div className="mt-3 sm:max-w-md">
+          <div className="mt-3 ">
             <Notice>Adding funds online isn&apos;t available yet. Contact us to top up your lookup balance.</Notice>
           </div>
         )}
