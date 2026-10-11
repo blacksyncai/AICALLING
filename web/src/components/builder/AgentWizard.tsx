@@ -182,6 +182,19 @@ export function AgentWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A link like /agents/new?specialty=expired_listings (dashboard recommendations) picks the specialty.
+  const presetDone = useRef(false);
+  const wantSpecialty = useRef(params.get("specialty")); // read once: the draft redirect drops it from the URL
+  useEffect(() => {
+    const want = wantSpecialty.current;
+    if (presetDone.current || !want || !catalog || !draftId) return;
+    presetDone.current = true;
+    const industry = data.business?.industry;
+    const sp = (catalog.specialties?.[industry ?? ""] ?? catalog.specialties?.other ?? []).find((s) => s.key === want);
+    if (sp && !data.goal?.specialty) setData((d) => ({ ...d, goal: { ...d.goal, specialty: { ...sp }, direction: sp.direction } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, draftId]);
+
   // ---- Autosave (debounced PATCH of {step, data}) ---------------------------------------
 
   const save = useCallback(() => {

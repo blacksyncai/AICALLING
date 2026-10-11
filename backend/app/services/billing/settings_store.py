@@ -25,6 +25,8 @@ DEFAULTS: dict = {
     "auto_recharge_max_monthly_cents": 200000,
     # Let account managers buy numbers themselves (off = they request one and an admin assigns it).
     "self_serve_numbers": False,
+    # Free calling credits for a self-serve signup (no card).
+    "trial_credits": 30,
     "max_numbers_per_org": 5,
 }
 

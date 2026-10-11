@@ -1,0 +1,55 @@
+import asyncio
+import uuid
+
+from tests.test_accounts import _login, _new_account
+
+
+def _orphan_login(client, make_client):
+    """A login that isn't in any account (what a self-serve sign-up looks like)."""
+    from sqlalchemy import delete, select
+
+    from app.database import AsyncSessionLocal
+    from app.models.account import Membership, User
+
+    _, email = _new_account(client, name="Placeholder")
+
+    async def drop():
+        async with AsyncSessionLocal() as db:
+            u = (await db.execute(select(User).where(User.email == email))).scalar_one()
+            await db.execute(delete(Membership).where(Membership.user_id == u.id))
+            u.active_org_id = None
+            await db.commit()
+
+    asyncio.run(drop())
+    return _login(make_client, email)
+
+
+def test_trial_onboarding_real_estate(client, make_client):
+    c = _orphan_login(client, make_client)
+    assert c.get("/api/agents/").status_code == 403  # no account yet
+    opts = c.get("/api/onboarding/options").json()
+    assert opts["trial_credits"] == 30 and "real_estate" in opts["lead_finder_industries"]
+    assert any(i["key"] == "logistics" for i in opts["industries"])
+
+    r = c.post("/api/onboarding/start", json={"company": "Summit Realty", "industry": "real_estate",
+                                              "goals": ["expired_listings", "fsbo_prospecting", "bogus"],
+                                              "team_size": "2_5", "timezone": "America/Chicago"})
+    assert r.status_code == 201, r.text
+    org = r.json()["org"]
+    assert org["name"] == "Summit Realty" and org["industry"] == "real_estate"
+    assert org["lead_finder_enabled"] is True and org["credits_balance"] == 30
+    assert org["onboarding"]["goals"] == ["expired_listings", "fsbo_prospecting"]
+    agents = c.get("/api/agents/").json()
+    assert [a["template"] for a in agents] == ["welcome_demo"]
+    demo = c.get(f"/api/agents/{agents[0]['id']}").json()
+    assert "Summit Realty" in demo["system_prompt"] and "Expired Listings" in demo["system_prompt"]
+    assert c.get("/api/business-profile").json()["industry"] == "real_estate"
+    # Only once per login.
+    assert c.post("/api/onboarding/start", json={"company": "Again", "industry": "other"}).status_code == 409
+
+
+def test_trial_onboarding_logistics_has_no_lead_finder(client, make_client):
+    c = _orphan_login(client, make_client)
+    assert c.post("/api/onboarding/start", json={"company": "Acme Freight", "industry": "nope"}).status_code == 422
+    org = c.post("/api/onboarding/start", json={"company": "Acme Freight", "industry": "logistics"}).json()["org"]
+    assert org["lead_finder_enabled"] is False and org["industry"] == "logistics"

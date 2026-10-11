@@ -273,6 +273,9 @@ export interface Org {
   /** IANA time zone used for reports (days on the dashboard, the call-log day filter). */
   timezone?: string | null;
   lead_finder_enabled?: boolean;
+  /** Industry chosen at free-trial onboarding (agent catalog key). */
+  industry?: string | null;
+  onboarding?: { goals?: string[]; other_goal?: string; team_size?: string | null; trial_credits?: number } | null;
   /** Lead-lookup credits (separate from calling credits). */
   lead_credits?: number;
   lead_credits_unlimited?: boolean;

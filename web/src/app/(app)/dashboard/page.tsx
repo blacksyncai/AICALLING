@@ -6,6 +6,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { ActivityHeatmap } from "@/components/dashboard/ActivityHeatmap";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
+import { RecommendedForYou } from "@/components/dashboard/RecommendedForYou";
 import { WelcomeDemo } from "@/components/dashboard/WelcomeDemo";
 import { ScoreCards } from "@/components/ui/score-gauge";
 import { StatsBento } from "@/components/ui/stats-bento";
@@ -140,6 +141,7 @@ export default function DashboardPage() {
 
       {/* New accounts: talk to the welcome demo agent, then the getting-started checklist */}
       <WelcomeDemo />
+      <RecommendedForYou />
       <GettingStarted />
 
       {/* Setup strip */}

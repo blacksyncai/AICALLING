@@ -36,6 +36,9 @@ class Organization(Base):
     # Lead Finder on/off (NULL = on). lead_finder_daily_limit is unused (replaced by lookup credits); kept so old databases match.
     lead_finder_daily_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lead_finder_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Free-trial onboarding answers: industry key (agent catalog) and {"goals", "team_size", ...}.
+    industry: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    onboarding: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Lead-lookup credits — separate from calling credits. 1 credit = 1 property owner found.
     lead_credits_balance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     lead_credits_unlimited: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)

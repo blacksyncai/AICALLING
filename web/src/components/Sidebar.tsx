@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { SearchButton } from "./CommandPalette";
 import { Logo } from "./Logo";
 
-type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean };
+type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean };
 
 const NAV: { title: string | null; items: NavItem[] }[] = [
   { title: null, items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] },
@@ -29,7 +29,7 @@ const NAV: { title: string | null; items: NavItem[] }[] = [
     title: "Reach",
     items: [
       { href: "/contacts", label: "Contacts", icon: Contact },
-      { href: "/lead-finder", label: "Lead Finder", icon: UserSearch },
+      { href: "/lead-finder", label: "Lead Finder", icon: UserSearch, leadFinder: true },
       { href: "/campaigns", label: "Campaigns", icon: Megaphone },
     ],
   },
@@ -185,7 +185,10 @@ export function Sidebar() {
       </div>
       <div className="scroll-thin flex-1 overflow-y-auto px-3 py-2">
         {NAV.map((section, i) => {
-          const items = section.items.filter((n) => !n.managersOnly || manager);
+          // Lead Finder only where it's on for the account (real estate and home services trials).
+          const items = section.items.filter(
+            (n) => (!n.managersOnly || manager) && (!n.leadFinder || session?.org?.lead_finder_enabled !== false || session?.user.is_superadmin),
+          );
           if (!items.length) return null;
           return (
             <div key={section.title ?? i} className={cn(i > 0 && "mt-4")}>
