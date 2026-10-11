@@ -7,6 +7,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { CreditsCard, LedgerCard, SettingsCard, TeamCard } from "@/components/admin/AccountCards";
 import { BillingCard } from "@/components/admin/BillingCard";
+import { DeleteAccountCard } from "@/components/admin/DeleteAccountCard";
 import { LeadFinderCard } from "@/components/admin/LeadFinderCard";
 import { PhoneNumbersCard } from "@/components/admin/PhoneNumbersCard";
 import { AdminGuard, StatTile, fmt } from "@/components/admin/shared";
@@ -110,6 +111,7 @@ function AccountDetail() {
           <PhoneNumbersCard orgId={org.id} />
           <LeadFinderCard orgId={org.id} />
           <TeamCard org={org} refresh={refresh} />
+          <DeleteAccountCard org={org} />
         </div>
       </div>
     </div>

@@ -248,3 +248,27 @@ def test_new_accounts_start_with_the_welcome_demo(client, make_client):
     assert demo["first_message"].startswith("Hey, welcome to BlackSync AI!")
     assert demo["specialty"] == "Welcome Demo"
     assert "welcome_demo" not in [t["template"] for t in owner.get("/api/agents/templates/list").json()]
+
+
+def test_admin_can_delete_an_account(client, make_client):
+    from tests.test_meetings_analytics import _seed
+
+    org, email = _new_account(client, name="Doomed Co", credits=20)
+    owner = _login(make_client, email)
+    agent = owner.get("/api/agents/").json()[0]
+    _seed(org["id"], agent["id"], [{"outcome": "meeting_booked", "duration_seconds": 60}],
+          lead={"name": "Pat", "phone": "+14155550199", "email": "", "company": ""}, campaign="List")
+
+    r = client.request("DELETE", f"/api/admin/orgs/{org['id']}", json={"confirm_name": "doomed co"})
+    assert r.status_code == 400  # name must match exactly
+    house = client.get("/api/auth/me").json()["org"]
+    assert client.request("DELETE", f"/api/admin/orgs/{house['id']}", json={"confirm_name": house["name"]}).status_code == 409
+    # Members can't do it.
+    assert owner.request("DELETE", f"/api/admin/orgs/{org['id']}", json={"confirm_name": "Doomed Co"}).status_code in (401, 403)
+
+    r = client.request("DELETE", f"/api/admin/orgs/{org['id']}", json={"confirm_name": "Doomed Co"})
+    assert r.status_code == 200, r.text
+    assert r.json()["removed"]["agents"] == 1 and r.json()["removed"]["call_logs"] == 1
+    assert client.get(f"/api/admin/orgs/{org['id']}").status_code == 404
+    # The login stays, without an account.
+    assert owner.get("/api/auth/me").json()["org"] is None

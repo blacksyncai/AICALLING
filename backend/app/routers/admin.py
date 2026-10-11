@@ -285,6 +285,55 @@ async def update_org(org_id: uuid.UUID, body: OrgPatch, _: AdminDep, db: DbDep):
     return org_to_dict(org)
 
 
+class OrgDelete(BaseModel):
+    # Typed by the admin to confirm; must match the account name exactly.
+    confirm_name: str
+
+
+@router.delete("/orgs/{org_id}")
+async def delete_org(org_id: uuid.UUID, body: OrgDelete, admin: AdminDep, db: DbDep):
+    """Permanently delete an account and everything in it (agents, contacts, calls, billing records…).
+    Logins stay (they're shared across accounts); someone left without an account sees onboarding."""
+    from sqlalchemy import delete, update
+
+    from app.database import Base
+    from app.models.billing import BillingSubscription, PhoneNumber
+    from app.models.calendar import CalendarConnection
+    from app.services import google_calendar as gcal
+
+    org = await _org_or_404(db, org_id)
+    if body.confirm_name.strip() != org.name:
+        raise HTTPException(status_code=400, detail="Type the account name exactly to confirm.")
+    house = (await db.execute(select(Organization).order_by(Organization.created_at).limit(1))).scalar_one_or_none()
+    if house and house.id == org.id:
+        raise HTTPException(status_code=409, detail="The main BlackSync account can't be deleted.")
+    sub = await db.get(BillingSubscription, org.id)
+    if sub and sub.status in ("active", "trialing", "past_due"):
+        raise HTTPException(status_code=409, detail="This account has a live subscription. Cancel it in Stripe first, then delete the account.")
+    numbers = (await db.execute(select(func.count()).select_from(PhoneNumber)
+                                .where(PhoneNumber.org_id == org.id, PhoneNumber.status == "active"))).scalar_one()
+    if numbers:
+        raise HTTPException(status_code=409, detail=f"This account still has {numbers} phone number{'s' if numbers != 1 else ''}. "
+                                                    "Release or reassign them first so they don't keep billing in Twilio.")
+    conn = await db.get(CalendarConnection, org.id)
+    if conn:
+        await gcal.revoke(conn)
+
+    name, counts = org.name, {}
+    for col in ("agents", "leads", "call_logs", "campaigns", "memberships"):
+        tbl = Base.metadata.tables[col]
+        counts[col] = (await db.execute(select(func.count()).select_from(tbl).where(tbl.c.org_id == org.id))).scalar_one()
+    # Every table that holds this account's rows, children first — doesn't rely on database cascades.
+    await db.execute(update(User).where(User.active_org_id == org.id).values(active_org_id=None))
+    for tbl in reversed(Base.metadata.sorted_tables):
+        if "org_id" in tbl.c and tbl.name != "organizations":
+            await db.execute(delete(tbl).where(tbl.c.org_id == org.id))
+    await db.execute(delete(Organization).where(Organization.id == org.id))
+    await db.commit()
+    log.warning("org_deleted", org_id=str(org_id), name=name, by=str(admin.id), **counts)
+    return {"deleted": True, "name": name, "removed": counts}
+
+
 @router.post("/orgs/{org_id}/credits")
 async def grant_credits(org_id: uuid.UUID, body: CreditGrant, admin: AdminDep, db: DbDep):
     """Add (or with a negative amount, remove) calling credits. Audited; never takes the balance below zero."""
