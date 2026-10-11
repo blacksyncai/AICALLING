@@ -39,6 +39,7 @@ def agent_to_runtime(agent) -> dict:
         "temperature": agent.temperature if agent.temperature is not None else 0.5,
         "voice_id": agent.voice_id or "",
         "voice_speed": agent.voice_speed or 1.0,
+        "voice_tuning": getattr(agent, "voice_tuning", None) or {},
         "background_audio": bool(agent.background_audio),
         "enable_booking": bool(agent.enable_booking),
         "calcom_event_type_id": agent.calcom_event_type_id or "",

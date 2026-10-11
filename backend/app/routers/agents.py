@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 import structlog
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from app.agent.runtime import agent_to_runtime
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 _EDITABLE = (
     "name", "description", "status", "system_prompt", "first_message", "knowledge_base",
-    "language", "llm_model", "temperature", "voice_id", "voice_speed", "background_audio",
+    "language", "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio",
     "enable_booking", "calcom_event_type_id", "transfer_number", "max_duration_seconds",
     "extraction_fields", "success_criteria", "builder", "ai_disclosure", "caller_number", "record_calls",
 )
@@ -36,6 +36,24 @@ _EDITABLE = (
 class ExtractionField(BaseModel):
     name: str
     description: str = ""
+
+
+class Pronunciation(BaseModel):
+    word: str = Field(max_length=60)
+    say: str = Field(max_length=120)
+
+
+class VoiceTuning(BaseModel):
+    volume: float = Field(default=1.0, ge=0.5, le=2)
+    # 0–1. Defaults reproduce the worker's standard turn-taking.
+    responsiveness: float = Field(default=0.75, ge=0, le=1)
+    interruption: float = Field(default=0.75, ge=0, le=1)
+    pronunciations: list[Pronunciation] = Field(default_factory=list, max_length=50)
+
+    @field_validator("pronunciations")
+    @classmethod
+    def _drop_blank(cls, v: list[Pronunciation]) -> list[Pronunciation]:
+        return [p for p in v if p.word.strip() and p.say.strip()]
 
 
 class AgentCreate(BaseModel):
@@ -55,6 +73,7 @@ class AgentUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     voice_id: str | None = None
     voice_speed: float | None = Field(default=None, ge=0.5, le=2)
+    voice_tuning: VoiceTuning | None = None
     background_audio: bool | None = None
     enable_booking: bool | None = None
     calcom_event_type_id: str | None = None
@@ -101,6 +120,7 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         "template": a.template,
         **{k: getattr(a, k) for k in _EDITABLE},
         "extraction_fields": a.extraction_fields or [],
+        "voice_tuning": a.voice_tuning or {},
         "ai_disclosure": a.ai_disclosure is not False,
         "caller_number": a.caller_number or "",
         "specialty": catalog_specialty(a) or "",

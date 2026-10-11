@@ -32,16 +32,21 @@ class LLMNotConfigured(RuntimeError):
 
 
 async def _chat(payload: dict, timeout: float = 45.0) -> dict:
-    if not settings.openai_api_key:
-        raise LLMNotConfigured("OPENAI_API_KEY is not set on the backend.")
+    from app.agent.models import llm_endpoint
+
+    api_key, base_url, sends_temperature = llm_endpoint(payload.get("model"))
+    if not api_key:
+        raise LLMNotConfigured("No API key is set on the backend for this model.")
+    if not sends_temperature:
+        payload = {k: v for k, v in payload.items() if k != "temperature"}
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
-            f"{settings.openai_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            f"{base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
             json=payload,
         )
         if resp.status_code >= 400:
-            raise RuntimeError(f"OpenAI error {resp.status_code}: {resp.text[:300]}")
+            raise RuntimeError(f"LLM error {resp.status_code}: {resp.text[:300]}")
         return resp.json()
 
 

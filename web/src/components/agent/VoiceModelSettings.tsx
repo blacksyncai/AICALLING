@@ -1,11 +1,11 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus, X } from "lucide-react";
 import { useState } from "react";
 import useSWR from "swr";
 import { Field, Input, Select, Toggle } from "@/components/ui";
 import { fetcher } from "@/lib/api";
-import type { Agent, ModelCatalog, VoiceCatalog } from "@/lib/types";
+import type { Agent, ModelCatalog, VoiceCatalog, VoiceTuning } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ModelPicker } from "./ModelPicker";
 import { VoicePicker } from "./VoicePicker";
@@ -100,6 +100,8 @@ export function VoiceModelSettings({
         </Field>
       </div>
 
+      <VoiceTuningSettings value={draft.voice_tuning ?? {}} onChange={(v) => set("voice_tuning", v)} />
+
       <div className="rounded-xl border border-zinc-200">
         <button
           type="button"
@@ -119,7 +121,10 @@ export function VoiceModelSettings({
         </button>
         {advanced && (
           <div id="voice-advanced" className="grid gap-5 border-t border-zinc-100 p-4 sm:grid-cols-2">
-            <Field label={`Creativity (temperature) · ${draft.temperature.toFixed(1)}`} hint="Lower = more consistent, higher = more varied.">
+            <Field
+              label={`Creativity (temperature) · ${draft.temperature.toFixed(1)}`}
+              hint={draft.llm_model.startsWith("claude-") ? "Claude models set this themselves; it's ignored for them." : "Lower = more consistent, higher = more varied."}
+            >
               <input
                 type="range"
                 min={0}
@@ -148,6 +153,66 @@ export function VoiceModelSettings({
               />
             </div>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const TUNING_DEFAULTS = { volume: 1, responsiveness: 0.75, interruption: 0.75 };
+
+function Slider({ label, hint, value, min, max, step, format, onChange }: {
+  label: string; hint: string; value: number; min: number; max: number; step: number;
+  format: (v: number) => string; onChange: (v: number) => void;
+}) {
+  return (
+    <Field label={`${label} · ${format(value)}`} hint={hint}>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-full accent-brand-600" />
+    </Field>
+  );
+}
+
+/** Volume, turn-taking and pronunciations — all applied by the voice worker on the next call. */
+function VoiceTuningSettings({ value, onChange }: { value: VoiceTuning; onChange: (v: VoiceTuning) => void }) {
+  const t = { ...TUNING_DEFAULTS, ...value };
+  const pron = value.pronunciations ?? [];
+  const patch = (p: Partial<VoiceTuning>) => onChange({ ...value, ...p });
+  const setPron = (list: { word: string; say: string }[]) => patch({ pronunciations: list });
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  return (
+    <div className="space-y-5 rounded-xl border border-zinc-200 p-4">
+      <div className="text-sm font-medium text-zinc-800">Voice tuning</div>
+      <div className="grid gap-5 sm:grid-cols-3">
+        <Slider label="Volume" hint="How loud the agent speaks." value={t.volume} min={0.5} max={1.5} step={0.05}
+          format={(v) => `${v.toFixed(2)}x`} onChange={(v) => patch({ volume: v })} />
+        <Slider label="Responsiveness" hint="Higher answers sooner after the caller stops talking." value={t.responsiveness}
+          min={0} max={1} step={0.05} format={pct} onChange={(v) => patch({ responsiveness: v })} />
+        <Slider label="Interruption sensitivity" hint="Higher lets the caller cut in more easily." value={t.interruption}
+          min={0} max={1} step={0.05} format={pct} onChange={(v) => patch({ interruption: v })} />
+      </div>
+      <div>
+        <div className="mb-1 text-xs font-medium text-zinc-700">Pronunciation dictionary</div>
+        <p className="mb-2 text-xs text-zinc-500">Spell a word the way it should be said, e.g. BlackSync → Black Sync, Nguyen → Win.</p>
+        <div className="space-y-2">
+          {pron.map((p, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input aria-label="Word" placeholder="Word" value={p.word} maxLength={60}
+                onChange={(e) => setPron(pron.map((x, j) => (j === i ? { ...x, word: e.target.value } : x)))} />
+              <span className="text-zinc-400">→</span>
+              <Input aria-label="Say it as" placeholder="Say it as" value={p.say} maxLength={120}
+                onChange={(e) => setPron(pron.map((x, j) => (j === i ? { ...x, say: e.target.value } : x)))} />
+              <button type="button" aria-label="Remove" onClick={() => setPron(pron.filter((_, j) => j !== i))}
+                className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+        {pron.length < 50 && (
+          <button type="button" onClick={() => setPron([...pron, { word: "", say: "" }])}
+            className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:text-brand-700">
+            <Plus className="h-4 w-4" /> Add pronunciation
+          </button>
         )}
       </div>
     </div>

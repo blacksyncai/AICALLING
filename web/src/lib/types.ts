@@ -19,6 +19,8 @@ export interface Agent {
   temperature: number;
   voice_id: string;
   voice_speed: number;
+  /** Empty object = defaults (volume 1, responsiveness 0.75, interruption 0.75). */
+  voice_tuning?: VoiceTuning;
   background_audio: boolean;
   enable_booking: boolean;
   calcom_event_type_id: string;
@@ -37,6 +39,13 @@ export interface Agent {
   specialty?: string;
   /** True when a person set the specialty (regeneration leaves it alone). */
   specialty_custom?: boolean;
+}
+
+export interface VoiceTuning {
+  volume?: number;
+  responsiveness?: number;
+  interruption?: number;
+  pronunciations?: { word: string; say: string }[];
 }
 
 export interface PhoneNumberItem {

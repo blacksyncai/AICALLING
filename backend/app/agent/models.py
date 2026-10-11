@@ -65,7 +65,44 @@ LLM_MODELS: list[dict] = [
         "tags": ["advanced"],
         "recommended_for": [],
     },
+    {
+        "id": "claude-haiku-5-5",
+        "name": "Claude Haiku 5.5",
+        "provider": "Anthropic",
+        "description": "Anthropic's fast model. Natural, concise replies at low latency.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": ["general"],
+    },
+    {
+        "id": "claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5",
+        "provider": "Anthropic",
+        "description": "Anthropic's most capable voice option. Strong at nuanced, complex conversations and tools.",
+        "speed": "standard",
+        "tags": ["advanced"],
+        "recommended_for": ["complex_scripts"],
+    },
 ]
+
+
+ANTHROPIC_OPENAI_BASE_URL = "https://api.anthropic.com/v1"
+
+
+def is_anthropic_model(model_id: str | None) -> bool:
+    return (model_id or "").startswith("claude-")
+
+
+def llm_endpoint(model_id: str | None) -> tuple[str, str, bool]:
+    """(api_key, base_url, sends_temperature) for a chat-completions call.
+
+    Claude models go through Anthropic's OpenAI-compatible endpoint, so the voice
+    worker's OpenAI plugin and the playground drive them unchanged. They reject
+    `temperature`, so it's left out for them.
+    """
+    if is_anthropic_model(model_id):
+        return settings.anthropic_api_key, ANTHROPIC_OPENAI_BASE_URL, False
+    return settings.openai_api_key, settings.openai_base_url, True
 
 GROUPS: list[tuple[str, str]] = [
     ("recommended", "Recommended"),
@@ -116,8 +153,9 @@ def model_catalog() -> list[dict]:
     already in the curated list (e.g. a model on a custom OpenAI-compatible endpoint).
     """
     models = [
-        {**m, "provider": "OpenAI", "status": "available", "group": m["tags"][0]}
+        {"provider": "OpenAI", **m, "status": "available", "group": m["tags"][0]}
         for m in LLM_MODELS
+        if not is_anthropic_model(m["id"]) or settings.anthropic_api_key
     ]
     known = {m["id"] for m in models}
     for extra in dict.fromkeys([settings.llm_model]):

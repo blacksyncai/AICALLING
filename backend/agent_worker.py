@@ -838,7 +838,9 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
 
 async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     import time as _time
+    from app.agent.models import llm_endpoint
     from app.agent.runtime import build_instructions, render_vars
+    from app.agent.voice_tuning import pronounce, voice_tuning
 
     cfg = metadata.get("agent") or {}
     if metadata.get("fetch_config") and metadata.get("agent_id"):
@@ -863,35 +865,37 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             turn_detector = None
 
     language = cfg.get("language") or "en"
+    tuning = voice_tuning(cfg.get("voice_tuning"))
+    model = cfg.get("llm_model") or "gpt-4.1-mini"
+    api_key, base_url, sends_temperature = llm_endpoint(model)
+    llm_kwargs = dict(model=model, api_key=api_key, base_url=base_url)
+    if sends_temperature:
+        llm_kwargs["temperature"] = float(cfg.get("temperature", 0.5))
     session_kwargs = dict(
         stt=deepgram.STT(
             model="nova-3", language=language if language != "multi" else "multi",
             api_key=settings.deepgram_api_key,
         ),
-        llm=openai.LLM(
-            model=cfg.get("llm_model") or "gpt-4.1-mini",
-            temperature=float(cfg.get("temperature", 0.5)),
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-        ),
+        llm=openai.LLM(**llm_kwargs),
         tts=cartesia.TTS(
             model="sonic-3",
             voice=cfg.get("voice_id") or DEFAULT_VOICE_ID,
             language=None if language in ("en", "multi") else language,
             speed=float(cfg.get("voice_speed") or 1.0),
+            volume=tuning["volume"] if tuning["volume"] != 1.0 else None,
             api_key=settings.cartesia_api_key,
         ),
         vad=silero.VAD.load(),
         turn_handling={
             "interruption": {
-                "min_duration": 0.5,
-                "min_words": 2,
+                "min_duration": tuning["min_duration"],
+                "min_words": tuning["min_words"],
                 "false_interruption_timeout": 3.0,
                 "resume_false_interruption": True,
             },
-            # Latency: answer ~350 ms after the caller stops (adapts per caller),
+            # Latency: by default answer ~350 ms after the caller stops (adapts per caller),
             # and start drafting the reply — including audio — before the turn is final.
-            "endpointing": {"mode": "dynamic", "min_delay": 0.35, "max_delay": 2.5},
+            "endpointing": {"mode": "dynamic", "min_delay": tuning["min_delay"], "max_delay": tuning["max_delay"]},
             "preemptive_generation": {"enabled": True, "preemptive_tts": True},
         },
     )
@@ -899,6 +903,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session_kwargs["turn_detection"] = turn_detector
     if _lk_replace is not None:
         session_kwargs["tts_text_transforms"] = ["filter_markdown", "filter_emoji"]
+        if tuning["pronunciations"]:
+            session_kwargs["tts_text_transforms"].append(pronounce(tuning["pronunciations"]))
 
     session = AgentSession(**session_kwargs)
     session_ref: dict = {"session": session}

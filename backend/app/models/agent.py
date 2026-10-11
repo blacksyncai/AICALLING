@@ -47,6 +47,8 @@ class Agent(Base):
     voice_id: Mapped[str] = mapped_column(String(128), nullable=False, default=DEFAULT_VOICE_ID)
     voice_speed: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     background_audio: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # {"volume", "responsiveness", "interruption", "pronunciations": [{"word", "say"}]} — see agent_worker.
+    voice_tuning: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # ── Actions ───────────────────────────────────────────────────────────────
     enable_booking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

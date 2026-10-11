@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     # Any OpenAI-compatible endpoint works (Azure OpenAI, Groq, OpenRouter, a local proxy…).
     openai_base_url: str = "https://api.openai.com/v1"
+    # Claude models for agents (Haiku/Sonnet); hidden from the model picker when unset.
+    anthropic_api_key: str = ""
     llm_model: str = "gpt-4.1-mini"
     # Model used for post-call summaries / data extraction.
     analysis_model: str = "gpt-4.1-mini"

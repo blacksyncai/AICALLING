@@ -39,7 +39,7 @@ const VARIABLES = ["name", "full_name", "company", "email", "phone", "role"];
 
 const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
-  "llm_model", "temperature", "voice_id", "voice_speed", "background_audio", "enable_booking",
+  "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio", "enable_booking",
   "calcom_event_type_id", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
   "ai_disclosure", "builder", "caller_number", "record_calls", "specialty",
 ];
