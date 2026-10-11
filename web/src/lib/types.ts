@@ -425,6 +425,9 @@ export interface AdminOrg extends Org {
   agents: number;
   contacts: number;
   usage_30d: Usage;
+  all_time?: Usage;
+  phone_numbers?: number;
+  lookup_balance_cents?: number;
 }
 
 export interface AdminOrgDetail extends Org, Team {

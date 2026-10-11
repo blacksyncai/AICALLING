@@ -158,7 +158,12 @@ async def list_orgs(_: AdminDep, db: DbDep, q: str = ""):
     if q.strip():
         stmt = stmt.where(Organization.name.ilike(f"%{q.strip()}%"))
     orgs = (await db.execute(stmt)).scalars().all()
+    from app.models.billing import PhoneNumber
+
     usage = await _usage_by_org(db, datetime.now(timezone.utc) - timedelta(days=30))
+    all_time = await _usage_by_org(db, datetime(1970, 1, 1, tzinfo=timezone.utc))
+    numbers = {r[0]: r[1] for r in (await db.execute(
+        select(PhoneNumber.org_id, func.count()).where(PhoneNumber.status == "active").group_by(PhoneNumber.org_id))).all()}
     members = await _counts(db, Membership.org_id)
     agents = await _counts(db, Agent.org_id)
     leads = await _counts(db, Lead.org_id)
@@ -178,6 +183,9 @@ async def list_orgs(_: AdminDep, db: DbDep, q: str = ""):
             "agents": agents.get(o.id, 0),
             "contacts": leads.get(o.id, 0),
             "usage_30d": usage.get(o.id, {"calls": 0, "minutes": 0, "credits_used": 0}),
+            "all_time": all_time.get(o.id, {"calls": 0, "minutes": 0, "credits_used": 0}),
+            "phone_numbers": numbers.get(o.id, 0),
+            "lookup_balance_cents": o.lookup_balance_cents or 0,
         })
     return {"orgs": out}
 

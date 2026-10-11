@@ -1,21 +1,19 @@
 "use client";
 
-import { BookOpen, Building2, CreditCard, Hash, Lock, LogIn, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
+import { BookOpen, Building2, CreditCard, Hash, Lock, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
+import { ClientCards } from "@/components/admin/ClientCards";
 import { NewAccountModal } from "@/components/admin/NewAccountModal";
 import { PlaybooksTab } from "@/components/admin/playbooks";
 import { BillingAdminTab } from "@/components/admin/BillingAdminTab";
 import { TelephonyTab } from "@/components/admin/TelephonyTab";
 import { AdminGuard, Avatar, StatTile, fmt } from "@/components/admin/shared";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Spinner, Tabs } from "@/components/ui";
-import { useToast } from "@/components/toast";
 import { fetcher, post } from "@/lib/api";
-import { switchOrg } from "@/lib/session";
 import type { AdminOrg, PlatformOverview } from "@/lib/types";
-import { cn, timeAgo } from "@/lib/utils";
+import { timeAgo } from "@/lib/utils";
 
 type AdminUser = {
   id: string;
@@ -98,7 +96,7 @@ function AdminPortal() {
             value={tab}
             onChange={setTab}
             tabs={[
-              { value: "accounts", label: "Accounts", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { value: "accounts", label: "Clients", icon: <Building2 className="h-3.5 w-3.5" /> },
               { value: "users", label: "Users", icon: <Users className="h-3.5 w-3.5" /> },
               { value: "playbooks", label: "Playbooks", icon: <BookOpen className="h-3.5 w-3.5" /> },
               { value: "numbers", label: "Numbers", icon: <Hash className="h-3.5 w-3.5" /> },
@@ -115,30 +113,32 @@ function AdminPortal() {
       </div>
 
       {tab === "accounts" ? (
-        <Card className="min-w-0">
-          {orgsError ? (
+        orgsError ? (
+          <Card>
             <EmptyState icon={<Building2 className="h-5 w-5" />} title="Couldn't load accounts" description={orgsError.message} />
-          ) : !orgs ? (
-            <div className="flex justify-center py-16">
-              <Spinner />
-            </div>
-          ) : orgs.orgs.length === 0 ? (
+          </Card>
+        ) : !orgs ? (
+          <div className="flex justify-center py-16">
+            <Spinner />
+          </div>
+        ) : orgs.orgs.length === 0 ? (
+          <Card>
             <EmptyState
               icon={<Building2 className="h-5 w-5" />}
-              title={q ? "No matching accounts" : "No accounts yet"}
-              description={q ? `Nothing matches “${q}”.` : "Create the first customer account to get started."}
+              title={q ? "No matching clients" : "No clients yet"}
+              description={q ? `Nothing matches “${q}”.` : "Create the first client account to get started."}
               action={
                 !q && (
                   <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-                    <Plus className="h-4 w-4" /> New account
+                    <Plus className="h-4 w-4" /> New client
                   </Button>
                 )
               }
             />
-          ) : (
-            <AccountsTable orgs={orgs.orgs} onChanged={() => void mutateOrgs()} />
-          )}
-        </Card>
+          </Card>
+        ) : (
+          <ClientCards orgs={orgs.orgs} onChanged={() => void mutateOrgs()} />
+        )
       ) : tab === "users" ? (
         <UsersTable />
       ) : tab === "numbers" ? (
@@ -158,93 +158,6 @@ function AdminPortal() {
         }}
       />
     </>
-  );
-}
-
-function AccountsTable({ orgs, onChanged }: { orgs: AdminOrg[]; onChanged: () => void }) {
-  const router = useRouter();
-  const toast = useToast();
-  const [opening, setOpening] = useState<string | null>(null);
-
-  const open = async (id: string) => {
-    setOpening(id);
-    try {
-      await switchOrg(id);
-    } catch (e) {
-      toast((e as Error).message, "error");
-      setOpening(null);
-    }
-  };
-
-  return (
-    <div className="relative overflow-x-auto">
-      <table className="w-full min-w-[960px] text-sm">
-        <thead className="border-b border-zinc-100 text-left text-xs text-zinc-500">
-          <tr>
-            <th className="px-5 py-3 font-medium">Account</th>
-            <th className="px-3 py-3 font-medium">Status</th>
-            <th className="px-3 py-3 text-right font-medium">Calling credits</th>
-            <th className="px-3 py-3 text-right font-medium">Lookup credits</th>
-            <th className="px-3 py-3 text-right font-medium">Calls 30d</th>
-            <th className="px-3 py-3 text-right font-medium">Minutes 30d</th>
-            <th className="px-3 py-3 text-right font-medium">Members</th>
-            <th className="px-3 py-3 text-right font-medium">Contacts</th>
-            <th className="px-3 py-3 text-right font-medium">Created</th>
-            <th className="px-5 py-3">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100">
-          {orgs.map((o) => {
-            const low = !o.unlimited_credits && o.credits_balance <= 10;
-            return (
-              <tr key={o.id} className="cursor-pointer hover:bg-zinc-50" onClick={() => router.push(`/admin/accounts/${o.id}`)}>
-                <td className="max-w-[280px] px-5 py-3">
-                  <Link href={`/admin/accounts/${o.id}`} className="flex min-w-0 items-center gap-3" onClick={(e) => e.stopPropagation()}>
-                    <Avatar name={o.name} />
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium text-zinc-900">{o.name}</span>
-                      <span className="block truncate text-xs text-zinc-500">{o.owner?.email ?? "No owner"}</span>
-                    </span>
-                  </Link>
-                </td>
-                <td className="px-3 py-3">
-                  <Badge tone={o.status === "active" ? "green" : "red"}>{o.status}</Badge>
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  {o.unlimited_credits ? (
-                    <Badge tone="violet">Unlimited</Badge>
-                  ) : (
-                    <span className={cn("font-medium", low ? "text-amber-700" : "text-zinc-900")}>{fmt(o.credits_balance)}</span>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
-                  <LookupCreditsCell org={o} onChanged={onChanged} />
-                </td>
-                <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{fmt(o.usage_30d.calls)}</td>
-                <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{fmt(o.usage_30d.minutes)}</td>
-                <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{fmt(o.members)}</td>
-                <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{fmt(o.contacts)}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right text-xs text-zinc-500">{timeAgo(o.created_at)}</td>
-                <td className="px-5 py-3 text-right">
-                  <Button
-                    size="sm"
-                    loading={opening === o.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      open(o.id);
-                    }}
-                  >
-                    <LogIn className="h-3.5 w-3.5" /> Open
-                  </Button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
@@ -324,40 +237,3 @@ function UsersTable() {
 }
 
 
-/** Lookup-credit balance with a quick "+" to add more (separate from calling credits). */
-function LookupCreditsCell({ org, onChanged }: { org: AdminOrg; onChanged: () => void }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  if (org.lead_credits_unlimited) return <Badge tone="violet">Unlimited</Badge>;
-  const credits = org.lead_credits ?? 0;
-  async function add() {
-    const raw = window.prompt(`Add lookup credits to ${org.name}`, "100");
-    const n = Number(raw);
-    if (!raw) return;
-    if (!Number.isInteger(n) || n <= 0) return toast("Enter a whole number of credits.", "error");
-    setBusy(true);
-    try {
-      const r = await post<{ credits: number }>(`/api/admin/orgs/${org.id}/lead-credits`, { amount: n, note: "Added from accounts list" });
-      toast(`${org.name}: ${r.credits.toLocaleString()} lookup credits`);
-      onChanged();
-    } catch (e) {
-      toast((e as Error).message, "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={cn("font-medium", credits <= 0 ? "text-amber-700" : "text-zinc-900")}>{fmt(credits)}</span>
-      <button
-        onClick={add}
-        disabled={busy}
-        className="inline-flex items-center gap-0.5 rounded-md bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-        aria-label={`Add lookup credits to ${org.name}`}
-        title="Add lookup credits"
-      >
-        <Plus className="h-3 w-3" /> Add
-      </button>
-    </span>
-  );
-}
