@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, History, Settings2, Sparkles } from "lucide-react";
+import { ArrowRight, History, Settings2, Sparkles, UserCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -59,6 +59,19 @@ export function NewAgentChooser({ open, onClose }: { open: boolean; onClose: () 
             <span className="mt-0.5 block text-xs text-zinc-500">Configure your agent manually, from the ground up.</span>
           </span>
         </button>
+
+        <Link href="/agents/expert" onClick={onClose} className={cn(card, "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50")}>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white">
+            <UserCheck className="h-4 w-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-zinc-900">
+              Have an expert build it <Badge tone="gray">Done for you</Badge>
+            </span>
+            <span className="mt-0.5 block text-xs text-zinc-500">Book a call and our team builds, tests and launches your agent with you.</span>
+          </span>
+          <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-zinc-400 transition-transform group-hover:translate-x-0.5" />
+        </Link>
       </div>
 
       {drafts.length > 0 && (
