@@ -20,8 +20,10 @@ export function strengthFor(value: number | null, target: number): Strength {
   return "weak";
 }
 
-const STOPS: Record<Strength, string[]> = {
+const STOPS: Record<Strength | "brand", string[]> = {
   none: ["#d4d4d8", "#a1a1aa"],
+  // Brand colors for cards shown without a benchmark judgement.
+  brand: ["#fed7aa", "#fb923c", "#ea580c"],
   weak: ["#fecaca", "#f87171", "#dc2626"],
   moderate: ["#fde68a", "#fbbf24", "#d97706"],
   strong: ["#bbf7d0", "#4ade80", "#16a34a"],
@@ -38,7 +40,7 @@ const R = 45;
 const HALF = Math.PI * R; // half the circumference
 
 /** The arc. `value` is 0–100 (null = no data yet). */
-export function ScoreArc({ value, strength }: { value: number | null; strength: Strength }) {
+export function ScoreArc({ value, strength }: { value: number | null; strength: Strength | "brand" }) {
   const ref = useRef<SVGCircleElement>(null);
   const gradId = `gauge-${useId().replace(/:/g, "")}`;
   const stops = STOPS[strength];
@@ -104,9 +106,11 @@ export interface ScoreCardProps {
   action?: { label: string; href: string };
   /** Staggers the entrance when several cards sit together. */
   index?: number;
+  /** No weak/moderate/strong judgement: brand-colored gauge, no badge, no target. */
+  neutral?: boolean;
 }
 
-export function ScoreCard({ title, value, target, description, caption, action, index = 0 }: ScoreCardProps) {
+export function ScoreCard({ title, value, target, description, caption, action, index = 0, neutral = false }: ScoreCardProps) {
   const strength = strengthFor(value, target);
   const rounded = value === null ? null : Math.round(value);
   return (
@@ -116,7 +120,7 @@ export function ScoreCard({ title, value, target, description, caption, action, 
     >
       <div className="flex items-center justify-between gap-3">
         <h3 className="truncate text-sm font-medium text-zinc-900">{title}</h3>
-        {strength !== "none" && (
+        {!neutral && strength !== "none" && (
           <span className={cn("shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset", BADGE[strength])}>
             {strength}
           </span>
@@ -124,7 +128,7 @@ export function ScoreCard({ title, value, target, description, caption, action, 
       </div>
 
       <div className="relative mt-4">
-        <ScoreArc value={rounded} strength={strength} />
+        <ScoreArc value={rounded} strength={neutral && value !== null ? "brand" : strength} />
         <div className="absolute inset-x-0 bottom-0 text-center">
           <div className="font-display text-4xl font-semibold tabular-nums tracking-tight text-zinc-900">
             {rounded === null ? <span className="text-zinc-300">—</span> : <RollingNumber text={`${rounded}%`} />}
@@ -133,7 +137,7 @@ export function ScoreCard({ title, value, target, description, caption, action, 
         </div>
       </div>
       <p className="mt-1 text-center text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-        {caption ?? (rounded === null ? "No data yet" : `Target ${target}%`)}
+        {caption ?? (rounded === null || neutral ? "No data yet" : `Target ${target}%`)}
       </p>
 
       <p className="mt-3 flex-1 text-center text-xs leading-relaxed text-zinc-500">{description}</p>
@@ -150,12 +154,12 @@ export function ScoreCard({ title, value, target, description, caption, action, 
   );
 }
 
-/** A responsive row of score cards. */
-export function ScoreCards({ items }: { items: ScoreCardProps[] }) {
+/** A responsive row of score cards (stacked on phones). */
+export function ScoreCards({ items, neutral = false }: { items: ScoreCardProps[]; neutral?: boolean }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-3">
       {items.map((item, i) => (
-        <ScoreCard key={item.title} {...item} index={i} />
+        <ScoreCard key={item.title} {...item} neutral={neutral || item.neutral} index={i} />
       ))}
     </div>
   );

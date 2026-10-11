@@ -14,7 +14,7 @@ import type { Agent, Call } from "@/lib/types";
 import { formatDateTime, formatDuration, humanize } from "@/lib/utils";
 
 const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "no_answer", "completed", "failed"];
-const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
+const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred", "callback,interested": "Follow-ups" };
 const TYPE_CHIP: Record<string, string> = { outbound: "Phone calls", web: "Browser tests" };
 const PAGE = 25;
 
@@ -44,6 +44,8 @@ function CallLogs() {
   const agentId = params.get("agent_id") ?? "";
   const outcome = params.get("outcome") ?? "";
   const type = params.get("call_type") ?? "";
+  const rawDays = params.get("days") ?? "";
+  const days = /^\d{1,3}$/.test(rawDays) ? rawDays : "";
   const [page, setPage] = useState(1);
 
   function setFilter(key: string, value: string) {
@@ -60,6 +62,7 @@ function CallLogs() {
   if (outcome) qs.set("outcome", outcome);
   if (type) qs.set("call_type", type);
   if (date) qs.set("date", date);
+  if (days) qs.set("days", days);
   const { data, error } = useSWR<{ items: Call[]; total: number }>(`/api/calls/?${qs}`, fetcher, { refreshInterval: 10000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1;
@@ -70,6 +73,7 @@ function CallLogs() {
   if (agentId) chips.push({ key: "agent_id", label: `Agent ${agents?.find((a) => a.id === agentId)?.name ?? "…"}` });
   if (outcome) chips.push({ key: "outcome", label: OUTCOME_CHIP[outcome] ?? humanize(outcome) });
   if (type) chips.push({ key: "call_type", label: TYPE_CHIP[type] ?? humanize(type) });
+  if (days) chips.push({ key: "days", label: `Last ${days} days` });
 
   return (
     <>
@@ -85,6 +89,7 @@ function CallLogs() {
         </Select>
         <Select className="sm:w-56" value={outcome} onChange={(e) => setFilter("outcome", e.target.value)} aria-label="Outcome">
           <option value="">All outcomes</option>
+          <option value="callback,interested">follow-ups (callback or interested)</option>
           {OUTCOMES.map((o) => (
             <option key={o} value={o}>
               {o.replace(/_/g, " ")}

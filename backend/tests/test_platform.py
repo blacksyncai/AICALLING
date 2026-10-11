@@ -126,7 +126,7 @@ def test_outcome_webhook_runs_analysis(client, agent_id, monkeypatch):
     assert call["transcript"] == transcript
 
     overview = client.get("/api/calls/overview").json()
-    assert overview["meetings_booked"] >= 1
+    assert overview["browser_tests"] >= 1  # a browser test: counted separately, not as a phone call
     assert client.get(f"/api/calls/?agent_id={agent_id}").json()["total"] >= 1
 
 

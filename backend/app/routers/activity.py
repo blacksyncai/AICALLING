@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.models.account import CreditTransaction
 from app.models.agent import Agent
@@ -113,7 +113,8 @@ async def daily_activity(
         CallLog.duration_seconds, CallLog.outcome,
     ).where(
         CallLog.org_id == org.id,
-        CallLog.call_type == "outbound",
+        # Phone calls: outbound, plus older rows saved before call_type existed.
+        or_(CallLog.call_type == "outbound", CallLog.call_type.is_(None)),
         CallLog.started_at >= start_utc,
         CallLog.started_at < end_utc,
     )

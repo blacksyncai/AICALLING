@@ -1195,17 +1195,9 @@ export default function ContributionSkyline({
 
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 pt-3 pb-3 text-[12px] sm:px-4" style={{ color: MUTED }}>
           {footer === undefined ? (
-            <span className="relative grid flex-1">
-              {hints.map((h) => (
-                <span
-                  key={h}
-                  aria-hidden={h !== hint}
-                  className="[grid-area:1/1] transition-opacity duration-500 motion-reduce:transition-none"
-                  style={{ opacity: h === hint ? 1 : 0 }}
-                >
-                  {h}
-                </span>
-              ))}
+            // Only the current view's instructions: hover/arrow keys in the heat map, orbit in 3D.
+            <span key={hint} className="flex-1 transition-opacity duration-500 starting:opacity-0 motion-reduce:transition-none">
+              {hint}
             </span>
           ) : (
             <span className="flex-1">{footer}</span>

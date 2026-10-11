@@ -49,6 +49,8 @@ export function ActivityHeatmap() {
   useEffect(() => {
     try {
       setTouch(window.matchMedia("(hover: none)").matches);
+      // Phones start on the simpler 30-day view; a year of squares is too small to read there.
+      if (window.matchMedia("(max-width: 639px)").matches) setRange("30d");
     } catch {
       /* older browsers: assume a mouse */
     }
@@ -140,7 +142,7 @@ export function ActivityHeatmap() {
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <Select
             aria-label="What to show"
-            className="h-8 w-auto min-w-0 max-w-full flex-1 text-xs sm:flex-none"
+            className="h-8 min-w-[9rem] flex-1 text-xs sm:w-auto sm:flex-none"
             value={metric}
             onChange={(e) => setMetric(e.target.value as ActivityMetric)}
           >
@@ -152,7 +154,7 @@ export function ActivityHeatmap() {
           </Select>
           <Select
             aria-label="Agent"
-            className="h-8 w-auto min-w-0 max-w-full flex-1 text-xs sm:max-w-44 sm:flex-none"
+            className="h-8 min-w-[9rem] flex-1 text-xs sm:w-auto sm:max-w-44 sm:flex-none"
             value={agentId}
             onChange={(e) => setAgentId(e.target.value)}
           >
@@ -233,12 +235,11 @@ export function ActivityHeatmap() {
               onViewChange={setView}
               unit={sInfo.unit}
               unitPlural={sInfo.unitPlural}
+              // The total, busiest day and streak appear once, in the stats below the chart.
               title={
-                <>
-                  <span className="font-semibold tabular-nums">{nf.format(shown.totals.value)}</span>{" "}
-                  {shown.totals.value === 1 ? sInfo.unit : sInfo.unitPlural} in the {rInfo.label}
-                  {agentName ? <span className="text-zinc-500"> · {agentName}</span> : null}
-                </>
+                <span className="text-zinc-600">
+                  {sInfo.label} · {agentName ?? "All agents"}
+                </span>
               }
               maxHeight3d={420}
               maxCell={28}
@@ -246,8 +247,8 @@ export function ActivityHeatmap() {
               onCellClick={onCellClick}
             />
             <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
-              Shades and heights are relative to your busiest days in this period (95th percentile). Phone calls only — browser test calls
-              aren&apos;t counted.
+              {view === "3d" ? "Heights" : "Shades"} are relative to your busiest days in this period (95th percentile). Phone calls only —
+              browser test calls aren&apos;t counted, matching the overview.
               {sInfo.value === "transfers" && " A warm transfer counts when your agent handed the call to your team and the phone system accepted it."}
               {sInfo.value === "credits" && " Credits come from your credit history, on the day they were charged."}
               {tzLabel && <> Days in {tzLabel}.</>}

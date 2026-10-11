@@ -83,6 +83,8 @@ async def list_calls(
     call_type: str | None = None,
     # A calendar day (YYYY-MM-DD) in the organization's reporting time zone.
     day: Date | None = Query(default=None, alias="date"),
+    # Only calls that started in the last N days (the dashboard's reporting period).
+    days: int | None = Query(default=None, ge=1, le=365),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
@@ -93,10 +95,13 @@ async def list_calls(
         filters.append(CallLog.agent_id == agent_id)
     if campaign_id:
         filters.append(CallLog.campaign_id == campaign_id)
-    if outcome:
-        filters.append(CallLog.outcome == outcome)
+    if outcome:  # one outcome, or several separated by commas ("callback,interested")
+        wanted = [o.strip() for o in outcome.split(",") if o.strip()]
+        filters.append(CallLog.outcome.in_(wanted) if len(wanted) > 1 else CallLog.outcome == wanted[0])
     if call_type:
         filters.append(CallLog.call_type == call_type)
+    if days:
+        filters.append(CallLog.started_at >= datetime.now(timezone.utc) - timedelta(days=days))
     if day:
         start, end = local_day_bounds(day, org_zone(ctx.org))
         filters += [CallLog.started_at >= start, CallLog.started_at < end]
@@ -118,20 +123,30 @@ async def list_calls(
 @router.get("/overview")
 async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, le=365)):
     """Dashboard KPIs for the window plus the previous window (for trends), computed in
-    Python so it works on SQLite and Postgres alike."""
+    Python so it works on SQLite and Postgres alike.
+
+    Phone calls only — the same definitions as the AI Calling Activity chart
+    (app/routers/activity.py): browser test calls ("web") are left out of every number
+    and reported separately as `browser_tests`; a call counts as connected when it was
+    answered or has talk time. Older rows without a call type are phone calls."""
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=days)
     prev_since = since - timedelta(days=days)
     rows = (await db.execute(
-        select(CallLog.started_at, CallLog.outcome, CallLog.duration_seconds)
+        select(CallLog.started_at, CallLog.outcome, CallLog.duration_seconds, CallLog.answered_at, CallLog.call_type)
         .where(CallLog.org_id == ctx.org.id, CallLog.started_at >= prev_since)
     )).all()
 
     def _aware(d: datetime | None) -> datetime | None:
         return d.replace(tzinfo=timezone.utc) if d is not None and d.tzinfo is None else d
 
-    cur = [r for r in rows if r.started_at and _aware(r.started_at) >= since]
-    prev = [r for r in rows if r.started_at and _aware(r.started_at) < since]
+    in_window = [r for r in rows if r.started_at and _aware(r.started_at) >= since]
+    browser_tests = sum(1 for r in in_window if r.call_type == "web")
+    cur = [r for r in in_window if r.call_type != "web"]
+    prev = [r for r in rows if r.started_at and _aware(r.started_at) < since and r.call_type != "web"]
+
+    def is_connected(c) -> bool:
+        return c.answered_at is not None or (c.duration_seconds or 0) > 0
     positive = {"meeting_booked", "qualified", "interested", "transferred"}
     # A "meaningful conversation": a real back-and-forth (30s+) that wasn't voicemail,
     # or any call that ended with a positive outcome or a follow-up.
@@ -144,7 +159,7 @@ async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, l
         return (c.duration_seconds or 0) >= 30 and c.outcome not in dead
 
     def summarize(calls: list) -> dict:
-        connected = [c for c in calls if (c.duration_seconds or 0) > 0]
+        connected = [c for c in calls if is_connected(c)]
         seconds = sum(c.duration_seconds or 0 for c in calls)
         wins = sum(1 for c in calls if c.outcome in positive)
         return {
@@ -167,7 +182,7 @@ async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, l
         key = _aware(c.started_at).strftime("%Y-%m-%d")
         if key in per_day:
             per_day[key]["calls"] += 1
-            if (c.duration_seconds or 0) > 0:
+            if is_connected(c):
                 per_day[key]["connected"] += 1
             if c.outcome == "meeting_booked":
                 per_day[key]["booked"] += 1
@@ -184,6 +199,7 @@ async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, l
     return {
         **summarize(cur),
         "previous": summarize(prev),
+        "browser_tests": browser_tests,
         "outcomes": dict(Counter(c.outcome or "in_progress" for c in cur)),
         "calls_per_day": list(per_day.values()),
         "agents": agents_n,

@@ -162,6 +162,8 @@ export interface OverviewTotals {
 
 export interface Overview extends OverviewTotals {
   previous: OverviewTotals;
+  /** Browser test calls in the period — not included in any phone-call number. */
+  browser_tests: number;
   outcomes: Record<string, number>;
   calls_per_day: { date: string; calls: number; connected: number; booked: number }[];
   agents: number;

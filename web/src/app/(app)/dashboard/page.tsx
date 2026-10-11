@@ -1,13 +1,12 @@
 "use client";
 
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CheckCircle2, Circle, Clock, Coins, Megaphone, MessagesSquare, PhoneCall, Users } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Bot, CalendarCheck, CheckCircle2, ChevronDown, Circle, Clock, Coins, Megaphone, MessagesSquare, PhoneCall, PhoneIncoming, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { ActivityHeatmap } from "@/components/dashboard/ActivityHeatmap";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
 import { ScoreCards } from "@/components/ui/score-gauge";
-import { StatsBento } from "@/components/ui/stats-bento";
 import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -22,10 +21,9 @@ function greeting() {
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
-/** "+12% vs previous 30 days" — or a neutral note when there's nothing to compare. */
+/** "+12% vs previous 30d" — nothing when the previous period had no activity to compare with. */
 function Trend({ now, before, days, invert = false, format = "pct" }: { now: number; before: number; days: number; invert?: boolean; format?: "pct" | "pts" }) {
-  if (!before && !now) return <span className="text-zinc-400">No activity yet</span>;
-  if (!before) return <span className="text-zinc-500">New this period</span>;
+  if (!before) return null;
   const delta = format === "pts" ? (now - before) * 100 : ((now - before) / before) * 100;
   const rounded = Math.round(delta);
   if (rounded === 0) return <span className="text-zinc-500">Flat vs previous {days}d</span>;
@@ -42,11 +40,23 @@ function Trend({ now, before, days, invert = false, format = "pct" }: { now: num
   );
 }
 
-/** Plain-language change for the dark hero card. */
-function heroDelta(now: number, before: number, days: number) {
-  if (!before) return now ? "new this period" : "no calls yet";
-  const d = Math.round(((now - before) / before) * 100);
-  return d === 0 ? `flat vs previous ${days}d` : `${d > 0 ? "+" : ""}${d}% vs previous ${days}d`;
+/** One overview number: label, value, and at most one supporting line plus the trend. */
+function OverviewCard({ label, value, icon: Icon, sub, trend, className }: {
+  label: string; value: string; icon: typeof PhoneCall; sub?: React.ReactNode; trend?: React.ReactNode; className?: string;
+}) {
+  return (
+    <Card className={cn("flex min-w-0 flex-col p-4 sm:p-5", className)}>
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-xs font-medium text-zinc-600 sm:text-sm">{label}</span>
+        <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 sm:flex">
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+      </div>
+      <div className="mt-2 font-display text-2xl font-semibold tabular-nums tracking-tight sm:text-3xl">{value}</div>
+      {sub && <div className="mt-1 text-xs text-zinc-500">{sub}</div>}
+      {trend && <div className="mt-1 text-xs">{trend}</div>}
+    </Card>
+  );
 }
 
 const ACTIVITY_VERB: Record<string, string> = {
@@ -104,7 +114,14 @@ export default function DashboardPage() {
   }
 
   const prev = overview?.previous;
-  const activeCampaigns = (campaigns?.campaigns ?? []).filter((c) => c.status !== "cancelled").slice(0, 4);
+  // Running and paused campaigns first, then finished ones; drafts stay collapsed (they live on the Campaigns page).
+  const ORDER: Record<string, number> = { running: 0, paused: 1, completed: 2 };
+  const allCampaigns = campaigns?.campaigns ?? [];
+  const activeCampaigns = allCampaigns
+    .filter((c) => c.status in ORDER)
+    .sort((a, b) => ORDER[a.status] - ORDER[b.status])
+    .slice(0, 4);
+  const drafts = allCampaigns.filter((c) => c.status === "draft");
 
   return (
     <div className="flex flex-col gap-6">
@@ -114,6 +131,8 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-semibold tracking-tight">{greeting()}</h1>
           <p className="mt-1 text-sm text-zinc-500">
             {overview ? `${overview.agents} agent${overview.agents === 1 ? "" : "s"} · ${overview.running_campaigns} campaign${overview.running_campaigns === 1 ? "" : "s"} running` : "Loading your workspace…"}
+            <span className="text-zinc-400"> · </span>
+            <span className="font-medium text-zinc-700">Showing the last {days} days</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -176,65 +195,79 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          <StatsBento
-            hero={{
-              label: "Calls placed",
-              badge: `Last ${days} days`,
-              value: overview.total_calls.toLocaleString(),
-              note: (
-                <>
-                  {overview.connected_calls.toLocaleString()} connected · {heroDelta(overview.total_calls, prev.total_calls, days)}
-                </>
-              ),
-            }}
-            trend={{
-              label: "Connect rate",
-              value: `${Math.round(overview.connect_rate * 100)}%`,
-              note: <Trend now={overview.connect_rate} before={prev.connect_rate} days={days} format="pts" />,
-              bars: overview.calls_per_day.slice(-14).map((d) => d.calls),
-              barsLabel: "Calls per day",
-            }}
-            compact={{
-              label: "Meetings",
-              value: overview.meetings_booked.toLocaleString(),
-              note: <Trend now={overview.meetings_booked} before={prev.meetings_booked} days={days} />,
-            }}
-            feature={{
-              label: "Talk time",
-              value: `${overview.total_minutes.toLocaleString()} min`,
-              note: `avg ${formatDuration(overview.avg_duration_seconds)} per connected call`,
-              icon: Clock,
-            }}
-            extras={[
-              {
-                label: "Total leads",
-                value: overview.total_leads.toLocaleString(),
-                icon: Users,
-                note: overview.new_leads ? (
-                  <span className="text-zinc-500">
-                    <span className="font-medium text-emerald-700">+{overview.new_leads.toLocaleString()}</span> added in the last {days}d
-                  </span>
-                ) : (
-                  <Link href="/contacts" className="text-zinc-500 hover:text-brand-700">Import contacts →</Link>
-                ),
-              },
-              {
-                label: "Meaningful conversations",
-                value: overview.meaningful_calls.toLocaleString(),
-                icon: MessagesSquare,
-                note: (
-                  <span className="text-zinc-500">
-                    <Link href="/contacts?status=callback" className="font-medium text-zinc-900 hover:text-brand-700">
-                      {overview.follow_ups.toLocaleString()} follow-up{overview.follow_ups === 1 ? "" : "s"}
-                    </Link>{" "}
-                    to work
-                  </span>
-                ),
-              },
-            ]}
-          />
+          <section aria-label="Overview" className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-5">
+              <OverviewCard
+                label="Calls placed"
+                value={overview.total_calls.toLocaleString()}
+                icon={PhoneCall}
+                sub={
+                  overview.browser_tests ? (
+                    <Link href={`/calls?call_type=web&days=${days}`} className="hover:text-brand-700">
+                      Phone calls · {overview.browser_tests} browser test{overview.browser_tests === 1 ? "" : "s"} not counted
+                    </Link>
+                  ) : (
+                    "Phone calls"
+                  )
+                }
+                trend={<Trend now={overview.total_calls} before={prev.total_calls} days={days} />}
+              />
+              <OverviewCard
+                label="Connected"
+                value={overview.connected_calls.toLocaleString()}
+                icon={PhoneIncoming}
+                sub="Answered or had talk time"
+                trend={<Trend now={overview.connected_calls} before={prev.connected_calls} days={days} />}
+              />
+              <OverviewCard
+                label="Meaningful conversations"
+                value={overview.meaningful_calls.toLocaleString()}
+                icon={MessagesSquare}
+                sub={
+                  overview.follow_ups ? (
+                    <Link href={`/calls?outcome=callback,interested&days=${days}`} className="font-medium text-zinc-900 hover:text-brand-700">
+                      {overview.follow_ups.toLocaleString()} follow-up{overview.follow_ups === 1 ? "" : "s"} to work →
+                    </Link>
+                  ) : (
+                    "No follow-ups waiting"
+                  )
+                }
+                trend={<Trend now={overview.meaningful_calls} before={prev.meaningful_calls} days={days} />}
+              />
+              <OverviewCard
+                label="Meetings booked"
+                value={overview.meetings_booked.toLocaleString()}
+                icon={CalendarCheck}
+                sub={
+                  <Link href="/meetings" className="hover:text-brand-700">
+                    View meetings →
+                  </Link>
+                }
+                trend={<Trend now={overview.meetings_booked} before={prev.meetings_booked} days={days} />}
+              />
+              <OverviewCard
+                label="Talk time"
+                value={`${overview.total_minutes.toLocaleString()} min`}
+                icon={Clock}
+                className="col-span-2 sm:col-span-1"
+                sub={overview.connected_calls ? `avg ${formatDuration(overview.avg_duration_seconds)} per connected call` : undefined}
+                trend={<Trend now={overview.total_minutes} before={prev.total_minutes} days={days} />}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-xs text-zinc-500">
+              <Users className="h-3.5 w-3.5" />
+              <span>
+                <span className="font-medium tabular-nums text-zinc-800">{overview.total_leads.toLocaleString()}</span> contact
+                {overview.total_leads === 1 ? "" : "s"}
+                {overview.new_leads ? ` · ${overview.new_leads.toLocaleString()} added in this period` : ""}
+              </span>
+              <Link href="/contacts" className="font-medium text-brand-700 hover:text-brand-800">
+                {overview.total_leads ? "Open contacts" : "Import contacts"} →
+              </Link>
+            </div>
+          </section>
 
-          <CallPerformance overview={overview} days={days} />
+          <CallPerformance overview={overview} />
 
           <ActivityHeatmap />
 
@@ -257,8 +290,8 @@ export default function DashboardPage() {
             {campaigns && activeCampaigns.length === 0 && (
               <EmptyState
                 icon={<Megaphone className="h-5 w-5" />}
-                title="No campaigns yet"
-                description="Upload a contact list and let an agent call through it."
+                title={drafts.length ? "No campaigns running" : "No campaigns yet"}
+                description={drafts.length ? "Start one of your drafts, or create a new campaign." : "Upload a contact list and let an agent call through it."}
                 action={
                   <Link href="/campaigns">
                     <Button size="sm">Create a campaign</Button>
@@ -298,6 +331,32 @@ export default function DashboardPage() {
                 </Link>
               );
             })}
+            {drafts.length > 0 && (
+              <details className="group rounded-lg border border-dashed border-zinc-200 px-3 py-2 text-sm">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-zinc-600 marker:hidden">
+                  <span>
+                    {drafts.length} draft{drafts.length === 1 ? "" : "s"} not started
+                  </span>
+                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                </summary>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {drafts.slice(0, 5).map((d) => (
+                    <li key={d.id}>
+                      <Link href={`/campaigns/${d.id}`} className="block truncate rounded-md px-1 py-1 text-zinc-700 hover:bg-zinc-50 hover:text-brand-700">
+                        {d.name}
+                      </Link>
+                    </li>
+                  ))}
+                  {drafts.length > 5 && (
+                    <li>
+                      <Link href="/campaigns" className="px-1 text-xs font-medium text-brand-700">
+                        All drafts on the Campaigns page →
+                      </Link>
+                    </li>
+                  )}
+                </ul>
+              </details>
+            )}
           </div>
         </Card>
 
@@ -351,17 +410,15 @@ export default function DashboardPage() {
 
 
 /** Three gauges built from the same period's numbers: answered, real conversations, booked. */
-function CallPerformance({ overview, days }: { overview: Overview; days: number }) {
+function CallPerformance({ overview }: { overview: Overview }) {
   const pct = (n: number, d: number) => (d > 0 ? (n / d) * 100 : null);
   const calls = overview.total_calls;
   const connected = overview.connected_calls;
   return (
     <section>
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-semibold">Call performance</h3>
-        <span className="text-xs text-zinc-500">Last {days} days</span>
-      </div>
+      <h3 className="mb-3 font-semibold">Call performance</h3>
       <ScoreCards
+        neutral
         items={[
           {
             title: "Connect rate",
