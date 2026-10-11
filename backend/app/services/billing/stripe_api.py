@@ -16,6 +16,13 @@ from app.config import settings
 log = structlog.get_logger(__name__)
 
 
+# Managed Payments (Stripe as merchant of record) needs 2025-03-31.basil or newer.
+# Handlers read both the old and new shapes (period end on items, invoice.parent).
+API_VERSION = "2025-03-31.basil"
+# Software as a service — business use. Required on every product sold under Managed Payments.
+SAAS_TAX_CODE = "txcd_10103001"
+
+
 class StripeNotConfigured(RuntimeError):
     pass
 
@@ -43,6 +50,7 @@ def _client():
     if not secret_key():
         raise StripeNotConfigured("Stripe isn't connected yet.")
     stripe.api_key = secret_key()
+    stripe.api_version = API_VERSION
     stripe.max_network_retries = 2  # safe: the SDK sends idempotency keys on retried POSTs
     return stripe
 
@@ -85,7 +93,7 @@ async def list_recurring_prices() -> list[dict]:
 async def create_price(*, name: str, amount_cents: int, lookup_key: str, recurring_interval: str | None) -> dict:
     """Admin-approved creation of a missing catalog item (product + price)."""
     s = _client()
-    product = await _run(s.Product.create, name=name, metadata={"blacksync": "catalog"},
+    product = await _run(s.Product.create, name=name, metadata={"blacksync": "catalog"}, tax_code=SAAS_TAX_CODE,
                          idempotency_key=f"bs-product-{lookup_key}")
     kwargs = {"product": product["id"], "unit_amount": amount_cents, "currency": "usd", "lookup_key": lookup_key}
     if recurring_interval:
@@ -226,6 +234,8 @@ async def inspect_key(key: str) -> dict:
     """Validate a secret key against Stripe without touching the configured one."""
     import stripe
 
+    stripe.api_version = API_VERSION
+
     acct = await _run(stripe.Account.retrieve, api_key=key)
     acct = _plain(acct)
     settings_ = acct.get("settings") or {}
@@ -237,6 +247,8 @@ async def inspect_key(key: str) -> dict:
 async def ensure_webhook(key: str, url: str, events: list[str]) -> dict:
     """Create our webhook endpoint (replacing one we created before for the same URL). Returns id + secret."""
     import stripe
+
+    stripe.api_version = API_VERSION
 
     existing = await _run(stripe.WebhookEndpoint.list, api_key=key, limit=100)
     for ep in existing.auto_paging_iter():
