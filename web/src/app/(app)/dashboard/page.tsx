@@ -7,6 +7,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { ActivityHeatmap } from "@/components/dashboard/ActivityHeatmap";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
+import { ScoreCards } from "@/components/ui/score-gauge";
 import { Badge, Button, Card, EmptyState, Notice, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -220,6 +221,8 @@ export default function DashboardPage() {
             </StatCard>
           </div>
 
+          <CallPerformance overview={overview} days={days} />
+
           <ActivityHeatmap />
 
           <Card>
@@ -344,5 +347,49 @@ export default function DashboardPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+
+/** Three gauges built from the same period's numbers: answered, real conversations, booked. */
+function CallPerformance({ overview, days }: { overview: Overview; days: number }) {
+  const pct = (n: number, d: number) => (d > 0 ? (n / d) * 100 : null);
+  const calls = overview.total_calls;
+  const connected = overview.connected_calls;
+  return (
+    <section>
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-semibold">Call performance</h3>
+        <span className="text-xs text-zinc-500">Last {days} days</span>
+      </div>
+      <ScoreCards
+        items={[
+          {
+            title: "Connect rate",
+            value: pct(connected, calls),
+            target: 30,
+            caption: calls ? `${connected.toLocaleString()} of ${calls.toLocaleString()} calls answered` : undefined,
+            description: "How often someone picks up. Calling at better times and fresh lists move this most.",
+            action: calls ? { label: "See call logs", href: "/calls" } : { label: "Start a campaign", href: "/campaigns" },
+          },
+          {
+            title: "Conversation rate",
+            value: pct(overview.meaningful_calls, connected),
+            target: 50,
+            caption: connected ? `${overview.meaningful_calls.toLocaleString()} of ${connected.toLocaleString()} answered calls` : undefined,
+            description: "Answered calls that became a real conversation. A strong opening keeps people on the line.",
+            action: { label: "Improve your agent", href: "/agents" },
+          },
+          {
+            title: "Booking rate",
+            value: pct(overview.meetings_booked, connected),
+            target: 10,
+            caption: connected ? `${overview.meetings_booked.toLocaleString()} booked from ${connected.toLocaleString()} answered` : undefined,
+            description: "Answered calls that ended with a meeting on the calendar.",
+            action: { label: "View meetings", href: "/meetings" },
+          },
+        ]}
+      />
+    </section>
   );
 }
