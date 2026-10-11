@@ -19,6 +19,10 @@ FEATURED_VOICES: list[dict] = [
      "description": "Easygoing and relaxed. Good for casual outreach and follow-ups."},
     {"id": "5ee9feff-1265-424a-9d7f-8e4d431a12c7", "name": "Paul", "gender": "masculine",
      "description": "The original Paul — thoughtful, steady and confident. Built for sales calls."},
+    # Gender, language and description for these come from the live Cartesia catalog.
+    {"id": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", "name": "Sarah"},
+    {"id": "f786b574-daa5-4673-aa0c-cbe3e8534c02", "name": "Kate"},
+    {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "name": "Jena"},
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza", "gender": "masculine",
      "description": "Live voice clone.", "clone": True},
 ]

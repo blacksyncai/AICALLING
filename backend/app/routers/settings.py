@@ -60,19 +60,30 @@ def _headers() -> dict:
 
 
 async def _fetch_cartesia_voices() -> tuple[list[dict], list[dict]]:
-    """(public library, account-owned voices) straight from Cartesia."""
-    public: list[dict] = []
-    params: dict = {"limit": 100}
+    """(listed voices, account-owned voices) straight from Cartesia.
+
+    Only the voices the picker shows are fetched — the house voices and the configured
+    premium/standard ids — one request each, rather than the whole public library."""
+    import asyncio
+
+    wanted = list(dict.fromkeys([v["id"] for v in FEATURED_VOICES] + _ids(settings.premium_voice_ids)
+                                + _ids(settings.standard_voice_ids)))[:50]
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for _ in range(10):  # the public library is large; cap at ~1000 voices
-            resp = await client.get(f"{_CARTESIA_URL}/voices", headers=_headers(), params=params)
-            resp.raise_for_status()
-            body = resp.json()
-            items = body.get("data", []) if isinstance(body, dict) else body
-            public.extend(items)
-            if not (isinstance(body, dict) and body.get("has_more") and items):
-                break
-            params["starting_after"] = items[-1].get("id")
+        async def one(vid: str) -> dict | None:
+            try:
+                resp = await client.get(f"{_CARTESIA_URL}/voices/{vid}", headers=_headers())
+                if resp.status_code == 404:
+                    return None
+                resp.raise_for_status()
+                body = resp.json()
+                return body if isinstance(body, dict) and body.get("id") else None
+            except httpx.HTTPError as exc:
+                log.debug("cartesia_voice_failed", voice_id=vid, error=str(exc))
+                return None
+
+        public = [v for v in await asyncio.gather(*(one(vid) for vid in wanted)) if v]
+    if not public:
+        raise RuntimeError("no voices could be loaded from Cartesia")
     owned: list[dict] = []
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
