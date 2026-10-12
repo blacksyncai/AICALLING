@@ -2,7 +2,8 @@
 
 import { Loader2, X } from "lucide-react";
 import type React from "react";
-import { forwardRef, useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { motion } from "motion/react";
+import { forwardRef, useEffect, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -172,21 +173,38 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 }
 
 export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (v: T) => void; tabs: { value: T; label: string; icon?: ReactNode }[] }) {
+  // Sliding highlight (same feel as the agent editor's animated tabs); unique per tab bar.
+  const layoutId = `tabs-pill-${useId()}`;
   return (
-    <div className="flex gap-1 rounded-xl bg-zinc-100/80 p-1 ring-1 ring-inset ring-zinc-200/60">
-      {tabs.map((t) => (
-        <button
-          key={t.value}
-          onClick={() => onChange(t.value)}
-          className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-150",
-            value === t.value ? "bg-white text-zinc-900 shadow-[0_1px_2px_rgba(33,27,24,0.08),0_1px_1px_rgba(33,27,24,0.04)]" : "text-zinc-500 hover:text-zinc-800",
-          )}
-        >
-          {t.icon}
-          {t.label}
-        </button>
-      ))}
+    <div role="tablist" className="flex gap-1 rounded-xl bg-zinc-100/80 p-1 ring-1 ring-inset ring-zinc-200/60">
+      {tabs.map((t) => {
+        const active = value === t.value;
+        return (
+          <button
+            key={t.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(t.value)}
+            className={cn(
+              "relative flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150",
+              active ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800",
+            )}
+          >
+            {active && (
+              <motion.span
+                layoutId={layoutId}
+                className="absolute inset-0 rounded-lg bg-white shadow-[0_1px_2px_rgba(33,27,24,0.08),0_1px_1px_rgba(33,27,24,0.04)]"
+                transition={{ type: "spring", duration: 0.5 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              {t.icon}
+              {t.label}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
