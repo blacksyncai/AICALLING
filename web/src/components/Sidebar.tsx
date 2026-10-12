@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ArrowRight, BarChart3, BookOpen, Bot, CalendarCheck, ChevronLeft, ChevronsUpDown, Coins, Contact, CreditCard, Hash, LayoutDashboard, LogOut, Megaphone, Menu,
+  ArrowRight, ArrowUp, BarChart3, BookOpen, Bot, CalendarCheck, ChevronLeft, ChevronsUpDown, Coins, Contact, CreditCard, Hash, LayoutDashboard, LogOut, Megaphone, Menu,
   PhoneCall, Plug, Search, UserRound, UserSearch, X,
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
@@ -211,6 +211,7 @@ function AccountMenu({ onNavigate, collapsed }: { onNavigate: () => void; collap
 }
 
 const COLLAPSE_KEY = "bs-sidebar-collapsed";
+const MENU_HINT_KEY = "bs-menu-hint-seen";
 
 export function Sidebar() {
   const [open, setOpen] = useState(false);
@@ -221,6 +222,23 @@ export function Sidebar() {
   const close = () => setOpen(false);
   // The mobile drawer is always full width.
   const collapsed = collapsedPref && !open;
+
+  // First-visit nudge on phones pointing at the menu button; gone once the menu has been opened.
+  const [showHint, setShowHint] = useState(false);
+  useEffect(() => {
+    try {
+      setShowHint(localStorage.getItem(MENU_HINT_KEY) !== "1");
+    } catch {}
+  }, []);
+  const openMobileMenu = () => {
+    setOpen((v) => !v);
+    if (showHint) {
+      setShowHint(false);
+      try {
+        localStorage.setItem(MENU_HINT_KEY, "1");
+      } catch {}
+    }
+  };
 
   useEffect(() => {
     try {
@@ -350,9 +368,30 @@ export function Sidebar() {
     <>
       <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between bg-zinc-950 px-4 lg:hidden">
         <Logo className="text-white" />
-        <button onClick={() => setOpen((v) => !v)} className="rounded-md p-2 text-zinc-300" aria-label="Menu">
-          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <div className="relative">
+          <button
+            onClick={openMobileMenu}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full py-1.5 pl-3 pr-2.5 text-sm font-medium text-white ring-1 ring-white/15 transition-colors active:bg-white/10",
+              showHint && !open && "bg-brand-500/20 ring-brand-500/60 shadow-[0_0_14px_rgba(249,115,22,0.45)]",
+            )}
+            aria-label="Menu"
+            aria-expanded={open}
+          >
+            {open ? "Close" : "Menu"}
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+          {showHint && !open && (
+            <button
+              type="button"
+              onClick={openMobileMenu}
+              className="absolute right-0 top-full mt-3 flex animate-bounce items-center gap-1.5 whitespace-nowrap rounded-xl bg-brand-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-brand-500/30"
+            >
+              <span className="absolute -top-1.5 right-6 h-3 w-3 rotate-45 bg-brand-500" aria-hidden />
+              <ArrowUp className="h-3.5 w-3.5" /> Tap here for agents, contacts &amp; more
+            </button>
+          )}
+        </div>
       </div>
       <div className="h-14 lg:hidden" />
       {open && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={close} />}
