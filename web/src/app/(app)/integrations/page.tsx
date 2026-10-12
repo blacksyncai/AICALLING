@@ -3,6 +3,7 @@
 import { KeyRound, Webhook as WebhookIcon } from "lucide-react";
 import useSWR from "swr";
 import { ApiKeysCard } from "@/components/integrations/ApiKeysCard";
+import { CrmIntegrations } from "@/components/integrations/CrmIntegrations";
 import { ZapierCard } from "@/components/integrations/ZapierCard";
 import { WebhooksCard } from "@/components/integrations/WebhooksCard";
 import { Card, Notice, PageHeader, Spinner } from "@/components/ui";
@@ -10,7 +11,7 @@ import { fetcher } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
 import type { Integrations } from "@/lib/types";
 
-const DESCRIPTION = "Connect BlackSync to Zapier, Make, n8n, your CRM or your own code.";
+const DESCRIPTION = "Connect your CRM, Slack and Google Sheets, or Zapier, Make, n8n and your own code.";
 
 function StatTile({ label, value, icon: Icon }: { label: string; value: number; icon: typeof KeyRound }) {
   return (
@@ -82,6 +83,7 @@ export default function IntegrationsPage() {
             </div>
           </div>
 
+          <CrmIntegrations />
           <WebhooksCard webhooks={data.webhooks} events={data.events} onChange={refresh} />
           <ApiKeysCard keys={data.api_keys} onChange={refresh} />
           <ZapierCard />

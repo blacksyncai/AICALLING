@@ -483,6 +483,8 @@ async def emit_call_events(call_id: uuid.UUID) -> None:
         "ended_at": call.ended_at,
     }
     await emit_event(call.org_id, "call.completed", data)
+    from app.services.crm.sync import schedule_push
+    schedule_push(call.org_id, data)
     if call.outcome == "meeting_booked":
         await emit_event(call.org_id, "meeting.booked", data)
 

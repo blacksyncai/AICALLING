@@ -49,6 +49,8 @@ class Lead(Base):
     # "phones": [{"number", "type", "dnc"}], "emails": [...], "property": {...}, "mailing": {...}}.
     enrichment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Ids of this contact in connected CRMs, e.g. {"close": "lead_abc", "followupboss": "123"}.
+    crm_refs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # ── Dialing rules (NULL = default) ───────────────────────────────────────
     # Campaign call attempts so far (NULL = 0) and when the next retry is due.

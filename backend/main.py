@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_all_tables
 from app.routers import (
-    account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, integrations, internal, lead_finder, meetings, phone_numbers, speech,
+    account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, internal, lead_finder, meetings, phone_numbers, speech,
     public_api, search,
     settings as settings_router,
 )
@@ -52,8 +52,11 @@ async def lifespan(app: FastAPI):
             log.warning("playbook_seed_failed", error=str(exc))
     from app.routers.business_profile import start_refresh_loop
     refresh_task = start_refresh_loop()
+    from app.services.crm.sync import start_poll_loop
+    crm_task = start_poll_loop()
     yield
     refresh_task.cancel()
+    crm_task.cancel()
     log.info("pounce_shutting_down")
 
 
@@ -80,7 +83,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-for r in (auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, integrations, public_api, search,
+for r in (auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, integrations, public_api, search,
           settings_router, internal):
     app.include_router(r.router)
 app.include_router(phone_numbers.admin_router)
