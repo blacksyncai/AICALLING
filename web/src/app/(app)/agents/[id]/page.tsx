@@ -610,6 +610,69 @@ const TIMEZONES: string[] = (() => {
   }
 })();
 
+const US_TIMEZONES: { value: string; label: string }[] = [
+  { value: "America/New_York", label: "Eastern (New York)" },
+  { value: "America/Chicago", label: "Central (Chicago)" },
+  { value: "America/Denver", label: "Mountain (Denver)" },
+  { value: "America/Phoenix", label: "Arizona (Phoenix, no DST)" },
+  { value: "America/Los_Angeles", label: "Pacific (Los Angeles)" },
+  { value: "America/Anchorage", label: "Alaska (Anchorage)" },
+  { value: "Pacific/Honolulu", label: "Hawaii (Honolulu)" },
+  { value: "America/Puerto_Rico", label: "Atlantic (Puerto Rico)" },
+];
+
+/** US zones up front; any other IANA zone can be searched by name. */
+function TimezonePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const known = !value || US_TIMEZONES.some((z) => z.value === value);
+  const [other, setOther] = useState(!known);
+  const [query, setQuery] = useState(known ? "" : value);
+  return (
+    <Field label="Time zone" hint="Times are offered and booked in this zone.">
+      <div className="space-y-2">
+        <Select
+          value={other ? "__other" : value}
+          onChange={(e) => {
+            if (e.target.value === "__other") {
+              setOther(true);
+            } else {
+              setOther(false);
+              onChange(e.target.value);
+            }
+          }}
+        >
+          <option value="">Pick a time zone…</option>
+          {US_TIMEZONES.map((z) => (
+            <option key={z.value} value={z.value}>
+              {z.label}
+            </option>
+          ))}
+          <option value="__other">Other time zone…</option>
+        </Select>
+        {other && (
+          <>
+            <Input
+              list="tz-list"
+              placeholder="Search, e.g. Toronto or Europe/London"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (TIMEZONES.includes(e.target.value)) onChange(e.target.value);
+              }}
+            />
+            <datalist id="tz-list">
+              {TIMEZONES.map((z) => (
+                <option key={z} value={z}>
+                  {z.replace(/_/g, " ")}
+                </option>
+              ))}
+            </datalist>
+          </>
+        )}
+      </div>
+    </Field>
+  );
+}
+
 /** Cal.com key (write-only), event type and the time zone the agent says times in. */
 function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void }) {
   const keySaved = !!draft.calcom_key_set && draft.calcom_api_key === undefined;
@@ -649,16 +712,7 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
         <Field label="Event type ID" hint="The number in the event type's URL in Cal.com.">
           <Input inputMode="numeric" value={draft.calcom_event_type_id} onChange={(e) => set("calcom_event_type_id", e.target.value.replace(/\D/g, ""))} placeholder="e.g. 4374694" />
         </Field>
-        <Field label="Time zone" hint="Times are offered and booked in this zone.">
-          <Select value={tz} onChange={(e) => set("calendar_timezone", e.target.value)}>
-            <option value="">UTC</option>
-            {TIMEZONES.filter((z) => z !== "UTC").map((z) => (
-              <option key={z} value={z}>
-                {z.replace(/_/g, " ")}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        <TimezonePicker value={tz} onChange={(v) => set("calendar_timezone", v)} />
       </div>
     </Card>
   );
