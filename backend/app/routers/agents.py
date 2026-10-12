@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 _EDITABLE = (
     "name", "description", "status", "system_prompt", "first_message", "knowledge_base",
     "language", "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio",
-    "enable_booking", "calcom_event_type_id", "transfer_number", "max_duration_seconds",
+    "enable_booking", "calcom_event_type_id", "calendar_timezone", "transfer_number", "max_duration_seconds",
     "extraction_fields", "success_criteria", "builder", "ai_disclosure", "caller_number", "record_calls",
 )
 
@@ -77,7 +77,10 @@ class AgentUpdate(BaseModel):
     voice_tuning: VoiceTuning | None = None
     background_audio: bool | None = None
     enable_booking: bool | None = None
-    calcom_event_type_id: str | None = None
+    calcom_event_type_id: str | None = Field(default=None, max_length=64)
+    # Write-only: "" removes the saved key.
+    calcom_api_key: str | None = Field(default=None, max_length=200)
+    calendar_timezone: str | None = Field(default=None, max_length=64)
     transfer_number: str | None = None
     max_duration_seconds: int | None = Field(default=None, ge=30, le=3600)
     extraction_fields: list[ExtractionField] | None = None
@@ -122,6 +125,8 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         **{k: getattr(a, k) for k in _EDITABLE},
         "extraction_fields": a.extraction_fields or [],
         "voice_tuning": a.voice_tuning or {},
+        "calendar_timezone": a.calendar_timezone or "",
+        "calcom_key_set": bool(a.calcom_api_key_enc),
         "ai_disclosure": a.ai_disclosure is not False,
         "caller_number": a.caller_number or "",
         "specialty": catalog_specialty(a) or "",
@@ -223,6 +228,26 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
         if label != (catalog_specialty(agent) or ""):
             agent.specialty, agent.specialty_custom = (label, True) if label else (None, None)
         changes.pop("specialty", None)
+    if "calcom_api_key" in changes:
+        from app.services import secret_store
+
+        key = changes.pop("calcom_api_key").strip()
+        if key:
+            try:
+                agent.calcom_api_key_enc = secret_store.encrypt_value(key)
+            except secret_store.SecretStoreError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        else:
+            agent.calcom_api_key_enc = None
+    if "calendar_timezone" in changes:
+        from app.services.calendar import valid_timezone
+
+        tz = changes["calendar_timezone"].strip()
+        if tz and not valid_timezone(tz):
+            raise HTTPException(status_code=400, detail="Unknown time zone. Use a name like America/New_York.")
+        changes["calendar_timezone"] = tz or None
+    if "calcom_event_type_id" in changes:
+        changes["calcom_event_type_id"] = changes["calcom_event_type_id"].strip()
     if "caller_number" in changes:
         from app.services import telephony
 
@@ -289,7 +314,7 @@ async def restore_version(agent_id: uuid.UUID, version_id: uuid.UUID, ctx: CtxDe
 async def duplicate_agent(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
     src = await _get_agent(db, ctx, agent_id)
     copy = Agent(id=uuid.uuid4(), org_id=ctx.org.id, template=src.template,
-                 **{k: getattr(src, k) for k in _EDITABLE})
+                 **{k: getattr(src, k) for k in _EDITABLE}, calcom_api_key_enc=src.calcom_api_key_enc)
     copy.name = f"{src.name} (copy)"
     db.add(copy)
     await db.commit()
@@ -311,7 +336,7 @@ async def chat_with_agent(agent_id: uuid.UUID, body: ChatRequest, ctx: CtxDep, d
     agent = await _get_agent(db, ctx, agent_id)
     try:
         return await playground_reply(
-            agent_to_runtime(agent),
+            agent_to_runtime(agent, secrets=True),
             {"name": "there", **body.variables},
             [m.model_dump() for m in body.messages],
             body.state,

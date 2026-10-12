@@ -26,9 +26,13 @@ def render_vars(text: str, variables: dict | None) -> str:
     return _VAR_RE.sub(_sub, text or "")
 
 
-def agent_to_runtime(agent) -> dict:
-    """Serialize an Agent row into the config the voice worker consumes."""
-    return {
+def agent_to_runtime(agent, *, secrets: bool = False) -> dict:
+    """Serialize an Agent row into the config the voice worker consumes.
+
+    secrets=True adds the decrypted Cal.com key — only for server-side use (the private
+    /internal endpoint and the playground), never for room metadata, which callers can read.
+    """
+    cfg = {
         "id": str(agent.id),
         "name": agent.name,
         "system_prompt": agent.system_prompt or "",
@@ -43,11 +47,18 @@ def agent_to_runtime(agent) -> dict:
         "background_audio": bool(agent.background_audio),
         "enable_booking": bool(agent.enable_booking),
         "calcom_event_type_id": agent.calcom_event_type_id or "",
+        "calendar_timezone": getattr(agent, "calendar_timezone", None) or "",
+        "calcom_key_set": bool(getattr(agent, "calcom_api_key_enc", None)),
         "transfer_number": agent.transfer_number or "",
         "max_duration_seconds": agent.max_duration_seconds or 600,
         "ai_disclosure": getattr(agent, "ai_disclosure", None) is not False,
         "business_name": (getattr(agent, "builder", None) or {}).get("business_name") or "",
     }
+    if secrets:
+        from app.services.secret_store import decrypt_value
+
+        cfg["calcom_api_key"] = decrypt_value(getattr(agent, "calcom_api_key_enc", None))
+    return cfg
 
 
 def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone") -> str:

@@ -19,7 +19,7 @@ import { SectionsEditor } from "@/components/agent-editor/SectionsEditor";
 import { VersionHistory } from "@/components/agent-editor/VersionHistory";
 import { sectionOrder } from "@/lib/builder";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, Field, Input, Modal, Notice, Spinner, Tabs, Textarea, Toggle } from "@/components/ui";
+import { Badge, Button, Card, Field, Input, Modal, Notice, Select, Spinner, Tabs, Textarea, Toggle } from "@/components/ui";
 import { fetcher, patch } from "@/lib/api";
 import type { Agent, SettingsStatus, Voice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,7 @@ const VARIABLES = ["name", "full_name", "company", "email", "phone", "role"];
 const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
   "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio", "enable_booking",
-  "calcom_event_type_id", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
+  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
   "ai_disclosure", "builder", "caller_number", "record_calls", "specialty",
 ];
 
@@ -463,13 +463,9 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 checked={draft.enable_booking}
                 onChange={(v) => set("enable_booking", v)}
                 label="Book appointments"
-                description="Gives the agent check_availability + book_appointment tools. Uses Cal.com when configured, otherwise realistic mock slots."
+                description="Gives the agent check_availability + book_appointment tools, booked straight into your Cal.com calendar."
               />
-              {draft.enable_booking && (
-                <Field label="Cal.com event type ID (optional)" hint="Overrides CALCOM_EVENT_TYPE_ID for this agent.">
-                  <Input value={draft.calcom_event_type_id} onChange={(e) => set("calcom_event_type_id", e.target.value.trim())} placeholder="e.g. 1234567" />
-                </Field>
-              )}
+              {draft.enable_booking && <CalcomSettings draft={draft} set={set} />}
               <CallFromSettings draft={draft} set={set} />
               <Field label="Transfer to human (phone calls)" hint="If set, the agent can warm-transfer the caller to this number. E.164, e.g. +14155550123.">
                 <Input value={draft.transfer_number} onChange={(e) => set("transfer_number", e.target.value.trim())} placeholder="+14155550123" />
@@ -602,5 +598,67 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
         </div>
       </Modal>
     </div>
+  );
+}
+
+const TIMEZONES: string[] = (() => {
+  try {
+    return (Intl as unknown as { supportedValuesOf(k: string): string[] }).supportedValuesOf("timeZone");
+  } catch {
+    return ["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Europe/London", "UTC"];
+  }
+})();
+
+/** Cal.com key (write-only), event type and the time zone the agent says times in. */
+function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void }) {
+  const keySaved = !!draft.calcom_key_set && draft.calcom_api_key === undefined;
+  const removing = draft.calcom_api_key === "";
+  const ready = (keySaved || !!draft.calcom_api_key) && !!draft.calcom_event_type_id;
+  const tz = draft.calendar_timezone ?? "";
+  return (
+    <Card className="space-y-4 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-medium">Cal.com calendar</div>
+        <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", ready ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
+          {ready ? "Connected" : "Needs API key and event type"}
+        </span>
+      </div>
+      <Field
+        label="Cal.com API key"
+        hint={
+          removing ? "The saved key will be removed when you save." : keySaved ? "A key is saved. Paste a new one to replace it." : "Cal.com → Settings → Developer → API keys."
+        }
+      >
+        <div className="flex gap-2">
+          <Input
+            type="password"
+            autoComplete="off"
+            value={draft.calcom_api_key ?? ""}
+            placeholder={keySaved ? "•••••••• saved" : "cal_live_…"}
+            onChange={(e) => set("calcom_api_key", e.target.value.trim() || undefined)}
+          />
+          {draft.calcom_key_set && !removing && (
+            <button type="button" onClick={() => set("calcom_api_key", "")} className="shrink-0 rounded-lg px-3 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-red-600">
+              Remove
+            </button>
+          )}
+        </div>
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Event type ID" hint="The number in the event type's URL in Cal.com.">
+          <Input inputMode="numeric" value={draft.calcom_event_type_id} onChange={(e) => set("calcom_event_type_id", e.target.value.replace(/\D/g, ""))} placeholder="e.g. 4374694" />
+        </Field>
+        <Field label="Time zone" hint="Times are offered and booked in this zone.">
+          <Select value={tz} onChange={(e) => set("calendar_timezone", e.target.value)}>
+            <option value="">UTC</option>
+            {TIMEZONES.filter((z) => z !== "UTC").map((z) => (
+              <option key={z} value={z}>
+                {z.replace(/_/g, " ")}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+    </Card>
   );
 }

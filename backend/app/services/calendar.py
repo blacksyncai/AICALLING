@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 import httpx
 import structlog
 
@@ -15,22 +17,40 @@ from app.config import settings
 
 log = structlog.get_logger(__name__)
 
-_TZ_LABEL = "UTC"
-
-
 def _event_type(event_type_id: str | None) -> str:
     return (event_type_id or settings.calcom_event_type_id or "").strip()
 
 
-def _label(start_iso: str) -> str:
+def _key(api_key: str | None) -> str:
+    """The agent's own Cal.com key, else the server-wide one."""
+    return (api_key or settings.calcom_api_key or "").strip()
+
+
+def _zone(tz: str | None) -> ZoneInfo:
     try:
-        d = dt.datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
-        return d.strftime(f"%A, %B %-d at %-I:%M %p {_TZ_LABEL}")
+        return ZoneInfo((tz or "").strip() or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def valid_timezone(tz: str) -> bool:
+    try:
+        ZoneInfo(tz)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+
+
+def _label(start_iso: str, tz: str | None = None) -> str:
+    try:
+        d = dt.datetime.fromisoformat(start_iso.replace("Z", "+00:00")).astimezone(_zone(tz))
+        name = d.tzname() or "UTC"
+        return d.strftime(f"%A, %B %-d at %-I:%M %p {name}")
     except Exception:
         return start_iso
 
 
-def mock_slots(preferred_date: str = "") -> list[dict]:
+def mock_slots(preferred_date: str = "", tz: str | None = None) -> list[dict]:
     """Two stable slots (3 PM and 6 PM UTC) on the requested day, or the next weekday."""
     today = dt.datetime.now(dt.timezone.utc).date()
     day = today + dt.timedelta(days=1)
@@ -46,15 +66,16 @@ def mock_slots(preferred_date: str = "") -> list[dict]:
     out = []
     for hour in (15, 18):
         start = dt.datetime.combine(day, dt.time(hour), tzinfo=dt.timezone.utc).isoformat()
-        out.append({"start": start, "label": _label(start)})
+        out.append({"start": start, "label": _label(start, tz)})
     return out
 
 
-async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None) -> list[dict]:
+async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None,
+                      api_key: str | None = None, tz: str | None = None) -> list[dict]:
     """Return up to 2 open slots ({start, label}) from the requested date onward."""
-    etype = _event_type(event_type_id)
-    if not settings.calcom_api_key or not etype:
-        return mock_slots(preferred_date)
+    etype, key = _event_type(event_type_id), _key(api_key)
+    if not key or not etype:
+        return mock_slots(preferred_date, tz)
 
     today = dt.datetime.now(dt.timezone.utc).date()
     start = today
@@ -69,12 +90,12 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(
                 "https://api.cal.com/v2/slots",
-                headers={"Authorization": f"Bearer {settings.calcom_api_key}", "cal-api-version": "2024-09-04"},
+                headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-09-04"},
                 params={
                     "eventTypeId": etype,
                     "start": start.isoformat(),
                     "end": (start + dt.timedelta(days=10)).isoformat(),
-                    "timeZone": "UTC",
+                    "timeZone": _zone(tz).key,
                 },
             )
             resp.raise_for_status()
@@ -87,27 +108,28 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
                 picks.append(starts[len(starts) // 2])
             if len(picks) >= 2:
                 break
-        return [{"start": s, "label": _label(s)} for s in picks] or mock_slots(preferred_date)
+        return [{"start": s, "label": _label(s, tz)} for s in picks]
     except Exception as exc:
         log.warning("calcom_fetch_failed", error=str(exc))
-        return mock_slots(preferred_date)
+        return []
 
 
-async def create_booking(start: str, email: str, name: str, event_type_id: str | None = None) -> str:
+async def create_booking(start: str, email: str, name: str, event_type_id: str | None = None,
+                         api_key: str | None = None, tz: str | None = None) -> str:
     """Book `start` for the attendee. Returns a booking link ('' on failure)."""
-    etype = _event_type(event_type_id)
-    if not settings.calcom_api_key or not etype:
+    etype, key = _event_type(event_type_id), _key(api_key)
+    if not key or not etype:
         log.info("calcom_not_configured_mock_booking", email=email)
         return f"https://cal.com/mock-booking?start={start}&attendee={email}"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 "https://api.cal.com/v2/bookings",
-                headers={"Authorization": f"Bearer {settings.calcom_api_key}", "cal-api-version": "2024-08-13"},
+                headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-08-13"},
                 json={
                     "start": start,
                     "eventTypeId": int(etype),
-                    "attendee": {"name": name or "Guest", "email": email, "timeZone": "UTC", "language": "en"},
+                    "attendee": {"name": name or "Guest", "email": email, "timeZone": _zone(tz).key, "language": "en"},
                     "metadata": {"source": "closer"},
                 },
             )

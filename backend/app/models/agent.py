@@ -53,6 +53,10 @@ class Agent(Base):
     # ── Actions ───────────────────────────────────────────────────────────────
     enable_booking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     calcom_event_type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    # The account's own Cal.com API key, Fernet-encrypted (SECRETS_ENCRYPTION_KEY); never returned by the API.
+    calcom_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # IANA zone the agent speaks booking times in (e.g. America/New_York); blank = UTC.
+    calendar_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     transfer_number: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
     # What the agent does, as a short badge ("Expired Listings"). Set by the builder; when a person

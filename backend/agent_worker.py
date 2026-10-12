@@ -765,7 +765,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             session = session_ref.get("session")
             if session:
                 session.say("One sec, let me check the calendar.", allow_interruptions=True)
-            found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"))
+            found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
+                                           cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
             run.slots = _cal.remember_slots(run.slots, found)
             _record("check_availability", {"preferred_date": preferred_date},
                     {"slots": [s["label"] for s in found]})
@@ -792,7 +793,12 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             if not email_was_given(email, user_turns, (cfg_vars or {}).get("email", "")):
                 return ("Not booked: the contact hasn't given that email. Ask for their email "
                         "and have them spell it — never guess it.")
-            link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"))
+            link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"),
+                                             cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
+            if not link:
+                _record("book_appointment", {"slot": slot, "email": email}, {"error": "booking failed"})
+                return ("Not booked: the calendar didn't accept it. Don't say it's booked — tell them "
+                        "the team will email a confirmation to set the time, then wrap up.")
             run.meeting_link, run.meeting_time, run.email = link, chosen["label"], email
             _record("book_appointment", {"slot": slot, "email": email}, {"booked": chosen["label"], "link": link})
             return f"Booked for {chosen['label']}. Confirm exactly this time with them, then wrap up."
@@ -843,8 +849,15 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     from app.agent.voice_tuning import pronounce, voice_tuning
 
     cfg = metadata.get("agent") or {}
-    if metadata.get("fetch_config") and metadata.get("agent_id"):
-        cfg = await _fetch_agent_config(metadata["agent_id"]) or cfg
+    # Fetch over the private API when the config was too big to inline, or when booking needs
+    # the agent's Cal.com key (it never rides in room metadata, which callers can read).
+    needs_key = cfg.get("enable_booking") and cfg.get("calcom_key_set")
+    if (metadata.get("fetch_config") or needs_key) and metadata.get("agent_id"):
+        fetched = await _fetch_agent_config(metadata["agent_id"])
+        if fetched:
+            # Keep the per-call cap (credits / trial) the dispatcher set.
+            cap = cfg.get("max_duration_seconds")
+            cfg = {**fetched, **({"max_duration_seconds": cap} if cap else {})}
     variables = metadata.get("variables") or {}
     call_type = metadata.get("call_type", "outbound")
     run = _CallRun(metadata.get("call_log_id", ""), call_type)

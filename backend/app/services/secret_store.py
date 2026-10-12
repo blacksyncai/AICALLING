@@ -62,6 +62,21 @@ async def load_all(db: AsyncSession) -> None:
             log.error("secret_decrypt_failed", name=r.key[len(_PREFIX):])
 
 
+def encrypt_value(value: str) -> str:
+    return _fernet().encrypt(value.encode()).decode()
+
+
+def decrypt_value(token: str | None) -> str:
+    """'' when missing or unreadable (e.g. the encryption key changed)."""
+    if not token:
+        return ""
+    try:
+        return _fernet().decrypt(token.encode()).decode()
+    except (InvalidToken, SecretStoreError):
+        log.error("secret_value_decrypt_failed")
+        return ""
+
+
 async def put(db: AsyncSession, name: str, value: str) -> None:
     """Encrypt and store (or replace) a secret. Caller commits."""
     token = _fernet().encrypt(value.encode()).decode()

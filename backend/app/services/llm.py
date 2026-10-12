@@ -143,7 +143,8 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                     ended, outcome = True, args.get("outcome", "completed")
                     result = "Call ended."
             elif name == "check_availability":
-                slots = await calendar.fetch_slots(args.get("preferred_date", ""), cfg.get("calcom_event_type_id"))
+                slots = await calendar.fetch_slots(args.get("preferred_date", ""), cfg.get("calcom_event_type_id"),
+                                             cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
                 state["slots"] = calendar.remember_slots(state.get("slots") or [], slots)
                 result = "Open slots: " + "; ".join(s["label"] for s in slots)
             elif name == "book_appointment":
@@ -161,7 +162,8 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                     state["booked"] = slot["label"]
                     link = await calendar.create_booking(slot["start"], normalize_email(args.get("email", "")),
                                                          variables.get("full_name") or variables.get("name", ""),
-                                                         cfg.get("calcom_event_type_id"))
+                                                         cfg.get("calcom_event_type_id"),
+                                                         cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
                     result = f"Booked {slot['label']}. Confirm exactly this time with the contact." + (f" Link: {link}" if link else "")
             else:
                 result = "Unknown tool."

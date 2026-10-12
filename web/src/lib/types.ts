@@ -24,6 +24,10 @@ export interface Agent {
   background_audio: boolean;
   enable_booking: boolean;
   calcom_event_type_id: string;
+  /** Write-only: set to save a new Cal.com key, "" to remove it. Never sent back by the API. */
+  calcom_api_key?: string;
+  calcom_key_set?: boolean;
+  calendar_timezone?: string;
   transfer_number: string;
   max_duration_seconds: number;
   extraction_fields: ExtractionField[];
