@@ -39,7 +39,10 @@ CALL_HOURS = (8, 21)  # local time window for speed-to-lead calls
 def defaults() -> dict:
     # create_contacts is off by default: a test call to your own number shouldn't add a "lead" to the CRM.
     return {"log_calls": True, "create_contacts": False, "only_connected": False,
-            "speed_to_lead_agent_id": None, "speed_to_lead_since": None, "activity_agent_id": None}
+            "speed_to_lead_agent_id": None, "speed_to_lead_since": None, "activity_agent_id": None,
+            # Which calls get logged, and what goes in the CRM note.
+            "min_seconds": 0, "skip_outcomes": [],
+            "note_summary": True, "note_details": True, "note_link": True}
 
 
 def conn_settings(conn: CrmConnection) -> dict:
@@ -104,6 +107,17 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
     call = call_info(data)
     if not cfg["log_calls"] or (cfg["only_connected"] and not call.connected):
         return
+    if call.outcome in (cfg.get("skip_outcomes") or []):
+        return
+    if cfg.get("min_seconds") and call.duration_seconds < int(cfg["min_seconds"]) and call.outcome != "do_not_call":
+        return
+    # What the note carries.
+    if not cfg.get("note_summary", True):
+        call.summary = ""
+    if not cfg.get("note_details", True):
+        call.extracted = {}
+    if not cfg.get("note_link", True):
+        call.url = ""
     contact = data.get("contact") or {}
     lead = await db.get(Lead, uuid.UUID(contact["id"])) if contact.get("id") else None
     c = Contact(name=contact.get("name") or "", phone=contact.get("phone") or call.phone,
@@ -235,18 +249,111 @@ async def preview_import(db, conn: CrmConnection, filters: dict | None, skip_con
 
 
 async def import_contacts(db, conn: CrmConnection, limit: int = 500, filters: dict | None = None,
-                          skip_contacted: bool = False, list_tag: str = "") -> dict:
+                          skip_contacted: bool = False, list_tag: str = "", campaign_id: str | None = None,
+                          source: str = "Imported") -> dict:
     p, http = http_for(conn)
     contacts = await p.list_contacts(http, conn.config or {}, limit=limit, filters=filters or {})
     keep, counts = _apply_skips(contacts, skip_contacted)
     created, updated = await save_contacts(db, conn, keep, "Imported", [list_tag.strip()[:60]] if list_tag.strip() else None)
     dnc_new = sum(1 for l in created if l.do_not_call)
-    msg = f"Imported {len(created)} new contact{'s' if len(created) != 1 else ''} from {p.name}" + (
+    added, campaign_name = await _add_to_campaign(db, conn, created, campaign_id) if campaign_id else (0, "")
+    msg = f"{source} {len(created)} new contact{'s' if len(created) != 1 else ''} from {p.name}" + (
         f", updated {updated} existing" if updated else "") + (
+        f"; {added} added to “{campaign_name}”" if added else "") + (
         f"; {counts['do_not_call']} marked do-not-call won't be dialed" if counts["do_not_call"] else "") + "."
     await add_log(db, conn, "import", "ok", msg)
     return {"found": len(contacts), "created": len(created), "linked": updated, "do_not_call": counts["do_not_call"],
-            "do_not_call_new": dnc_new, "skipped_contacted": counts["skipped_contacted"]}
+            "do_not_call_new": dnc_new, "skipped_contacted": counts["skipped_contacted"], "added_to_campaign": added}
+
+
+async def _add_to_campaign(db, conn: CrmConnection, leads: list[Lead], campaign_id: str) -> tuple[int, str]:
+    """Put newly imported contacts into a campaign (and wake it up if it had finished its list)."""
+    from app.models.campaign import Campaign
+
+    try:
+        campaign = await db.get(Campaign, uuid.UUID(str(campaign_id)))
+    except ValueError:
+        campaign = None
+    if not campaign or campaign.org_id != conn.org_id or campaign.status == "cancelled":
+        return 0, ""
+    dialable = [l for l in leads if not l.do_not_call]
+    for lead in dialable:
+        lead.campaign_id, lead.status = campaign.id, "new"
+    campaign.total_targets = (campaign.total_targets or 0) + len(dialable)
+    campaign.updated_at = dt.datetime.now(UTC)
+    if dialable and campaign.status == "completed":
+        campaign.status = "running"  # it had run out of contacts — keep calling the new ones
+        _wake[str(campaign.id)] = True
+    return len(dialable), campaign.name
+
+
+# Campaigns to (re)start once the importing transaction has committed.
+_wake: dict[str, bool] = {}
+
+
+def wake_campaigns() -> None:
+    from app.routers.campaigns import _process_call_queue
+
+    for cid in list(_wake):
+        _wake.pop(cid, None)
+        task = asyncio.create_task(_process_call_queue(cid))
+        _BACKGROUND.add(task)
+        task.add_done_callback(_BACKGROUND.discard)
+
+
+# ── Auto-sync: re-run a saved import on a schedule (e.g. "new leads in stage X → campaign Y") ──
+
+AUTO_EVERY = (15, 60, 240, 1440)
+
+
+def auto_rules(conn: CrmConnection) -> list[dict]:
+    """A copy (edit it, then assign back to conn.settings so the JSON column is saved)."""
+    import copy
+
+    return copy.deepcopy(list((conn.settings or {}).get("auto_imports") or []))
+
+
+def _due(rule: dict, now: dt.datetime) -> bool:
+    if not rule.get("enabled", True):
+        return False
+    last = rule.get("last_run_at")
+    if not last:
+        return True
+    try:
+        return now - dt.datetime.fromisoformat(last) >= dt.timedelta(minutes=int(rule.get("every_minutes") or 60))
+    except ValueError:
+        return True
+
+
+async def run_auto_rule(db, conn: CrmConnection, rule_id: str, now: dt.datetime | None = None) -> dict:
+    now = now or dt.datetime.now(UTC)
+    rules = auto_rules(conn)
+    rule = next((r for r in rules if r.get("id") == rule_id), None)
+    if not rule:
+        raise CrmError("That auto-sync rule wasn't found.")
+    try:
+        result = await import_contacts(db, conn, limit=int(rule.get("limit") or 500), filters=rule.get("filters") or {},
+                                       skip_contacted=bool(rule.get("skip_contacted")), list_tag=rule.get("list_tag") or "",
+                                       campaign_id=rule.get("campaign_id"), source=f"Auto-sync “{rule.get('name') or 'rule'}”:")
+        rule["last_result"] = {"ok": True, "created": result["created"], "added": result.get("added_to_campaign", 0)}
+    except CrmError as exc:
+        await add_log(db, conn, "import", "error", f"Auto-sync “{rule.get('name') or 'rule'}” failed: {exc}")
+        rule["last_result"] = {"ok": False, "error": str(exc)[:300]}
+        result = {"error": str(exc)}
+    rule["last_run_at"] = now.isoformat()
+    rule["runs"] = int(rule.get("runs") or 0) + 1
+    conn.settings = {**(conn.settings or {}), "auto_imports": rules}
+    return result
+
+
+async def run_due_rules(db, conn: CrmConnection, now: dt.datetime | None = None) -> int:
+    now = now or dt.datetime.now(UTC)
+    ran = 0
+    for rule in auto_rules(conn):
+        if _due(rule, now):
+            await run_auto_rule(db, conn, rule["id"], now)
+            ran += 1
+    return ran
 
 
 # ── BlackSync pipeline inside the CRM (drag a card into the queue → the agent calls) ──
@@ -557,7 +664,8 @@ async def poll_once() -> None:
 
     async with AsyncSessionLocal() as db:
         conns = (await db.execute(select(CrmConnection))).scalars().all()
-        ids = [c.id for c in conns if any((c.settings or {}).get(k) for k in ("speed_to_lead_agent_id", "installs", "activity_agent_id"))]
+        ids = [c.id for c in conns if any((c.settings or {}).get(k) for k in
+                                          ("speed_to_lead_agent_id", "installs", "activity_agent_id", "auto_imports"))]
     for cid in ids:
         async with AsyncSessionLocal() as db:
             conn = await db.get(CrmConnection, cid)
@@ -566,7 +674,9 @@ async def poll_once() -> None:
                     await check_new_leads(db, conn)
                     await check_activity(db, conn)
                     await process_queue(db, conn)
+                    await run_due_rules(db, conn)
                     await db.commit()
+                    wake_campaigns()
                 except Exception as exc:
                     await db.rollback()
                     log.warning("speed_to_lead_failed", connection=str(cid), error=str(exc))

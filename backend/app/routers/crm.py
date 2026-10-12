@@ -71,7 +71,11 @@ def conn_to_dict(c: CrmConnection) -> dict:
         "provider": c.provider, "method": c.method, "account_label": c.account_label, "status": c.status,
         "last_error": c.last_error, "last_synced_at": _iso(c.last_synced_at), "created_at": _iso(c.created_at),
         "settings": {k: s.get(k) for k in ("log_calls", "create_contacts", "only_connected", "speed_to_lead_agent_id",
-                                             "activity_agent_id")},
+                                             "activity_agent_id", "min_seconds", "skip_outcomes", "note_summary",
+                                             "note_details", "note_link")},
+        "auto_imports": [{k: r.get(k) for k in ("id", "name", "filters", "skip_contacted", "campaign_id", "list_tag",
+                                                 "every_minutes", "enabled", "last_run_at", "last_result", "runs", "summary")}
+                         for r in s.get("auto_imports") or []],
         "pending_calls": len(s.get("pending") or []),
         "installs": [{"agent_id": i["agent_id"], "agent_name": i.get("agent_name", ""), "pipeline_id": i["pipeline"]["id"],
                       "pipeline_name": i["pipeline"]["name"], "stages": [st["label"] for st in i["pipeline"]["stages"]]}
@@ -296,6 +300,11 @@ class SettingsIn(BaseModel):
     log_calls: bool | None = None
     create_contacts: bool | None = None
     only_connected: bool | None = None
+    min_seconds: int | None = Field(default=None, ge=0, le=3600)
+    skip_outcomes: list[str] | None = None
+    note_summary: bool | None = None
+    note_details: bool | None = None
+    note_link: bool | None = None
     speed_to_lead_agent_id: str | None = None  # "" turns it off
     activity_agent_id: str | None = None  # "" turns it off
     location_id: str | None = Field(default=None, max_length=100)
@@ -308,9 +317,13 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
     conn = await _require_conn(db, ctx.org.id, key)
     s = sync.conn_settings(conn)
     data = body.model_dump(exclude_unset=True)
-    for k in ("log_calls", "create_contacts", "only_connected"):
+    for k in ("log_calls", "create_contacts", "only_connected", "note_summary", "note_details", "note_link", "min_seconds"):
         if data.get(k) is not None:
             s[k] = data[k]
+    if data.get("skip_outcomes") is not None:
+        from app.models.call_log import CALL_OUTCOMES
+
+        s["skip_outcomes"] = [o for o in dict.fromkeys(data["skip_outcomes"]) if o in CALL_OUTCOMES and o != "do_not_call"]
     if "speed_to_lead_agent_id" in data:
         agent_id = (data["speed_to_lead_agent_id"] or "").strip()
         if agent_id:
@@ -375,6 +388,7 @@ class ImportIn(BaseModel):
     skip_contacted: bool = False
     list_tag: str = Field(default="", max_length=60)
     limit: int = Field(default=500, ge=1, le=2000)
+    campaign_id: str | None = Field(default=None, max_length=64)
 
 
 def _filters(body: ImportIn) -> dict:
@@ -418,13 +432,112 @@ async def import_contacts(key: str, ctx: ManagerDep, db: DbDep, body: ImportIn |
         raise HTTPException(status_code=400, detail="This integration doesn't have contacts to import.")
     try:
         result = await sync.import_contacts(db, conn, limit=body.limit, filters=_filters(body),
-                                            skip_contacted=body.skip_contacted, list_tag=body.list_tag)
+                                            skip_contacted=body.skip_contacted, list_tag=body.list_tag,
+                                            campaign_id=await _campaign_id(db, ctx, body.campaign_id))
     except CrmError as exc:
         await sync.add_log(db, conn, "import", "error", f"Import failed: {exc}")
         await db.commit()
         raise HTTPException(status_code=400, detail=f"Import failed: {exc}") from exc
     await db.commit()
+    sync.wake_campaigns()
     return result
+
+
+async def _campaign_id(db, ctx, raw: str | None) -> str | None:
+    if not raw:
+        return None
+    from app.models.campaign import Campaign
+
+    try:
+        campaign = await db.get(Campaign, uuid.UUID(raw))
+    except ValueError:
+        campaign = None
+    if not campaign or campaign.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return str(campaign.id)
+
+
+# ── Auto-sync rules: re-run a saved import on a schedule ──────────────────────
+
+
+class AutoRuleIn(BaseModel):
+    name: str = Field(default="", max_length=80)
+    filters: dict[str, list[str] | str | bool] = Field(default_factory=dict)
+    skip_contacted: bool = False
+    list_tag: str = Field(default="", max_length=60)
+    campaign_id: str | None = Field(default=None, max_length=64)
+    every_minutes: int = 60
+    enabled: bool = True
+    summary: str = Field(default="", max_length=300)  # human description of the filters, for the list
+
+
+async def _rule_from(body: AutoRuleIn, ctx, db, p: Provider) -> dict:
+    if body.every_minutes not in sync.AUTO_EVERY:
+        raise HTTPException(status_code=400, detail="Pick how often to check: 15 min, 1 hour, 4 hours or daily.")
+    imp = ImportIn(filters=body.filters, skip_contacted=body.skip_contacted)
+    return {"name": body.name.strip() or f"{p.name} auto-sync", "filters": _filters(imp),
+            "skip_contacted": body.skip_contacted, "list_tag": body.list_tag.strip(),
+            "campaign_id": await _campaign_id(db, ctx, body.campaign_id), "every_minutes": body.every_minutes,
+            "enabled": body.enabled, "summary": body.summary.strip()}
+
+
+@router.post("/{key}/auto-imports", status_code=201)
+async def create_auto_rule(key: str, body: AutoRuleIn, ctx: ManagerDep, db: DbDep):
+    p = _provider(key)
+    conn = await _require_conn(db, ctx.org.id, key)
+    if not p.can_import:
+        raise HTTPException(status_code=400, detail=f"{p.name} doesn't have contacts to sync.")
+    rules = sync.auto_rules(conn)
+    if len(rules) >= 10:
+        raise HTTPException(status_code=400, detail="You can have up to 10 auto-sync rules per integration.")
+    rule = {"id": uuid.uuid4().hex[:12], **await _rule_from(body, ctx, db, p), "runs": 0}
+    conn.settings = {**(conn.settings or {}), "auto_imports": [*rules, rule]}
+    await sync.add_log(db, conn, "test", "ok", f"Auto-sync “{rule['name']}” created — checks every "
+                       f"{_every_label(rule['every_minutes'])}.")
+    await db.commit()
+    await db.refresh(conn)
+    return conn_to_dict(conn)
+
+
+def _every_label(m: int) -> str:
+    return {15: "15 minutes", 60: "hour", 240: "4 hours", 1440: "day"}.get(m, f"{m} minutes")
+
+
+@router.put("/{key}/auto-imports/{rule_id}")
+async def update_auto_rule(key: str, rule_id: str, body: AutoRuleIn, ctx: ManagerDep, db: DbDep):
+    p = _provider(key)
+    conn = await _require_conn(db, ctx.org.id, key)
+    rules = sync.auto_rules(conn)
+    rule = next((r for r in rules if r.get("id") == rule_id), None)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    rule.update(await _rule_from(body, ctx, db, p))
+    conn.settings = {**(conn.settings or {}), "auto_imports": rules}
+    await db.commit()
+    await db.refresh(conn)
+    return conn_to_dict(conn)
+
+
+@router.delete("/{key}/auto-imports/{rule_id}")
+async def delete_auto_rule(key: str, rule_id: str, ctx: ManagerDep, db: DbDep):
+    conn = await _require_conn(db, ctx.org.id, key)
+    conn.settings = {**(conn.settings or {}), "auto_imports": [r for r in sync.auto_rules(conn) if r.get("id") != rule_id]}
+    await db.commit()
+    await db.refresh(conn)
+    return conn_to_dict(conn)
+
+
+@router.post("/{key}/auto-imports/{rule_id}/run")
+async def run_auto_rule_now(key: str, rule_id: str, ctx: ManagerDep, db: DbDep):
+    conn = await _require_conn(db, ctx.org.id, key)
+    try:
+        result = await sync.run_auto_rule(db, conn, rule_id)
+    except CrmError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    sync.wake_campaigns()
+    await db.refresh(conn)
+    return {"result": result, "connection": conn_to_dict(conn)}
 
 
 @router.get("/{key}/activity")

@@ -585,3 +585,58 @@ def test_fub_tags_queue_activity_trigger_and_tasks(client, monkeypatch):
     task = next(b for p, b in posts if p == "/v1/tasks")
     assert task["personId"] == 11 and task["assignedUserId"] == 7 and "Tue 3 PM" in task["name"]
     client.delete("/api/integrations/crm/followupboss")
+
+
+def test_push_rules_note_options_and_auto_sync_into_campaign(client, http_mock, monkeypatch):
+    state, calls = http_mock
+    state["responses"] = dict(RESPONSES["followupboss"])
+    assert client.post("/api/integrations/crm/followupboss/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    lead = client.post("/api/contacts", json={"name": "Jamie", "phone": "+14155550311"}).json()
+
+    def push(outcome, seconds):
+        data = {"call_id": str(uuid.uuid4()), "outcome": outcome, "summary": "Secret summary.", "duration_seconds": seconds,
+                "to_phone": "+14155550311", "contact": {"id": lead["id"], "name": "Jamie", "phone": "+14155550311"},
+                "extracted_data": {"budget": "500k"}}
+        before = len([c for c in calls if c[0] == "POST" and c[1] == "/v1/calls"])
+        asyncio.run(sync.push_call(org_id, data))
+        posted = [json.loads(c[2].content) for c in calls if c[0] == "POST" and c[1] == "/v1/calls"]
+        return posted[-1] if len(posted) > before else None
+
+    s = client.patch("/api/integrations/crm/followupboss", json={
+        "create_contacts": True, "skip_outcomes": ["voicemail", "bogus"], "min_seconds": 20,
+        "note_summary": False, "note_link": False}).json()["settings"]
+    assert s["skip_outcomes"] == ["voicemail"] and s["min_seconds"] == 20
+    assert push("voicemail", 40) is None          # skipped outcome
+    assert push("interested", 8) is None          # too short
+    body = push("interested", 45)
+    assert body and "Secret summary" not in json.dumps(body) and "500k" in json.dumps(body)
+
+    # Auto-sync: new people matching the rule land in the campaign; a finished campaign wakes up.
+    agent_id = client.get("/api/agents/").json()[0]["id"]
+    camp = client.post("/api/campaigns", json={"name": "FUB hot", "agent_id": agent_id}).json()
+    state["responses"][("GET", "/v1/people")] = {"people": [
+        {"id": 71, "name": "New Hot", "stage": "Hot", "phones": [{"value": "+14155550371"}]},
+        {"id": 72, "name": "Dnc Hot", "stage": "Hot", "tags": ["Do Not Call"], "phones": [{"value": "+14155550372"}]}]}
+    conn = client.post("/api/integrations/crm/followupboss/auto-imports", json={
+        "name": "Hot → campaign", "filters": {"stage": ["Hot"]}, "campaign_id": camp["id"], "every_minutes": 15}).json()
+    rule = conn["auto_imports"][0]
+    assert rule["every_minutes"] == 15 and rule["campaign_id"] == camp["id"] and rule["runs"] == 0
+    assert client.post("/api/integrations/crm/followupboss/auto-imports", json={"every_minutes": 7}).status_code == 400
+
+    woke = []
+    monkeypatch.setattr(sync, "wake_campaigns", lambda: woke.append(dict(sync._wake)) or sync._wake.clear())
+    r = client.post(f"/api/integrations/crm/followupboss/auto-imports/{rule['id']}/run").json()
+    assert r["result"]["created"] == 2 and r["result"]["added_to_campaign"] == 1  # the DNC one is saved, never queued
+    assert r["connection"]["auto_imports"][0]["runs"] == 1 and r["connection"]["auto_imports"][0]["last_result"]["ok"]
+    c = client.get(f"/api/campaigns/{camp['id']}").json()
+    assert c["total_targets"] == 1
+
+    # Due-ness: just ran → not due; an hour later (15-min rule) → due.
+    from app.services.crm.sync import _due
+    rr = r["connection"]["auto_imports"][0]
+    assert not _due(rr, dt.datetime.fromisoformat(rr["last_run_at"]) + dt.timedelta(minutes=5))
+    assert _due(rr, dt.datetime.fromisoformat(rr["last_run_at"]) + dt.timedelta(minutes=16))
+
+    assert client.delete(f"/api/integrations/crm/followupboss/auto-imports/{rule['id']}").json()["auto_imports"] == []
+    client.delete("/api/integrations/crm/followupboss")

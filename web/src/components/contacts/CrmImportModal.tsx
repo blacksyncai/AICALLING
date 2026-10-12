@@ -8,7 +8,7 @@ import { Badge, Button, Field, Input, Modal, Notice, Select, Spinner, Toggle } f
 import { fetcher, post } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-interface FilterDef {
+export interface FilterDef {
   key: string;
   label: string;
   type: "multi" | "single" | "pipeline";
@@ -19,7 +19,7 @@ interface FilterDef {
 }
 
 /** Pick a pipeline, then any of its stages (none = the whole pipeline). */
-function PipelinePicker({
+export function PipelinePicker({
   f, pipeline, stages, onChange,
 }: {
   f: FilterDef; pipeline: string; stages: string[]; onChange: (pipeline: string, stages: string[]) => void;
@@ -70,7 +70,7 @@ function PipelinePicker({
     </div>
   );
 }
-interface Preview {
+export interface Preview {
   found: number;
   will_import: number;
   already_in_blacksync: number;
@@ -86,7 +86,7 @@ interface Overview {
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
 
-function MultiPicker({ f, value, onChange }: { f: FilterDef; value: string[]; onChange: (v: string[]) => void }) {
+export function MultiPicker({ f, value, onChange }: { f: FilterDef; value: string[]; onChange: (v: string[]) => void }) {
   const [q, setQ] = useState("");
   const shown = f.options.filter((o) => !q || o.label.toLowerCase().includes(q.toLowerCase()));
   const extra = value.filter((v) => !f.options.some((o) => o.value === v));

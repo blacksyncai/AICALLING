@@ -1,23 +1,24 @@
 "use client";
 
-import { CheckCircle2, ChevronRight, Download, ExternalLink, RefreshCw, Trash2, Zap } from "lucide-react";
+import { CheckCircle2, ChevronRight, ExternalLink, Zap } from "lucide-react";
 import type React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Toggle } from "@/components/ui";
-import { del, fetcher, patch, post, put } from "@/lib/api";
+import { del, fetcher, post, put } from "@/lib/api";
 import { cn, timeAgo } from "@/lib/utils";
 
-interface ProviderField {
+export interface ProviderField {
   name: string;
   label: string;
   secret: boolean;
   placeholder: string;
   help: string;
 }
-interface Provider {
+export interface Provider {
   key: string;
   name: string;
   category: "crm" | "notify" | "sheet";
@@ -34,7 +35,21 @@ interface Provider {
   can_activity: boolean;
   fields: ProviderField[];
 }
-interface Connection {
+export interface AutoRule {
+  id: string;
+  name: string;
+  filters: Record<string, string[]>;
+  skip_contacted: boolean;
+  campaign_id: string | null;
+  list_tag: string;
+  every_minutes: number;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_result: { ok: boolean; created?: number; added?: number; error?: string } | null;
+  runs: number;
+  summary: string;
+}
+export interface Connection {
   provider: string;
   method: "api_key" | "nango";
   account_label: string;
@@ -44,7 +59,13 @@ interface Connection {
   settings: {
     log_calls: boolean; create_contacts: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null;
     activity_agent_id: string | null;
+    min_seconds: number;
+    skip_outcomes: string[];
+    note_summary: boolean;
+    note_details: boolean;
+    note_link: boolean;
   };
+  auto_imports: AutoRule[];
   pending_calls: number;
   config: Record<string, string>;
   pipeline: { id: string; name: string; mapped: number } | null;
@@ -55,7 +76,7 @@ interface Overview {
   connections: Connection[];
   nango_enabled: boolean;
 }
-interface Activity {
+export interface Activity {
   id: string;
   kind: string;
   status: "ok" | "error";
@@ -75,7 +96,7 @@ const DOMAIN: Record<string, string> = {
   google_sheets: "sheets.google.com", slack: "slack.com",
 };
 
-function Logo({ p }: { p: Provider }) {
+export function Logo({ p }: { p: Provider }) {
   const [failed, setFailed] = useState(false);
   const initials = p.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const domain = DOMAIN[p.key];
@@ -106,13 +127,12 @@ function Group({ title, children }: { title?: string; children: React.ReactNode 
   );
 }
 
-const errText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
+export const errText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
 
 export function CrmIntegrations() {
   const { data, error, mutate } = useSWR<Overview>("/api/integrations/crm", fetcher);
-  const { data: agents } = useSWR<{ id: string; name: string }[]>("/api/agents/", fetcher);
   const [connecting, setConnecting] = useState<Provider | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
+  const router = useRouter();
 
   if (error) return <Notice tone="red">Couldn&apos;t load CRM integrations: {error.message}</Notice>;
   if (!data) {
@@ -148,16 +168,7 @@ export function CrmIntegrations() {
         {connected.length > 0 && (
           <Group title="Connected">
             {connected.map((p) => (
-              <ConnectedRow
-                key={p.key}
-                p={p}
-                c={byKey[p.key]}
-                agents={agents ?? []}
-                open={open === p.key}
-                onToggle={() => setOpen(open === p.key ? null : p.key)}
-                onChange={() => void mutate()}
-                onReconnect={() => setConnecting(p)}
-              />
+              <ConnectedRow key={p.key} p={p} c={byKey[p.key]} />
             ))}
           </Group>
         )}
@@ -196,7 +207,7 @@ export function CrmIntegrations() {
           existing={byKey[connecting.key]}
           onClose={() => setConnecting(null)}
           onDone={() => {
-            setOpen(connecting.key);
+            router.push(`/integrations/${connecting.key}`);
             setConnecting(null);
             void mutate();
           }}
@@ -206,7 +217,7 @@ export function CrmIntegrations() {
   );
 }
 
-function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; existing?: Connection; onClose: () => void; onDone: () => void }) {
+export function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; existing?: Connection; onClose: () => void; onDone: () => void }) {
   const [values, setValues] = useState<Record<string, string>>(() => ({ ...(existing?.config ?? {}) }));
   const [busy, setBusy] = useState<"key" | "oauth" | null>(null);
   const [err, setErr] = useState("");
@@ -303,36 +314,12 @@ function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; existing?
   );
 }
 
-function ConnectedRow({
-  p, c, agents, open, onToggle, onChange, onReconnect,
-}: {
-  p: Provider; c: Connection; agents: { id: string; name: string }[]; open: boolean;
-  onToggle: () => void; onChange: () => void; onReconnect: () => void;
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<{ tone: "green" | "red"; text: string } | null>(null);
-  const { data: activity, mutate: refreshActivity } = useSWR<{ items: Activity[] }>(open ? `/api/integrations/crm/${p.key}/activity` : null, fetcher);
-
-  const run = async (name: string, fn: () => Promise<unknown>, ok?: (r: unknown) => string) => {
-    setBusy(name);
-    setMsg(null);
-    try {
-      const r = await fn();
-      if (ok) setMsg({ tone: "green", text: ok(r) });
-      onChange();
-      void refreshActivity();
-    } catch (e) {
-      setMsg({ tone: "red", text: errText(e) });
-    } finally {
-      setBusy(null);
-    }
-  };
-  const save = (body: Record<string, unknown>) => run("settings", () => patch(`/api/integrations/crm/${p.key}`, body));
+function ConnectedRow({ p, c }: { p: Provider; c: Connection }) {
   const s = c.settings;
-
+  const rules = c.auto_imports.filter((r) => r.enabled).length;
   return (
     <li className="relative">
-      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-zinc-50">
+      <Link href={`/integrations/${p.key}`} className="flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-zinc-50">
         <Logo p={p} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 text-[15px] font-medium text-zinc-900">
@@ -342,6 +329,8 @@ function ConnectedRow({
                 <Zap className="h-3 w-3" /> Speed to lead
               </Badge>
             )}
+            {rules > 0 && <Badge tone="gray">{rules} auto-sync</Badge>}
+            {c.pipeline && <Badge tone="gray">Stages synced</Badge>}
           </div>
           <div className="truncate text-xs text-zinc-500">
             {c.account_label}
@@ -356,130 +345,9 @@ function ConnectedRow({
         ) : (
           <span className="shrink-0 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">Needs attention</span>
         )}
-        <ChevronRight className={cn("h-5 w-5 shrink-0 text-zinc-400 transition-transform", open && "rotate-90")} />
-      </button>
-      {open && (
-        <div className="space-y-5 border-t border-zinc-100 bg-zinc-50/50 p-4 sm:pl-[68px]">
-          {c.status === "error" && c.last_error && <Notice tone="red">{c.last_error}</Notice>}
-          <div className="grid gap-3 md:grid-cols-2">
-            <Toggle
-              checked={s.log_calls}
-              onChange={(v) => void save({ log_calls: v })}
-              label={p.category === "notify" ? "Post every finished call" : p.category === "sheet" ? "Add a row for every call" : "Log every call"}
-              description={p.category === "crm" ? "Adds the call, summary, outcome and recording link to the contact." : undefined}
-            />
-            {p.category === "crm" && (
-              <Toggle
-                checked={s.create_contacts}
-                onChange={(v) => void save({ create_contacts: v })}
-                label="Create missing contacts"
-                description={`Off by default. When on, a called number that isn't in ${p.name} is added quietly (no new-lead alerts). Leave off while testing with your own phone.`}
-              />
-            )}
-            <Toggle
-              checked={s.only_connected}
-              onChange={(v) => void save({ only_connected: v })}
-              label="Only answered calls"
-              description="Skip no-answers and failed calls."
-            />
-          </div>
-
-          {p.can_install && <BlackSyncPipelines p={p} c={c} agents={agents} onChange={onChange} />}
-
-          {p.pipeline_noun && <PipelineSync p={p} c={c} onSaved={onChange} />}
-
-          {p.can_activity && (
-            <div className="rounded-xl bg-red-50/50 p-4 ring-1 ring-red-100">
-              <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-                <Zap className="h-4 w-4 text-red-500" /> Call when they show interest
-              </div>
-              <p className="mt-1 text-xs text-zinc-600">
-                When someone in {p.name} views or saves a listing, sends an inquiry or registers, this agent calls them within about a minute and
-                knows what they looked at. Skips anyone called in the last 24 hours. 8 AM – 9 PM. Uses calling credits.
-              </p>
-              <Select className="mt-3" value={s.activity_agent_id ?? ""} onChange={(e) => void save({ activity_agent_id: e.target.value })}
-                aria-label="Agent for interest calls">
-                <option value="">Off</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>Call with {a.name}</option>
-                ))}
-              </Select>
-            </div>
-          )}
-
-          {p.can_new_leads && (
-            <div className="rounded-xl bg-brand-50/50 p-4 ring-1 ring-brand-100">
-              <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-                <Zap className="h-4 w-4 text-brand-600" /> Speed to lead
-              </div>
-              <p className="mt-1 text-xs text-zinc-600">
-                When a new lead lands in {p.name}, this agent calls them within about a minute (8 AM – 9 PM in your account&apos;s time zone; later leads are
-                called when the window opens). Uses calling credits.
-              </p>
-              <Select
-                className="mt-3"
-                value={s.speed_to_lead_agent_id ?? ""}
-                onChange={(e) => void save({ speed_to_lead_agent_id: e.target.value })}
-                aria-label="Speed to lead agent"
-              >
-                <option value="">Off</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    Call with {a.name}
-                  </option>
-                ))}
-              </Select>
-              {c.pending_calls > 0 && <p className="mt-2 text-xs text-zinc-600">{c.pending_calls} new lead(s) waiting for calling hours.</p>}
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {p.can_import && (
-              <Link href={`/contacts?import=${p.key}`}>
-                <Button size="sm">
-                  <Download className="h-3.5 w-3.5" /> Import contacts…
-                </Button>
-              </Link>
-            )}
-            <Button size="sm" loading={busy === "test"} onClick={() => void run("test", () => post(`/api/integrations/crm/${p.key}/test`), () => "Test finished — see activity below.")}>
-              <RefreshCw className="h-3.5 w-3.5" /> Test connection
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onReconnect}>
-              Update credentials
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              loading={busy === "delete"}
-              onClick={() => {
-                if (window.confirm(`Disconnect ${p.name}? Calls will stop syncing.`)) void run("delete", () => del(`/api/integrations/crm/${p.key}`));
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Disconnect
-            </Button>
-          </div>
-          {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-
-          <div>
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Activity</div>
-            {!activity ? (
-              <Spinner />
-            ) : activity.items.length === 0 ? (
-              <p className="text-sm text-zinc-500">Nothing yet — finished calls will show up here.</p>
-            ) : (
-              <ul className="divide-y divide-zinc-100 text-sm">
-                {activity.items.slice(0, 12).map((a) => (
-                  <li key={a.id} className="flex items-start gap-2 py-2">
-                    <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", a.status === "ok" ? "bg-emerald-500" : "bg-red-500")} />
-                    <span className="min-w-0 flex-1 text-zinc-700">{a.message}</span>
-                    <span className="shrink-0 text-xs text-zinc-400">{timeAgo(a.created_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
+        <span className="hidden shrink-0 text-sm text-zinc-500 sm:inline">Set up</span>
+        <ChevronRight className="h-5 w-5 shrink-0 text-zinc-400" />
+      </Link>
     </li>
   );
 }
@@ -494,7 +362,7 @@ interface PipelineInfo {
 }
 
 /** Pick a pipeline and map each call result to a stage; calls then move the contact's deal there. */
-function PipelineSync({ p, c, onSaved }: { p: Provider; c: Connection; onSaved: () => void }) {
+export function PipelineSync({ p, c, onSaved }: { p: Provider; c: Connection; onSaved: () => void }) {
   const { data, error, mutate } = useSWR<PipelineInfo>(`/api/integrations/crm/${p.key}/pipelines`, fetcher, { revalidateOnFocus: false });
   const [pipelineId, setPipelineId] = useState<string | null>(null);
   const [map, setMap] = useState<Record<string, string> | null>(null);
@@ -623,7 +491,7 @@ function PipelineSync({ p, c, onSaved }: { p: Provider; c: Connection; onSaved: 
 }
 
 /** "BlackSync AI · <agent>" pipelines inside the CRM: drag a card into the queue stage and the agent calls. */
-function BlackSyncPipelines({
+export function BlackSyncPipelines({
   p, c, agents, onChange,
 }: {
   p: Provider; c: Connection; agents: { id: string; name: string }[]; onChange: () => void;
