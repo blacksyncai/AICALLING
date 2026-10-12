@@ -2,6 +2,7 @@
 
 import { ArrowLeft, ArrowUpRight, BookOpen, Brain, Check, Eye, MessageSquare, Mic, Phone, Plus, Sparkles, Trash2, Upload, Wrench, Zap } from "lucide-react";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
+import { AnimatedTabList, AnimatedTabPanel } from "@/components/ui/animated-tabs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -288,21 +289,16 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             forceOpen={openReadiness}
           />
           <div ref={editorRef} className="scroll-mt-32">
-          <div className="scroll-thin mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200">
-            {SECTIONS.map(({ value, label, icon: Icon }) => (
-              <button
-                key={value}
-                onClick={() => setSection(value)}
-                className={cn(
-                  "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium",
-                  section === value ? "border-brand-600 text-brand-700" : "border-transparent text-zinc-500 hover:text-zinc-800",
-                )}
-              >
-                <Icon className="h-4 w-4" /> {label}
-              </button>
-            ))}
-          </div>
+          <AnimatedTabList
+            tabs={SECTIONS.map(({ value, label, icon: Icon }) => ({ id: value, label, icon: <Icon className="h-4 w-4" /> }))}
+            value={section}
+            onChange={setSection}
+            variant="light"
+            layoutId="agent-editor-tab"
+            className="scroll-thin mb-5 overflow-x-auto"
+          />
 
+          <AnimatedTabPanel key={section}>
           {section === "prompt" && (
             <div className="space-y-5">
               <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
@@ -541,6 +537,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               </div>
             </div>
           )}
+          </AnimatedTabPanel>
           </div>
         </div>
 
