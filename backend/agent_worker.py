@@ -843,22 +843,6 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     return tools
 
 
-FALLBACK_LLM = "gpt-4.1-mini"
-
-
-def _llm_with_fallback(model: str, llm_kwargs: dict, temperature: float):
-    """Non-OpenAI models (Cerebras, Claude) fail over to OpenAI the moment they error or rate-limit,
-    so a 429 mid-call never leaves the caller in silence. OpenAI models run as-is."""
-    primary = openai.LLM(**llm_kwargs)
-    if llm_kwargs.get("base_url") == settings.openai_base_url or not settings.openai_api_key:
-        return primary
-    from livekit.agents import llm as lk_llm
-
-    backup = openai.LLM(model=FALLBACK_LLM, api_key=settings.openai_api_key, base_url=settings.openai_base_url,
-                        temperature=temperature)
-    return lk_llm.FallbackAdapter([primary, backup], attempt_timeout=4.0, max_retry_per_llm=0)
-
-
 async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     import time as _time
     from app.agent.models import llm_endpoint
@@ -906,7 +890,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             model="nova-3", language=language if language != "multi" else "multi",
             api_key=settings.deepgram_api_key,
         ),
-        llm=_llm_with_fallback(model, llm_kwargs, float(cfg.get("temperature", 0.5))),
+        llm=openai.LLM(**llm_kwargs),
         tts=cartesia.TTS(
             model="sonic-3",
             voice=cfg.get("voice_id") or DEFAULT_VOICE_ID,
@@ -1041,6 +1025,15 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             log.debug("transcript_capture_failed", error=str(exc))
 
     session.on("conversation_item_added", _on_item)
+    log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,
+             has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
+             background_audio=bool(cfg.get("background_audio")), tuning={k: v for k, v in tuning.items() if k != "pronunciations"})
+    session.on("agent_state_changed", lambda ev: log.info("agent_state", room=ctx.room.name,
+                                                           state=getattr(ev, "new_state", "")))
+    session.on("error", lambda ev: log.warning("session_error", room=ctx.room.name,
+                                               error=str(getattr(ev, "error", ev))[:300]))
+    session.on("close", lambda ev: log.info("session_closed", room=ctx.room.name,
+                                            reason=str(getattr(ev, "reason", "")), error=str(getattr(ev, "error", "") or "")[:300]))
     await session.start(agent, room=ctx.room)
 
     asyncio.create_task(_push_live_event(run.call_log_id, {
