@@ -288,14 +288,14 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             onSection={goToSection}
             forceOpen={openReadiness}
           />
-          <div ref={editorRef} className="scroll-mt-32">
+          <div ref={editorRef} className="agent-glass scroll-mt-32 rounded-2xl p-3 sm:p-5">
           <AnimatedTabList
             tabs={SECTIONS.map(({ value, label, icon: Icon }) => ({ id: value, label, icon: <Icon className="h-4 w-4" /> }))}
             value={section}
             onChange={setSection}
-            variant="light"
+            variant="dark"
             layoutId="agent-editor-tab"
-            className="scroll-thin mb-5 overflow-x-auto"
+            className="scroll-thin mb-5 flex-nowrap overflow-x-auto"
           />
 
           <AnimatedTabPanel key={section}>

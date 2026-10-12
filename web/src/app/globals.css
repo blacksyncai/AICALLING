@@ -126,3 +126,58 @@ h2,
 .fb-caption { margin-top: 8px; text-align: center; font-size: 12px; color: #a89f98; }
 .fb-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { .fb-collapse { transition: none; } }
+
+/* ── Agent editor: dark brushed-metal glass panel (animated-tabs "dark" look) ── */
+.agent-glass {
+  position: relative;
+  color: #f4f1ee;
+  background:
+    radial-gradient(120% 60% at 0% 0%, rgba(255, 255, 255, 0.07), transparent 60%),
+    linear-gradient(160deg, rgba(46, 41, 38, 0.96) 0%, rgba(24, 20, 17, 0.97) 55%, rgba(34, 29, 26, 0.96) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 20px rgba(0, 0, 0, 0.2), 0 18px 40px -20px rgba(24, 20, 17, 0.55);
+  backdrop-filter: blur(8px);
+}
+/* Text */
+.agent-glass :is(.text-zinc-900, .text-zinc-800, .text-zinc-700) { color: #f4f1ee; }
+.agent-glass :is(.text-zinc-600, .text-zinc-500) { color: #b5aca5; }
+.agent-glass :is(.text-zinc-400, .text-zinc-300) { color: #8c837d; }
+.agent-glass .text-brand-700 { color: #f19a77; }
+.agent-glass .text-amber-700 { color: #f5c26b; }
+/* Surfaces: cards, inputs, chips */
+.agent-glass :is(.bg-white, .bg-zinc-50, .bg-zinc-100, .bg-zinc-100\/80, .bg-zinc-50\/60) {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+.agent-glass :is(.border-zinc-200, .border-zinc-200\/80, .border-zinc-100, .border-zinc-300) { border-color: rgba(255, 255, 255, 0.1); }
+.agent-glass :is(.divide-zinc-100, .divide-zinc-200) > :not(:last-child) { border-color: rgba(255, 255, 255, 0.08); }
+.agent-glass :is(.ring-zinc-200, .ring-zinc-200\/60, .ring-zinc-200\/70) { --tw-ring-color: rgba(255, 255, 255, 0.1); }
+.agent-glass :is(input, textarea, select) {
+  background-color: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #f4f1ee;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.agent-glass :is(input, textarea)::placeholder { color: #7d746e; }
+.agent-glass :is(input, textarea, select):hover { border-color: rgba(255, 255, 255, 0.18); }
+.agent-glass :is(input, textarea, select):focus { border-color: #ec653c; }
+.agent-glass select option { background: #211b18; color: #f4f1ee; }
+.agent-glass :is(input[type="checkbox"], input[type="radio"], input[type="range"]) { box-shadow: none; }
+/* Selected/accent tiles keep a warm glow */
+.agent-glass .bg-brand-50, .agent-glass .bg-brand-50\/60 { background-color: rgba(236, 101, 60, 0.14); }
+.agent-glass .hover\:bg-zinc-50:hover, .agent-glass .hover\:bg-zinc-100:hover { background-color: rgba(255, 255, 255, 0.08); }
+.agent-glass .hover\:text-zinc-800:hover, .agent-glass .hover\:text-zinc-900:hover { color: #fff; }
+.agent-glass code { color: #f19a77; }
+/* Notices inside the glass panel: tinted glass instead of bright pastel boxes */
+.agent-glass .bg-blue-50 { background-color: rgba(96, 165, 250, 0.12); border-color: rgba(96, 165, 250, 0.28); }
+.agent-glass .text-blue-900 { color: #c7dcfb; }
+.agent-glass .bg-amber-50 { background-color: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3); }
+.agent-glass .text-amber-900 { color: #f8d79a; }
+.agent-glass .bg-red-50 { background-color: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.3); }
+.agent-glass .text-red-800 { color: #fbc4c4; }
+.agent-glass .bg-emerald-50 { background-color: rgba(52, 211, 153, 0.12); border-color: rgba(52, 211, 153, 0.28); }
+.agent-glass .text-emerald-900, .agent-glass .text-emerald-700 { color: #a7f0d0; }
+/* Matte alert inside the panel follows the dark look */
+.agent-glass .fb-card { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); box-shadow: none; }
+.agent-glass .fb-card-head h3 { color: #f4f1ee; }
+.agent-glass .fb-card > p { color: #b5aca5; }
+.agent-glass .fb-pill { background: rgba(255, 255, 255, 0.08); color: #d6d0ca; box-shadow: none; }
