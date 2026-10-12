@@ -653,6 +653,7 @@ class _CallRun:
         self.meeting_time = ""
         self.email = ""
         self.t0 = 0.0
+        self.ended_wall: float | None = None  # unix time the caller left
         self.lat: dict[str, list[float]] = {"eou": [], "llm": [], "tts": []}
 
     def latency_summary(self) -> dict | None:
@@ -685,6 +686,7 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
                     "prospect_email": run.email,
                     "transcript": run.transcript,
                     "metrics": run.latency_summary(),
+                    "ended_at": run.ended_wall,
                 },
             )
         log.info("call_outcome_posted", call_log_id=run.call_log_id, outcome=outcome)
@@ -1008,6 +1010,24 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     )
 
     run.t0 = _time.monotonic()
+    wall_t0 = _time.time()
+
+    # Stop the clock the moment the caller leaves; the job's own teardown takes ~20 s more.
+    def _mark_ended(*_a) -> None:
+        if run.ended_wall is None:
+            run.ended_wall = _time.time()
+
+    def _on_participant_left(p) -> None:
+        from livekit import rtc
+
+        if getattr(p, "kind", None) in (rtc.ParticipantKind.Value("PARTICIPANT_KIND_EGRESS"),
+                                        rtc.ParticipantKind.Value("PARTICIPANT_KIND_AGENT")):
+            return  # the recorder or another agent leaving isn't the caller hanging up
+        _mark_ended()
+
+    ctx.room.on("participant_disconnected", _on_participant_left)
+    ctx.room.on("disconnected", _mark_ended)
+    session.on("close", _mark_ended)
 
     def _on_item(ev) -> None:
         try:
@@ -1077,7 +1097,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             outcome = "no_answer"
         await _push_live_event(run.call_log_id, {
             "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
-            "duration_sec": round(_time.monotonic() - run.t0), "ts": str(_time.time()),
+            "duration_sec": round((run.ended_wall or _time.time()) - wall_t0), "ts": str(_time.time()),
         })
         await _post_run_outcome(run, outcome)
 

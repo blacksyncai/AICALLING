@@ -668,3 +668,28 @@ def test_voicemail_and_short_calls_pay_only_the_phone_line(client, make_client):
     cid = _finish_call(client, org["id"], agent["id"], 9)
     assert c.get(f"/api/calls/{cid}").json()["credits_used"] == 0.08
     assert _balance(c) == 9.84
+
+
+def test_duration_stops_when_caller_hangs_up(client, make_client):
+    """The worker reports ~20 s after hang-up; billing uses the hang-up time it sends."""
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+
+    org, c = _account(client, make_client, "Hangup Co", credits=10)
+    agent = c.get("/api/agents/").json()[0]
+    call_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+
+    async def make():
+        async with AsyncSessionLocal() as db:
+            db.add(CallLog(id=call_id, org_id=uuid.UUID(org["id"]), agent_id=uuid.UUID(agent["id"]), call_type="outbound",
+                           to_phone="+14155550123", livekit_room_name=f"call-{call_id}", status="connected",
+                           started_at=now - timedelta(seconds=40), answered_at=now - timedelta(seconds=35)))
+            await db.commit()
+
+    asyncio.run(make())
+    left = (now - timedelta(seconds=23)).timestamp()  # talked 12 s, hung up 23 s ago
+    client.post(f"/internal/calls/{call_id}/outcome",
+                json={"outcome": "completed", "transcript": [{"role": "user", "text": "hi"}], "ended_at": left})
+    call = c.get(f"/api/calls/{call_id}").json()
+    assert 11 <= call["duration_seconds"] <= 13

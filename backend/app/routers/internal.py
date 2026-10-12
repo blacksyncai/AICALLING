@@ -32,6 +32,7 @@ class CallOutcomePayload(BaseModel):
     prospect_email: str = ""
     transcript: list[dict] | None = None
     metrics: dict | None = None
+    ended_at: float | None = None  # unix time the caller actually left (the report can lag behind)
 
 
 @router.get("/agents/{agent_id}/runtime")
@@ -75,6 +76,7 @@ async def call_outcome(
         agreed_meeting_time=body.agreed_meeting_time or None,
         prospect_email=body.prospect_email or None,
         metrics=body.metrics,
+        ended_at=body.ended_at,
         db=db,
     )
     background_tasks.add_task(analyze_and_store, call_log_id)

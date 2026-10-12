@@ -349,6 +349,7 @@ class CallService:
         agreed_meeting_time: str | None = None,
         prospect_email: str | None = None,
         metrics: dict | None = None,
+        ended_at: float | None = None,
     ) -> CallLog | None:
         call_log = (await db.execute(
             select(CallLog).where(CallLog.id == uuid.UUID(call_log_id))
@@ -362,11 +363,16 @@ class CallService:
             return call_log
 
         now = datetime.now(timezone.utc)
+        # The worker reports a few seconds (up to ~20 s) after the caller hangs up; end the call when they left.
+        if ended_at:
+            left = datetime.fromtimestamp(ended_at, tz=timezone.utc)
+            if left <= now:
+                now = left
         # Talk time runs from pickup for phone calls (ringing isn't billed), from start for web calls.
         started = call_log.answered_at or call_log.started_at
         if started and started.tzinfo is None:  # SQLite drops tzinfo
             started = started.replace(tzinfo=timezone.utc)
-        duration = int((now - started).total_seconds()) if started else None
+        duration = max(0, int((now - started).total_seconds())) if started else None
         if (call_log.call_type == "outbound" and not call_log.answered_at
                 and not any(t.get("role") == "user" for t in (transcript or []))):
             duration = 0  # never picked up
