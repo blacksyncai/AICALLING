@@ -34,6 +34,8 @@ class Campaign(Base):
     # ── Status ────────────────────────────────────────────────────────────────
     # draft | running | paused | completed | cancelled
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    # Why the system paused it ("credits"); None when a person paused it or it's running.
+    pause_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # ── Agent that places this campaign's calls ───────────────────────────────
     agent_id: Mapped[uuid.UUID | None] = mapped_column(

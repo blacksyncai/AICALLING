@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
+import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { CallingRulesCard, CallingStatus } from "@/components/campaigns/CallingRules";
 import { useToast } from "@/components/toast";
@@ -266,6 +267,24 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
               Finish setup
             </Link>
           </Notice>
+        </div>
+      )}
+
+      {campaign.status === "paused" && campaign.pause_reason === "credits" && (
+        <div className="mb-6 max-w-2xl">
+          <MatteAlertFeedback
+            cardTitle="Campaign paused"
+            pillText="Out of credits"
+            cardDescription="This campaign stopped dialing because your calling credits ran out. Nothing is lost — it picks up where it left off."
+            alertTitle="Add credits, then press Resume"
+            alertDetail="Turn on auto-recharge so campaigns never stop mid-list."
+            showControls={false}
+            action={
+              <Link href="/billing?tab=credits" className="inline-flex h-8 items-center rounded-lg bg-brand-600 px-3 text-xs font-medium text-white hover:bg-brand-700">
+                Buy credits
+              </Link>
+            }
+          />
         </div>
       )}
 

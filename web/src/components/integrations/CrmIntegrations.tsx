@@ -5,6 +5,7 @@ import type React from "react";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
+import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Toggle } from "@/components/ui";
 import { del, fetcher, patch, post, put } from "@/lib/api";
 import { cn, timeAgo } from "@/lib/utils";
@@ -124,6 +125,7 @@ export function CrmIntegrations() {
   const byKey = Object.fromEntries(data.connections.map((c) => [c.provider, c]));
   const connected = data.providers.filter((p) => byKey[p.key]);
   const available = data.providers.filter((p) => !byKey[p.key]);
+  const pushing = connected.filter((p) => byKey[p.key]?.settings?.log_calls);
 
   return (
     <Card>
@@ -132,6 +134,17 @@ export function CrmIntegrations() {
         description="Every AI call is logged in your CRM with the summary, outcome and recording link. Import contacts to call, and have an agent call new leads within a minute."
       />
       <div className="space-y-6 p-3 sm:p-5">
+        {pushing.length > 0 && (
+          <MatteAlertFeedback
+            cardTitle="Live CRM sync"
+            pillText={pushing.length === 1 ? "1 CRM" : `${pushing.length} CRMs`}
+            cardDescription={`Every AI call — test calls included — is logged in ${pushing.map((p) => p.name).join(" and ")}.`}
+            alertTitle="Test calls show up in your CRM too"
+            alertDetail="Turn off “Log every call” on a connection while testing, or disconnect it to stop syncing completely."
+            showControls={false}
+            persistKey={`crm-sync-${pushing.map((p) => p.key).join("-")}`}
+          />
+        )}
         {connected.length > 0 && (
           <Group title="Connected">
             {connected.map((p) => (

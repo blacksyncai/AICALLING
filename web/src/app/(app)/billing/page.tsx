@@ -4,6 +4,8 @@ import { Coins, CreditCard, LayoutGrid, Receipt, UserSearch } from "lucide-react
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
+import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
+import type { AutoRechargeCfg, CreditBreakdown } from "@/components/billing/types";
 import { CreditsTab } from "@/components/billing/CreditsTab";
 import { InvoicesTab } from "@/components/billing/InvoicesTab";
 import { LookupsTab } from "@/components/billing/LookupsTab";
@@ -108,6 +110,9 @@ function BillingContent() {
   const raw = params.get("tab");
   const tab: Tab = TABS.some((t) => t.value === raw) ? (raw as Tab) : "overview";
   const { data: overview, error, mutate } = useSWR<Overview>("/api/billing/overview", fetcher);
+  const { data: credits } = useSWR<CreditBreakdown>("/api/billing/credits", fetcher);
+  const { data: recharge } = useSWR<AutoRechargeCfg>("/api/billing/auto-recharge", fetcher);
+  const lowCredits = !!credits && !credits.unlimited && credits.balance < 20 && recharge !== undefined && !recharge.enabled;
 
   function select(next: Tab) {
     const p = new URLSearchParams(params.toString());
@@ -140,6 +145,23 @@ function BillingContent() {
           {!overview.stripe_ready && (
             <div className="mb-6">
               <Notice>Online payments aren&apos;t switched on yet. Your balances and usage are shown below; purchases open once payments are set up.</Notice>
+            </div>
+          )}
+          {lowCredits && tab !== "credits" && (
+            <div className="mb-6 max-w-2xl">
+              <MatteAlertFeedback
+                cardTitle="Calling credits"
+                pillText={`${Math.max(0, Math.floor(credits!.balance))} left`}
+                cardDescription="Campaigns pause automatically when credits run out."
+                alertTitle="Running low on credits"
+                alertDetail="Turn on auto-recharge to top up automatically, or buy a pack now."
+                showControls={false}
+                action={
+                  <button type="button" onClick={() => select("credits")} className="inline-flex h-8 items-center rounded-lg bg-brand-600 px-3 text-xs font-medium text-white hover:bg-brand-700">
+                    Set up auto-recharge
+                  </button>
+                }
+              />
             </div>
           )}
           {tab === "overview" && <OverviewTab overview={overview} go={select} />}

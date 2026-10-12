@@ -215,6 +215,7 @@ def _campaign_to_dict(c: Campaign, pending_retries: int = 0, now: datetime | Non
         "name": c.name,
         "description": c.description,
         "status": c.status,
+        "pause_reason": c.pause_reason if c.status == "paused" else None,
         "icp_description": c.icp_description,
         "agent_id": str(c.agent_id) if c.agent_id else None,
         "max_concurrent_calls": c.max_concurrent_calls or 1,
@@ -419,6 +420,7 @@ async def start_campaign(
     _ensure_can_dial(campaign, ctx.org)
 
     campaign.status = "running"
+    campaign.pause_reason = None
     campaign.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
@@ -438,6 +440,7 @@ async def pause_campaign(
     campaign = await _get_campaign(db, ctx, campaign_id)
 
     campaign.status = "paused"
+    campaign.pause_reason = None
     campaign.updated_at = datetime.now(timezone.utc)
     await db.commit()
     return {"message": "Campaign paused", "campaign": await _campaign_out(db, campaign)}
@@ -540,6 +543,7 @@ async def call_selected_leads(
     # Mark the campaign running so the pipeline/stats reflect live activity.
     if campaign.status in ("draft", "paused"):
         campaign.status = "running"
+        campaign.pause_reason = None
         campaign.updated_at = datetime.now(timezone.utc)
         await db.commit()
 
@@ -590,6 +594,7 @@ async def _pause_for_credits(campaign_uuid: uuid.UUID, reason: str) -> None:
         campaign = await db.get(Campaign, campaign_uuid)
         if campaign and campaign.status == "running":
             campaign.status = "paused"
+            campaign.pause_reason = "credits"
             campaign.updated_at = datetime.now(timezone.utc)
             await db.commit()
     log.warning("campaign_paused_no_credits", campaign_id=str(campaign_uuid), reason=reason)

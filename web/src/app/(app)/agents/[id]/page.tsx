@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, ArrowUpRight, BookOpen, Brain, Check, Eye, MessageSquare, Mic, Phone, Plus, Sparkles, Trash2, Upload, Wrench, Zap } from "lucide-react";
+import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -763,6 +764,16 @@ function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof
       )}
       {action === "leave_message" && !(draft.voicemail_message ?? "").trim() && (
         <p className="text-xs text-amber-700">Add a message, otherwise the agent will just hang up.</p>
+      )}
+      {action === "ignore" && (
+        <MatteAlertFeedback
+          cardTitle="Voicemail handling"
+          pillText="Keep talking"
+          cardDescription="The agent will pitch to answering machines like they're a person."
+          alertTitle="You'll pay AI time on every voicemail"
+          alertDetail="Calls stay open until the mailbox cuts off (often 2+ minutes). Hang up or Leave a message is cheaper and sounds better."
+          showControls={false}
+        />
       )}
     </Card>
   );

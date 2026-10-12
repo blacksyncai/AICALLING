@@ -93,6 +93,8 @@ export interface Campaign {
   name: string;
   description: string;
   status: "draft" | "running" | "paused" | "completed" | "cancelled";
+  /** Why the system paused it ("credits"); null when a person paused it. */
+  pause_reason?: string | null;
   agent_id: string | null;
   max_concurrent_calls: number;
   // Calling hours (local time in `timezone`) and automatic retries.
