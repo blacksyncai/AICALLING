@@ -273,3 +273,31 @@ def test_admin_can_delete_an_account(client, make_client):
     assert client.get(f"/api/admin/orgs/{org['id']}").status_code == 404
     # The login stays, without an account.
     assert owner.get("/api/auth/me").json()["org"] is None
+
+
+def test_unedited_welcome_demo_is_upgraded_edited_one_kept(client, make_client):
+    import asyncio
+
+    from app.agent import templates
+    from app.database import AsyncSessionLocal
+    from app.models.agent import Agent
+
+    _, e1 = _new_account(client, name="Old Marissa Co")
+    _, e2 = _new_account(client, name="Edited Marissa Co")
+    a1 = _login(make_client, e1).get("/api/agents/").json()[0]["id"]
+    a2 = _login(make_client, e2).get("/api/agents/").json()[0]["id"]
+
+    async def setup():
+        async with AsyncSessionLocal() as db:
+            old = templates._PREVIOUS_WELCOME_PROMPTS[0] + templates._VOICE_RULES
+            (await db.get(Agent, __import__("uuid").UUID(a1))).system_prompt = old
+            (await db.get(Agent, __import__("uuid").UUID(a2))).system_prompt = old + "\nAlways mention our Austin office."
+            await db.commit()
+        await templates.refresh_welcome_agents()
+        async with AsyncSessionLocal() as db:
+            return ((await db.get(Agent, __import__("uuid").UUID(a1))).system_prompt,
+                    (await db.get(Agent, __import__("uuid").UUID(a2))).system_prompt)
+
+    p1, p2 = asyncio.run(setup())
+    assert p1 == templates.WELCOME_DEMO["system_prompt"]
+    assert "Austin office" in p2
