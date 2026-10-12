@@ -2,6 +2,7 @@
 
 import { CheckCircle2, ChevronRight, Download, ExternalLink, RefreshCw, Trash2, Zap } from "lucide-react";
 import type React from "react";
+import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Toggle } from "@/components/ui";
@@ -388,22 +389,11 @@ function ConnectedRow({
 
           <div className="flex flex-wrap gap-2">
             {p.can_import && (
-              <Button
-                size="sm"
-                loading={busy === "import"}
-                onClick={() =>
-                  void run(
-                    "import",
-                    () => post<{ created: number; linked: number; found: number }>(`/api/integrations/crm/${p.key}/import`),
-                    (r) => {
-                      const x = r as { created: number; linked: number; found: number };
-                      return `Imported ${x.created} new contact${x.created === 1 ? "" : "s"} (${x.found} with phone numbers found).`;
-                    },
-                  )
-                }
-              >
-                <Download className="h-3.5 w-3.5" /> Import contacts
-              </Button>
+              <Link href={`/contacts?import=${p.key}`}>
+                <Button size="sm">
+                  <Download className="h-3.5 w-3.5" /> Import contacts…
+                </Button>
+              </Link>
             )}
             <Button size="sm" loading={busy === "test"} onClick={() => void run("test", () => post(`/api/integrations/crm/${p.key}/test`), () => "Test finished — see activity below.")}>
               <RefreshCw className="h-3.5 w-3.5" /> Test connection

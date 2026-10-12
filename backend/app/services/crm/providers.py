@@ -217,6 +217,8 @@ class Close(Provider):
                 raise
             await http.request("POST", "/v1/activity/note/", json={"lead_id": external_id, "note": call.note()})
 
+    _LEAD_FIELDS = ["id", "display_name", "contacts", "date_created", "status_label"]
+
     async def import_options(self, http, config):
         out = []
         try:
@@ -226,48 +228,125 @@ class Close(Provider):
         except CrmError:
             pass
         try:
-            views = (await http.request("GET", "/v1/saved_search/", params={"_limit": 100})).get("data") or []
-            usable = [v for v in views if isinstance(v.get("query"), str) and v["query"].strip()]
+            pipes = (await http.request("GET", "/v1/pipeline/")).get("data") or []
+            opts = [{"value": st["id"], "label": f"{p.get('name') or 'Pipeline'} · {st.get('label') or st['id']}"}
+                    for p in pipes for st in p.get("statuses") or [] if st.get("id")]
+            if opts:
+                out.append({"key": "opp_status", "label": "Pipeline stage (opportunities)", "type": "multi", "options": opts})
+        except CrmError:
+            pass
+        try:
+            views = (await http.request("GET", "/v1/saved_search/", params={"_limit": 200})).get("data") or []
+            usable = [v for v in views if v.get("s_query") or (isinstance(v.get("query"), str) and v["query"].strip())]
             if usable:
                 out.append({"key": "view", "label": "Smart view", "type": "single",
-                            "options": [{"value": v["query"], "label": v.get("name") or "Smart view"} for v in usable]})
+                            "options": [{"value": v["id"], "label": v.get("name") or "Smart view"} for v in usable]})
         except CrmError:
             pass
         return out
 
-    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
-        f = filters or {}
-        parts = []
-        if since:
-            parts.append(f'created > "{since.strftime("%Y-%m-%d %H:%M:%S")}"')
-        statuses = f.get("status") or []
-        if statuses:
-            parts.append("(" + " or ".join(f'lead_status:"{x}"' for x in statuses) + ")")
-        view = (f.get("view") or [""])[0] if isinstance(f.get("view"), list) else (f.get("view") or "")
-        if view:
-            parts.append(f"({view})")
-        query = " ".join(parts)
-        out: list[Contact] = []
+    @staticmethod
+    def _contacts_of(lead: dict) -> list[Contact]:
+        status = lead.get("status_label") or ""
+        dnc = any(w in status.lower() for w in ("do not call", "dnc", "do not contact"))
+        out = []
+        for ct in lead.get("contacts") or []:
+            phones = [p.get("phone") for p in ct.get("phones") or [] if p.get("phone")]
+            if not phones:
+                continue
+            emails = [e.get("email") for e in ct.get("emails") or [] if e.get("email")]
+            out.append(Contact(ct.get("name") or lead.get("display_name", ""), phones[0], (emails or [""])[0],
+                               lead.get("display_name", ""), lead["id"], _parse_time(lead.get("date_created")),
+                               stage=status, dnc=dnc))
+        return out
+
+    async def _view_leads(self, http, view_id: str, cap: int):
+        """Leads in a smart view (both classic query views and newer filter-builder views)."""
+        view = await http.request("GET", f"/v1/saved_search/{view_id}/")
+        if isinstance(view.get("query"), str) and view["query"].strip() and not view.get("s_query"):
+            async for lead in self._query_leads(http, view["query"], cap):
+                yield lead
+            return
+        cursor, seen = None, 0
+        while seen < cap:
+            body: dict = {"query": view.get("s_query"), "_fields": {"lead": self._LEAD_FIELDS}, "_limit": 200}
+            if cursor:
+                body["cursor"] = cursor
+            page = await http.request("POST", "/v1/data/search/", json=body)
+            for lead in page.get("data") or []:
+                if lead.get("id", "").startswith("lead_") or "contacts" in lead:
+                    seen += 1
+                    yield lead
+            cursor = page.get("cursor")
+            if not cursor:
+                break
+
+    async def _query_leads(self, http, query: str, cap: int):
         skip = 0
-        while len(out) < limit:
-            params = {"_limit": 100, "_skip": skip, "_fields": "id,display_name,contacts,date_created,status_label"}
+        while skip < cap:
+            params = {"_limit": 100, "_skip": skip, "_fields": ",".join(self._LEAD_FIELDS)}
             if query:
                 params["query"] = query
             page = await http.request("GET", "/v1/lead/", params=params)
             for lead in page.get("data") or []:
-                status = lead.get("status_label") or ""
-                dnc_status = any(w in status.lower() for w in ("do not call", "dnc", "do not contact"))
-                for ct in lead.get("contacts") or []:
-                    phones = [p.get("phone") for p in ct.get("phones") or [] if p.get("phone")]
-                    if not phones:
-                        continue
-                    emails = [e.get("email") for e in ct.get("emails") or [] if e.get("email")]
-                    out.append(Contact(ct.get("name") or lead.get("display_name", ""), phones[0], (emails or [""])[0],
-                                       lead.get("display_name", ""), lead["id"], _parse_time(lead.get("date_created")),
-                                       stage=status, dnc=dnc_status))
+                yield lead
             if not page.get("has_more"):
                 break
             skip += 100
+
+    async def _stage_lead_ids(self, http, status_ids: list[str], cap: int = 2000) -> list[str]:
+        ids: list[str] = []
+        for sid in status_ids:
+            skip = 0
+            while len(ids) < cap:
+                page = await http.request("GET", "/v1/opportunity/", params={"status_id": sid, "_limit": 100, "_skip": skip,
+                                                                            "_fields": "lead_id"})
+                ids += [o["lead_id"] for o in page.get("data") or [] if o.get("lead_id")]
+                if not page.get("has_more"):
+                    break
+                skip += 100
+        return list(dict.fromkeys(ids))
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        f = filters or {}
+        statuses = set(f.get("status") or [])
+        view = (f.get("view") or [""])[0] if isinstance(f.get("view"), list) else (f.get("view") or "")
+        stage_ids = list(f.get("opp_status") or [])
+        stage_leads = set(await self._stage_lead_ids(http, stage_ids)) if stage_ids else None
+        cap = max(limit * 3, 300)
+
+        def keep(lead: dict) -> bool:
+            if statuses and (lead.get("status_label") or "") not in statuses:
+                return False
+            if stage_leads is not None and lead.get("id") not in stage_leads:
+                return False
+            created = _parse_time(lead.get("date_created"))
+            return not (since and created and created <= since)
+
+        out: list[Contact] = []
+        if view:
+            source = self._view_leads(http, view, cap)
+        elif stage_leads is not None and not statuses:
+            async def by_id():
+                for lid in list(stage_leads)[:cap]:
+                    try:
+                        yield await http.request("GET", f"/v1/lead/{lid}/", params={"_fields": ",".join(self._LEAD_FIELDS)})
+                    except CrmError as exc:
+                        if exc.status in (401, 403):
+                            raise
+            source = by_id()
+        else:
+            parts = []
+            if since:
+                parts.append(f'created > "{since.strftime("%Y-%m-%d %H:%M:%S")}"')
+            if statuses:
+                parts.append("(" + " or ".join(f'lead_status:"{x}"' for x in statuses) + ")")
+            source = self._query_leads(http, " ".join(parts), cap)
+        async for lead in source:
+            if keep(lead):
+                out += self._contacts_of(lead)
+            if len(out) >= limit:
+                break
         return out[:limit]
 
 

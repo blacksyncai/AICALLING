@@ -257,3 +257,35 @@ def test_filtered_import_reads_dnc_and_contacted(client, http_mock):
     put = [json.loads(c[2].content) for c in calls if c[0] == "PUT" and c[1] == "/v1/people/1"]
     assert put and "Do Not Call" in put[-1]["tags"]
     client.delete("/api/integrations/crm/followupboss")
+
+
+def test_close_pipeline_stage_and_smart_view(http_mock):
+    state, calls = http_mock
+    lead = lambda i, status="Potential": {"id": f"lead_{i}", "display_name": f"Co {i}", "status_label": status,
+                                          "contacts": [{"name": f"P {i}", "phones": [{"phone": f"+1415555200{i}"}]}]}
+    state["responses"] = {
+        ("GET", "/v1/status/lead/"): {"data": [{"label": "Potential"}, {"label": "Bad Fit"}]},
+        ("GET", "/v1/pipeline/"): {"data": [{"name": "Sales", "statuses": [{"id": "stat_1", "label": "Demo booked"}]}]},
+        ("GET", "/v1/saved_search/"): {"data": [{"id": "save_1", "name": "Hot", "s_query": {"type": "and"}}]},
+        ("GET", "/v1/opportunity/"): {"data": [{"lead_id": "lead_1"}, {"lead_id": "lead_2"}], "has_more": False},
+        ("GET", "/v1/lead/lead_1/"): lead(1),
+        ("GET", "/v1/lead/lead_2/"): lead(2, "Bad Fit"),
+        ("GET", "/v1/saved_search/save_1/"): {"id": "save_1", "s_query": {"type": "and"}},
+        ("POST", "/v1/data/search/"): {"data": [lead(3), lead(4)], "cursor": None},
+        ("GET", "/v1/lead/"): {"data": [lead(1), lead(5)], "has_more": False},
+    }
+    p = PROVIDERS["close"]
+    http = p.native_http("k", {})
+
+    async def run():
+        opts = {o["key"]: o for o in await p.import_options(http, {})}
+        by_stage = await p.list_contacts(http, {}, filters={"opp_status": ["stat_1"]})
+        stage_and_status = await p.list_contacts(http, {}, filters={"opp_status": ["stat_1"], "status": ["Potential"]})
+        view = await p.list_contacts(http, {}, filters={"view": ["save_1"]})
+        return opts, by_stage, stage_and_status, view
+
+    opts, by_stage, both, view = asyncio.run(run())
+    assert opts["opp_status"]["options"][0]["label"] == "Sales · Demo booked" and opts["view"]["options"][0]["value"] == "save_1"
+    assert {c.external_id for c in by_stage} == {"lead_1", "lead_2"}
+    assert [c.external_id for c in both] == ["lead_1"]  # in the stage AND the status
+    assert [c.external_id for c in view] == ["lead_3", "lead_4"]

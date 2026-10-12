@@ -29,6 +29,15 @@ export default function ContactsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [crmOpen, setCrmOpen] = useState(false);
+  const [crmKey, setCrmKey] = useState<string | undefined>();
+  // /contacts?import=close (from Integrations) opens the CRM importer for that CRM.
+  useEffect(() => {
+    const k = new URLSearchParams(window.location.search).get("import");
+    if (k) {
+      setCrmKey(k);
+      setCrmOpen(true);
+    }
+  }, []);
   const { session } = useSession();
   const manager = canManage(session);
 
@@ -320,7 +329,7 @@ export default function ContactsPage() {
       )}
 
       <AddContactModal open={addOpen} onClose={() => setAddOpen(false)} campaigns={campaigns} onCreated={() => mutate()} />
-      <CrmImportModal open={crmOpen} onClose={() => setCrmOpen(false)} onDone={() => mutate()} />
+      <CrmImportModal open={crmOpen} onClose={() => setCrmOpen(false)} onDone={() => mutate()} initialKey={crmKey} />
       <ImportContactsModal open={importOpen} onClose={() => setImportOpen(false)} campaigns={campaigns} onDone={() => mutate()} />
     </>
   );

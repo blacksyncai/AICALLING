@@ -88,7 +88,7 @@ function MultiPicker({ f, value, onChange }: { f: FilterDef; value: string[]; on
   );
 }
 
-export function CrmImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
+export function CrmImportModal({ open, onClose, onDone, initialKey }: { open: boolean; onClose: () => void; onDone: () => void; initialKey?: string }) {
   const { data: overview } = useSWR<Overview>(open ? "/api/integrations/crm" : null, fetcher);
   const crms = useMemo(() => {
     if (!overview) return [];
@@ -96,7 +96,10 @@ export function CrmImportModal({ open, onClose, onDone }: { open: boolean; onClo
     const names = Object.fromEntries(overview.providers.map((p) => [p.key, p.name]));
     return overview.connections.filter((c) => importable.has(c.provider)).map((c) => ({ key: c.provider, name: names[c.provider], label: c.account_label }));
   }, [overview]);
-  const [key, setKey] = useState<string>("");
+  const [key, setKey] = useState<string>(initialKey ?? "");
+  useEffect(() => {
+    if (initialKey) setKey(initialKey);
+  }, [initialKey]);
   const active = key || crms[0]?.key || "";
   const { data: opts, error: optsError } = useSWR<{ filters: FilterDef[] }>(open && active ? `/api/integrations/crm/${active}/import/options` : null, fetcher);
   const [filters, setFilters] = useState<Record<string, string[]>>({});
