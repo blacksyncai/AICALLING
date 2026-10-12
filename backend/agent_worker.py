@@ -845,6 +845,36 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     return tools
 
 
+async def _draft_opening(cfg: dict, variables: dict) -> str:
+    """The agent's first line for an outbound call, written ahead of pickup (empty on any failure)."""
+    from openai import AsyncOpenAI
+
+    from app.agent.models import llm_endpoint
+    from app.agent.runtime import build_instructions
+
+    model = cfg.get("llm_model") or "gpt-4.1-nano"
+    try:
+        api_key, base_url, sends_temperature = llm_endpoint(model)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        kwargs: dict = {}
+        if sends_temperature:
+            kwargs["temperature"] = float(cfg.get("temperature", 0.5))
+        resp = await asyncio.wait_for(client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": build_instructions(cfg, variables, channel="phone")},
+                {"role": "user", "content": "[The contact just picked up the phone.] Say only your opening line — one or two "
+                                            "short spoken sentences, no stage directions or quotes."},
+            ],
+            **kwargs,
+        ), timeout=12)
+        text = (resp.choices[0].message.content or "").strip().strip('"')
+        return text if 0 < len(text) < 400 else ""
+    except Exception as exc:
+        log.warning("opening_draft_failed", model=model, error=str(exc)[:200])
+        return ""
+
+
 async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     import time as _time
     from app.agent.models import llm_endpoint
@@ -866,6 +896,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     run = _CallRun(metadata.get("call_log_id", ""), call_type)
 
     log.info("configurable_agent_started", room=ctx.room.name, agent=cfg.get("name"), call_type=call_type)
+
+    # Write the opening line while the phone is still ringing, so the agent can speak the moment
+    # the contact says hello instead of waiting on the LLM after pickup.
+    opening_task = None
+    if call_type == "outbound" and not render_vars(cfg.get("first_message", ""), variables).strip():
+        opening_task = asyncio.create_task(_draft_opening(cfg, variables))
 
     if call_type == "outbound":
         await _wait_for_sip_answer(ctx)
@@ -1078,6 +1114,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 detection_options={"no_speech_threshold": 3.0},
             )
             await detector.__aenter__()
+            # Don't hold the opening line for AMD's verdict (that cost ~6 s on live pickups); it keeps listening
+            # and hangs up / leaves the message as soon as it hears a machine.
+            act = getattr(session, "_activity", None)
+            if act is not None and hasattr(act, "_resume_authorization"):
+                act._resume_authorization()
 
             async def _amd_flow() -> None:
                 try:
@@ -1203,6 +1244,27 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         ctx.room.on("participant_disconnected", _on_left)
 
     first = render_vars(cfg.get("first_message", ""), variables).strip()
+    if call_type == "outbound":
+        # Let the contact finish their "Hello?" (or ~1.2 s of quiet), then speak the line written during ringing.
+        t_open = _time.monotonic()
+        heard = False
+        while _time.monotonic() - t_open < 3.0:
+            if vm["detected"]:
+                break
+            if silence["user"] == "speaking":
+                heard = True
+            elif heard or _time.monotonic() - t_open > 1.2:
+                break
+            await asyncio.sleep(0.05)
+        if not first and opening_task is not None:
+            try:
+                first = await asyncio.wait_for(opening_task, timeout=2.0)
+            except Exception:
+                first = ""
+        log.info("opening_line", room=ctx.room.name, waited=round(_time.monotonic() - t_open, 2),
+                 prepared=bool(first), heard_hello=heard)
+        if vm["detected"]:
+            return
     if first:
         session.say(first, allow_interruptions=True)
     else:
