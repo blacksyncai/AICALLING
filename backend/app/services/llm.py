@@ -225,13 +225,16 @@ Outcome definitions (pick the single best one):
 - meeting_booked: a meeting/appointment time was confirmed.
 - qualified: the contact meets the agent's criteria but nothing was booked yet.
 - interested: positive interest, wants more info or a follow-up.
-- callback: asked to be called back later / bad time right now.
+- callback: a live person, replying to the agent, asked to be called back later / said it's a bad time.
 - not_interested: declined or said no.
 - not_qualified: doesn't fit (wrong size, budget, area, etc.).
 - do_not_call: asked to never be called again / remove them from the list.
 - wrong_number: the person isn't who the agent was trying to reach.
 - transferred: handed to a human.
-- voicemail: ONLY a voicemail greeting/recording answered; no live person.
+- voicemail: a voicemail greeting/recording answered and no live person ever replied to the agent. This
+  includes personal recorded greetings ("Hey, it's Sam, can't talk right now, I'll call you back / text me")
+  — that is voicemail, NOT callback. Signs: the contact's only words are one monologue right after pickup
+  that doesn't respond to anything the agent said.
 - no_answer: ONLY when nobody answered at all; never when the contact said anything.
 - completed: a live conversation happened but none of the above fits (e.g. the contact hung up mid-call
   or the call ended before a clear result).

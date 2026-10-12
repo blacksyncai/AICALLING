@@ -270,5 +270,5 @@ async def reanalyze_call(call_id: uuid.UUID, background_tasks: BackgroundTasks,
     call = await db.get(CallLog, call_id)
     if not call or call.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Call not found")
-    background_tasks.add_task(analyze_and_store, str(call_id))
+    background_tasks.add_task(analyze_and_store, str(call_id), True)
     return {"queued": True}

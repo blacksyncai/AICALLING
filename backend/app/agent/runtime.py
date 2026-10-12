@@ -168,7 +168,24 @@ _VOICEMAIL_HINTS = (
     "can't take your call", "cannot take your call", "can't come to the phone", "unable to answer", "unable to take",
     "please record", "automated voice messaging", "forwarded to an automated", "voice messaging system",
     "not available to take",
+    # Personal greetings
+    "can't get to the phone", "can't answer", "can't talk right now", "i'll call you back", "i will call you back",
+    "call you back as soon", "text me", "send me a text", "away from my phone", "you've reached", "you have reached",
 )
+
+# How people record their own greeting. Only trusted when it's the contact's very first, long-ish
+# utterance right after pickup (a live person says "Hello?" first).
+_PERSONAL_GREETING = (
+    "can't get to the phone", "can't come to the phone", "can't answer", "can't talk right now", "can't talk at the moment",
+    "unable to come to the phone", "unable to answer", "i'll call you back", "i will call you back", "call you back as soon",
+    "get back to you as soon", "text me", "send me a text", "shoot me a text", "away from my phone", "not available right now",
+    "you've reached", "you have reached", "sorry i missed your call", "sorry i missed you",
+)
+
+
+def looks_like_personal_greeting(text: str) -> bool:
+    t = (text or "").lower().replace("’", "'")
+    return len(t.split()) >= 7 and any(h in t for h in _PERSONAL_GREETING)
 
 # Phrases only an answering machine says — strict, because hearing one ends a live call.
 _VOICEMAIL_STRICT = (

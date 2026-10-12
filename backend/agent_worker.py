@@ -941,7 +941,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     channel = "phone" if call_type == "outbound" else "web"
 
     # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
-    from app.agent.runtime import is_voicemail_greeting
+    from app.agent.runtime import is_voicemail_greeting, looks_like_personal_greeting
 
     vm = {"detected": False, "heard": "", "speaking": False, "changed": _time.monotonic()}
     vm_action = (cfg.get("voicemail_action") or "hang_up")
@@ -984,8 +984,13 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             return
         if run.t0 and _time.monotonic() - run.t0 > 45:
             return  # only the opening of the call
-        vm["heard"] += " " + (getattr(ev, "transcript", "") or "")
-        if is_voicemail_greeting(vm["heard"]):
+        text = getattr(ev, "transcript", "") or ""
+        first = not vm["heard"].strip()
+        vm["heard"] += " " + text
+        # A recorded greeting ("Hey, it's Sam, can't talk right now, I'll call you back") is the first
+        # thing heard after pickup; a live person says hello first.
+        personal = first and run.t0 and _time.monotonic() - run.t0 < 15 and looks_like_personal_greeting(text)
+        if is_voicemail_greeting(vm["heard"]) or personal:
             vm["detected"] = True
             asyncio.create_task(_handle_voicemail())
 

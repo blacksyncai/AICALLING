@@ -409,15 +409,17 @@ class CallService:
         return call_log
 
 
-async def analyze_and_store(call_log_id: str) -> None:
-    """Background: run post-call analysis and save summary/sentiment/extracted fields."""
+async def analyze_and_store(call_log_id: str, force: bool = False) -> None:
+    """Background: run post-call analysis and save summary/sentiment/extracted fields.
+
+    force=True (the Re-analyze button) also lets the analyzer correct an outcome it set before."""
     try:
-        await _analyze(call_log_id)
+        await _analyze(call_log_id, force=force)
     finally:
         await emit_call_events(uuid.UUID(call_log_id))
 
 
-async def _analyze(call_log_id: str) -> None:
+async def _analyze(call_log_id: str, force: bool = False) -> None:
     from app.database import AsyncSessionLocal
     from app.services.llm import analyze_call
 
@@ -444,8 +446,11 @@ async def _analyze(call_log_id: str) -> None:
         call_log.summary = result.get("summary")
         call_log.sentiment = result.get("sentiment")
         call_log.extracted_data = {**(result.get("extracted") or {}), "_successful": result.get("successful")}
-        # The analyzer's outcome only fills in when the agent didn't pick a specific one.
-        if call_log.outcome in (None, "completed", "failed") and result.get("outcome"):
+        # The analyzer's outcome only fills in when the agent didn't pick a specific one — or, when
+        # re-analyzing on request, replaces anything but a hard result the agent confirmed.
+        replaceable = call_log.outcome in (None, "completed", "failed") or (
+            force and call_log.outcome not in ("meeting_booked", "transferred", "do_not_call"))
+        if replaceable and result.get("outcome"):
             if call_log.duration_seconds or call_log.outcome != "failed":
                 from app.agent.runtime import reconcile_outcome
                 call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript)
