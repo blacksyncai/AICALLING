@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_sip_outbound_trunk_id: str = ""
+    livekit_sip_inbound_trunk_id: str = ""
     livekit_agent_name: str = "closer"
 
     # ── Phone numbers (Twilio, bought into the account behind the LiveKit trunk) ──

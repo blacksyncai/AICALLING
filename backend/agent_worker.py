@@ -976,7 +976,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             pass
 
     session.on("metrics_collected", _on_metrics)
-    channel = "phone" if call_type == "outbound" else "web"
+    channel = "web" if call_type == "web" else "phone"
 
     # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
     from app.agent.runtime import is_voicemail_greeting, looks_like_personal_greeting
@@ -1267,6 +1267,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             return
     if first:
         session.say(first, allow_interruptions=True)
+    elif call_type == "inbound":
+        session.generate_reply(instructions="You're answering an incoming phone call. Greet the caller warmly and ask how you can help.")
     else:
         session.generate_reply(instructions="Greet the contact and begin the conversation.")
 
@@ -1310,6 +1312,31 @@ async def _wait_for_sip_answer(ctx: JobContext, timeout: float = 50.0) -> None:
 
 # ── Worker entrypoint ─────────────────────────────────────────────────────────
 
+async def _run_inbound(ctx: JobContext) -> None:
+    import httpx
+
+    caller = await ctx.wait_for_participant()
+    attrs = dict(getattr(caller, "attributes", {}) or {})
+    to_number = attrs.get("sip.trunkPhoneNumber", "")
+    from_number = attrs.get("sip.phoneNumber", "")
+    routed = None
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(f"{settings.api_base_url}/internal/inbound-call",
+                                     json={"to": to_number, "from_number": from_number, "room": ctx.room.name})
+            if resp.status_code == 200:
+                routed = resp.json()
+    except Exception as exc:
+        log.warning("inbound_route_failed", error=str(exc), to=to_number)
+    if not routed:
+        # Nobody answers this number (no live inbound campaign, or out of credits): hang up.
+        log.info("inbound_unrouted", to=to_number, room=ctx.room.name)
+        await _delete_room(ctx.room.name)
+        return
+    log.info("inbound_call", to=to_number, room=ctx.room.name, agent=(routed.get("agent") or {}).get("name"))
+    await _run_configurable(ctx, routed)
+
+
 async def entrypoint(ctx: JobContext) -> None:
     """Called by the LiveKit worker for every new room/job."""
     await ctx.connect()
@@ -1324,6 +1351,15 @@ async def entrypoint(ctx: JobContext) -> None:
     # Dashboard-built agents carry their config in the metadata.
     if metadata.get("agent") or metadata.get("agent_id"):
         await _run_configurable(ctx, metadata)
+        return
+
+    # Inbound phone call (the SIP dispatch rule sends us here): find who answers the dialed number.
+    try:
+        job_meta = json.loads(getattr(ctx.job, "metadata", "") or "{}")
+    except json.JSONDecodeError:
+        job_meta = {}
+    if job_meta.get("call_type") == "inbound":
+        await _run_inbound(ctx)
         return
 
     state = CallState(

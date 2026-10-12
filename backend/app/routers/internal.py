@@ -56,6 +56,23 @@ async def lead_answer(lead_id: str, body: dict):
     return {"ok": True}
 
 
+class InboundCallIn(BaseModel):
+    to: str = ""
+    from_number: str = ""
+    room: str = ""
+
+
+@router.post("/inbound-call")
+async def inbound_call(body: InboundCallIn, db: Annotated[AsyncSession, Depends(get_db)]):
+    """The worker asks who answers a call to this number; we log the call and hand back the agent config."""
+    from app.services.inbound import route_call
+
+    routed = await route_call(db, body.to, body.from_number, body.room)
+    if not routed:
+        raise HTTPException(status_code=404, detail="No agent answers this number")
+    return routed
+
+
 @router.post("/calls/{call_log_id}/outcome")
 async def call_outcome(
     call_log_id: str,

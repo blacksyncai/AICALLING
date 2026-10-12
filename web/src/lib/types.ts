@@ -95,6 +95,9 @@ export interface Campaign {
   status: "draft" | "running" | "paused" | "completed" | "cancelled";
   /** Why the system paused it ("credits"); null when a person paused it. */
   pause_reason?: string | null;
+  /** "outbound" dials a contact list; "inbound" answers calls to one of your numbers. */
+  direction?: "outbound" | "inbound";
+  phone_number_id?: string | null;
   agent_id: string | null;
   max_concurrent_calls: number;
   // Calling hours (local time in `timezone`) and automatic retries.
@@ -139,7 +142,7 @@ export interface TranscriptTurn {
 
 export interface Call {
   id: string;
-  call_type: "outbound" | "web";
+  call_type: "outbound" | "web" | "inbound";
   status: string;
   outcome: string | null;
   sentiment: string | null;

@@ -55,7 +55,7 @@ def _credits_used(c: CallLog) -> float | None:
 
     if c.credits_used_milli is not None:
         return round(c.credits_used_milli / 1000, 3)
-    if c.call_type != "outbound" or c.credits_charged is None:
+    if c.call_type not in ("outbound", "inbound") or c.credits_charged is None:
         return None
     seconds = int(c.duration_seconds or 0)
     if c.outcome in UNBILLED_OUTCOMES or (c.answered_at is None and seconds == 0) or c.credit_rate is None:
@@ -73,7 +73,9 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         "sentiment": c.sentiment,
         "summary": c.summary,
         "duration_seconds": c.duration_seconds,
-        "to_phone": c.to_phone or (lead.phone if lead else None),
+        # Inbound: the contact is the caller; to_phone is our own number.
+        "to_phone": (c.from_phone if c.call_type == "inbound" else c.to_phone) or (lead.phone if lead else None),
+        "our_number": c.to_phone if c.call_type == "inbound" else c.from_phone,
         "contact_name": lead.name if lead else ("Browser test" if c.call_type == "web" else None),
         "contact_company": lead.company if lead else None,
         "agent_id": str(c.agent_id) if c.agent_id else None,

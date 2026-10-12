@@ -197,6 +197,9 @@ class PhoneNumber(Base):
     provider_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     is_default: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Who answers calls to this number (set by a live inbound campaign).
+    inbound_agent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    inbound_campaign_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -34,6 +34,9 @@ class Campaign(Base):
     # ── Status ────────────────────────────────────────────────────────────────
     # draft | running | paused | completed | cancelled
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    # "outbound" dials a contact list; "inbound" answers calls to one of the account's numbers.
+    direction: Mapped[str | None] = mapped_column(String(16), nullable=True, default="outbound")
+    phone_number_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     # Why the system paused it ("credits"); None when a person paused it or it's running.
     pause_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 

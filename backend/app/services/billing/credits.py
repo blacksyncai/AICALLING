@@ -299,7 +299,7 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
     Browser tests: the account's free test minutes first, then seconds × the model's rate (no phone fee)."""
     from app.services.billing import settings_store
 
-    if call.credits_charged is not None or call.call_type not in ("outbound", "web") or not call.org_id:
+    if call.credits_charged is not None or call.call_type not in ("outbound", "web", "inbound") or not call.org_id:
         return None
     existing = (await db.execute(select(CallUsage).where(CallUsage.call_id == call.id))).scalar_one_or_none()
     if existing:
@@ -312,7 +312,7 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
 
     agent = await db.get(Agent, call.agent_id) if call.agent_id else None
     seconds = max(0, int(call.duration_seconds or 0))
-    phone = call.call_type == "outbound"
+    phone = call.call_type in ("outbound", "inbound")
     # Only connected talk time is billed: a call that rang out, was busy or failed costs nothing.
     if call.outcome in UNBILLED_OUTCOMES or (phone and call.answered_at is None and seconds == 0):
         seconds = 0

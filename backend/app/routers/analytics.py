@@ -46,7 +46,7 @@ async def analytics(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, 
             CallLog.sentiment, CallLog.credits_charged, CallLog.agent_id, CallLog.campaign_id,
         ).where(
             CallLog.org_id == ctx.org.id,
-            CallLog.call_type == "outbound",
+            CallLog.call_type.in_(("outbound", "inbound")),
             CallLog.started_at >= since - timedelta(days=1),  # widened; exact cut below (naive SQLite dates)
         )
     )).all()

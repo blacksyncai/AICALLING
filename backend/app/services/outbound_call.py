@@ -502,7 +502,7 @@ async def emit_call_events(call_id: uuid.UUID) -> None:
     async with AsyncSessionLocal() as db:
         # Claim the call so its events go out exactly once (re-analysis, late worker reports).
         claimed = await db.execute(update(CallLog).where(
-            CallLog.id == call_id, CallLog.events_sent_at.is_(None), CallLog.call_type == "outbound",
+            CallLog.id == call_id, CallLog.events_sent_at.is_(None), CallLog.call_type.in_(("outbound", "inbound")),
             CallLog.org_id.isnot(None),
         ).values(events_sent_at=datetime.now(timezone.utc)))
         await db.commit()

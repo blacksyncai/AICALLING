@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { use, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
+import { InboundCampaign } from "@/components/campaigns/InboundCampaign";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { CallingRulesCard, CallingStatus } from "@/components/campaigns/CallingRules";
 import { useToast } from "@/components/toast";
@@ -206,6 +207,10 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         <Spinner />
       </div>
     );
+
+  if ((campaign.direction ?? "outbound") === "inbound") {
+    return <InboundCampaign campaign={campaign} calls={calls?.items ?? []} agents={agents ?? []} onChange={() => void refreshCampaign()} />;
+  }
 
   const counts = leads.reduce<Record<string, number>>((acc, l) => (l.do_not_call ? acc : ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc)), {});
   const pending = (counts.new ?? 0) + (campaign.pending_retries ?? 0);

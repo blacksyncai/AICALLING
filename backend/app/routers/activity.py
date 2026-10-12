@@ -113,7 +113,7 @@ async def daily_activity(
         CallLog.duration_seconds, CallLog.outcome,
     ).where(
         CallLog.org_id == org.id,
-        CallLog.call_type == "outbound",
+        CallLog.call_type.in_(("outbound", "inbound")),
         CallLog.started_at >= start_utc,
         CallLog.started_at < end_utc,
     )

@@ -49,6 +49,8 @@ class CampaignCreate(CallingRules):
     icp_description: str = ""
     agent_id: uuid.UUID | None = None
     max_concurrent_calls: int = Field(default=1, ge=1, le=20)
+    direction: str = Field(default="outbound", pattern="^(outbound|inbound)$")
+    phone_number_id: uuid.UUID | None = None
 
 
 class CampaignUpdate(CallingRules):
@@ -56,6 +58,18 @@ class CampaignUpdate(CallingRules):
     description: str | None = None
     agent_id: uuid.UUID | None = None
     max_concurrent_calls: int | None = Field(default=None, ge=1, le=20)
+    phone_number_id: uuid.UUID | None = None
+
+
+async def _check_number(db, ctx, number_id: uuid.UUID | None) -> None:
+    """Inbound campaigns answer one of the account's own numbers."""
+    from app.models.billing import PhoneNumber
+
+    if number_id is None:
+        raise HTTPException(status_code=400, detail="Inbound campaigns need your own phone number — get one under Phone numbers first.")
+    row = await db.get(PhoneNumber, number_id)
+    if not row or row.org_id != ctx.org.id or row.status != "active":
+        raise HTTPException(status_code=404, detail="Phone number not found")
 
 
 class LeadImport(BaseModel):
@@ -215,6 +229,8 @@ def _campaign_to_dict(c: Campaign, pending_retries: int = 0, now: datetime | Non
         "name": c.name,
         "description": c.description,
         "status": c.status,
+        "direction": c.direction or "outbound",
+        "phone_number_id": str(c.phone_number_id) if c.phone_number_id else None,
         "pause_reason": c.pause_reason if c.status == "paused" else None,
         "icp_description": c.icp_description,
         "agent_id": str(c.agent_id) if c.agent_id else None,
@@ -309,9 +325,13 @@ async def create_campaign(
     db: DbDep,
 ):
     await _check_agent(db, ctx, body.agent_id)
+    if body.direction == "inbound":
+        await _check_number(db, ctx, body.phone_number_id)
     rules = body.model_dump(include=set(CallingRules.model_fields), exclude_none=True)
     _validate_rules(rules)
     campaign = Campaign(
+        direction=body.direction,
+        phone_number_id=body.phone_number_id if body.direction == "inbound" else None,
         id=uuid.uuid4(),
         org_id=ctx.org.id,
         name=body.name,
@@ -338,9 +358,27 @@ async def update_campaign(
     campaign = await _get_campaign(db, ctx, campaign_id)
     await _check_agent(db, ctx, body.agent_id)
     data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "phone_number_id" in data:
+        if (campaign.direction or "outbound") != "inbound":
+            data.pop("phone_number_id")
+        else:
+            await _check_number(db, ctx, data["phone_number_id"])
     _validate_rules(data, campaign)
+    relink = (campaign.direction == "inbound" and campaign.status == "running"
+              and ("agent_id" in data or "phone_number_id" in data))
+    if relink:
+        from app.services.inbound import deactivate
+
+        await deactivate(db, campaign)
     for key, value in data.items():
         setattr(campaign, key, value)
+    if relink:
+        from app.services.inbound import InboundError, activate
+
+        try:
+            await activate(db, campaign)
+        except InboundError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     campaign.updated_at = datetime.now(timezone.utc)
     await db.commit()
     return await _campaign_out(db, campaign)
@@ -355,6 +393,9 @@ async def delete_campaign(
     campaign = await _get_campaign(db, ctx, campaign_id)
     # Its contacts stay in the CRM, just no longer in this campaign.
     await db.execute(update(Lead).where(Lead.campaign_id == campaign_id).values(campaign_id=None))
+    from app.services.inbound import deactivate
+
+    await deactivate(db, campaign)
     await db.delete(campaign)
     await db.commit()
 
@@ -417,6 +458,23 @@ async def start_campaign(
             status_code=400,
             detail=f"Campaign is {campaign.status}, cannot start",
         )
+    if (campaign.direction or "outbound") == "inbound":
+        # Inbound: go live — the number's calls are answered by the campaign's agent.
+        from app.services.inbound import InboundError, activate
+
+        try:
+            await activate(db, campaign)
+        except InboundError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            log.error("inbound_activate_failed", campaign_id=str(campaign_id), error=str(exc))
+            raise HTTPException(status_code=502, detail="Couldn't connect the number to the agent. Try again in a minute.") from exc
+        campaign.status = "running"
+        campaign.pause_reason = None
+        campaign.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {"message": "Answering calls", "campaign": await _campaign_out(db, campaign)}
+
     _ensure_can_dial(campaign, ctx.org)
 
     campaign.status = "running"
@@ -442,6 +500,10 @@ async def pause_campaign(
     campaign.status = "paused"
     campaign.pause_reason = None
     campaign.updated_at = datetime.now(timezone.utc)
+    if (campaign.direction or "outbound") == "inbound":
+        from app.services.inbound import deactivate
+
+        await deactivate(db, campaign)
     await db.commit()
     return {"message": "Campaign paused", "campaign": await _campaign_out(db, campaign)}
 
@@ -456,6 +518,9 @@ async def cancel_campaign(
 
     campaign.status = "cancelled"
     campaign.updated_at = datetime.now(timezone.utc)
+    from app.services.inbound import deactivate
+
+    await deactivate(db, campaign)
     await db.commit()
     return {"message": "Campaign cancelled", "campaign": await _campaign_out(db, campaign)}
 
