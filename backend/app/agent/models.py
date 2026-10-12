@@ -29,7 +29,8 @@ LLM_MODELS: list[dict] = [
         "id": "gpt-oss-120b",
         "name": "BlackSync Super Intelligence · Ultra",
         "provider": "BlackSync",
-        "description": "Our flagship voice brain on wafer-scale AI chips: near-instant replies, strong reasoning and tool use.",
+        "description": "Runs in dedicated AI data centers on wafer-scale supercomputer chips — thousands of tokens a "
+                       "second, so it answers instantly with flagship reasoning and tool use.",
         "speed": "fast",
         "tags": ["recommended", "fast"],
         "recommended_for": ["general", "booking", "complex_scripts"],
@@ -38,7 +39,7 @@ LLM_MODELS: list[dict] = [
         "id": "qwen-3.8-27b",
         "name": "BlackSync Super Intelligence · Flash",
         "provider": "BlackSync",
-        "description": "Lightning-fast BlackSync model for short, high-volume calls.",
+        "description": "Same data-center supercomputer hardware, tuned for speed on short, high-volume calls.",
         "speed": "fast",
         "tags": ["fast"],
         "recommended_for": ["general"],
