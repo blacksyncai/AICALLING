@@ -9,13 +9,15 @@ from app.models.billing import BillingAudit, PlatformSetting
 # Credits per connected minute, by LLM model (1.0–1.3). Admin-editable; these are the starting values.
 DEFAULT_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.2,
                        "claude-haiku-5-5": 1.0, "claude-sonnet-5-5": 1.3,
-                       "gpt-oss-120b": 1.6, "qwen-3.8-27b": 1.2}
+                       "gpt-oss-120b": 1.45, "qwen-3.8-27b": 1.2}
 # Earlier defaults; a saved copy of one of them follows the current defaults instead.
 _LEGACY_MODEL_RATES = [
     {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.4, "gpt-4o": 1.5},
     {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.3},
     {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.2},
 ]
+# Per-model rates that were once the default; a saved copy follows the current default instead.
+_SUPERSEDED_RATES = {"gpt-oss-120b": [1.6]}
 
 DEFAULTS: dict = {
     # None = paid lookups are OFF until an admin confirms a retail price.
@@ -58,7 +60,8 @@ def _current(key: str, value):
     if value in _LEGACY_MODEL_RATES:
         return DEFAULT_MODEL_RATES
     # Models added after the admin saved their rates start at the default rate.
-    return {**DEFAULT_MODEL_RATES, **(value or {})}
+    saved = {k: v for k, v in (value or {}).items() if v not in _SUPERSEDED_RATES.get(k, [])}
+    return {**DEFAULT_MODEL_RATES, **saved}
 
 
 async def get(db, key: str):
