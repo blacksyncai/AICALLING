@@ -155,3 +155,43 @@ def email_was_given(email: str, user_turns: list[str], known_email: str = "") ->
     if known_email and email == known_email.strip().lower():
         return True
     return any(email in _normalize_email_speech(t) for t in user_turns)
+
+
+# ── Did a person actually pick up? ───────────────────────────────────────────
+
+_VOICEMAIL_HINTS = (
+    "leave a message", "leave your message", "after the tone", "after the beep", "voicemail", "voice mail",
+    "not available", "unavailable", "record your message", "mailbox", "at the tone", "please leave",
+    "has not set up", "is not accepting", "reached the", "the person you are calling", "the number you have dialed",
+)
+
+NO_CONVERSATION_OUTCOMES = ("no_answer", "voicemail")
+
+
+def is_voicemail_text(text: str) -> bool:
+    t = (text or "").lower()
+    return any(h in t for h in _VOICEMAIL_HINTS)
+
+
+def contact_turns(transcript: list[dict] | None) -> list[str]:
+    return [(t.get("text") or "").strip() for t in transcript or []
+            if t.get("role") in ("user", "caller") and (t.get("text") or "").strip()]
+
+
+def person_answered(transcript: list[dict] | None) -> bool:
+    """True when a live person spoke on the call (not just a voicemail greeting or silence)."""
+    turns = contact_turns(transcript)
+    if not turns:
+        return False
+    if all(is_voicemail_text(t) for t in turns):
+        return False
+    # A greeting that's mostly a voicemail recording ("Hi, you've reached Sam, leave a message") isn't a person.
+    joined = " ".join(turns)
+    return not (is_voicemail_text(joined) and len(turns) <= 2)
+
+
+def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str | None:
+    """Never label a call where the contact talked as no answer / voicemail."""
+    if outcome in NO_CONVERSATION_OUTCOMES and person_answered(transcript):
+        return "completed"
+    return outcome

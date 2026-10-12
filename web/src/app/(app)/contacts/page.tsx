@@ -1,16 +1,18 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, FileUp, Plus, Search, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileUp, Plug, Plus, Search, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { AddContactModal } from "@/components/contacts/AddContactModal";
 import { BulkActionBar } from "@/components/contacts/BulkActionBar";
+import { CrmImportModal } from "@/components/contacts/CrmImportModal";
 import { ImportContactsModal } from "@/components/contacts/ImportContactsModal";
 import { CONTACT_STATUSES, ContactAvatar, DncBadge, StatusBadge, TagChip } from "@/components/contacts/shared";
 import { Button, Card, EmptyState, Input, Notice, PageHeader, Select, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import type { Campaign, ContactList } from "@/lib/types";
+import { canManage, useSession } from "@/lib/session";
 import { cn, humanize, timeAgo } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -26,6 +28,9 @@ export default function ContactsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [crmOpen, setCrmOpen] = useState(false);
+  const { session } = useSession();
+  const manager = canManage(session);
 
   // Deep links like /contacts?status=callback (from the dashboard) open pre-filtered.
   useEffect(() => {
@@ -101,6 +106,11 @@ export default function ContactsPage() {
         description="Everyone your agents can call — import lists, organise with tags, and track where each person is in the pipeline."
         action={
           <div className="flex flex-wrap gap-2">
+            {manager && (
+              <Button onClick={() => setCrmOpen(true)}>
+                <Plug className="h-4 w-4" /> Import from CRM
+              </Button>
+            )}
             <Button onClick={() => setImportOpen(true)}>
               <FileUp className="h-4 w-4" /> Import CSV
             </Button>
@@ -126,9 +136,14 @@ export default function ContactsPage() {
           <EmptyState
             icon={<Users className="h-5 w-5" />}
             title="No contacts yet"
-            description="Import a CSV of leads or add people one by one. You can then drop them into campaigns or call them directly."
+            description="Import from your CRM or a CSV, or add people one by one. You can then drop them into campaigns or call them directly."
             action={
               <div className="flex flex-wrap justify-center gap-2">
+                {manager && (
+                  <Button onClick={() => setCrmOpen(true)}>
+                    <Plug className="h-4 w-4" /> Import from CRM
+                  </Button>
+                )}
                 <Button onClick={() => setImportOpen(true)}>
                   <FileUp className="h-4 w-4" /> Import CSV
                 </Button>
@@ -305,6 +320,7 @@ export default function ContactsPage() {
       )}
 
       <AddContactModal open={addOpen} onClose={() => setAddOpen(false)} campaigns={campaigns} onCreated={() => mutate()} />
+      <CrmImportModal open={crmOpen} onClose={() => setCrmOpen(false)} onDone={() => mutate()} />
       <ImportContactsModal open={importOpen} onClose={() => setImportOpen(false)} campaigns={campaigns} onDone={() => mutate()} />
     </>
   );

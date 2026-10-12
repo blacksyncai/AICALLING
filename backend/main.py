@@ -10,6 +10,7 @@ Agent worker is a SEPARATE process:
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import structlog
@@ -54,9 +55,12 @@ async def lifespan(app: FastAPI):
     refresh_task = start_refresh_loop()
     from app.services.crm.sync import start_poll_loop
     crm_task = start_poll_loop()
+    from app.services.outbound_call import fix_mislabeled_outcomes
+    repair_task = asyncio.create_task(fix_mislabeled_outcomes() if settings.run_startup_jobs else asyncio.sleep(0))
     yield
     refresh_task.cancel()
     crm_task.cancel()
+    repair_task.cancel()
     log.info("pounce_shutting_down")
 
 

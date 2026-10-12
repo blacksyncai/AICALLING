@@ -5,6 +5,7 @@ import tempfile
 _db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db.name}"
 os.environ["OPENAI_API_KEY"] = "test-key"
+os.environ["RUN_STARTUP_JOBS"] = "0"
 os.environ["AUTH_EMAIL"] = "admin@test.dev"
 os.environ["AUTH_PASSWORD"] = "admin-pass-123"
 os.environ["ADMIN_PASSWORD"] = "portal-pass-456"

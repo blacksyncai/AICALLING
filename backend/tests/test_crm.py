@@ -158,7 +158,7 @@ def test_connect_push_import_and_disconnect(client, http_mock):
         {"id": 43, "name": "Pat Lee", "phones": [{"value": "+14155550177"}], "emails": [{"value": "pat@x.com"}]},
         {"id": 44, "name": "No Phone"}]}}
     res = client.post("/api/integrations/crm/followupboss/import").json()
-    assert res == {"found": 2, "created": 1, "linked": 0}
+    assert {k: res[k] for k in ("found", "created", "linked")} == {"found": 2, "created": 1, "linked": 0}
     again = client.post("/api/integrations/crm/followupboss/import").json()
     assert again["created"] == 0
 
@@ -211,3 +211,49 @@ def test_speed_to_lead_calls_new_leads_in_hours(client, http_mock, monkeypatch):
     asyncio.run(sync.poll_once())
     assert dialed == ["+14155550155", "+14155550166"]
     client.delete("/api/integrations/crm/close")
+
+
+def test_filtered_import_reads_dnc_and_contacted(client, http_mock):
+    state, calls = http_mock
+    people = {"people": [
+        {"id": 1, "name": "Hot Buyer", "stage": "Hot Prospect", "tags": ["Buyer"], "contacted": 0,
+         "phones": [{"value": "+14155551001"}]},
+        {"id": 2, "name": "Called Before", "stage": "Hot Prospect", "tags": ["Buyer"], "contacted": 1,
+         "phones": [{"value": "+14155551002"}]},
+        {"id": 3, "name": "Stop Calling", "stage": "Hot Prospect", "tags": ["Buyer", "Do Not Call"],
+         "phones": [{"value": "+14155551003"}]},
+        {"id": 4, "name": "Wrong Stage", "stage": "Closed", "tags": ["Buyer"], "phones": [{"value": "+14155551004"}]},
+        {"id": 5, "name": "Wrong Tag", "stage": "Hot Prospect", "tags": ["Seller"], "phones": [{"value": "+14155551005"}]},
+    ]}
+    state["responses"] = {**RESPONSES["followupboss"], ("GET", "/v1/people"): people,
+                          ("GET", "/v1/stages"): {"stages": [{"id": 1, "name": "Hot Prospect"}, {"id": 2, "name": "Closed"}]},
+                          ("GET", "/v1/ponds"): {"ponds": [{"id": 9, "name": "Buyer pond"}]},
+                          ("GET", "/v1/users"): {"users": [{"id": 3, "name": "Jo"}]}}
+    assert client.post("/api/integrations/crm/followupboss/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    opts = client.get("/api/integrations/crm/followupboss/import/options").json()["filters"]
+    keys = {f["key"]: f for f in opts}
+    assert {"stage", "tags", "pond", "agent"} <= set(keys) and keys["tags"]["options"]
+
+    body = {"filters": {"stage": ["Hot Prospect"], "tags": ["buyer"]}, "skip_contacted": True, "list_tag": "Hot buyers"}
+    prev = client.post("/api/integrations/crm/followupboss/import/preview", json=body).json()
+    assert prev["found"] == 3 and prev["skipped_contacted"] == 1 and prev["do_not_call"] == 1
+    res = client.post("/api/integrations/crm/followupboss/import", json=body).json()
+    assert res["created"] == 2 and res["do_not_call"] == 1
+
+    leads = client.get("/api/contacts?q=+1415555100").json()
+    items = leads.get("items") or leads.get("contacts") or leads
+    by_name = {l["name"]: l for l in items}
+    assert "Called Before" not in by_name and "Wrong Stage" not in by_name
+    assert by_name["Stop Calling"]["do_not_call"] is True and by_name["Hot Buyer"]["do_not_call"] in (False, None)
+    assert "Hot buyers" in by_name["Hot Buyer"]["tags"]
+
+    # A "do not call" result is written back to FUB as a tag.
+    state["responses"][("GET", "/v1/people/1")] = {"id": 1, "tags": ["Buyer"]}
+    state["responses"][("PUT", "/v1/people/1")] = {}
+    org_id = client.get("/api/auth/me").json()["org"]["id"]
+    data = {"call_id": str(uuid.uuid4()), "outcome": "do_not_call", "duration_seconds": 20, "to_phone": "+14155551001",
+            "contact": {"id": by_name["Hot Buyer"]["id"], "name": "Hot Buyer", "phone": "+14155551001"}}
+    asyncio.run(sync.push_call(uuid.UUID(org_id), data))
+    put = [json.loads(c[2].content) for c in calls if c[0] == "PUT" and c[1] == "/v1/people/1"]
+    assert put and "Do Not Call" in put[-1]["tags"]
+    client.delete("/api/integrations/crm/followupboss")

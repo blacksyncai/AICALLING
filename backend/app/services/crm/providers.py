@@ -20,6 +20,7 @@ from app.services.contacts import normalize_phone
 from app.services.crm.http import BaseHttp, CrmError, NangoHttp, NativeHttp
 
 UTC = dt.timezone.utc
+_DNC_TAGS = {"dnc", "do not call", "do-not-call", "donotcall", "do not contact", "dnd"}
 
 
 @dataclass
@@ -30,6 +31,10 @@ class Contact:
     company: str = ""
     external_id: str = ""
     created_at: dt.datetime | None = None
+    tags: list[str] = field(default_factory=list)
+    stage: str = ""
+    dnc: bool = False               # marked do-not-call / bad number in the CRM
+    contacted: bool | None = None   # the CRM shows earlier contact (None = unknown)
 
 
 @dataclass
@@ -148,8 +153,16 @@ class Provider:
         raise NotImplementedError
 
     async def list_contacts(self, http: BaseHttp, config: dict, limit: int = 500,
-                            since: dt.datetime | None = None) -> list[Contact]:
+                            since: dt.datetime | None = None, filters: dict | None = None) -> list[Contact]:
         raise NotImplementedError
+
+    async def import_options(self, http: BaseHttp, config: dict) -> list[dict]:
+        """Filters the import dialog offers: [{key, label, type: multi|single, options: [{value, label}]}]."""
+        return []
+
+    async def mark_dnc(self, http: BaseHttp, config: dict, external_id: str) -> None:
+        """Flag the contact as do-not-call in the CRM (when the CRM has a way to)."""
+        return None
 
 
 # ── Close ─────────────────────────────────────────────────────────────────────
@@ -204,23 +217,54 @@ class Close(Provider):
                 raise
             await http.request("POST", "/v1/activity/note/", json={"lead_id": external_id, "note": call.note()})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def import_options(self, http, config):
+        out = []
+        try:
+            st = (await http.request("GET", "/v1/status/lead/")).get("data") or []
+            out.append({"key": "status", "label": "Lead statuses", "type": "multi",
+                        "options": [{"value": x["label"], "label": x["label"]} for x in st]})
+        except CrmError:
+            pass
+        try:
+            views = (await http.request("GET", "/v1/saved_search/", params={"_limit": 100})).get("data") or []
+            usable = [v for v in views if isinstance(v.get("query"), str) and v["query"].strip()]
+            if usable:
+                out.append({"key": "view", "label": "Smart view", "type": "single",
+                            "options": [{"value": v["query"], "label": v.get("name") or "Smart view"} for v in usable]})
+        except CrmError:
+            pass
+        return out
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        f = filters or {}
+        parts = []
+        if since:
+            parts.append(f'created > "{since.strftime("%Y-%m-%d %H:%M:%S")}"')
+        statuses = f.get("status") or []
+        if statuses:
+            parts.append("(" + " or ".join(f'lead_status:"{x}"' for x in statuses) + ")")
+        view = (f.get("view") or [""])[0] if isinstance(f.get("view"), list) else (f.get("view") or "")
+        if view:
+            parts.append(f"({view})")
+        query = " ".join(parts)
         out: list[Contact] = []
         skip = 0
-        query = f'created > "{since.strftime("%Y-%m-%d %H:%M:%S")}"' if since else ""
         while len(out) < limit:
-            params = {"_limit": 100, "_skip": skip, "_fields": "id,display_name,contacts,date_created"}
+            params = {"_limit": 100, "_skip": skip, "_fields": "id,display_name,contacts,date_created,status_label"}
             if query:
                 params["query"] = query
             page = await http.request("GET", "/v1/lead/", params=params)
             for lead in page.get("data") or []:
+                status = lead.get("status_label") or ""
+                dnc_status = any(w in status.lower() for w in ("do not call", "dnc", "do not contact"))
                 for ct in lead.get("contacts") or []:
                     phones = [p.get("phone") for p in ct.get("phones") or [] if p.get("phone")]
                     if not phones:
                         continue
                     emails = [e.get("email") for e in ct.get("emails") or [] if e.get("email")]
                     out.append(Contact(ct.get("name") or lead.get("display_name", ""), phones[0], (emails or [""])[0],
-                                       lead.get("display_name", ""), lead["id"], _parse_time(lead.get("date_created"))))
+                                       lead.get("display_name", ""), lead["id"], _parse_time(lead.get("date_created")),
+                                       stage=status, dnc=dnc_status))
             if not page.get("has_more"):
                 break
             skip += 100
@@ -282,13 +326,52 @@ class FollowUpBoss(Provider):
             await http.request("POST", "/v1/notes", json={"personId": int(external_id),
                                                          "subject": f"AI call: {call.outcome_label}", "body": call.note()})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def import_options(self, http, config):
+        async def get(path, key):
+            try:
+                return (await http.request("GET", path, params={"limit": 100})).get(key) or []
+            except CrmError:
+                return []
+        stages, ponds, users = await get("/v1/stages", "stages"), await get("/v1/ponds", "ponds"), await get("/v1/users", "users")
+        tags: dict[str, int] = {}
+        try:
+            sample = await http.request("GET", "/v1/people", params={"limit": 100, "sort": "-updated", "fields": "id,tags"})
+            for p in sample.get("people") or []:
+                for t in p.get("tags") or []:
+                    tags[t] = tags.get(t, 0) + 1
+        except CrmError:
+            pass
+        out = [{"key": "stage", "label": "Stages", "type": "multi", "options": [{"value": x["name"], "label": x["name"]} for x in stages]},
+               {"key": "tags", "label": "Tags", "type": "multi", "free": True,
+                "options": [{"value": t, "label": t} for t in sorted(tags, key=lambda t: -tags[t])[:60]]}]
+        if ponds:
+            out.append({"key": "pond", "label": "Ponds", "type": "multi",
+                        "options": [{"value": str(x["id"]), "label": x.get("name") or str(x["id"])} for x in ponds]})
+        if users:
+            out.append({"key": "agent", "label": "Assigned agent", "type": "multi",
+                        "options": [{"value": str(x["id"]), "label": x.get("name") or x.get("email", "")} for x in users]})
+        return out
+
+    async def mark_dnc(self, http, config, external_id):
+        person = await http.request("GET", f"/v1/people/{int(external_id)}", params={"fields": "id,tags"})
+        tags = list(dict.fromkeys([*(person.get("tags") or []), "Do Not Call"]))
+        await http.request("PUT", f"/v1/people/{int(external_id)}", json={"tags": tags})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        f = filters or {}
+        want_stage, want_tags = set(f.get("stage") or []), {t.lower() for t in f.get("tags") or []}
+        want_pond, want_agent = set(f.get("pond") or []), set(f.get("agent") or [])
         out: list[Contact] = []
-        offset = 0
-        while len(out) < limit:
+        offset, pages = 0, 0
+        while len(out) < limit and pages < 40:
             params: dict = {"limit": 100, "offset": offset, "sort": "-created",
-                            "fields": "id,name,firstName,lastName,phones,emails,created"}
+                            "fields": "id,name,firstName,lastName,phones,emails,created,stage,tags,assignedPondId,assignedUserId,contacted"}
+            if len(want_stage) == 1:
+                params["stage"] = next(iter(want_stage))
+            if len(want_pond) == 1:
+                params["assignedPondId"] = next(iter(want_pond))
             page = await http.request("GET", "/v1/people", params=params)
+            pages += 1
             people = page.get("people") or []
             stop = False
             for p in people:
@@ -296,12 +379,24 @@ class FollowUpBoss(Provider):
                 if since and created and created <= since:
                     stop = True
                     break
-                phones = [x.get("value") for x in p.get("phones") or [] if x.get("value")]
+                tags = [t for t in p.get("tags") or [] if isinstance(t, str)]
+                if want_stage and p.get("stage") not in want_stage:
+                    continue
+                if want_tags and not want_tags & {t.lower() for t in tags}:
+                    continue
+                if want_pond and str(p.get("assignedPondId") or "") not in want_pond:
+                    continue
+                if want_agent and str(p.get("assignedUserId") or "") not in want_agent:
+                    continue
+                phones = [x for x in p.get("phones") or [] if x.get("value")]
+                good = [x["value"] for x in phones if str(x.get("status") or "").lower() not in ("not valid", "bad", "invalid")]
                 if not phones:
                     continue
                 emails = [x.get("value") for x in p.get("emails") or [] if x.get("value")]
                 name = p.get("name") or " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x)
-                out.append(Contact(name, phones[0], (emails or [""])[0], "", str(p["id"]), created))
+                dnc = (not good) or (p.get("stage") or "").lower() == "trash" or bool(_DNC_TAGS & {t.lower() for t in tags})
+                out.append(Contact(name, (good or [phones[0]["value"]])[0], (emails or [""])[0], "", str(p["id"]), created,
+                                   tags=tags, stage=p.get("stage") or "", dnc=dnc, contacted=bool(p.get("contacted"))))
             if stop or len(people) < 100:
                 break
             offset += 100
@@ -359,15 +454,44 @@ class HubSpot(Provider):
                               "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 194}]}],
         })
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def import_options(self, http, config):
+        out = []
+        for prop, label in (("lifecyclestage", "Lifecycle stage"), ("hs_lead_status", "Lead status")):
+            try:
+                d = await http.request("GET", f"/crm/v3/properties/contacts/{prop}")
+                opts = [{"value": o["value"], "label": o.get("label") or o["value"]} for o in d.get("options") or [] if not o.get("hidden")]
+                if opts:
+                    out.append({"key": prop, "label": label, "type": "multi", "options": opts})
+            except CrmError:
+                pass
+        try:
+            owners = (await http.request("GET", "/crm/v3/owners", params={"limit": 100})).get("results") or []
+            if owners:
+                out.append({"key": "hubspot_owner_id", "label": "Contact owner", "type": "multi", "options": [
+                    {"value": str(o["id"]), "label": " ".join(x for x in (o.get("firstName"), o.get("lastName")) if x) or o.get("email", "")}
+                    for o in owners]})
+        except CrmError:
+            pass
+        return out
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        f = filters or {}
         out: list[Contact] = []
         after = None
-        props = ["firstname", "lastname", "phone", "mobilephone", "email", "company", "createdate"]
+        props = ["firstname", "lastname", "phone", "mobilephone", "email", "company", "createdate", "lifecyclestage",
+                 "hs_lead_status", "notes_last_contacted"]
+        conds = []
+        if since:
+            conds.append({"propertyName": "createdate", "operator": "GT", "value": str(int(since.timestamp() * 1000))})
+        for key in ("lifecyclestage", "hs_lead_status", "hubspot_owner_id"):
+            if f.get(key):
+                conds.append({"propertyName": key, "operator": "IN", "values": list(f[key])})
+        if f.get("skip_contacted"):
+            conds.append({"propertyName": "notes_last_contacted", "operator": "NOT_HAS_PROPERTY"})
         while len(out) < limit:
             body: dict = {"limit": 100, "properties": props, "sorts": [{"propertyName": "createdate", "direction": "DESCENDING"}]}
-            if since:
-                body["filterGroups"] = [{"filters": [{"propertyName": "createdate", "operator": "GT",
-                                                      "value": str(int(since.timestamp() * 1000))}]}]
+            if conds:
+                body["filterGroups"] = [{"filters": conds}]
             if after:
                 body["after"] = after
             page = await http.request("POST", "/crm/v3/objects/contacts/search", json=body)
@@ -377,8 +501,11 @@ class HubSpot(Provider):
                 if not phone:
                     continue
                 name = " ".join(x for x in (p.get("firstname"), p.get("lastname")) if x)
+                status = p.get("hs_lead_status") or ""
                 out.append(Contact(name, phone, p.get("email") or "", p.get("company") or "", str(r["id"]),
-                                   _parse_time(p.get("createdate"))))
+                                   _parse_time(p.get("createdate")), stage=p.get("lifecyclestage") or "",
+                                   dnc=status.upper() in ("UNQUALIFIED_DNC", "DO_NOT_CALL"),
+                                   contacted=bool(p.get("notes_last_contacted"))))
             after = ((page.get("paging") or {}).get("next") or {}).get("after")
             if not after:
                 break
@@ -429,11 +556,44 @@ class Pipedrive(Provider):
             "due_date": when.strftime("%Y-%m-%d"), "due_time": when.strftime("%H:%M"),
             "duration": f"{h:02d}:{m:02d}", "note": call.note(html=True)})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def import_options(self, http, config):
+        out = []
+        try:
+            flt = (await http.request("GET", "/v1/filters", params={"type": "people"})).get("data") or []
+            if flt:
+                out.append({"key": "filter_id", "label": "Saved filter", "type": "single",
+                            "options": [{"value": str(x["id"]), "label": x.get("name") or str(x["id"])} for x in flt]})
+        except CrmError:
+            pass
+        try:
+            fields = (await http.request("GET", "/v1/personFields", params={"limit": 200})).get("data") or []
+            label = next((x for x in fields if x.get("key") == "label"), None)
+            if label and label.get("options"):
+                out.append({"key": "label", "label": "Labels", "type": "multi",
+                            "options": [{"value": str(o["id"]), "label": o.get("label") or str(o["id"])} for o in label["options"]]})
+        except CrmError:
+            pass
+        try:
+            users = (await http.request("GET", "/v1/users")).get("data") or []
+            if users:
+                out.append({"key": "owner", "label": "Owner", "type": "multi",
+                            "options": [{"value": str(u["id"]), "label": u.get("name") or u.get("email", "")} for u in users]})
+        except CrmError:
+            pass
+        return out
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        f = filters or {}
+        want_label, want_owner = set(f.get("label") or []), set(f.get("owner") or [])
+        fid = (f.get("filter_id") or [""])[0] if isinstance(f.get("filter_id"), list) else f.get("filter_id")
         out: list[Contact] = []
-        start = 0
-        while len(out) < limit:
-            page = await http.request("GET", "/v1/persons", params={"start": start, "limit": 100, "sort": "add_time DESC"})
+        start, pages = 0, 0
+        while len(out) < limit and pages < 40:
+            params: dict = {"start": start, "limit": 100, "sort": "add_time DESC"}
+            if fid:
+                params["filter_id"] = fid
+            page = await http.request("GET", "/v1/persons", params=params)
+            pages += 1
             rows = page.get("data") or []
             stop = False
             for p in rows:
@@ -441,12 +601,21 @@ class Pipedrive(Provider):
                 if since and created and created <= since:
                     stop = True
                     break
+                labels = {str(x) for x in (p.get("label_ids") or ([p["label"]] if p.get("label") else []))}
+                if want_label and not want_label & labels:
+                    continue
+                owner = p.get("owner_id")
+                owner = str(owner.get("id") if isinstance(owner, dict) else owner or "")
+                if want_owner and owner not in want_owner:
+                    continue
                 phones = [x.get("value") for x in p.get("phone") or [] if x.get("value")]
                 if not phones:
                     continue
                 emails = [x.get("value") for x in p.get("email") or [] if x.get("value")]
                 org = p.get("org_name") or ((p.get("org_id") or {}).get("name") if isinstance(p.get("org_id"), dict) else "")
-                out.append(Contact(p.get("name") or "", phones[0], (emails or [""])[0], org or "", str(p["id"]), created))
+                done = p.get("done_activities_count")
+                out.append(Contact(p.get("name") or "", phones[0], (emails or [""])[0], org or "", str(p["id"]), created,
+                                   contacted=(done > 0) if isinstance(done, int) else None))
             more = ((page.get("additional_data") or {}).get("pagination") or {}).get("more_items_in_collection")
             if stop or not more:
                 break
@@ -507,20 +676,39 @@ class HighLevel(Provider):
             except CrmError:
                 pass
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def import_options(self, http, config):
+        try:
+            tags = (await http.request("GET", f"/locations/{self._loc(config)}/tags")).get("tags") or []
+        except CrmError:
+            return []
+        return [{"key": "tags", "label": "Tags", "type": "multi", "free": True,
+                 "options": [{"value": t["name"], "label": t["name"]} for t in tags if t.get("name")]}]
+
+    async def mark_dnc(self, http, config, external_id):
+        await http.request("PUT", f"/contacts/{external_id}", json={"dnd": True})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        want_tags = {t.lower() for t in (filters or {}).get("tags") or []}
         out: list[Contact] = []
         params: dict = {"locationId": self._loc(config), "limit": 100}
-        while len(out) < limit:
+        pages = 0
+        while len(out) < limit and pages < 40:
             page = await http.request("GET", "/contacts/", params=params)
+            pages += 1
             rows = page.get("contacts") or []
             for p in rows:
                 created = _parse_time(p.get("dateAdded"))
                 if since and created and created <= since:
                     continue
+                tags = [t for t in p.get("tags") or [] if isinstance(t, str)]
+                if want_tags and not want_tags & {t.lower() for t in tags}:
+                    continue
                 if not p.get("phone"):
                     continue
+                dnd = bool(p.get("dnd")) or str(((p.get("dndSettings") or {}).get("Call") or {}).get("status", "")).lower() == "active"
                 name = p.get("contactName") or " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x)
-                out.append(Contact(name or "", p["phone"], p.get("email") or "", p.get("companyName") or "", str(p["id"]), created))
+                out.append(Contact(name or "", p["phone"], p.get("email") or "", p.get("companyName") or "", str(p["id"]),
+                                   created, tags=tags, dnc=dnd or bool(_DNC_TAGS & {t.lower() for t in tags})))
             meta = page.get("meta") or {}
             if len(rows) < 100 or not meta.get("startAfterId"):
                 break
@@ -572,7 +760,7 @@ class Attio(Provider):
             "parent_object": "people", "parent_record_id": external_id, "title": f"AI call: {call.outcome_label}",
             "format": "plaintext", "content": call.note()}})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
         out: list[Contact] = []
         offset = 0
         while len(out) < limit:
@@ -643,14 +831,43 @@ class Salesforce(Provider):
             "Status": "Completed", "TaskSubtype": "Call", "CallType": "Outbound",
             "CallDurationInSeconds": int(call.duration_seconds or 0), "ActivityDate": when.strftime("%Y-%m-%d")})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
-        where = "Phone != null AND IsConverted = false"
+    async def import_options(self, http, config):
+        out = []
+        for fld, label in (("Status", "Lead status"), ("LeadSource", "Lead source")):
+            try:
+                res = await http.request("GET", f"{self._v}/query",
+                                         params={"q": f"SELECT {fld} v, COUNT(Id) n FROM Lead WHERE IsConverted = false GROUP BY {fld}"})
+                opts = [{"value": r["v"], "label": f"{r['v']} ({r['n']})"} for r in res.get("records") or [] if r.get("v")]
+                if opts:
+                    out.append({"key": fld, "label": label, "type": "multi", "options": opts})
+            except CrmError:
+                pass
+        return out
+
+    async def mark_dnc(self, http, config, external_id):
+        obj = "Lead" if str(external_id).startswith("00Q") else "Contact"
+        await http.request("PATCH", f"{self._v}/sobjects/{obj}/{external_id}", json={"DoNotCall": True})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        f = filters or {}
+
+        def quote(v: str) -> str:
+            return "'" + str(v).replace("\\", "").replace("'", "\\'") + "'"
+
+        where = ["Phone != null", "IsConverted = false"]
+        for fld in ("Status", "LeadSource"):
+            if f.get(fld):
+                where.append(f"{fld} IN (" + ", ".join(quote(v) for v in f[fld]) + ")")
+        if f.get("skip_contacted"):
+            where.append("LastActivityDate = null")
         if since:
-            where += f" AND CreatedDate > {since.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}"
-        q = f"SELECT Id, Name, Phone, Email, Company, CreatedDate FROM Lead WHERE {where} ORDER BY CreatedDate DESC LIMIT {int(limit)}"
+            where.append(f"CreatedDate > {since.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+        q = ("SELECT Id, Name, Phone, Email, Company, CreatedDate, Status, DoNotCall, LastActivityDate FROM Lead WHERE "
+             + " AND ".join(where) + f" ORDER BY CreatedDate DESC LIMIT {int(limit)}")
         res = await http.request("GET", f"{self._v}/query", params={"q": q})
         return [Contact(r.get("Name") or "", r["Phone"], r.get("Email") or "", r.get("Company") or "", r["Id"],
-                        _parse_time(r.get("CreatedDate"))) for r in res.get("records") or []]
+                        _parse_time(r.get("CreatedDate")), stage=r.get("Status") or "", dnc=bool(r.get("DoNotCall")),
+                        contacted=bool(r.get("LastActivityDate"))) for r in res.get("records") or []]
 
 
 # ── Zoho CRM (OAuth via Nango) ────────────────────────────────────────────────
@@ -684,7 +901,7 @@ class ZohoCrm(Provider):
         await http.request("POST", f"/crm/v6/Leads/{external_id}/Notes", json={"data": [{
             "Note_Title": f"AI call: {call.outcome_label}", "Note_Content": call.note()}]})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
         res = await http.request("GET", "/crm/v6/Leads", params={
             "fields": "Full_Name,Phone,Mobile,Email,Company,Created_Time", "per_page": min(200, limit),
             "sort_by": "Created_Time", "sort_order": "desc"})
@@ -726,7 +943,7 @@ class Slack(Provider):
         emoji = {"meeting_booked": ":calendar:", "interested": ":fire:", "callback": ":telephone_receiver:"}.get(call.outcome, ":phone:")
         await http.request("POST", "", json={"text": f"{emoji} {call.note()}"})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
         return []
 
 
@@ -776,7 +993,7 @@ class GoogleSheets(Provider):
             await http.request("POST", f"/v4/spreadsheets/{sid}/values/'{tab}'!A1:append",
                                params={"valueInputOption": "USER_ENTERED"}, json={"values": [header, row]})
 
-    async def list_contacts(self, http, config, limit=500, since=None):
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
         res = await http.request("GET", f"/v4/spreadsheets/{self._sheet_id(config)}/values/A1:Z{limit + 1}")
         rows = res.get("values") or []
         if not rows:

@@ -117,6 +117,11 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
                           call_id=uuid.UUID(call.call_id) if call.call_id else None)
             return
         await p.log_call(http, conn.config or {}, ref, call)
+        if call.outcome == "do_not_call":
+            try:
+                await p.mark_dnc(http, conn.config or {}, ref)
+            except CrmError as exc:
+                log.warning("crm_mark_dnc_failed", provider=conn.provider, error=str(exc))
         if lead and (lead.crm_refs or {}).get(conn.provider) != ref:
             lead.crm_refs = {**(lead.crm_refs or {}), conn.provider: ref}
         await add_log(db, conn, "call", "ok", f"Logged {call.outcome_label.lower()} call with {c.name or c.phone}.",
@@ -148,8 +153,13 @@ def schedule_push(org_id: uuid.UUID | None, data: dict) -> None:
 # ── CRM → contacts ────────────────────────────────────────────────────────────
 
 
-async def save_contacts(db, conn: CrmConnection, contacts: list[Contact], tag: str) -> tuple[list[Lead], int]:
-    """Create or update Leads for CRM contacts (matched by phone). Returns (new leads, updated count)."""
+async def save_contacts(db, conn: CrmConnection, contacts: list[Contact], tag: str,
+                        extra_tags: list[str] | None = None) -> tuple[list[Lead], int]:
+    """Create or update Leads for CRM contacts (matched by phone). Returns (new leads, updated count).
+
+    CRM do-not-call contacts are saved with do_not_call set, so no agent ever dials them;
+    the CRM's stage, tags and contacted flag land in custom fields ({{crm_stage}} etc.).
+    """
     existing = {normalize_phone(l.phone): l for l in (await db.execute(
         select(Lead).where(Lead.org_id == conn.org_id))).scalars().all()}
     created, updated = [], 0
@@ -158,14 +168,25 @@ async def save_contacts(db, conn: CrmConnection, contacts: list[Contact], tag: s
         phone = normalize_phone(c.phone)
         if len(phone) < 8:
             continue
+        crm_fields = {k: v for k, v in {
+            "crm": p.name, "crm_stage": c.stage, "crm_tags": ", ".join(c.tags[:20]),
+            "crm_contacted": None if c.contacted is None else ("yes" if c.contacted else "no"),
+        }.items() if v not in (None, "")}
         lead = existing.get(phone)
         if lead:
+            changed = False
             if (lead.crm_refs or {}).get(conn.provider) != c.external_id:
                 lead.crm_refs = {**(lead.crm_refs or {}), conn.provider: c.external_id}
-                updated += 1
+                changed = True
+            if c.dnc and not lead.do_not_call:
+                lead.do_not_call, changed = True, True
+            lead.custom_fields = {**(lead.custom_fields or {}), **crm_fields}
+            updated += changed
             continue
+        tags = list(dict.fromkeys([p.name, tag, *(extra_tags or [])]))
         lead = Lead(org_id=conn.org_id, name=c.name or phone, phone=phone, email=c.email or "", company=c.company or "",
-                    intent_source=p.key, crm_refs={conn.provider: c.external_id}, tags=[p.name, tag])
+                    intent_source=p.key, crm_refs={conn.provider: c.external_id}, tags=[t for t in tags if t],
+                    custom_fields=crm_fields or None, do_not_call=bool(c.dnc))
         db.add(lead)
         existing[phone] = lead
         created.append(lead)
@@ -173,14 +194,39 @@ async def save_contacts(db, conn: CrmConnection, contacts: list[Contact], tag: s
     return created, updated
 
 
-async def import_contacts(db, conn: CrmConnection, limit: int = 500) -> dict:
+def _apply_skips(contacts: list[Contact], skip_contacted: bool) -> tuple[list[Contact], dict]:
+    dnc = sum(1 for c in contacts if c.dnc)
+    contacted = [c for c in contacts if c.contacted and not c.dnc]
+    keep = [c for c in contacts if not (skip_contacted and c.contacted)]
+    return keep, {"do_not_call": dnc, "contacted": len(contacted), "skipped_contacted": len(contacts) - len(keep)}
+
+
+async def preview_import(db, conn: CrmConnection, filters: dict | None, skip_contacted: bool, limit: int = 500) -> dict:
     p, http = http_for(conn)
-    contacts = await p.list_contacts(http, conn.config or {}, limit=limit)
-    created, updated = await save_contacts(db, conn, contacts, "Imported")
+    contacts = await p.list_contacts(http, conn.config or {}, limit=limit, filters=filters or {})
+    keep, counts = _apply_skips(contacts, skip_contacted)
+    known = {normalize_phone(x) for x in (await db.execute(select(Lead.phone).where(Lead.org_id == conn.org_id))).scalars()}
+    return {
+        "found": len(contacts), "will_import": len([c for c in keep if normalize_phone(c.phone) not in known]),
+        "already_in_blacksync": len([c for c in keep if normalize_phone(c.phone) in known]), **counts,
+        "sample": [{"name": c.name, "phone": c.phone, "stage": c.stage, "tags": c.tags[:5], "dnc": c.dnc,
+                    "contacted": c.contacted} for c in keep[:8]],
+    }
+
+
+async def import_contacts(db, conn: CrmConnection, limit: int = 500, filters: dict | None = None,
+                          skip_contacted: bool = False, list_tag: str = "") -> dict:
+    p, http = http_for(conn)
+    contacts = await p.list_contacts(http, conn.config or {}, limit=limit, filters=filters or {})
+    keep, counts = _apply_skips(contacts, skip_contacted)
+    created, updated = await save_contacts(db, conn, keep, "Imported", [list_tag.strip()[:60]] if list_tag.strip() else None)
+    dnc_new = sum(1 for l in created if l.do_not_call)
     msg = f"Imported {len(created)} new contact{'s' if len(created) != 1 else ''} from {p.name}" + (
-        f", linked {updated} existing" if updated else "") + "."
+        f", updated {updated} existing" if updated else "") + (
+        f"; {counts['do_not_call']} marked do-not-call won't be dialed" if counts["do_not_call"] else "") + "."
     await add_log(db, conn, "import", "ok", msg)
-    return {"found": len(contacts), "created": len(created), "linked": updated}
+    return {"found": len(contacts), "created": len(created), "linked": updated, "do_not_call": counts["do_not_call"],
+            "do_not_call_new": dnc_new, "skipped_contacted": counts["skipped_contacted"]}
 
 
 # ── Speed to lead ─────────────────────────────────────────────────────────────

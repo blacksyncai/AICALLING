@@ -255,13 +255,55 @@ async def test(key: str, ctx: ManagerDep, db: DbDep):
     return conn_to_dict(conn)
 
 
+class ImportIn(BaseModel):
+    filters: dict[str, list[str] | str | bool] = Field(default_factory=dict)
+    skip_contacted: bool = False
+    list_tag: str = Field(default="", max_length=60)
+    limit: int = Field(default=500, ge=1, le=2000)
+
+
+def _filters(body: ImportIn) -> dict:
+    out: dict = {}
+    for k, v in body.filters.items():
+        if isinstance(v, str):
+            v = [v] if v else []
+        if v:
+            out[k] = v
+    if body.skip_contacted:
+        out["skip_contacted"] = True
+    return out
+
+
+@router.get("/{key}/import/options")
+async def import_options(key: str, ctx: ManagerDep, db: DbDep):
+    p = _provider(key)
+    conn = await _require_conn(db, ctx.org.id, key)
+    try:
+        _, http = sync.http_for(conn)
+        filters = await p.import_options(http, conn.config or {})
+    except CrmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"provider": p.key, "name": p.name, "filters": filters}
+
+
+@router.post("/{key}/import/preview")
+async def import_preview(key: str, body: ImportIn, ctx: ManagerDep, db: DbDep):
+    conn = await _require_conn(db, ctx.org.id, key)
+    try:
+        return await sync.preview_import(db, conn, _filters(body), body.skip_contacted, body.limit)
+    except CrmError as exc:
+        raise HTTPException(status_code=400, detail=f"Couldn't read {_provider(key).name}: {exc}") from exc
+
+
 @router.post("/{key}/import")
-async def import_contacts(key: str, ctx: ManagerDep, db: DbDep):
+async def import_contacts(key: str, ctx: ManagerDep, db: DbDep, body: ImportIn | None = None):
+    body = body or ImportIn()
     conn = await _require_conn(db, ctx.org.id, key)
     if not _provider(key).can_import:
         raise HTTPException(status_code=400, detail="This integration doesn't have contacts to import.")
     try:
-        result = await sync.import_contacts(db, conn)
+        result = await sync.import_contacts(db, conn, limit=body.limit, filters=_filters(body),
+                                            skip_contacted=body.skip_contacted, list_tag=body.list_tag)
     except CrmError as exc:
         await sync.add_log(db, conn, "import", "error", f"Import failed: {exc}")
         await db.commit()

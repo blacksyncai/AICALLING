@@ -253,7 +253,8 @@ def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="compl
             await db.commit()
 
     asyncio.run(make())
-    transcript = [{"role": "user", "text": "hi"}]
+    # Nobody spoke on a no-answer call (a contact who talks can't be "no answer").
+    transcript = [] if outcome == "no_answer" else [{"role": "user", "text": "hi"}]
     for _ in range(2):  # duplicate outcome reports must not double-bill
         client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": outcome, "transcript": transcript})
     return call_id

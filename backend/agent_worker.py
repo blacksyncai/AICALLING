@@ -993,7 +993,15 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         task = bg_state.get("task")
         if task:
             task.cancel()
-        outcome = run.outcome or ("no_answer" if not run.transcript else "completed")
+        from app.agent.runtime import is_voicemail_text, person_answered, reconcile_outcome
+        if run.outcome:
+            outcome = reconcile_outcome(run.outcome, run.transcript) or run.outcome
+        elif person_answered(run.transcript):
+            outcome = "completed"
+        elif any(t.get("role") == "user" and is_voicemail_text(t.get("text", "")) for t in run.transcript):
+            outcome = "voicemail"
+        else:
+            outcome = "no_answer"
         await _push_live_event(run.call_log_id, {
             "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
             "duration_sec": round(_time.monotonic() - run.t0), "ts": str(_time.time()),

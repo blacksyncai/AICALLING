@@ -139,7 +139,35 @@ function CallLogs() {
             <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="No calls found" description="Test an agent or start a campaign — calls show up here." />
           )
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Phones: one card per call */}
+          <ul className="divide-y divide-zinc-100 md:hidden">
+            {data.items.map((c) => (
+              <li key={c.id}>
+                <Link href={`/calls/${c.id}`} className="block px-4 py-3 active:bg-zinc-50">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-zinc-900">
+                        {c.contact_name ?? (c.call_type === "web" ? "Browser test" : c.to_phone ?? "Unknown")}
+                      </span>
+                      <span className="block truncate text-xs text-zinc-500">
+                        {c.agent_name ?? "—"} · {formatDateTime(c.started_at)}
+                      </span>
+                    </span>
+                    <OutcomeBadge outcome={c.outcome} status={c.status} />
+                  </div>
+                  <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
+                    {c.call_type === "web" ? <Globe className="h-3.5 w-3.5" /> : <PhoneOutgoing className="h-3.5 w-3.5" />}
+                    <span>{durationWords(c.duration_seconds)}</span>
+                    {c.credits_used != null && c.credits_used > 0 && <span>{c.credits_used.toFixed(3)} credits</span>}
+                    {c.has_recording && <PlayCircle className="h-3.5 w-3.5 text-brand-600" />}
+                  </div>
+                  {c.summary && <p className="mt-1.5 line-clamp-2 text-xs text-zinc-600">{c.summary}</p>}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1080px] text-sm">
               <thead className="border-b border-zinc-100 bg-zinc-50/60 text-left text-xs text-zinc-500">
                 <tr>
@@ -189,6 +217,7 @@ function CallLogs() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </Card>
       {data && data.total > PAGE && (

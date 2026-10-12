@@ -243,6 +243,8 @@ class CallService:
                 "Phone calling isn't configured — set LIVEKIT_SIP_OUTBOUND_TRUNK_ID "
                 "(a LiveKit outbound SIP trunk, e.g. via Twilio Elastic SIP)."
             )
+        if lead is not None and lead.do_not_call:
+            raise CallSetupError("This contact is on the do-not-call list.")
         phone = validate_e164(to_phone or (lead.phone if lead else ""))
         campaign_id = campaign_id or (lead.campaign_id if lead else None)
 
@@ -363,6 +365,9 @@ class CallService:
                 and not any(t.get("role") == "user" for t in (transcript or []))):
             duration = 0  # never picked up
 
+        from app.agent.runtime import reconcile_outcome
+
+        outcome = reconcile_outcome(outcome, transcript) or outcome
         status = {"no_answer": "no_answer", "voicemail": "no_answer", "failed": "failed"}.get(outcome, "completed")
         await db.execute(update(CallLog).where(CallLog.id == call_log.id).values(
             status=status,
@@ -420,6 +425,13 @@ async def _analyze(call_log_id: str) -> None:
         call_log = await db.get(CallLog, uuid.UUID(call_log_id))
         if not call_log or not call_log.transcript:
             return
+        from app.agent.runtime import NO_CONVERSATION_OUTCOMES, person_answered
+
+        mislabeled = call_log.outcome in NO_CONVERSATION_OUTCOMES and person_answered(call_log.transcript)
+        if mislabeled:
+            call_log.outcome = "completed"
+            if call_log.status == "no_answer":
+                call_log.status = "completed"
         agent = await db.get(Agent, call_log.agent_id) if call_log.agent_id else None
         result = await analyze_call(
             call_log.transcript,
@@ -427,6 +439,7 @@ async def _analyze(call_log_id: str) -> None:
             agent.success_criteria if agent else "",
         )
         if not result:
+            await db.commit()
             return
         call_log.summary = result.get("summary")
         call_log.sentiment = result.get("sentiment")
@@ -434,7 +447,8 @@ async def _analyze(call_log_id: str) -> None:
         # The analyzer's outcome only fills in when the agent didn't pick a specific one.
         if call_log.outcome in (None, "completed", "failed") and result.get("outcome"):
             if call_log.duration_seconds or call_log.outcome != "failed":
-                call_log.outcome = result["outcome"]
+                from app.agent.runtime import reconcile_outcome
+                call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript)
         # Someone who asked not to be called again goes on the Do-Not-Call list.
         if call_log.outcome == "do_not_call" and call_log.lead_id:
             lead = await db.get(Lead, call_log.lead_id)
@@ -442,6 +456,26 @@ async def _analyze(call_log_id: str) -> None:
                 lead.do_not_call = True
         await db.commit()
         log.info("call_analyzed", call_log_id=call_log_id, outcome=call_log.outcome)
+
+
+async def fix_mislabeled_outcomes(limit: int = 500) -> int:
+    """One-off repair: calls where the contact clearly talked but were labeled no answer / voicemail."""
+    from app.agent.runtime import NO_CONVERSATION_OUTCOMES, person_answered
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CallLog.id, CallLog.transcript).where(
+            CallLog.outcome.in_(NO_CONVERSATION_OUTCOMES), CallLog.transcript.isnot(None),
+        ).order_by(CallLog.started_at.desc()).limit(limit))).all()
+    ids = [str(r.id) for r in rows if person_answered(r.transcript)]
+    for cid in ids:
+        try:
+            await _analyze(cid)
+        except Exception as exc:
+            log.warning("outcome_repair_failed", call_log_id=cid, error=str(exc))
+    if ids:
+        log.info("outcomes_repaired", count=len(ids))
+    return len(ids)
 
 
 async def emit_call_events(call_id: uuid.UUID) -> None:

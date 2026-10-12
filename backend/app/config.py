@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     # Nango (OAuth for CRMs like Salesforce, HubSpot, Close); integrations configured in Nango show up in the app.
     nango_secret_key: str = ""
+    # One-off repair jobs at startup (off in tests).
+    run_startup_jobs: bool = True
     llm_model: str = "gpt-4.1-mini"
     # Model used for post-call summaries / data extraction.
     analysis_model: str = "gpt-4.1-mini"

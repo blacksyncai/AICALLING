@@ -211,7 +211,30 @@ async def analyze_call(transcript: list[dict], extraction_fields: list[dict] | N
             fields.append(f)
             seen.add(f["name"])
     field_spec = "\n".join(f'- "{f.get("name")}": {f.get("description", "")}' for f in fields if f.get("name"))
+    from app.agent.runtime import contact_turns, person_answered, reconcile_outcome
+
+    answered = person_answered(transcript)
+    facts = (f"FACTS: the contact spoke {len(contact_turns(transcript))} time(s); "
+             + ("a live person answered, so the outcome can NOT be no_answer or voicemail."
+                if answered else "no live conversation was detected."))
     prompt = f"""Analyze this phone call transcript between an AI agent and a contact.
+
+{facts}
+
+Outcome definitions (pick the single best one):
+- meeting_booked: a meeting/appointment time was confirmed.
+- qualified: the contact meets the agent's criteria but nothing was booked yet.
+- interested: positive interest, wants more info or a follow-up.
+- callback: asked to be called back later / bad time right now.
+- not_interested: declined or said no.
+- not_qualified: doesn't fit (wrong size, budget, area, etc.).
+- do_not_call: asked to never be called again / remove them from the list.
+- wrong_number: the person isn't who the agent was trying to reach.
+- transferred: handed to a human.
+- voicemail: ONLY a voicemail greeting/recording answered; no live person.
+- no_answer: ONLY when nobody answered at all; never when the contact said anything.
+- completed: a live conversation happened but none of the above fits (e.g. the contact hung up mid-call
+  or the call ended before a clear result).
 
 Return JSON with keys:
 - "summary": 2-3 sentence summary of what happened.
@@ -233,6 +256,7 @@ TRANSCRIPT:
         result = json.loads(data["choices"][0]["message"]["content"])
         if result.get("outcome") not in CALL_OUTCOMES:
             result["outcome"] = "completed"
+        result["outcome"] = reconcile_outcome(result["outcome"], transcript)
         return result
     except Exception as exc:
         log.warning("call_analysis_failed", error=str(exc))
