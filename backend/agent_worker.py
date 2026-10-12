@@ -843,6 +843,22 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     return tools
 
 
+FALLBACK_LLM = "gpt-4.1-mini"
+
+
+def _llm_with_fallback(model: str, llm_kwargs: dict, temperature: float):
+    """Non-OpenAI models (Cerebras, Claude) fail over to OpenAI the moment they error or rate-limit,
+    so a 429 mid-call never leaves the caller in silence. OpenAI models run as-is."""
+    primary = openai.LLM(**llm_kwargs)
+    if llm_kwargs.get("base_url") == settings.openai_base_url or not settings.openai_api_key:
+        return primary
+    from livekit.agents import llm as lk_llm
+
+    backup = openai.LLM(model=FALLBACK_LLM, api_key=settings.openai_api_key, base_url=settings.openai_base_url,
+                        temperature=temperature)
+    return lk_llm.FallbackAdapter([primary, backup], attempt_timeout=4.0, max_retry_per_llm=0)
+
+
 async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     import time as _time
     from app.agent.models import llm_endpoint
@@ -890,7 +906,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             model="nova-3", language=language if language != "multi" else "multi",
             api_key=settings.deepgram_api_key,
         ),
-        llm=openai.LLM(**llm_kwargs),
+        llm=_llm_with_fallback(model, llm_kwargs, float(cfg.get("temperature", 0.5))),
         tts=cartesia.TTS(
             model="sonic-3",
             voice=cfg.get("voice_id") or DEFAULT_VOICE_ID,
