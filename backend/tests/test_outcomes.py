@@ -46,3 +46,20 @@ def test_repair_existing_mislabeled_calls(client, monkeypatch):
 
     n, call = asyncio.run(run())
     assert n >= 1 and call.outcome == "completed" and call.summary == "They asked to repeat."
+
+
+def test_worker_voicemail_marker_and_strict_greeting():
+    from app.agent.runtime import is_voicemail_greeting
+
+    marked = TALKED + [{"role": "tool", "tool": "voicemail", "args": {"action": "hung_up"}}]
+    assert not person_answered(marked) and reconcile_outcome("voicemail", marked) == "voicemail"
+    assert is_voicemail_greeting("Hi you've reached Sam, please leave a message after the beep")
+    assert not is_voicemail_greeting("Sure, I can get back to you tomorrow")
+
+
+def test_agent_voicemail_settings(client):
+    a = client.post("/api/agents", json={"template": "blank"}).json()
+    assert a["voicemail_action"] == "hang_up"
+    r = client.patch(f"/api/agents/{a['id']}", json={"voicemail_action": "leave_message", "voicemail_message": "Hi {{name}}"})
+    assert r.status_code == 200 and r.json()["voicemail_action"] == "leave_message"
+    assert client.patch(f"/api/agents/{a['id']}", json={"voicemail_action": "scream"}).status_code == 422

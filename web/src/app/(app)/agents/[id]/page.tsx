@@ -40,7 +40,7 @@ const VARIABLES = ["name", "full_name", "company", "email", "phone", "role"];
 const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
   "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio", "enable_booking",
-  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
+  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "voicemail_action", "voicemail_message", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
   "ai_disclosure", "builder", "caller_number", "record_calls", "specialty",
 ];
 
@@ -466,6 +466,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 description="Gives the agent check_availability + book_appointment tools, booked straight into your Cal.com calendar."
               />
               {draft.enable_booking && <CalcomSettings draft={draft} set={set} />}
+              <VoicemailSettings draft={draft} set={set} />
               <CallFromSettings draft={draft} set={set} />
               <Field label="Transfer to human (phone calls)" hint="If set, the agent can warm-transfer the caller to this number. E.164, e.g. +14155550123.">
                 <Input value={draft.transfer_number} onChange={(e) => set("transfer_number", e.target.value.trim())} placeholder="+14155550123" />
@@ -659,6 +660,56 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
           </Select>
         </Field>
       </div>
+    </Card>
+  );
+}
+
+const VOICEMAIL_OPTIONS: { value: NonNullable<Agent["voicemail_action"]>; label: string; hint: string }[] = [
+  { value: "hang_up", label: "Hang up", hint: "End the call right away. Only the phone line fee is charged." },
+  { value: "leave_message", label: "Leave a message", hint: "Wait for the beep, say your message, then hang up." },
+  { value: "ignore", label: "Keep talking", hint: "Treat it like a normal call (not recommended)." },
+];
+
+/** What a phone call does when an answering machine picks up. */
+function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void }) {
+  const action = draft.voicemail_action ?? "hang_up";
+  return (
+    <Card className="space-y-4 p-4">
+      <div>
+        <div className="text-sm font-medium">When voicemail picks up</div>
+        <p className="mt-0.5 text-xs text-zinc-500">The agent listens for an answering-machine greeting in the first seconds of a phone call.</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {VOICEMAIL_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => set("voicemail_action", o.value)}
+            aria-pressed={action === o.value}
+            className={cn(
+              "rounded-xl border p-3 text-left transition-colors",
+              action === o.value ? "border-brand-500 bg-brand-50/60 ring-1 ring-brand-500" : "border-zinc-200 hover:border-zinc-300",
+            )}
+          >
+            <div className="text-sm font-medium text-zinc-900">{o.label}</div>
+            <div className="mt-0.5 text-xs text-zinc-500">{o.hint}</div>
+          </button>
+        ))}
+      </div>
+      {action === "leave_message" && (
+        <Field label="Voicemail message" hint="Keep it under 30 seconds. You can use {{name}}, {{company}} and other contact fields.">
+          <Textarea
+            rows={3}
+            maxLength={1000}
+            value={draft.voicemail_message ?? ""}
+            placeholder="Hi {{name}}, this is Marissa from BlackSync — sorry I missed you. I'll try you again soon, or call us back at this number. Thanks!"
+            onChange={(e) => set("voicemail_message", e.target.value)}
+          />
+        </Field>
+      )}
+      {action === "leave_message" && !(draft.voicemail_message ?? "").trim() && (
+        <p className="text-xs text-amber-700">Add a message, otherwise the agent will just hang up.</p>
+      )}
     </Card>
   );
 }

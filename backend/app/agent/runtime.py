@@ -50,6 +50,8 @@ def agent_to_runtime(agent, *, secrets: bool = False) -> dict:
         "calendar_timezone": getattr(agent, "calendar_timezone", None) or "",
         "calcom_key_set": bool(getattr(agent, "calcom_api_key_enc", None)),
         "transfer_number": agent.transfer_number or "",
+        "voicemail_action": getattr(agent, "voicemail_action", None) or "hang_up",
+        "voicemail_message": getattr(agent, "voicemail_message", None) or "",
         "max_duration_seconds": agent.max_duration_seconds or 600,
         "ai_disclosure": getattr(agent, "ai_disclosure", None) is not False,
         "business_name": (getattr(agent, "builder", None) or {}).get("business_name") or "",
@@ -163,7 +165,23 @@ _VOICEMAIL_HINTS = (
     "leave a message", "leave your message", "after the tone", "after the beep", "voicemail", "voice mail",
     "not available", "unavailable", "record your message", "mailbox", "at the tone", "please leave",
     "has not set up", "is not accepting", "reached the", "the person you are calling", "the number you have dialed",
+    "can't take your call", "cannot take your call", "can't come to the phone", "unable to answer", "unable to take",
+    "please record", "automated voice messaging", "forwarded to an automated", "voice messaging system",
+    "not available to take",
 )
+
+# Phrases only an answering machine says — strict, because hearing one ends a live call.
+_VOICEMAIL_STRICT = (
+    "leave a message", "leave your message", "after the tone", "after the beep", "at the tone", "voicemail",
+    "voice mail", "record your message", "please record", "mailbox", "automated voice messaging",
+    "voice messaging system", "not available to take your call", "can't take your call", "cannot take your call",
+    "can't come to the phone", "cannot come to the phone",
+)
+
+
+def is_voicemail_greeting(text: str) -> bool:
+    t = (text or "").lower().replace("’", "'")
+    return any(h in t for h in _VOICEMAIL_STRICT)
 
 NO_CONVERSATION_OUTCOMES = ("no_answer", "voicemail")
 
@@ -180,6 +198,8 @@ def contact_turns(transcript: list[dict] | None) -> list[str]:
 
 def person_answered(transcript: list[dict] | None) -> bool:
     """True when a live person spoke on the call (not just a voicemail greeting or silence)."""
+    if any(t.get("role") == "tool" and t.get("tool") == "voicemail" for t in transcript or []):
+        return False  # the call worker detected an answering machine
     turns = contact_turns(transcript)
     if not turns:
         return False

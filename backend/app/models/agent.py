@@ -58,6 +58,10 @@ class Agent(Base):
     # IANA zone the agent speaks booking times in (e.g. America/New_York); blank = UTC.
     calendar_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     transfer_number: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    # When an answering machine picks up: "hang_up" (default) | "leave_message" | "ignore" (talk as normal).
+    voicemail_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # What to say on "leave_message" ({{variables}} allowed).
+    voicemail_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
     # What the agent does, as a short badge ("Expired Listings"). Set by the builder; when a person
     # edits it, specialty_custom is set and regeneration never overwrites it.

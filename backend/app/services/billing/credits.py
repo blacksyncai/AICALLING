@@ -294,7 +294,8 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
     """Bill a finished call exactly once (CallUsage.call_id is unique). Caller commits.
 
     Phone calls: connected seconds × the model's rate (1.0 or 1.2 credits/min), plus the phone line fee
-    (PHONE_MINUTE_FEE credits per started minute, the way the carrier bills). Never-connected calls are free.
+    (PHONE_MINUTE_FEE credits per started minute, the way the carrier bills). Never-connected calls are free;
+    voicemails and calls shorter than min_ai_billable_seconds pay only the phone line fee.
     Browser tests: the account's free test minutes first, then seconds × the model's rate (no phone fee)."""
     from app.services.billing import settings_store
 
@@ -321,6 +322,10 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
     if not phone and seconds:
         free = min(seconds, await free_test_seconds_left(db, org))
     billable = seconds - free
+    # Voicemails and very short phone calls only cost the phone line, not AI time.
+    min_ai = int(await settings_store.get(db, "min_ai_billable_seconds") or 0)
+    if phone and (call.outcome == "voicemail" or seconds < min_ai):
+        billable = 0
     # Per second at the model's rate, kept to a thousandth of a credit: 66s at 1.0/min = 1.100 credits.
     ai_milli = round(billable * rate * 1000 / 60)
     fee_milli = 0

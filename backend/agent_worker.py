@@ -26,6 +26,7 @@ from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
+    StopResponse,
     WorkerOptions,
     cli,
     function_tool,
@@ -938,7 +939,65 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     session.on("metrics_collected", _on_metrics)
     channel = "phone" if call_type == "outbound" else "web"
-    agent = Agent(
+
+    # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
+    from app.agent.runtime import is_voicemail_greeting
+
+    vm = {"detected": False, "heard": "", "speaking": False, "changed": _time.monotonic()}
+    vm_action = (cfg.get("voicemail_action") or "hang_up")
+    vm_message = render_vars(cfg.get("voicemail_message") or "", variables).strip()
+
+    class _CallAgent(Agent):
+        async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+            if vm["detected"]:
+                raise StopResponse()  # don't talk back to a voicemail greeting
+
+    async def _handle_voicemail() -> None:
+        log.info("voicemail_detected", room=ctx.room.name, action=vm_action)
+        try:
+            session.interrupt(force=True)
+        except Exception:
+            pass
+        left = False
+        if vm_action == "leave_message" and vm_message:
+            # Wait for the greeting (and its beep) to finish: ~1.5 s of quiet, at most 30 s.
+            deadline = _time.monotonic() + 30
+            while _time.monotonic() < deadline:
+                if not vm["speaking"] and _time.monotonic() - vm["changed"] > 1.5:
+                    break
+                await asyncio.sleep(0.2)
+            try:
+                await session.say(vm_message, allow_interruptions=False).wait_for_playout()
+                left = True
+            except Exception as exc:
+                log.warning("voicemail_message_failed", error=str(exc))
+        run.transcript.append({"role": "tool", "tool": "voicemail",
+                               "args": {"action": "left_message" if left else "hung_up"},
+                               "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
+        run.outcome = "voicemail"
+        await _post_run_outcome(run, "voicemail")
+        await asyncio.sleep(0.5)
+        await _delete_room(ctx.room.name)
+
+    def _on_transcribed(ev) -> None:
+        if call_type != "outbound" or vm["detected"] or not getattr(ev, "is_final", False):
+            return
+        if run.t0 and _time.monotonic() - run.t0 > 45:
+            return  # only the opening of the call
+        vm["heard"] += " " + (getattr(ev, "transcript", "") or "")
+        if is_voicemail_greeting(vm["heard"]):
+            vm["detected"] = True
+            asyncio.create_task(_handle_voicemail())
+
+    def _on_user_state(ev) -> None:
+        vm["speaking"] = getattr(ev, "new_state", "") == "speaking"
+        vm["changed"] = _time.monotonic()
+
+    if call_type == "outbound" and vm_action != "ignore":
+        session.on("user_input_transcribed", _on_transcribed)
+        session.on("user_state_changed", _on_user_state)
+
+    agent = _CallAgent(
         instructions=build_instructions(cfg, variables, channel=channel),
         tools=_build_tools(cfg, run, ctx, session_ref, variables),
     )

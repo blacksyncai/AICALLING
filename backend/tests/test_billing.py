@@ -254,7 +254,9 @@ def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="compl
 
     asyncio.run(make())
     # Nobody spoke on a no-answer call (a contact who talks can't be "no answer").
-    transcript = [] if outcome == "no_answer" else [{"role": "user", "text": "hi"}]
+    transcript = ([] if outcome == "no_answer" else
+                  [{"role": "user", "text": "Please leave a message after the tone."}] if outcome == "voicemail" else
+                  [{"role": "user", "text": "hi"}])
     for _ in range(2):  # duplicate outcome reports must not double-bill
         client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": outcome, "transcript": transcript})
     return call_id
@@ -272,12 +274,12 @@ def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     assert _balance(c) == 8.04
     _finish_call(client, org["id"], agent["id"], 61)        # 1.22 + 0.16 = 1.38
     assert _balance(c) == 6.66
-    _finish_call(client, org["id"], agent["id"], 5)         # 0.1 + 0.08 = 0.18
-    assert _balance(c) == 6.48
-    _finish_call(client, org["id"], agent["id"], 600)       # owes 12.8, only 6.48 left → 0 (never negative)
+    _finish_call(client, org["id"], agent["id"], 5)         # under 10 s: phone line only = 0.08
+    assert _balance(c) == 6.58
+    _finish_call(client, org["id"], agent["id"], 600)       # owes 12.8, only 6.58 left → 0 (never negative)
     assert _balance(c) == 0
     ledger = c.get("/api/billing/credits").json()["ledger"]
-    assert [t["amount"] for t in ledger[1:4]] == [-0.18, -1.38, -1.96] and all(t["balance_after"] >= 0 for t in ledger)
+    assert [t["amount"] for t in ledger[1:4]] == [-0.08, -1.38, -1.96] and all(t["balance_after"] >= 0 for t in ledger)
 
     # Calls that never connect cost nothing, even with a stray duration.
     org2, c2 = _account(client, make_client, "No Answer Co", credits=5)
@@ -656,3 +658,13 @@ def test_browser_tests_free_minutes_then_billed(client, make_client):
     second = web(120)                     # 1 free minute left, 1 minute billed at the model rate, no phone fee
     assert second["credits_used"] == round(rate, 3)
     assert _balance(c) == round(10 - rate, 3)
+
+
+def test_voicemail_and_short_calls_pay_only_the_phone_line(client, make_client):
+    org, c = _account(client, make_client, "Voicemail Co", credits=10)
+    agent = c.get("/api/agents/").json()[0]
+    cid = _finish_call(client, org["id"], agent["id"], 40, outcome="voicemail")
+    assert c.get(f"/api/calls/{cid}").json()["credits_used"] == 0.08
+    cid = _finish_call(client, org["id"], agent["id"], 9)
+    assert c.get(f"/api/calls/{cid}").json()["credits_used"] == 0.08
+    assert _balance(c) == 9.84

@@ -376,6 +376,7 @@ class BillingSettingsIn(BaseModel):
     included_phone_numbers: int | None = Field(default=None, ge=0, le=100)
     phone_minute_fee: float | None = Field(default=None, ge=0, le=5)
     free_test_minutes: int | None = Field(default=None, ge=0, le=600)
+    min_ai_billable_seconds: int | None = Field(default=None, ge=0, le=120)
     auto_recharge_max_monthly_cents: int | None = Field(default=None, ge=0, le=10_000_000)
     reason: str = Field(default="Updated billing settings", max_length=500)
 

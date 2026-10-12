@@ -27,6 +27,7 @@ _EDITABLE = (
     "name", "description", "status", "system_prompt", "first_message", "knowledge_base",
     "language", "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio",
     "enable_booking", "calcom_event_type_id", "calendar_timezone", "transfer_number", "max_duration_seconds",
+    "voicemail_action", "voicemail_message",
     "extraction_fields", "success_criteria", "builder", "ai_disclosure", "caller_number", "record_calls",
 )
 
@@ -82,6 +83,8 @@ class AgentUpdate(BaseModel):
     calcom_api_key: str | None = Field(default=None, max_length=200)
     calendar_timezone: str | None = Field(default=None, max_length=64)
     transfer_number: str | None = None
+    voicemail_action: str | None = Field(default=None, pattern="^(hang_up|leave_message|ignore)$")
+    voicemail_message: str | None = Field(default=None, max_length=1000)
     max_duration_seconds: int | None = Field(default=None, ge=30, le=3600)
     extraction_fields: list[ExtractionField] | None = None
     success_criteria: str | None = None
@@ -126,6 +129,8 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         "extraction_fields": a.extraction_fields or [],
         "voice_tuning": a.voice_tuning or {},
         "calendar_timezone": a.calendar_timezone or "",
+        "voicemail_action": a.voicemail_action or "hang_up",
+        "voicemail_message": a.voicemail_message or "",
         "calcom_key_set": bool(a.calcom_api_key_enc),
         "ai_disclosure": a.ai_disclosure is not False,
         "caller_number": a.caller_number or "",

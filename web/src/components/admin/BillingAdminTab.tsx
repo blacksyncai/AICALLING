@@ -18,6 +18,7 @@ interface BillingSettings {
   included_phone_numbers: number;
   phone_minute_fee: number;
   free_test_minutes: number;
+  min_ai_billable_seconds?: number;
   auto_recharge_max_monthly_cents: number;
   stripe_ready: boolean;
   webhook_ready: boolean;
@@ -199,6 +200,7 @@ function PricingCard() {
         phones: String(data.included_phone_numbers),
         phoneFee: String(data.phone_minute_fee ?? 0.08),
         freeTest: String(data.free_test_minutes ?? 10),
+        minAi: String(data.min_ai_billable_seconds ?? 10),
         cap: String(Math.round(data.auto_recharge_max_monthly_cents / 100)),
         ...Object.fromEntries(Object.entries(data.model_credit_rates).map(([k, v]) => [`rate:${k}`, String(v)])),
       });
@@ -230,6 +232,7 @@ function PricingCard() {
         included_phone_numbers: Number(form.phones),
         phone_minute_fee: Number(form.phoneFee),
         free_test_minutes: Number(form.freeTest),
+        min_ai_billable_seconds: Number(form.minAi),
         auto_recharge_max_monthly_cents: Math.round(Number(form.cap) * 100),
         model_credit_rates: rates,
         reason: "Updated from admin portal",
@@ -272,6 +275,9 @@ function PricingCard() {
           </Field>
           <Field label="Free browser-test minutes per account" hint="After these, tests use credits at the model rate.">
             <Input inputMode="numeric" value={form.freeTest} onChange={(e) => set("freeTest", e.target.value.replace(/\D/g, ""))} />
+          </Field>
+          <Field label="No AI charge under (seconds)" hint="Phone calls shorter than this, and voicemails, pay only the phone line fee.">
+            <Input inputMode="numeric" value={form.minAi} onChange={(e) => set("minAi", e.target.value.replace(/\D/g, ""))} />
           </Field>
           <Field label="Auto-recharge monthly cap ($)">
             <Input inputMode="numeric" value={form.cap} onChange={(e) => set("cap", e.target.value.replace(/\D/g, ""))} />

@@ -28,6 +28,8 @@ export interface Agent {
   calcom_api_key?: string;
   calcom_key_set?: boolean;
   calendar_timezone?: string;
+  voicemail_action?: "hang_up" | "leave_message" | "ignore";
+  voicemail_message?: string;
   transfer_number: string;
   max_duration_seconds: number;
   extraction_fields: ExtractionField[];

@@ -32,6 +32,8 @@ DEFAULTS: dict = {
     "self_serve_numbers": False,
     # Phone line (Twilio) fee: credits per started minute of a connected phone call, on top of the AI rate.
     "phone_minute_fee": 0.08,
+    # Phone calls shorter than this (and voicemails) aren't charged AI time — only the phone line fee.
+    "min_ai_billable_seconds": 10,
     # Browser test minutes each account gets free; after that tests use credits at the AI rate (no phone fee).
     "free_test_minutes": 10,
     # Free calling credits for a self-serve signup (no card).
