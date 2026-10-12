@@ -122,7 +122,8 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
                 await p.mark_dnc(http, conn.config or {}, ref)
             except CrmError as exc:
                 log.warning("crm_mark_dnc_failed", provider=conn.provider, error=str(exc))
-        moved = await _move_stage(db, conn, p, http, ref, call, c)
+        moved = await _move_installed_deal(db, conn, p, http, lead, call.outcome) or \
+            await _move_stage(db, conn, p, http, ref, call, c)
         if lead and (lead.crm_refs or {}).get(conn.provider) != ref:
             lead.crm_refs = {**(lead.crm_refs or {}), conn.provider: ref}
         await add_log(db, conn, "call", "ok", f"Logged {call.outcome_label.lower()} call with {c.name or c.phone}."
@@ -247,6 +248,183 @@ async def import_contacts(db, conn: CrmConnection, limit: int = 500, filters: di
             "do_not_call_new": dnc_new, "skipped_contacted": counts["skipped_contacted"]}
 
 
+# ── BlackSync pipeline inside the CRM (drag a card into the queue → the agent calls) ──
+
+BLACKSYNC_STAGES = [
+    {"key": "queued", "label": "Queued for AI call", "kind": "active"},
+    {"key": "calling", "label": "AI calling", "kind": "active"},
+    {"key": "no_answer", "label": "No answer (AI will retry)", "kind": "active"},
+    {"key": "voicemail", "label": "Voicemail left", "kind": "active"},
+    {"key": "follow_up", "label": "Talked - needs follow-up", "kind": "active"},
+    {"key": "booked", "label": "Meeting booked by AI", "kind": "active"},
+    {"key": "not_interested", "label": "Not interested", "kind": "lost"},
+    {"key": "dnc", "label": "Do not call", "kind": "lost"},
+]
+OUTCOME_TO_KEY = {
+    "meeting_booked": "booked", "interested": "follow_up", "qualified": "follow_up", "callback": "follow_up",
+    "completed": "follow_up", "transferred": "follow_up", "voicemail": "voicemail", "no_answer": "no_answer",
+    "failed": "no_answer", "not_interested": "not_interested", "not_qualified": "not_interested",
+    "wrong_number": "not_interested", "do_not_call": "dnc",
+}
+QUEUE_BATCH = 5
+MAX_TRIES = 3
+RETRY_AFTER = dt.timedelta(hours=4)
+
+
+def _installs(conn: CrmConnection) -> list[dict]:
+    return list((conn.settings or {}).get("installs") or [])
+
+
+def _stage(install: dict, key: str) -> str | None:
+    return next((st["id"] for st in install["pipeline"]["stages"] if st.get("key") == key), None)
+
+
+async def install_pipeline(db, conn: CrmConnection, agent: Agent) -> dict:
+    p, http = http_for(conn)
+    if not p.can_install:
+        raise CrmError(f"{p.name} doesn't support a BlackSync pipeline yet.")
+    pipe = await p.install_pipeline(http, conn.config or {}, f"BlackSync AI · {agent.name}"[:60], BLACKSYNC_STAGES)
+    installs = [i for i in _installs(conn) if i.get("agent_id") != str(agent.id)]
+    installs.append({"agent_id": str(agent.id), "agent_name": agent.name, "pipeline": pipe})
+    conn.settings = {**(conn.settings or {}), "installs": installs}
+    await add_log(db, conn, "test", "ok", f"Created the “{pipe['name']}” pipeline in {p.name}. Drag a card into "
+                  f"“Queued for AI call” and {agent.name} calls them.")
+    return pipe
+
+
+async def remove_install(db, conn: CrmConnection, agent_id: str) -> None:
+    conn.settings = {**(conn.settings or {}), "installs": [i for i in _installs(conn) if i.get("agent_id") != agent_id]}
+
+
+async def refresh_context(db, conn: CrmConnection, lead: Lead) -> None:
+    """Pull the CRM's notes/last touches for a contact into {{crm_context}} for the agent."""
+    ref = (lead.crm_refs or {}).get(conn.provider)
+    if not ref:
+        return
+    p, http = http_for(conn)
+    text = await p.context(http, conn.config or {}, ref)
+    if text:
+        lead.custom_fields = {**(lead.custom_fields or {}), "crm_context": text,
+                              "crm_context_at": dt.datetime.now(UTC).isoformat()}
+
+
+async def ensure_context(db, lead: Lead, max_age: dt.timedelta = dt.timedelta(hours=12)) -> None:
+    """Before a call: refresh {{crm_context}} for a CRM-linked contact if it's missing or stale."""
+    refs = lead.crm_refs or {}
+    if not refs or not lead.org_id:
+        return
+    at = (lead.custom_fields or {}).get("crm_context_at")
+    if at:
+        try:
+            if dt.datetime.now(UTC) - dt.datetime.fromisoformat(at) < max_age:
+                return
+        except ValueError:
+            pass
+    conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == lead.org_id,
+                                                         CrmConnection.provider.in_(list(refs))))).scalars().all()
+    for conn in conns:
+        try:
+            await asyncio.wait_for(refresh_context(db, conn, lead), timeout=4)
+        except (CrmError, asyncio.TimeoutError) as exc:
+            log.info("crm_context_skipped", provider=conn.provider, error=str(exc))
+
+
+async def process_queue(db, conn: CrmConnection, now: dt.datetime | None = None) -> int:
+    """Dial cards waiting in each BlackSync pipeline's queue stage. Returns calls started."""
+    now = now or dt.datetime.now(UTC)
+    installs = _installs(conn)
+    if not installs:
+        return 0
+    org = await db.get(Organization, conn.org_id)
+    if not _in_hours(org, now):
+        return 0
+    p, http = http_for(conn)
+    started = 0
+    skipped = set((conn.settings or {}).get("queue_skipped") or [])
+    for inst in installs:
+        agent = await db.get(Agent, uuid.UUID(inst["agent_id"]))
+        queue_id, calling_id = _stage(inst, "queued"), _stage(inst, "calling")
+        if not agent or agent.org_id != conn.org_id or not queue_id:
+            continue
+        # Retry no-answers: back into the queue after RETRY_AFTER, up to MAX_TRIES calls in total.
+        no_answer_id = _stage(inst, "no_answer")
+        if no_answer_id:
+            try:
+                for it in await p.queued(http, conn.config or {}, no_answer_id, limit=25):
+                    c0 = it.get("contact")
+                    if not c0:
+                        continue
+                    lead0 = (await db.execute(select(Lead).where(Lead.org_id == conn.org_id,
+                                                                 Lead.phone == normalize_phone(c0.phone)))).scalars().first()
+                    tries = int(((lead0.custom_fields or {}) if lead0 else {}).get("bs_tries") or 0)
+                    last = lead0.last_called_at if lead0 else None
+                    if last and last.tzinfo is None:
+                        last = last.replace(tzinfo=UTC)
+                    if lead0 and tries < MAX_TRIES and (not last or now - last >= RETRY_AFTER):
+                        await p.move_deal(http, conn.config or {}, it["deal_id"], queue_id)
+            except CrmError as exc:
+                log.warning("blacksync_retry_failed", error=str(exc))
+        try:
+            items = await p.queued(http, conn.config or {}, queue_id, limit=QUEUE_BATCH + len(skipped))
+        except CrmError as exc:
+            await add_log(db, conn, "new_lead", "error", f"Couldn't read the {inst['pipeline']['name']} queue: {exc}")
+            continue
+        for it in items:
+            if it["deal_id"] in skipped or started >= QUEUE_BATCH:
+                continue
+            c: Contact | None = it.get("contact")
+            if not c or len(normalize_phone(c.phone)) < 8:
+                skipped.add(it["deal_id"])
+                await add_log(db, conn, "new_lead", "error", f"Skipped a queued card in {inst['pipeline']['name']}: no phone number.")
+                continue
+            created, _ = await save_contacts(db, conn, [c], "BlackSync pipeline")
+            lead = created[0] if created else (await db.execute(select(Lead).where(
+                Lead.org_id == conn.org_id, Lead.phone == normalize_phone(c.phone)))).scalars().first()
+            if lead is None:
+                continue
+            tries = int((lead.custom_fields or {}).get("bs_tries") or 0) if (lead.custom_fields or {}).get("bs_deal") == it["deal_id"] else 0
+            lead.custom_fields = {**(lead.custom_fields or {}), "bs_deal": it["deal_id"], "bs_install": inst["pipeline"]["id"],
+                                  "bs_tries": tries + 1}
+            if lead.do_not_call:
+                await p.move_deal(http, conn.config or {}, it["deal_id"], _stage(inst, "dnc"))
+                await add_log(db, conn, "new_lead", "ok", f"{lead.name} is on the do-not-call list — moved to Do not call.")
+                continue
+            try:
+                await refresh_context(db, conn, lead)
+            except CrmError:
+                pass
+            await db.flush()
+            try:
+                await _call_lead(db, conn, agent, lead)
+            except Exception as exc:  # credits, phone setup… leave it queued and say why once
+                skipped.add(it["deal_id"])
+                await add_log(db, conn, "new_lead", "error", f"Couldn't call {lead.name} from the queue: {exc}")
+                continue
+            if calling_id:
+                await p.move_deal(http, conn.config or {}, it["deal_id"], calling_id)
+            started += 1
+            await add_log(db, conn, "new_lead", "ok", f"{agent.name} is calling {lead.name} (queued in {inst['pipeline']['name']}).",
+                          external_id=it["deal_id"])
+    conn.settings = {**(conn.settings or {}), "queue_skipped": list(skipped)[-200:]}
+    return started
+
+
+async def _move_installed_deal(db, conn: CrmConnection, p: Provider, http, lead: Lead | None, outcome: str) -> str | None:
+    """After a call from a BlackSync pipeline, move its card to the stage for the result."""
+    cf = (lead.custom_fields or {}) if lead else {}
+    inst = next((i for i in _installs(conn) if i["pipeline"]["id"] == cf.get("bs_install")), None)
+    if not inst or not cf.get("bs_deal"):
+        return None
+    key = OUTCOME_TO_KEY.get(outcome or "", "follow_up")
+    target = _stage(inst, key)
+    current = await p.deal_stage(http, conn.config or {}, cf["bs_deal"])
+    ids = {st["id"] for st in inst["pipeline"]["stages"]}
+    if not target or current not in ids or current == target:
+        return None  # someone moved it out of the BlackSync pipeline — leave it alone
+    await p.move_deal(http, conn.config or {}, cf["bs_deal"], target)
+    return f"Card moved to {next(st['label'] for st in inst['pipeline']['stages'] if st['id'] == target)}"
+
+
 # ── Speed to lead ─────────────────────────────────────────────────────────────
 
 
@@ -315,13 +493,14 @@ async def poll_once() -> None:
 
     async with AsyncSessionLocal() as db:
         conns = (await db.execute(select(CrmConnection))).scalars().all()
-        ids = [c.id for c in conns if (c.settings or {}).get("speed_to_lead_agent_id")]
+        ids = [c.id for c in conns if (c.settings or {}).get("speed_to_lead_agent_id") or (c.settings or {}).get("installs")]
     for cid in ids:
         async with AsyncSessionLocal() as db:
             conn = await db.get(CrmConnection, cid)
             if conn:
                 try:
                     await check_new_leads(db, conn)
+                    await process_queue(db, conn)
                     await db.commit()
                 except Exception as exc:
                     await db.rollback()

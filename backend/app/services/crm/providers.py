@@ -196,6 +196,28 @@ class Provider:
         """Move the contact's deal in `pipeline` to `stage_id`. Returns what happened, or None if nothing changed."""
         return None
 
+    # BlackSync pipeline inside the CRM: drag a card into the queue stage and the agent calls them.
+    can_install = False
+
+    async def install_pipeline(self, http: BaseHttp, config: dict, name: str, stages: list[dict]) -> dict:
+        """Create (or reuse, by name) a pipeline with these stages [{key, label, kind}]. Returns the pipeline
+        snapshot with each stage's CRM id and its BlackSync key."""
+        raise CrmError(f"{self.name} doesn't support a BlackSync pipeline yet.")
+
+    async def queued(self, http: BaseHttp, config: dict, stage_id: str, limit: int = 10) -> list[dict]:
+        """Deals waiting in a stage: [{deal_id, external_id (contact/lead), contact: Contact}]."""
+        return []
+
+    async def move_deal(self, http: BaseHttp, config: dict, deal_id: str, stage_id: str) -> None:
+        return None
+
+    async def deal_stage(self, http: BaseHttp, config: dict, deal_id: str) -> str | None:
+        return None
+
+    async def context(self, http: BaseHttp, config: dict, external_id: str) -> str:
+        """What the CRM knows about this contact, condensed for the agent (notes, last touches, stage)."""
+        return ""
+
 
 # ── Close ─────────────────────────────────────────────────────────────────────
 
@@ -262,6 +284,78 @@ class Close(Provider):
         await http.request("POST", "/v1/opportunity/", json={"lead_id": external_id, "status_id": stage_id,
                                                               "note": "Created by BlackSync AI after a call."})
         return f"Opportunity created in {label}"
+
+    can_install = True
+
+    async def install_pipeline(self, http, config, name, stages):
+        pipes = (await http.request("GET", "/v1/pipeline/")).get("data") or []
+        pipe = next((p for p in pipes if (p.get("name") or "").strip().lower() == name.strip().lower()), None)
+        if pipe is None:
+            pipe = await http.request("POST", "/v1/pipeline/", json={"name": name})
+            pipe["statuses"] = []
+        have = {(st.get("label") or "").lower(): st for st in pipe.get("statuses") or []}
+        out = []
+        for st in stages:
+            found = have.get(st["label"].lower())
+            if not found:
+                found = await http.request("POST", "/v1/status/opportunity/", json={
+                    "label": st["label"], "type": st.get("kind", "active"), "pipeline_id": pipe["id"]})
+            out.append({"id": found["id"], "label": st["label"], "kind": st.get("kind", "active"), "key": st["key"]})
+        return {"id": pipe["id"], "name": name, "stages": out}
+
+    async def queued(self, http, config, stage_id, limit=10):
+        opps = (await http.request("GET", "/v1/opportunity/", params={
+            "status_id": stage_id, "_limit": limit, "_fields": "id,lead_id,contact_id"})).get("data") or []
+        out = []
+        for o in opps:
+            if not o.get("lead_id"):
+                continue
+            lead = await http.request("GET", f"/v1/lead/{o['lead_id']}/", params={"_fields": ",".join(self._LEAD_FIELDS)})
+            with_phone = [ct for ct in lead.get("contacts") or [] if ct.get("phones")]
+            ct = next((x for x in with_phone if x.get("id") == o.get("contact_id")), None) or (with_phone[0] if with_phone else None)
+            pick = None
+            if ct:
+                emails = [e.get("email") for e in ct.get("emails") or [] if e.get("email")]
+                pick = Contact(ct.get("name") or lead.get("display_name", ""), ct["phones"][0]["phone"], (emails or [""])[0],
+                               lead.get("display_name", ""), lead["id"], stage=lead.get("status_label") or "")
+            out.append({"deal_id": o["id"], "external_id": o["lead_id"], "contact": pick})
+        return out
+
+    async def move_deal(self, http, config, deal_id, stage_id):
+        await http.request("PUT", f"/v1/opportunity/{deal_id}/", json={"status_id": stage_id})
+
+    async def deal_stage(self, http, config, deal_id):
+        return (await http.request("GET", f"/v1/opportunity/{deal_id}/", params={"_fields": "status_id"})).get("status_id")
+
+    async def context(self, http, config, external_id):
+        parts: list[str] = []
+        try:
+            lead = await http.request("GET", f"/v1/lead/{external_id}/",
+                                      params={"_fields": "display_name,description,status_label,opportunities"})
+        except CrmError:
+            return ""
+        if lead.get("status_label"):
+            parts.append(f"Lead status: {lead['status_label']}.")
+        for o in (lead.get("opportunities") or [])[:2]:
+            parts.append(f"Opportunity: {o.get('status_label') or ''}" + (f" — {o['note']}" if o.get("note") else "") + ".")
+        if lead.get("description"):
+            parts.append(lead["description"].strip())
+        try:
+            notes = (await http.request("GET", "/v1/activity/note/", params={"lead_id": external_id, "_limit": 3})).get("data") or []
+            for n in notes:
+                text = (n.get("note") or "").replace("**", "").strip()
+                if text:
+                    parts.append(f"Note ({(n.get('date_created') or '')[:10]}): {text}")
+            calls = (await http.request("GET", "/v1/activity/call/", params={"lead_id": external_id, "_limit": 3})).get("data") or []
+            for c in calls:
+                when = (c.get("date_created") or "")[:10]
+                disp = c.get("disposition") or c.get("status") or "call"
+                parts.append(f"Earlier call {when}: {disp.replace('-', ' ')}"
+                             + (f", {int(c['duration'])}s" if c.get("duration") else "")
+                             + (f" — {c['note'][:200]}" if c.get("note") else "") + ".")
+        except CrmError:
+            pass
+        return "\n".join(parts)[:1500]
 
     async def log_call(self, http, config, external_id, call):
         body = {"lead_id": external_id, "direction": "outbound", "status": "completed",

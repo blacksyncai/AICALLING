@@ -334,3 +334,79 @@ def test_close_pipeline_sync_moves_and_creates_opportunities(client, http_mock):
     acts = client.get("/api/integrations/crm/close/activity").json()["items"]
     assert any("Opportunity created in Voicemail Left" in a["message"] for a in acts)
     client.delete("/api/integrations/crm/close")
+
+
+def test_blacksync_pipeline_install_queue_and_card_moves(client, http_mock, monkeypatch):
+    state, calls = http_mock
+    created_status = iter(f"st_{i}" for i in range(20))
+
+    def mk_status(req_body):
+        return {"id": next(created_status)}
+
+    state["responses"] = {
+        **RESPONSES["close"],
+        ("GET", "/v1/pipeline/"): {"data": []},
+        ("POST", "/v1/pipeline/"): {"id": "pipe_bs", "name": "BlackSync AI · Ann"},
+        ("POST", "/v1/status/opportunity/"): {"id": "st_x"},
+    }
+    assert client.post("/api/integrations/crm/close/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    agent = client.post("/api/agents/", json={"template": "blank", "name": "Ann"}).json()
+
+    # Each created stage gets its own id.
+    orig = BaseHttp.client_factory
+
+    def factory():
+        def handler(request):
+            if request.method == "POST" and request.url.path.endswith("/v1/status/opportunity/"):
+                calls.append((request.method, request.url.path, request))
+                return httpx.Response(200, json=mk_status(request))
+            return mock(state["responses"], calls)(request)
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(BaseHttp, "client_factory", staticmethod(factory))
+    r = client.post("/api/integrations/crm/close/install", json={"agent_id": agent["id"]})
+    assert r.status_code == 200, r.text
+    inst = r.json()["installs"][0]
+    assert inst["agent_name"] == "Ann" and inst["stages"][0] == "Queued for AI call" and len(inst["stages"]) == 8
+    stage_posts = [json.loads(c[2].content) for c in calls if c[1].endswith("/v1/status/opportunity/")]
+    assert stage_posts[0]["pipeline_id"] == "pipe_bs" and stage_posts[-1]["type"] == "lost"
+
+    # A card dragged into "Queued for AI call" (st_0) is called and moved to "AI calling" (st_1).
+    state["responses"].update({
+        ("GET", "/v1/opportunity/"): {"data": [{"id": "oppo_q", "lead_id": "lead_q", "contact_id": "cont_q"}]},
+        ("GET", "/v1/lead/lead_q/"): {"id": "lead_q", "display_name": "Davis Group", "status_label": "Potential",
+                                      "description": "67 sales last year. Decision maker: Katie.",
+                                      "contacts": [{"id": "cont_q", "name": "Katie Davis", "phones": [{"phone": "+14155554001"}]}]},
+        ("GET", "/v1/activity/note/"): {"data": [{"note": "Wants database reactivation", "date_created": "2026-09-11"}]},
+        ("GET", "/v1/activity/call/"): {"data": [{"disposition": "no-answer", "date_created": "2026-09-28"}]},
+        ("PUT", "/v1/opportunity/oppo_q/"): {},
+        ("GET", "/v1/opportunity/oppo_q/"): {"status_id": "st_1"},
+    })
+    dialed = []
+
+    async def fake_call(db, conn, agent_, lead):
+        dialed.append((agent_.name, lead.phone, (lead.custom_fields or {}).get("crm_context", "")))
+        return "c"
+
+    monkeypatch.setattr(sync, "_call_lead", fake_call)
+    monkeypatch.setattr(sync, "_in_hours", lambda org, now: True)
+    asyncio.run(sync.poll_once())
+    assert dialed and dialed[0][0] == "Ann" and dialed[0][1] == "+14155554001"
+    assert "67 sales" in dialed[0][2] and "no answer" in dialed[0][2]
+    moves = [json.loads(c[2].content) for c in calls if c[0] == "PUT" and c[1].endswith("/oppo_q/")]
+    assert moves[-1] == {"status_id": "st_1"}
+
+    # The call result moves the card: meeting booked → "Meeting booked by AI" (st_5).
+    lead = next(l for l in client.get("/api/contacts?q=4155554001").json().get("items", []))
+    org_id = client.get("/api/auth/me").json()["org"]["id"]
+    asyncio.run(sync.push_call(uuid.UUID(org_id), {"call_id": str(uuid.uuid4()), "outcome": "meeting_booked",
+                "duration_seconds": 90, "to_phone": "+14155554001",
+                "contact": {"id": lead["id"], "name": "Katie Davis", "phone": "+14155554001"}}))
+    moves = [json.loads(c[2].content) for c in calls if c[0] == "PUT" and c[1].endswith("/oppo_q/")]
+    assert moves[-1] == {"status_id": "st_5"}
+
+    # The agent's prompt gets the CRM context (without the raw field names).
+    from app.agent.runtime import build_instructions
+    prompt = build_instructions({"system_prompt": "Hi"}, {"name": "Katie", "crm_context": "67 sales last year", "bs_deal": "x"})
+    assert "WHAT THE CRM SAYS" in prompt and "67 sales" in prompt and "bs_deal" not in prompt
+    client.delete("/api/integrations/crm/close")

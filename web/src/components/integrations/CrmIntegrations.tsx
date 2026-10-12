@@ -28,6 +28,7 @@ interface Provider {
   docs_url: string;
   /** "opportunity" / "deal" / "stage" when the CRM has pipelines to sync; "" otherwise. */
   pipeline_noun: string;
+  can_install: boolean;
   fields: ProviderField[];
 }
 interface Connection {
@@ -41,6 +42,7 @@ interface Connection {
   pending_calls: number;
   config: Record<string, string>;
   pipeline: { id: string; name: string; mapped: number } | null;
+  installs: { agent_id: string; agent_name: string; pipeline_id: string; pipeline_name: string; stages: string[] }[];
 }
 interface Overview {
   providers: Provider[];
@@ -364,6 +366,8 @@ function ConnectedRow({
             />
           </div>
 
+          {p.can_install && <BlackSyncPipelines p={p} c={c} agents={agents} onChange={onChange} />}
+
           {p.pipeline_noun && <PipelineSync p={p} c={c} onSaved={onChange} />}
 
           {p.can_new_leads && (
@@ -577,6 +581,104 @@ function PipelineSync({ p, c, onSaved }: { p: Provider; c: Connection; onSaved: 
           {c.pipeline ? "Save mapping" : "Turn on pipeline sync"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** "BlackSync AI · <agent>" pipelines inside the CRM: drag a card into the queue stage and the agent calls. */
+function BlackSyncPipelines({
+  p, c, agents, onChange,
+}: {
+  p: Provider; c: Connection; agents: { id: string; name: string }[]; onChange: () => void;
+}) {
+  const [agentId, setAgentId] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ tone: "green" | "red"; text: string } | null>(null);
+  const installed = new Set(c.installs.map((i) => i.agent_id));
+  const free = agents.filter((a) => !installed.has(a.id));
+
+  const install = async () => {
+    if (!agentId) return;
+    setBusy("install");
+    setMsg(null);
+    try {
+      await post(`/api/integrations/crm/${p.key}/install`, { agent_id: agentId });
+      const name = agents.find((a) => a.id === agentId)?.name ?? "your agent";
+      setMsg({ tone: "green", text: `Done — open ${p.name}, find the “BlackSync AI · ${name}” pipeline and drag anyone into “Queued for AI call”.` });
+      setAgentId("");
+      onChange();
+    } catch (e) {
+      setMsg({ tone: "red", text: errText(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const remove = async (id: string) => {
+    setBusy(id);
+    try {
+      await del(`/api/integrations/crm/${p.key}/install/${id}`);
+      onChange();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4 rounded-xl bg-zinc-950 p-4 text-white ring-1 ring-white/10 bg-[radial-gradient(420px_200px_at_0%_0%,rgba(249,115,22,0.18),transparent_70%)]">
+      <div>
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Zap className="h-4 w-4 text-brand-400" /> Call straight from your {p.name} pipeline
+        </div>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+          We create a <span className="text-zinc-200">BlackSync AI</span> pipeline in {p.name} for an agent. Drag any lead into
+          {" "}<span className="text-zinc-200">Queued for AI call</span> and the agent calls them within a minute, already knowing their notes and
+          history. The card then moves itself: Voicemail left, Talked, Meeting booked… No answers are retried up to 3 times.
+        </p>
+      </div>
+
+      {c.installs.map((i) => (
+        <div key={i.agent_id} className="rounded-lg bg-white/[0.04] p-3 ring-1 ring-white/10">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">{i.pipeline_name}</div>
+              <div className="text-xs text-zinc-400">Calls with {i.agent_name}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void remove(i.agent_id)}
+              disabled={busy === i.agent_id}
+              className="shrink-0 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-white/10 hover:text-white"
+            >
+              Stop watching
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            {i.stages.map((st, n) => (
+              <span key={st} className="flex items-center gap-1 text-[11px]">
+                <span className={cn("rounded-full px-2 py-0.5", n === 0 ? "bg-brand-500 text-white" : "bg-white/[0.06] text-zinc-300")}>{st}</span>
+                {n < i.stages.length - 1 && <span className="text-zinc-600">›</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {free.length > 0 && (
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="sm:flex-1" aria-label="Agent for the pipeline">
+            <option value="">{c.installs.length ? "Add a pipeline for another agent…" : "Pick the agent that should call…"}</option>
+            {free.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+          <Button variant="primary" loading={busy === "install"} disabled={!agentId} onClick={() => void install()}>
+            Create pipeline in {p.name}
+          </Button>
+        </div>
+      )}
+      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );
 }

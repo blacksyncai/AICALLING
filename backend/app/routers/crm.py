@@ -72,6 +72,9 @@ def conn_to_dict(c: CrmConnection) -> dict:
         "last_error": c.last_error, "last_synced_at": _iso(c.last_synced_at), "created_at": _iso(c.created_at),
         "settings": {k: s[k] for k in ("log_calls", "create_contacts", "only_connected", "speed_to_lead_agent_id")},
         "pending_calls": len(s.get("pending") or []),
+        "installs": [{"agent_id": i["agent_id"], "agent_name": i.get("agent_name", ""), "pipeline_id": i["pipeline"]["id"],
+                      "pipeline_name": i["pipeline"]["name"], "stages": [st["label"] for st in i["pipeline"]["stages"]]}
+                     for i in s.get("installs") or []],
         "pipeline": ({"id": s["pipeline"]["id"], "name": (s["pipeline"].get("snapshot") or {}).get("name", ""),
                       "mapped": len(s["pipeline"].get("map") or {})} if s.get("pipeline") else None),
         # Non-secret details only.
@@ -100,7 +103,7 @@ async def overview(ctx: ManagerDep, db: DbDep):
         "key": p.key, "name": p.name, "category": p.category, "description": p.description,
         "native": p.native, "oauth": any(n in nango_providers for n in p.nango_providers),
         "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
-        "pipeline_noun": p.pipeline_noun,
+        "pipeline_noun": p.pipeline_noun, "can_install": p.can_install,
         "fields": [{"name": f.name, "label": f.label, "secret": f.secret, "placeholder": f.placeholder, "help": f.help}
                    for f in p.auth_fields],
     } for p in PROVIDERS.values()]
@@ -251,6 +254,37 @@ async def save_pipeline_sync(key: str, body: PipelineSyncIn, ctx: ManagerDep, db
                          "snapshot": pipe}
         await sync.add_log(db, conn, "test", "ok", f"Pipeline sync set to {pipe['name']} ({len(mapping)} results mapped).")
     conn.settings = s
+    await db.commit()
+    await db.refresh(conn)
+    return conn_to_dict(conn)
+
+
+class InstallIn(BaseModel):
+    agent_id: uuid.UUID
+
+
+@router.post("/{key}/install")
+async def install(key: str, body: InstallIn, ctx: ManagerDep, db: DbDep):
+    """Create a "BlackSync AI · <agent>" pipeline in the CRM. Cards dragged into its queue stage get called."""
+    conn = await _require_conn(db, ctx.org.id, key)
+    agent = await db.get(Agent, body.agent_id)
+    if not agent or agent.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        await sync.install_pipeline(db, conn, agent)
+    except CrmError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Couldn't create the pipeline: {exc}") from exc
+    await db.commit()
+    await db.refresh(conn)
+    return conn_to_dict(conn)
+
+
+@router.delete("/{key}/install/{agent_id}")
+async def uninstall(key: str, agent_id: str, ctx: ManagerDep, db: DbDep):
+    """Stop watching that pipeline (it stays in the CRM so nothing is lost)."""
+    conn = await _require_conn(db, ctx.org.id, key)
+    await sync.remove_install(db, conn, agent_id)
     await db.commit()
     await db.refresh(conn)
     return conn_to_dict(conn)

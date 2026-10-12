@@ -81,9 +81,18 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
             f"you're an AI assistant for {company}. Never claim to be human."
         )
 
-    ctx_lines = [f"- {k}: {v}" for k, v in (variables or {}).items() if v not in (None, "")]
+    hidden = {"crm_context", "crm_context_at", "bs_deal", "bs_install", "bs_tries"}
+    ctx_lines = [f"- {k}: {v}" for k, v in (variables or {}).items() if v not in (None, "") and k not in hidden]
     if ctx_lines:
         parts.append("# CONTACT CONTEXT\n" + "\n".join(ctx_lines))
+    crm = str((variables or {}).get("crm_context") or "").strip()
+    if crm:
+        parts.append(
+            "# WHAT THE CRM SAYS ABOUT THIS CONTACT\n"
+            "Internal notes and history from the team's CRM. Use them to sound informed and personal "
+            "(reference their business, past conversations or why you're calling back) but never read notes "
+            "out loud, quote them, or mention a CRM, notes or research. If something here conflicts with "
+            "what the contact says, trust the contact.\n" + crm[:1500])
 
     tools = ["- end_call(outcome): hangs up. Say your goodbye in the same reply, then call it. "
              "Pick the outcome that best describes the call."]

@@ -245,6 +245,12 @@ class CallService:
             )
         if lead is not None and lead.do_not_call:
             raise CallSetupError("This contact is on the do-not-call list.")
+        if lead is not None and lead.crm_refs:
+            from app.services.crm.sync import ensure_context
+            try:
+                await ensure_context(db, lead)  # the agent knows the CRM's notes and history
+            except Exception as exc:
+                log.info("crm_context_failed", error=str(exc))
         phone = validate_e164(to_phone or (lead.phone if lead else ""))
         campaign_id = campaign_id or (lead.campaign_id if lead else None)
 
