@@ -474,3 +474,43 @@ def test_radar_scan_and_launch_campaign(client, http_mock):
     r = client.post(f"/api/radar/scans/{scan['id']}/launch", json={"play": "unreached", "agent_id": agent["id"], "mode": "pipeline"})
     assert r.status_code == 400 and "pipeline" in r.json()["detail"]
     client.delete("/api/integrations/crm/close")
+
+
+def test_fub_follows_next_link_and_radar_scans(monkeypatch):
+    seen = []
+
+    def handler(request: httpx.Request):
+        q = dict(request.url.params)
+        seen.append((request.url.path, q))
+        if "offset" in q and int(q["offset"]) >= 100:
+            return httpx.Response(400, json={"errorMessage": "Deep pagination disabled, use 'nextLink' url"})
+        path = request.url.path
+        if path == "/v1/people":
+            if q.get("next") == "p2":
+                return httpx.Response(200, json={"people": [{"id": 200, "name": "Page Two", "phones": [{"value": "+14155557200"}],
+                                                             "created": "2026-01-01T00:00:00Z", "stage": "Lead"}], "_metadata": {}})
+            people = [{"id": i, "name": f"P{i}", "phones": [{"value": f"+1415555{7000 + i}"}], "stage": "Lead",
+                       "created": "2026-09-01T00:00:00Z"} for i in range(100)]
+            return httpx.Response(200, json={"people": people,
+                                             "_metadata": {"nextLink": "https://api.followupboss.com/v1/people?next=p2&limit=100"}})
+        if path == "/v1/events":
+            return httpx.Response(200, json={"events": [{"personId": 5, "type": "Viewed Property",
+                                                         "created": dt.datetime.now(dt.timezone.utc).isoformat(),
+                                                         "property": {"street": "12 Oak St"}}], "_metadata": {}})
+        if path == "/v1/calls":
+            return httpx.Response(200, json={"calls": [], "_metadata": {}})
+        return httpx.Response(404, json={})
+
+    monkeypatch.setattr(BaseHttp, "client_factory",
+                        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    p = PROVIDERS["followupboss"]
+    http = p.native_http("k", {})
+    from app.services.crm.radar import build_plays
+
+    signals = asyncio.run(p.scan_signals(http, {}))
+    assert len(signals) == 101 and any(s.name == "Page Two" for s in signals)
+    assert not any("offset" in q for _, q in seen)
+    plays = {pl["key"]: pl for pl in build_plays(signals)["plays"]}
+    assert plays["hot"]["count"] == 1 and "12 Oak St" in plays["hot"]["items"][0]["reason"]
+    contacts = asyncio.run(p.list_contacts(http, {}, limit=500))
+    assert len(contacts) == 101

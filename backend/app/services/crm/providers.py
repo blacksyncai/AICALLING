@@ -609,6 +609,17 @@ class Close(Provider):
 
 # ── Follow Up Boss ────────────────────────────────────────────────────────────
 
+
+def _fub_next(page: dict) -> tuple[str, dict] | None:
+    """FUB disables deep offset paging; each page carries a nextLink to follow instead."""
+    from urllib.parse import parse_qsl, urlparse
+
+    link = ((page.get("_metadata") or {}).get("nextLink") or "").strip()
+    if not link:
+        return None
+    u = urlparse(link)
+    return u.path, dict(parse_qsl(u.query))
+
 _FUB_OUTCOMES = {"meeting_booked": "Interested", "interested": "Interested", "callback": "Interested",
                  "not_interested": "Not Interested", "no_answer": "No Answer", "voicemail": "Left Message",
                  "wrong_number": "Bad Number", "failed": "No Answer"}
@@ -672,14 +683,13 @@ class FollowUpBoss(Provider):
     can_scan = True
 
     async def _pages(self, http, path: str, key: str, cap: int, params: dict) -> list[dict]:
-        out, offset = [], 0
-        while len(out) < cap:
-            page = await http.request("GET", path, params={**params, "limit": 100, "offset": offset})
+        out: list[dict] = []
+        req: tuple[str, dict] | None = (path, {**params, "limit": 100})
+        while req and len(out) < cap:
+            page = await http.request("GET", req[0], params=req[1])
             rows = page.get(key) or []
             out += rows
-            if len(rows) < 100:
-                break
-            offset += 100
+            req = _fub_next(page) if len(rows) >= 100 else None
         return out
 
     async def scan_signals(self, http, config, limit=1000):
@@ -779,15 +789,16 @@ class FollowUpBoss(Provider):
         want_stage, want_tags = set(f.get("stage") or []), {t.lower() for t in f.get("tags") or []}
         want_pond, want_agent = set(f.get("pond") or []), set(f.get("agent") or [])
         out: list[Contact] = []
-        offset, pages = 0, 0
-        while len(out) < limit and pages < 40:
-            params: dict = {"limit": 100, "offset": offset, "sort": "-created",
-                            "fields": "id,name,firstName,lastName,phones,emails,created,stage,tags,assignedPondId,assignedUserId,contacted"}
-            if len(want_stage) == 1:
-                params["stage"] = next(iter(want_stage))
-            if len(want_pond) == 1:
-                params["assignedPondId"] = next(iter(want_pond))
-            page = await http.request("GET", "/v1/people", params=params)
+        pages = 0
+        params: dict = {"limit": 100, "sort": "-created",
+                        "fields": "id,name,firstName,lastName,phones,emails,created,stage,tags,assignedPondId,assignedUserId,contacted"}
+        if len(want_stage) == 1:
+            params["stage"] = next(iter(want_stage))
+        if len(want_pond) == 1:
+            params["assignedPondId"] = next(iter(want_pond))
+        req: tuple[str, dict] | None = ("/v1/people", params)
+        while req and len(out) < limit and pages < 40:
+            page = await http.request("GET", req[0], params=req[1])
             pages += 1
             people = page.get("people") or []
             stop = False
@@ -816,7 +827,7 @@ class FollowUpBoss(Provider):
                                    tags=tags, stage=p.get("stage") or "", dnc=dnc, contacted=bool(p.get("contacted"))))
             if stop or len(people) < 100:
                 break
-            offset += 100
+            req = _fub_next(page)
         return out[:limit]
 
 
