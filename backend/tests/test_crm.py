@@ -640,3 +640,56 @@ def test_push_rules_note_options_and_auto_sync_into_campaign(client, http_mock, 
 
     assert client.delete(f"/api/integrations/crm/followupboss/auto-imports/{rule['id']}").json()["auto_imports"] == []
     client.delete("/api/integrations/crm/followupboss")
+
+
+def test_only_results_and_sentiment_rules(client, http_mock):
+    state, calls = http_mock
+    state["responses"] = dict(RESPONSES["followupboss"])
+    assert client.post("/api/integrations/crm/followupboss/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    lead = client.post("/api/contacts", json={"name": "Rae", "phone": "+14155550411"}).json()
+    s = client.patch("/api/integrations/crm/followupboss", json={
+        "create_contacts": True, "only_outcomes": ["meeting_booked", "interested", "nope"], "only_sentiments": ["positive", "meh"],
+        "min_seconds": 45}).json()["settings"]
+    assert s["only_outcomes"] == ["meeting_booked", "interested"] and s["only_sentiments"] == ["positive"]
+
+    def sent(outcome, seconds, sentiment):
+        before = len([c for c in calls if c[0] == "POST" and c[1] == "/v1/calls"])
+        asyncio.run(sync.push_call(org_id, {"call_id": str(uuid.uuid4()), "outcome": outcome, "duration_seconds": seconds,
+                                             "sentiment": sentiment, "to_phone": "+14155550411",
+                                             "contact": {"id": lead["id"], "name": "Rae", "phone": "+14155550411"}}))
+        return len([c for c in calls if c[0] == "POST" and c[1] == "/v1/calls"]) > before
+
+    assert sent("interested", 60, "positive")
+    assert not sent("interested", 30, "positive")      # under 45 s
+    assert not sent("not_interested", 90, "positive")  # result not in the list
+    assert not sent("interested", 90, "negative")      # wrong mood
+    assert sent("do_not_call", 5, "negative")          # always synced
+    client.delete("/api/integrations/crm/followupboss")
+
+
+def test_hubspot_deal_stage_sync(http_mock):
+    from app.services.crm.http import NativeHttp
+    from app.services.crm.providers import HubSpot
+
+    state, calls = http_mock
+    state["responses"] = {
+        ("GET", "/crm/v3/pipelines/deals"): {"results": [{"id": "default", "label": "Sales", "stages": [
+            {"id": "appt", "label": "Appointment scheduled", "displayOrder": 0, "metadata": {"probability": "0.2"}},
+            {"id": "qual", "label": "Qualified to buy", "displayOrder": 1, "metadata": {"probability": "0.4"}},
+            {"id": "won", "label": "Closed won", "displayOrder": 2, "metadata": {"probability": "1.0", "isClosed": "true"}}]}]},
+        ("GET", "/crm/v4/objects/contacts/901/associations/deals"): {"results": [{"toObjectId": 55}]},
+        ("POST", "/crm/v3/objects/deals/batch/read"): {"results": [{"id": "55", "properties": {"pipeline": "default", "dealstage": "appt"}}]},
+        ("PATCH", "/crm/v3/objects/deals/55"): {},
+        ("POST", "/crm/v3/objects/deals"): {"id": "56"},
+    }
+    hs = HubSpot()
+    http = NativeHttp("https://api.hubapi.com")
+    pipes = asyncio.run(hs.pipelines(http, {}))
+    assert [st["kind"] for st in pipes[0]["stages"]] == ["active", "active", "won"]
+    msg = asyncio.run(hs.set_stage(http, {}, "901", pipes[0], "qual", create=True, forward_only=True, name="Rae"))
+    assert msg == "Deal moved to Qualified to buy"
+    patched = [json.loads(c[2].content) for c in calls if c[0] == "PATCH"]
+    assert patched[-1] == {"properties": {"dealstage": "qual"}}
+    # Forward-only: never move back down the board.
+    assert asyncio.run(hs.set_stage(http, {}, "901", pipes[0], "appt", create=True, forward_only=True)) is None

@@ -976,7 +976,8 @@ class HubSpot(Provider):
     key, name = "hubspot", "HubSpot"
     description = "Log AI calls on the contact's timeline, create contacts and import contacts to call."
     auth_fields = [AuthField("api_key", "Private app access token", placeholder="pat-na1-…",
-                             help="HubSpot → Settings → Integrations → Private apps. Scopes: crm.objects.contacts.read/write.")]
+                             help="HubSpot → Settings → Integrations → Private apps. Scopes: crm.objects.contacts.read/write "
+                                  "(and crm.objects.deals.read/write to move deal stages).")]
     nango_providers = ("hubspot",)
     docs_url = "https://developers.hubspot.com/docs/api/crm/calls"
 
@@ -1007,6 +1008,46 @@ class HubSpot(Provider):
                                    "company": c.company}.items() if v}
         created = await http.request("POST", "/crm/v3/objects/contacts", json={"properties": props})
         return str(created["id"])
+
+    pipeline_noun = "deal"
+
+    async def pipelines(self, http, config):
+        pipes = (await http.request("GET", "/crm/v3/pipelines/deals")).get("results") or []
+        out = []
+        for p in pipes:
+            stages = sorted(p.get("stages") or [], key=lambda st: st.get("displayOrder") or 0)
+            out.append({"id": str(p["id"]), "name": p.get("label") or "Pipeline", "stages": [
+                {"id": str(st["id"]), "label": st.get("label") or str(st["id"]),
+                 "kind": ("won" if (st.get("metadata") or {}).get("probability") in ("1.0", 1, 1.0)
+                          else "lost" if (st.get("metadata") or {}).get("probability") in ("0.0", 0, 0.0)
+                          and (st.get("metadata") or {}).get("isClosed") in ("true", True) else "active")}
+                for st in stages]})
+        return out
+
+    async def set_stage(self, http, config, external_id, pipeline, stage_id, *, create, forward_only, name=""):
+        stage_ids = {st["id"] for st in pipeline.get("stages") or []}
+        assoc = await http.request("GET", f"/crm/v4/objects/contacts/{external_id}/associations/deals", params={"limit": 50})
+        deal_ids = [str(r.get("toObjectId")) for r in assoc.get("results") or [] if r.get("toObjectId")]
+        label = _stage_label(pipeline, stage_id)
+        if deal_ids:
+            res = await http.request("POST", "/crm/v3/objects/deals/batch/read", json={
+                "properties": ["dealstage", "pipeline"], "inputs": [{"id": d} for d in deal_ids[:50]]})
+            mine = [d for d in res.get("results") or []
+                    if (d.get("properties") or {}).get("pipeline") == pipeline["id"]
+                    and (d.get("properties") or {}).get("dealstage") in stage_ids]
+            if mine:
+                deal = mine[0]
+                if not _should_move(pipeline, deal["properties"]["dealstage"], stage_id, forward_only):
+                    return None
+                await http.request("PATCH", f"/crm/v3/objects/deals/{deal['id']}", json={"properties": {"dealstage": stage_id}})
+                return f"Deal moved to {label}"
+        if not create:
+            return None
+        await http.request("POST", "/crm/v3/objects/deals", json={
+            "properties": {"dealname": f"{name or 'Contact'} (BlackSync AI)", "pipeline": pipeline["id"], "dealstage": stage_id},
+            "associations": [{"to": {"id": external_id},
+                              "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 3}]}]})
+        return f"Deal created in {label}"
 
     async def log_call(self, http, config, external_id, call):
         ts = (call.started_at or dt.datetime.now(UTC)).astimezone(UTC).isoformat()

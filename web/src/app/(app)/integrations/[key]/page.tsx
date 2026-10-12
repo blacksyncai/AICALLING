@@ -31,6 +31,37 @@ const OUTCOMES: { key: string; label: string }[] = [
   { key: "not_qualified", label: "Not qualified" }, { key: "wrong_number", label: "Wrong number" },
   { key: "voicemail", label: "Voicemail" }, { key: "no_answer", label: "No answer" }, { key: "failed", label: "Failed" },
 ];
+const SENTIMENTS = [{ key: "positive", label: "Positive" }, { key: "neutral", label: "Neutral" }, { key: "negative", label: "Negative" }];
+const POSITIVE = ["meeting_booked", "interested", "qualified", "callback", "transferred"];
+const PRESETS: { label: string; body: { min_seconds: number; only_outcomes: string[]; only_sentiments: string[]; only_connected: boolean } }[] = [
+  { label: "Every call", body: { min_seconds: 0, only_outcomes: [], only_sentiments: [], only_connected: false } },
+  { label: "Real conversations (30s+)", body: { min_seconds: 30, only_outcomes: [], only_sentiments: [], only_connected: true } },
+  { label: "Positive only", body: { min_seconds: 0, only_outcomes: POSITIVE, only_sentiments: [], only_connected: true } },
+  { label: "Booked meetings only", body: { min_seconds: 0, only_outcomes: ["meeting_booked"], only_sentiments: [], only_connected: true } },
+];
+
+function ruleSentence(crm: string, s: Connection["settings"]): string {
+  if (!s.log_calls) return `Nothing is sent to ${crm}.`;
+  const parts: string[] = [];
+  if (s.only_connected) parts.push("answered");
+  if (s.min_seconds) parts.push(`at least ${s.min_seconds}s long`);
+  if (s.only_outcomes.length) parts.push(`ending in ${s.only_outcomes.map((k) => OUTCOMES.find((o) => o.key === k)?.label.toLowerCase() ?? k).join(" or ")}`);
+  if (s.only_sentiments.length) parts.push(`where the contact sounded ${s.only_sentiments.join(" or ")}`);
+  return parts.length ? `Sends calls that are ${parts.join(", ")} — plus every do-not-call request.` : `Sends every finished call to ${crm}.`;
+}
+
+function RuleRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-start">
+      <div className="pt-1 text-sm font-medium text-zinc-700">
+        {label}
+        {hint && <div className="text-xs font-normal text-zinc-400">{hint}</div>}
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
 const EVERY = [
   { value: 15, label: "Every 15 minutes" }, { value: 60, label: "Every hour" }, { value: 240, label: "Every 4 hours" }, { value: 1440, label: "Once a day" },
 ];
@@ -150,7 +181,13 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
   };
 
   const s = c.settings;
-  const pushDetail = !s.log_calls ? "Off" : [s.only_connected ? "Answered calls" : "Every call", s.skip_outcomes.length ? `skips ${s.skip_outcomes.length}` : ""].filter(Boolean).join(" · ");
+  const pushDetail = !s.log_calls
+    ? "Off"
+    : [
+        s.only_outcomes.length ? `${s.only_outcomes.length} result${s.only_outcomes.length > 1 ? "s" : ""}` : s.only_connected ? "Answered calls" : "Every call",
+        s.min_seconds ? `${s.min_seconds}s+` : "",
+        s.only_sentiments.length ? s.only_sentiments.join("/") : "",
+      ].filter(Boolean).join(" · ");
   const triggers = [s.speed_to_lead_agent_id && "Speed to lead", s.activity_agent_id && "Interest calls", c.installs.length && `${c.installs.length} AI pipeline${c.installs.length > 1 ? "s" : ""}`].filter(Boolean);
 
   return (
@@ -280,8 +317,9 @@ function PushCalls({ p, c, isCrm, onSaved }: { p: Provider; c: Connection; isCrm
       setErr(errText(e));
     }
   };
-  const toggleOutcome = (k: string) =>
-    void save({ skip_outcomes: s.skip_outcomes.includes(k) ? s.skip_outcomes.filter((x) => x !== k) : [...s.skip_outcomes, k] });
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+  const presetActive = (b: (typeof PRESETS)[number]["body"]) =>
+    s.log_calls && s.min_seconds === b.min_seconds && s.only_connected === b.only_connected && same(s.only_outcomes, b.only_outcomes) && same(s.only_sentiments, b.only_sentiments);
 
   const preview = [
     "BlackSync AI call: Meeting booked",
@@ -295,42 +333,78 @@ function PushCalls({ p, c, isCrm, onSaved }: { p: Provider; c: Connection; isCrm
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="space-y-5">
-        <Card className="space-y-4 p-5">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-              <Filter className="h-4 w-4 text-brand-600" /> Which calls get logged
+        <Card className="space-y-5 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+                <Filter className="h-4 w-4 text-brand-600" /> Send a call to {p.name} when…
+              </div>
+              <p className="mt-0.5 text-xs text-zinc-500">Every rule must match. Do-not-call requests are always sent so {p.name} stops calling them too.</p>
             </div>
-            <p className="mt-0.5 text-xs text-zinc-500">Every finished phone call is checked against these rules before it&apos;s sent to {p.name}.</p>
+            <Toggle checked={s.log_calls} onChange={(v) => void save({ log_calls: v })} label={s.log_calls ? "On" : "Off"} />
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Toggle
-              checked={s.log_calls}
-              onChange={(v) => void save({ log_calls: v })}
-              label={p.category === "notify" ? "Post every finished call" : p.category === "sheet" ? "Add a row for every call" : "Log calls"}
-              description="Master switch for this direction."
-            />
+
+          <div className="flex flex-wrap gap-2">
+            {PRESETS.map((pr) => (
+              <button key={pr.label} type="button" onClick={() => void save({ ...pr.body, skip_outcomes: [], log_calls: true })} className={chip(presetActive(pr.body))}>
+                {pr.label}
+              </button>
+            ))}
+          </div>
+
+          <div className={cn("space-y-4", !s.log_calls && "pointer-events-none opacity-50")}>
+            <RuleRow label="It lasted at least">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  max={3600}
+                  key={s.min_seconds}
+                  defaultValue={s.min_seconds ?? 0}
+                  onBlur={(e) => {
+                    const v = Math.max(0, Math.min(3600, Math.round(Number(e.target.value) || 0)));
+                    if (v !== s.min_seconds) void save({ min_seconds: v });
+                  }}
+                  className="w-24"
+                  aria-label="Minimum seconds"
+                />
+                <span className="text-sm text-zinc-500">seconds</span>
+                <span className="text-xs text-zinc-400">(0 = any length)</span>
+              </div>
+            </RuleRow>
+            <RuleRow label="The result is" hint={s.only_outcomes.length ? undefined : "Any result"}>
+              <div className="flex flex-wrap gap-1.5">
+                {OUTCOMES.map((o) => {
+                  const on = s.only_outcomes.includes(o.key);
+                  return (
+                    <button key={o.key} type="button" aria-pressed={on} onClick={() => void save({ only_outcomes: on ? s.only_outcomes.filter((x) => x !== o.key) : [...s.only_outcomes, o.key] })} className={chip(on)}>
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </RuleRow>
+            <RuleRow label="The contact sounded" hint={s.only_sentiments.length ? undefined : "Any mood"}>
+              <div className="flex flex-wrap gap-1.5">
+                {SENTIMENTS.map((o) => {
+                  const on = s.only_sentiments.includes(o.key);
+                  return (
+                    <button key={o.key} type="button" aria-pressed={on} onClick={() => void save({ only_sentiments: on ? s.only_sentiments.filter((x) => x !== o.key) : [...s.only_sentiments, o.key] })} className={chip(on)}>
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </RuleRow>
             <Toggle checked={s.only_connected} onChange={(v) => void save({ only_connected: v })} label="Only answered calls" description="Skip no-answers, voicemails and failed calls." />
+            {s.skip_outcomes.length > 0 && (
+              <p className="text-xs text-zinc-500">
+                Also never sent: {s.skip_outcomes.map((k) => OUTCOMES.find((o) => o.key === k)?.label ?? k).join(", ")}.{" "}
+                <button type="button" className="underline" onClick={() => void save({ skip_outcomes: [] })}>Clear</button>
+              </p>
+            )}
           </div>
-          <Field label="Minimum call length" hint="Shorter calls aren't logged (do-not-call requests always are).">
-            <Select value={String(s.min_seconds ?? 0)} onChange={(e) => void save({ min_seconds: Number(e.target.value) })} className="sm:w-60">
-              {[0, 10, 20, 30, 60, 120].map((n) => (
-                <option key={n} value={n}>
-                  {n === 0 ? "Any length" : n < 60 ? `${n} seconds or more` : `${n / 60} minute${n > 60 ? "s" : ""} or more`}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <div>
-            <div className="mb-1.5 text-xs font-medium text-zinc-700">Don&apos;t log these results</div>
-            <div className="flex flex-wrap gap-1.5">
-              {OUTCOMES.map((o) => (
-                <button key={o.key} type="button" aria-pressed={s.skip_outcomes.includes(o.key)} onClick={() => toggleOutcome(o.key)} className={chip(s.skip_outcomes.includes(o.key))}>
-                  {s.skip_outcomes.includes(o.key) && <Ban className="mr-1 inline h-3 w-3" />}
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600 ring-1 ring-zinc-100">{ruleSentence(p.name, s)}</p>
         </Card>
 
         <Card className="space-y-4 p-5">

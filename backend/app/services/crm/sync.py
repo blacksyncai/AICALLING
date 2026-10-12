@@ -41,7 +41,7 @@ def defaults() -> dict:
     return {"log_calls": True, "create_contacts": False, "only_connected": False,
             "speed_to_lead_agent_id": None, "speed_to_lead_since": None, "activity_agent_id": None,
             # Which calls get logged, and what goes in the CRM note.
-            "min_seconds": 0, "skip_outcomes": [],
+            "min_seconds": 0, "skip_outcomes": [], "only_outcomes": [], "only_sentiments": [],
             "note_summary": True, "note_details": True, "note_link": True}
 
 
@@ -109,6 +109,12 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
         return
     if call.outcome in (cfg.get("skip_outcomes") or []):
         return
+    # Allowlists (empty = any). A do-not-call request is always synced so the CRM can stop calling them.
+    if call.outcome != "do_not_call":
+        if cfg.get("only_outcomes") and call.outcome not in cfg["only_outcomes"]:
+            return
+        if cfg.get("only_sentiments") and (data.get("sentiment") or "neutral") not in cfg["only_sentiments"]:
+            return
     if cfg.get("min_seconds") and call.duration_seconds < int(cfg["min_seconds"]) and call.outcome != "do_not_call":
         return
     # What the note carries.

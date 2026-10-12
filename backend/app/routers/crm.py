@@ -71,7 +71,8 @@ def conn_to_dict(c: CrmConnection) -> dict:
         "provider": c.provider, "method": c.method, "account_label": c.account_label, "status": c.status,
         "last_error": c.last_error, "last_synced_at": _iso(c.last_synced_at), "created_at": _iso(c.created_at),
         "settings": {k: s.get(k) for k in ("log_calls", "create_contacts", "only_connected", "speed_to_lead_agent_id",
-                                             "activity_agent_id", "min_seconds", "skip_outcomes", "note_summary",
+                                             "activity_agent_id", "min_seconds", "skip_outcomes", "only_outcomes",
+                                             "only_sentiments", "note_summary",
                                              "note_details", "note_link")},
         "auto_imports": [{k: r.get(k) for k in ("id", "name", "filters", "skip_contacted", "campaign_id", "list_tag",
                                                  "every_minutes", "enabled", "last_run_at", "last_result", "runs", "summary")}
@@ -302,6 +303,8 @@ class SettingsIn(BaseModel):
     only_connected: bool | None = None
     min_seconds: int | None = Field(default=None, ge=0, le=3600)
     skip_outcomes: list[str] | None = None
+    only_outcomes: list[str] | None = None
+    only_sentiments: list[str] | None = None
     note_summary: bool | None = None
     note_details: bool | None = None
     note_link: bool | None = None
@@ -324,6 +327,12 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
         from app.models.call_log import CALL_OUTCOMES
 
         s["skip_outcomes"] = [o for o in dict.fromkeys(data["skip_outcomes"]) if o in CALL_OUTCOMES and o != "do_not_call"]
+    if data.get("only_outcomes") is not None:
+        from app.models.call_log import CALL_OUTCOMES
+
+        s["only_outcomes"] = [o for o in dict.fromkeys(data["only_outcomes"]) if o in CALL_OUTCOMES]
+    if data.get("only_sentiments") is not None:
+        s["only_sentiments"] = [x for x in dict.fromkeys(data["only_sentiments"]) if x in ("positive", "neutral", "negative")]
     if "speed_to_lead_agent_id" in data:
         agent_id = (data["speed_to_lead_agent_id"] or "").strip()
         if agent_id:

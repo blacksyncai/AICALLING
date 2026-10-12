@@ -61,6 +61,8 @@ export interface Connection {
     activity_agent_id: string | null;
     min_seconds: number;
     skip_outcomes: string[];
+    only_outcomes: string[];
+    only_sentiments: string[];
     note_summary: boolean;
     note_details: boolean;
     note_link: boolean;
