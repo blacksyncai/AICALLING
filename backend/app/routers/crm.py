@@ -72,6 +72,8 @@ def conn_to_dict(c: CrmConnection) -> dict:
         "last_error": c.last_error, "last_synced_at": _iso(c.last_synced_at), "created_at": _iso(c.created_at),
         "settings": {k: s[k] for k in ("log_calls", "create_contacts", "only_connected", "speed_to_lead_agent_id")},
         "pending_calls": len(s.get("pending") or []),
+        "pipeline": ({"id": s["pipeline"]["id"], "name": (s["pipeline"].get("snapshot") or {}).get("name", ""),
+                      "mapped": len(s["pipeline"].get("map") or {})} if s.get("pipeline") else None),
         # Non-secret details only.
         "config": {k: v for k, v in cfg.items() if k in ("location_id", "spreadsheet")},
     }
@@ -98,6 +100,7 @@ async def overview(ctx: ManagerDep, db: DbDep):
         "key": p.key, "name": p.name, "category": p.category, "description": p.description,
         "native": p.native, "oauth": any(n in nango_providers for n in p.nango_providers),
         "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
+        "pipeline_noun": p.pipeline_noun,
         "fields": [{"name": f.name, "label": f.label, "secret": f.secret, "placeholder": f.placeholder, "help": f.help}
                    for f in p.auth_fields],
     } for p in PROVIDERS.values()]
@@ -193,6 +196,64 @@ async def oauth_complete(key: str, body: OAuthDoneIn, ctx: ManagerDep, db: DbDep
         label = ""
         log.warning("oauth_verify_failed", provider=key, error=str(exc))
     return conn_to_dict(await _save(db, ctx, p, "nango", "", config, label or p.name))
+
+
+@router.get("/{key}/pipelines")
+async def pipelines(key: str, ctx: ManagerDep, db: DbDep):
+    """The CRM's pipelines and stages, a suggested result → stage map for each, and the saved setup."""
+    from app.services.crm.providers import MAPPABLE_OUTCOMES, suggest_mapping
+
+    p = _provider(key)
+    conn = await _require_conn(db, ctx.org.id, key)
+    if not p.pipeline_noun:
+        return {"supported": False}
+    try:
+        _, http = sync.http_for(conn)
+        pipes = await p.pipelines(http, conn.config or {})
+    except CrmError as exc:
+        raise HTTPException(status_code=400, detail=f"Couldn't read {p.name} pipelines: {exc}") from exc
+    saved = (conn.settings or {}).get("pipeline") or {}
+    return {"supported": True, "noun": p.pipeline_noun, "pipelines": pipes,
+            "suggested": {pl["id"]: suggest_mapping(pl) for pl in pipes},
+            "outcomes": [{"key": k, "label": label} for k, label in MAPPABLE_OUTCOMES],
+            "current": {k: saved.get(k) for k in ("id", "map", "create", "forward_only")} if saved else None}
+
+
+class PipelineSyncIn(BaseModel):
+    pipeline_id: str = Field(default="", max_length=100)  # "" turns pipeline sync off
+    map: dict[str, str] = Field(default_factory=dict)
+    create: bool = True
+    forward_only: bool = True
+
+
+@router.put("/{key}/pipelines")
+async def save_pipeline_sync(key: str, body: PipelineSyncIn, ctx: ManagerDep, db: DbDep):
+    from app.services.crm.providers import MAPPABLE_OUTCOMES
+
+    p = _provider(key)
+    conn = await _require_conn(db, ctx.org.id, key)
+    s = dict(conn.settings or {})
+    if not body.pipeline_id:
+        s.pop("pipeline", None)
+    else:
+        try:
+            _, http = sync.http_for(conn)
+            pipes = await p.pipelines(http, conn.config or {})
+        except CrmError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        pipe = next((pl for pl in pipes if pl["id"] == body.pipeline_id), None)
+        if not pipe:
+            raise HTTPException(status_code=404, detail="That pipeline wasn't found.")
+        stage_ids = {st["id"] for st in pipe["stages"]}
+        allowed = {k for k, _ in MAPPABLE_OUTCOMES}
+        mapping = {k: v for k, v in body.map.items() if k in allowed and v in stage_ids}
+        s["pipeline"] = {"id": pipe["id"], "map": mapping, "create": body.create, "forward_only": body.forward_only,
+                         "snapshot": pipe}
+        await sync.add_log(db, conn, "test", "ok", f"Pipeline sync set to {pipe['name']} ({len(mapping)} results mapped).")
+    conn.settings = s
+    await db.commit()
+    await db.refresh(conn)
+    return conn_to_dict(conn)
 
 
 class SettingsIn(BaseModel):

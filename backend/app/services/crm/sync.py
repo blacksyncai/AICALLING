@@ -122,14 +122,32 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
                 await p.mark_dnc(http, conn.config or {}, ref)
             except CrmError as exc:
                 log.warning("crm_mark_dnc_failed", provider=conn.provider, error=str(exc))
+        moved = await _move_stage(db, conn, p, http, ref, call, c)
         if lead and (lead.crm_refs or {}).get(conn.provider) != ref:
             lead.crm_refs = {**(lead.crm_refs or {}), conn.provider: ref}
-        await add_log(db, conn, "call", "ok", f"Logged {call.outcome_label.lower()} call with {c.name or c.phone}.",
+        await add_log(db, conn, "call", "ok", f"Logged {call.outcome_label.lower()} call with {c.name or c.phone}."
+                      + (f" {moved}." if moved else ""),
                       call_id=uuid.UUID(call.call_id) if call.call_id else None, external_id=ref)
     except (CrmError, KeyError, ValueError, TypeError) as exc:
         log.warning("crm_push_failed", provider=conn.provider, error=str(exc))
         await add_log(db, conn, "call", "error", f"Couldn't log the call with {c.name or c.phone}: {exc}",
                       call_id=uuid.UUID(call.call_id) if call.call_id else None)
+
+
+async def _move_stage(db, conn: CrmConnection, p: Provider, http, ref: str, call: CallInfo, c: Contact) -> str | None:
+    """Pipeline sync: move the contact's deal to the stage mapped to this call's result."""
+    sync_cfg = (conn.settings or {}).get("pipeline") or {}
+    pipeline = sync_cfg.get("snapshot")
+    stage_id = (sync_cfg.get("map") or {}).get(call.outcome or "")
+    if not p.pipeline_noun or not pipeline or not stage_id:
+        return None
+    try:
+        return await p.set_stage(http, conn.config or {}, ref, pipeline, stage_id,
+                                 create=bool(sync_cfg.get("create", True)),
+                                 forward_only=bool(sync_cfg.get("forward_only", True)), name=c.name or c.phone)
+    except CrmError as exc:
+        log.warning("crm_stage_move_failed", provider=conn.provider, error=str(exc))
+        return f"Couldn't move the {p.pipeline_noun}: {exc}"
 
 
 async def push_call(org_id: uuid.UUID, data: dict) -> None:

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Toggle } from "@/components/ui";
-import { del, fetcher, patch, post } from "@/lib/api";
+import { del, fetcher, patch, post, put } from "@/lib/api";
 import { cn, timeAgo } from "@/lib/utils";
 
 interface ProviderField {
@@ -26,6 +26,8 @@ interface Provider {
   can_import: boolean;
   can_new_leads: boolean;
   docs_url: string;
+  /** "opportunity" / "deal" / "stage" when the CRM has pipelines to sync; "" otherwise. */
+  pipeline_noun: string;
   fields: ProviderField[];
 }
 interface Connection {
@@ -38,6 +40,7 @@ interface Connection {
   settings: { log_calls: boolean; create_contacts: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null };
   pending_calls: number;
   config: Record<string, string>;
+  pipeline: { id: string; name: string; mapped: number } | null;
 }
 interface Overview {
   providers: Provider[];
@@ -361,6 +364,8 @@ function ConnectedRow({
             />
           </div>
 
+          {p.pipeline_noun && <PipelineSync p={p} c={c} onSaved={onChange} />}
+
           {p.can_new_leads && (
             <div className="rounded-xl bg-brand-50/50 p-4 ring-1 ring-brand-100">
               <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
@@ -435,5 +440,143 @@ function ConnectedRow({
         </div>
       )}
     </li>
+  );
+}
+
+interface PipelineInfo {
+  supported: boolean;
+  noun: string;
+  pipelines: { id: string; name: string; stages: { id: string; label: string; kind: string }[] }[];
+  suggested: Record<string, Record<string, string>>;
+  outcomes: { key: string; label: string }[];
+  current: { id: string; map: Record<string, string>; create: boolean; forward_only: boolean } | null;
+}
+
+/** Pick a pipeline and map each call result to a stage; calls then move the contact's deal there. */
+function PipelineSync({ p, c, onSaved }: { p: Provider; c: Connection; onSaved: () => void }) {
+  const { data, error, mutate } = useSWR<PipelineInfo>(`/api/integrations/crm/${p.key}/pipelines`, fetcher, { revalidateOnFocus: false });
+  const [pipelineId, setPipelineId] = useState<string | null>(null);
+  const [map, setMap] = useState<Record<string, string> | null>(null);
+  const [create, setCreate] = useState<boolean | null>(null);
+  const [forward, setForward] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "green" | "red"; text: string } | null>(null);
+
+  if (error) return <Notice tone="red">Couldn&apos;t load {p.name} pipelines: {(error as Error).message}</Notice>;
+  if (!data) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">
+        <Spinner /> Reading your {p.name} pipelines…
+      </div>
+    );
+  }
+  if (!data.supported) return null;
+
+  const noun = data.noun === "stage" ? "lead stage" : data.noun;
+  const pid = pipelineId ?? data.current?.id ?? "";
+  const pipe = data.pipelines.find((x) => x.id === pid);
+  const currentMap = map ?? (data.current && data.current.id === pid ? data.current.map : data.suggested[pid] ?? {});
+  const doCreate = create ?? data.current?.create ?? true;
+  const fwd = forward ?? data.current?.forward_only ?? true;
+  const dirty = pipelineId !== null || map !== null || create !== null || forward !== null;
+
+  const choosePipeline = (id: string) => {
+    setPipelineId(id);
+    setMap(id ? { ...(data.suggested[id] ?? {}) } : {});
+    setMsg(null);
+  };
+  const save = async (off = false) => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      await put(`/api/integrations/crm/${p.key}/pipelines`, off ? { pipeline_id: "" } : { pipeline_id: pid, map: currentMap, create: doCreate, forward_only: fwd });
+      setPipelineId(null);
+      setMap(null);
+      setCreate(null);
+      setForward(null);
+      await mutate();
+      onSaved();
+      setMsg({ tone: "green", text: off ? "Pipeline sync is off." : `Saved — calls now move ${noun}s in ${pipe?.name ?? "this pipeline"}.` });
+    } catch (e) {
+      setMsg({ tone: "red", text: errText(e) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 rounded-xl border border-zinc-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium text-zinc-900">Pipeline sync</div>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            After every call, move the contact&apos;s {noun} to the stage that matches the result. We pre-filled the matches from your stage names.
+          </p>
+        </div>
+        {c.pipeline && !dirty && <Badge tone="green">On · {c.pipeline.name}</Badge>}
+      </div>
+      <Field label="Pipeline">
+        <Select value={pid} onChange={(e) => choosePipeline(e.target.value)}>
+          <option value="">Off — don&apos;t move {noun}s</option>
+          {data.pipelines.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name} · {x.stages.length} stages
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {pipe && (
+        <>
+          <div className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-100">
+            {data.outcomes.map((o) => (
+              <div key={o.key} className="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <span className="text-sm text-zinc-700">{o.label}</span>
+                <Select
+                  className="sm:w-60"
+                  value={currentMap[o.key] ?? ""}
+                  onChange={(e) => {
+                    const next = { ...currentMap };
+                    if (e.target.value) next[o.key] = e.target.value;
+                    else delete next[o.key];
+                    setMap(next);
+                  }}
+                  aria-label={`Stage for ${o.label}`}
+                >
+                  <option value="">Don&apos;t move</option>
+                  {pipe.stages.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {st.label}
+                      {st.kind !== "active" ? ` (${st.kind})` : ""}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {data.noun !== "stage" && (
+              <Toggle
+                checked={doCreate}
+                onChange={setCreate}
+                label={`Create the ${noun} if they don't have one`}
+                description={`Adds a new ${noun} in ${pipe.name} at the mapped stage.`}
+              />
+            )}
+            <Toggle checked={fwd} onChange={setForward} label="Only move forward" description="Never move a deal back to an earlier stage, or touch won/lost ones." />
+          </div>
+        </>
+      )}
+      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
+      <div className="flex flex-wrap justify-end gap-2">
+        {c.pipeline && (
+          <Button size="sm" variant="ghost" disabled={saving} onClick={() => void save(true)}>
+            Turn off
+          </Button>
+        )}
+        <Button size="sm" variant="primary" loading={saving} disabled={!pid || (!dirty && !!c.pipeline)} onClick={() => void save()}>
+          {c.pipeline ? "Save mapping" : "Turn on pipeline sync"}
+        </Button>
+      </div>
+    </div>
   );
 }

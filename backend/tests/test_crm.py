@@ -292,3 +292,45 @@ def test_close_pipeline_stage_and_smart_view(http_mock):
     assert {c.external_id for c in by_stage} == {"lead_1", "lead_2"}
     assert [c.external_id for c in both] == ["lead_1"]  # in the stage AND the status
     assert [c.external_id for c in view] == ["lead_3", "lead_4"]
+
+
+def test_close_pipeline_sync_moves_and_creates_opportunities(client, http_mock):
+    state, calls = http_mock
+    stages = [("st_new", "New Prospect", "active"), ("st_dial", "Dialing", "active"), ("st_vm", "Voicemail Left", "active"),
+              ("st_booked", "Discovery Booked", "active"), ("st_won", "Won", "won")]
+    state["responses"] = {
+        **RESPONSES["close"],
+        ("GET", "/v1/pipeline/"): {"data": [{"id": "pipe_smb", "name": "SMB Sales", "statuses": [
+            {"id": i, "label": l, "type": t} for i, l, t in stages]}]},
+        ("GET", "/v1/lead/"): {"data": [{"id": "lead_7"}]},
+        ("GET", "/v1/opportunity/"): {"data": [{"id": "oppo_1", "status_id": "st_vm"}]},
+        ("PUT", "/v1/opportunity/oppo_1/"): {},
+        ("POST", "/v1/opportunity/"): {"id": "oppo_new"},
+    }
+    assert client.post("/api/integrations/crm/close/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    info = client.get("/api/integrations/crm/close/pipelines").json()
+    assert info["supported"] and info["noun"] == "opportunity"
+    suggested = info["suggested"]["pipe_smb"]
+    assert suggested["meeting_booked"] == "st_booked" and suggested["voicemail"] == "st_vm" and suggested["no_answer"] == "st_dial"
+    r = client.put("/api/integrations/crm/close/pipelines", json={"pipeline_id": "pipe_smb", "map": suggested})
+    assert r.status_code == 200 and r.json()["pipeline"]["name"] == "SMB Sales"
+
+    org_id = client.get("/api/auth/me").json()["org"]["id"]
+
+    def call(outcome):
+        asyncio.run(sync.push_call(uuid.UUID(org_id), {"call_id": str(uuid.uuid4()), "outcome": outcome,
+                    "duration_seconds": 30, "to_phone": "+14155553001", "contact": {"name": "Ann", "phone": "+14155553001"}}))
+
+    call("meeting_booked")  # Voicemail Left → Discovery Booked (forward)
+    moves = [json.loads(c[2].content) for c in calls if c[0] == "PUT" and c[1].endswith("/v1/opportunity/oppo_1/")]
+    assert moves == [{"status_id": "st_booked"}]
+    call("no_answer")       # Dialing is behind Voicemail Left → not moved back
+    assert len([c for c in calls if c[0] == "PUT" and c[1].endswith("/oppo_1/")]) == 1
+
+    state["responses"][("GET", "/v1/opportunity/")] = {"data": []}  # no opportunity yet → created in the mapped stage
+    call("voicemail")
+    created = [json.loads(c[2].content) for c in calls if c[0] == "POST" and c[1].endswith("/v1/opportunity/")]
+    assert created and created[-1]["status_id"] == "st_vm" and created[-1]["lead_id"] == "lead_7"
+    acts = client.get("/api/integrations/crm/close/activity").json()["items"]
+    assert any("Opportunity created in Voicemail Left" in a["message"] for a in acts)
+    client.delete("/api/integrations/crm/close")

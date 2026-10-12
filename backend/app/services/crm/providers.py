@@ -111,6 +111,26 @@ def _parse_time(v: Any) -> dt.datetime | None:
         return None
 
 
+def _stage_index(pipeline: dict, stage_id: str) -> int:
+    return next((i for i, st in enumerate(pipeline.get("stages") or []) if st["id"] == stage_id), -1)
+
+
+def _stage_label(pipeline: dict, stage_id: str) -> str:
+    return next((st["label"] for st in pipeline.get("stages") or [] if st["id"] == stage_id), stage_id)
+
+
+def _should_move(pipeline: dict, current: str | None, target: str, forward_only: bool) -> bool:
+    """Never touch closed (won/lost) deals; with forward_only, never move a deal back down the board."""
+    if not current:
+        return True
+    if current == target:
+        return False
+    cur = next((st for st in pipeline.get("stages") or [] if st["id"] == current), None)
+    if cur and cur.get("kind") in ("won", "lost"):
+        return False
+    return not forward_only or _stage_index(pipeline, target) > _stage_index(pipeline, current)
+
+
 @dataclass
 class AuthField:
     name: str
@@ -164,6 +184,18 @@ class Provider:
         """Flag the contact as do-not-call in the CRM (when the CRM has a way to)."""
         return None
 
+    # Pipeline sync: each call result can move the contact's deal/opportunity to a mapped stage.
+    pipeline_noun = ""  # "opportunity" / "deal" / "stage" — empty when the CRM has no pipelines
+
+    async def pipelines(self, http: BaseHttp, config: dict) -> list[dict]:
+        """[{id, name, stages: [{id, label, kind: active|won|lost}]}] in board order."""
+        return []
+
+    async def set_stage(self, http: BaseHttp, config: dict, external_id: str, pipeline: dict, stage_id: str,
+                        *, create: bool, forward_only: bool, name: str = "") -> str | None:
+        """Move the contact's deal in `pipeline` to `stage_id`. Returns what happened, or None if nothing changed."""
+        return None
+
 
 # ── Close ─────────────────────────────────────────────────────────────────────
 
@@ -204,6 +236,32 @@ class Close(Provider):
             contact["emails"] = [{"email": c.email, "type": "office"}]
         lead = await http.request("POST", "/v1/lead/", json={"name": c.company or c.name or c.phone, "contacts": [contact]})
         return lead["id"]
+
+    pipeline_noun = "opportunity"
+
+    async def pipelines(self, http, config):
+        pipes = (await http.request("GET", "/v1/pipeline/")).get("data") or []
+        return [{"id": p["id"], "name": p.get("name") or "Pipeline",
+                 "stages": [{"id": st["id"], "label": st.get("label") or st["id"], "kind": st.get("type") or "active"}
+                            for st in p.get("statuses") or [] if st.get("id")]} for p in pipes if p.get("id")]
+
+    async def set_stage(self, http, config, external_id, pipeline, stage_id, *, create, forward_only, name=""):
+        stage_ids = {st["id"] for st in pipeline.get("stages") or []}
+        opps = (await http.request("GET", "/v1/opportunity/", params={
+            "lead_id": external_id, "_fields": "id,status_id,date_updated", "_limit": 50})).get("data") or []
+        mine = [o for o in opps if o.get("status_id") in stage_ids]
+        label = _stage_label(pipeline, stage_id)
+        if mine:
+            opp = mine[0]
+            if not _should_move(pipeline, opp.get("status_id"), stage_id, forward_only):
+                return None
+            await http.request("PUT", f"/v1/opportunity/{opp['id']}/", json={"status_id": stage_id})
+            return f"Moved to {label}"
+        if not create:
+            return None
+        await http.request("POST", "/v1/opportunity/", json={"lead_id": external_id, "status_id": stage_id,
+                                                              "note": "Created by BlackSync AI after a call."})
+        return f"Opportunity created in {label}"
 
     async def log_call(self, http, config, external_id, call):
         body = {"lead_id": external_id, "direction": "outbound", "status": "completed",
@@ -402,6 +460,23 @@ class FollowUpBoss(Provider):
         if not pid:
             raise CrmError("Follow Up Boss didn't return the new person.")
         return str(pid)
+
+    pipeline_noun = "stage"
+
+    async def pipelines(self, http, config):
+        stages = (await http.request("GET", "/v1/stages", params={"limit": 100})).get("stages") or []
+        def kind(n: str) -> str:
+            n = n.lower()
+            return "won" if n in ("closed", "past client", "sphere") else "lost" if n in ("trash", "unresponsive") else "active"
+        return [{"id": "stages", "name": "Lead stages",
+                 "stages": [{"id": st["name"], "label": st["name"], "kind": kind(st["name"])} for st in stages if st.get("name")]}]
+
+    async def set_stage(self, http, config, external_id, pipeline, stage_id, *, create, forward_only, name=""):
+        person = await http.request("GET", f"/v1/people/{int(external_id)}", params={"fields": "id,stage"})
+        if not _should_move(pipeline, person.get("stage"), stage_id, forward_only):
+            return None
+        await http.request("PUT", f"/v1/people/{int(external_id)}", json={"stage": stage_id})
+        return f"Stage set to {stage_id}"
 
     async def log_call(self, http, config, external_id, call):
         body = {"personId": int(external_id), "phone": call.phone, "isIncoming": False,
@@ -634,6 +709,35 @@ class Pipedrive(Provider):
         created = await http.request("POST", "/v1/persons", json=body)
         return str(created["data"]["id"])
 
+    pipeline_noun = "deal"
+
+    async def pipelines(self, http, config):
+        pipes = (await http.request("GET", "/v1/pipelines")).get("data") or []
+        stages = (await http.request("GET", "/v1/stages")).get("data") or []
+        out = []
+        for p in pipes:
+            mine = sorted([st for st in stages if st.get("pipeline_id") == p["id"]], key=lambda st: st.get("order_nr") or 0)
+            out.append({"id": str(p["id"]), "name": p.get("name") or "Pipeline",
+                        "stages": [{"id": str(st["id"]), "label": st.get("name") or str(st["id"]), "kind": "active"} for st in mine]})
+        return out
+
+    async def set_stage(self, http, config, external_id, pipeline, stage_id, *, create, forward_only, name=""):
+        stage_ids = {st["id"] for st in pipeline.get("stages") or []}
+        deals = (await http.request("GET", f"/v1/persons/{int(external_id)}/deals", params={"status": "open"})).get("data") or []
+        mine = [d for d in deals if str(d.get("stage_id")) in stage_ids]
+        label = _stage_label(pipeline, stage_id)
+        if mine:
+            deal = mine[0]
+            if not _should_move(pipeline, str(deal.get("stage_id")), stage_id, forward_only):
+                return None
+            await http.request("PUT", f"/v1/deals/{deal['id']}", json={"stage_id": int(stage_id)})
+            return f"Deal moved to {label}"
+        if not create:
+            return None
+        await http.request("POST", "/v1/deals", json={"title": f"{name or 'Contact'} (BlackSync AI)",
+                                                     "person_id": int(external_id), "stage_id": int(stage_id)})
+        return f"Deal created in {label}"
+
     async def log_call(self, http, config, external_id, call):
         m, s = divmod(int(call.duration_seconds or 0), 60)
         h, m = divmod(m, 60)
@@ -752,6 +856,31 @@ class HighLevel(Provider):
                                   "email": c.email, "companyName": c.company, "source": "BlackSync AI"}.items() if v}
         res = await http.request("POST", "/contacts/upsert", json=body)
         return str((res.get("contact") or {})["id"])
+
+    pipeline_noun = "opportunity"
+
+    async def pipelines(self, http, config):
+        pipes = (await http.request("GET", "/opportunities/pipelines", params={"locationId": self._loc(config)})).get("pipelines") or []
+        return [{"id": p["id"], "name": p.get("name") or "Pipeline",
+                 "stages": [{"id": st["id"], "label": st.get("name") or st["id"], "kind": "active"}
+                            for st in sorted(p.get("stages") or [], key=lambda st: st.get("position") or 0)]} for p in pipes]
+
+    async def set_stage(self, http, config, external_id, pipeline, stage_id, *, create, forward_only, name=""):
+        found = (await http.request("GET", "/opportunities/search", params={
+            "location_id": self._loc(config), "contact_id": external_id, "pipeline_id": pipeline["id"]})).get("opportunities") or []
+        label = _stage_label(pipeline, stage_id)
+        if found:
+            opp = found[0]
+            if opp.get("status") in ("won", "lost") or not _should_move(pipeline, opp.get("pipelineStageId"), stage_id, forward_only):
+                return None
+            await http.request("PUT", f"/opportunities/{opp['id']}", json={"pipelineStageId": stage_id})
+            return f"Moved to {label}"
+        if not create:
+            return None
+        await http.request("POST", "/opportunities/", json={"pipelineId": pipeline["id"], "locationId": self._loc(config),
+                                                            "pipelineStageId": stage_id, "contactId": external_id,
+                                                            "name": f"{name or 'Contact'} (BlackSync AI)", "status": "open"})
+        return f"Opportunity created in {label}"
 
     async def log_call(self, http, config, external_id, call):
         await http.request("POST", f"/contacts/{external_id}/notes", json={"body": call.note()})
@@ -1113,3 +1242,52 @@ def provider_for_nango(nango_provider: str) -> Provider | None:
 def phone_key(phone: str) -> str:
     """Comparable form of a phone number (E.164)."""
     return normalize_phone(phone)
+
+
+# Call results a pipeline stage can be mapped to, in the order the settings show them.
+MAPPABLE_OUTCOMES = [
+    ("meeting_booked", "Meeting booked"), ("interested", "Interested"), ("qualified", "Qualified"),
+    ("callback", "Callback requested"), ("completed", "Talked, no clear result"), ("voicemail", "Voicemail"),
+    ("no_answer", "No answer"), ("not_interested", "Not interested"), ("not_qualified", "Not qualified"),
+    ("do_not_call", "Do not call"), ("wrong_number", "Wrong number"),
+]
+
+_HINTS = {
+    "meeting_booked": ("booked", "discovery", "appointment", "meeting", "demo scheduled", "demo booked", "showing"),
+    "interested": ("interested", "engaged", "warm", "hot", "follow up", "needs follow"),
+    "qualified": ("qualified", "engaged"),
+    "callback": ("follow up", "callback", "call back", "nurture"),
+    "completed": ("contacted", "conversation", "attempted contact", "spoke"),
+    "voicemail": ("voicemail", "voice mail", "left message", "vm"),
+    "no_answer": ("dialing", "attempted", "no answer", "contact attempted", "attempting"),
+    "not_interested": ("not interested", "lost", "nurture", "cold"),
+    "not_qualified": ("not a fit", "not qualified", "unqualified", "disqualified", "bad fit"),
+    "do_not_call": ("do not call", "dnc", "lost", "trash"),
+    "wrong_number": ("bad number", "wrong number", "trash", "lost"),
+}
+
+
+_NEGATIVE = ("not ", "lost", "no show", "trash", "bad ", "unqualified", "disqualified", "dnc")
+_POSITIVE_OUTCOMES = {"meeting_booked", "interested", "qualified", "callback", "completed"}
+
+
+def suggest_mapping(pipeline: dict) -> dict[str, str]:
+    """Best-guess outcome → stage map from stage names (never a won stage). The closest name wins:
+    an exact match beats a prefix beats a substring, shorter labels beat longer ones."""
+    stages = [st for st in pipeline.get("stages") or [] if st.get("kind") != "won"]
+    out: dict[str, str] = {}
+    for outcome, hints in _HINTS.items():
+        pool = stages
+        if outcome in _POSITIVE_OUTCOMES:
+            pool = [st for st in stages if st.get("kind") != "lost" and not any(n in st["label"].lower() for n in _NEGATIVE)]
+        for h in hints:
+            scored = []
+            for st in pool:
+                lab = st["label"].lower().strip()
+                if h not in lab:
+                    continue
+                scored.append((0 if lab == h else 1 if lab.startswith(h) else 2, len(lab), st["id"]))
+            if scored:
+                out[outcome] = min(scored)[2]
+                break
+    return out
