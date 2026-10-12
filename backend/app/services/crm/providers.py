@@ -198,6 +198,13 @@ class Provider:
 
     # BlackSync pipeline inside the CRM: drag a card into the queue stage and the agent calls them.
     can_install = False
+    install_style = "pipeline"  # "pipeline" (stages on a board) or "tags" (tag a person to queue them)
+
+    can_activity = False
+
+    async def recent_activity(self, http: BaseHttp, config: dict, since: dt.datetime) -> list[dict]:
+        """Buying signals since `since`: [{external_id, contact: Contact, kind, at}] (newest first)."""
+        return []
 
     async def install_pipeline(self, http: BaseHttp, config: dict, name: str, stages: list[dict]) -> dict:
         """Create (or reuse, by name) a pipeline with these stages [{key, label, kind}]. Returns the pipeline
@@ -224,7 +231,7 @@ class Provider:
 
     can_scan = False
 
-    async def scan_signals(self, http: BaseHttp, config: dict, limit: int = 1000) -> list:
+    async def scan_signals(self, http: BaseHttp, config: dict, limit: int = 1000, quick: bool = False) -> list:
         """Radar input: a radar.Signals per contact (created, inbound, calls, deals)."""
         return []
 
@@ -394,10 +401,12 @@ class Close(Provider):
             skip += 100
         return out
 
-    async def scan_signals(self, http, config, limit=1000):
+    async def scan_signals(self, http, config, limit=1000, quick=False):
         from app.services.crm.radar import Signals
 
         now = dt.datetime.now(UTC)
+        if quick:
+            limit = min(limit, 300)
         leads, skip = [], 0
         while len(leads) < limit:
             page = await http.request("GET", "/v1/lead/", params={
@@ -692,14 +701,16 @@ class FollowUpBoss(Provider):
             req = _fub_next(page) if len(rows) >= 100 else None
         return out
 
-    async def scan_signals(self, http, config, limit=1000):
+    async def scan_signals(self, http, config, limit=1000, quick=False):
         from app.services.crm.radar import Signals
 
-        people = await self._pages(http, "/v1/people", "people", limit, {
-            "sort": "-updated", "fields": "id,name,firstName,lastName,phones,emails,created,updated,stage,tags,lastActivity,contacted,price"})
-        calls = await self._pages(http, "/v1/calls", "calls", 4000, {"sort": "-created"})
+        # Quick: the newest people only (who came in lately and hasn't been touched); full: everyone recent.
+        people = await self._pages(http, "/v1/people", "people", 300 if quick else limit, {
+            "sort": "-created" if quick else "-updated",
+            "fields": "id,name,firstName,lastName,phones,emails,created,updated,stage,tags,lastActivity,contacted,price"})
+        calls = [] if quick else await self._pages(http, "/v1/calls", "calls", 3000, {"sort": "-created"})
         # FUB's lead events are the gold: website visits, property views/saves, inquiries.
-        events = await self._pages(http, "/v1/events", "events", 2000, {"sort": "-created"})
+        events = await self._pages(http, "/v1/events", "events", 300 if quick else 1500, {"sort": "-created"})
         by_person: dict[str, list[dict]] = {}
         for c in calls:
             if c.get("personId"):
@@ -740,8 +751,121 @@ class FollowUpBoss(Provider):
                 deal_stage=stage, deal_open=stage.lower() not in ("closed", "past client", "trash", "sphere"),
                 deal_updated_at=None,
                 won_at=_parse_time(p.get("updated")) if stage.lower() in ("closed", "past client") else None,
-                status=stage, dnc=stage.lower() == "trash" or bool(_DNC_TAGS & tags)))
+                status=stage, dnc=stage.lower() == "trash" or bool(_DNC_TAGS & tags),
+                contacted=bool(p.get("contacted")) if p.get("contacted") is not None else None))
         return out
+
+    # ── BlackSync via tags: tag someone "AI Call - <agent>" and the agent calls them ──
+    can_install = True
+    install_style = "tags"
+    _TAG_LABELS = {"calling": "AI Calling", "no_answer": "AI No Answer", "voicemail": "AI Voicemail",
+                   "follow_up": "AI Talked", "booked": "AI Booked", "not_interested": "AI Not Interested",
+                   "dnc": "AI Do Not Call"}
+
+    @classmethod
+    def _managed(cls, tag: str) -> bool:
+        return tag in cls._TAG_LABELS.values() or tag.startswith("AI Call - ")
+
+    async def install_pipeline(self, http, config, name, stages):
+        agent = name.split("·", 1)[-1].strip() or "Agent"
+        out = []
+        for st in stages:
+            tag = f"AI Call - {agent}" if st["key"] == "queued" else self._TAG_LABELS.get(st["key"], f"AI {st['label']}")
+            out.append({"id": tag, "label": tag, "kind": st.get("kind", "active"), "key": st["key"]})
+        await http.request("GET", "/v1/me")  # the key still works
+        return {"id": f"tags:{agent}", "name": f"Tags for {agent}", "stages": out}
+
+    async def _person(self, http, pid: str, fields: str) -> dict:
+        return await http.request("GET", f"/v1/people/{int(pid)}", params={"fields": fields})
+
+    async def queued(self, http, config, stage_id, limit=10):
+        page = await http.request("GET", "/v1/people", params={
+            "tags": stage_id, "limit": max(limit, 25), "sort": "updated",
+            "fields": "id,name,firstName,lastName,phones,emails,stage,tags"})
+        out = []
+        for p in page.get("people") or []:
+            if stage_id not in (p.get("tags") or []):
+                continue  # the tag filter wasn't applied — only take people who really carry the tag
+            phones = [x["value"] for x in p.get("phones") or [] if x.get("value")]
+            emails = [x.get("value") for x in p.get("emails") or [] if x.get("value")]
+            name = p.get("name") or " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x)
+            c = Contact(name, phones[0], (emails or [""])[0], "", str(p["id"]), stage=p.get("stage") or "",
+                        tags=p.get("tags") or []) if phones else None
+            out.append({"deal_id": str(p["id"]), "external_id": str(p["id"]), "contact": c})
+        return out[:limit]
+
+    async def move_deal(self, http, config, deal_id, stage_id):
+        person = await self._person(http, deal_id, "id,tags")
+        tags = [t for t in person.get("tags") or [] if not self._managed(t)] + [stage_id]
+        await http.request("PUT", f"/v1/people/{int(deal_id)}", json={"tags": tags})
+
+    async def deal_stage(self, http, config, deal_id):
+        tags = (await self._person(http, deal_id, "id,tags")).get("tags") or []
+        return next((t for t in tags if self._managed(t)), None)
+
+    async def enqueue(self, http, config, external_id, pipeline, stage_id):
+        await self.move_deal(http, config, external_id, stage_id)
+        return external_id
+
+    async def context(self, http, config, external_id):
+        parts: list[str] = []
+        try:
+            p = await self._person(http, external_id, "id,name,stage,source,tags,price,assignedTo,created,lastActivity")
+        except CrmError:
+            return ""
+        bits = [f"Stage: {p['stage']}" if p.get("stage") else "", f"Source: {p['source']}" if p.get("source") else "",
+                f"Price range: ${p['price']:,}" if isinstance(p.get("price"), (int, float)) and p["price"] else "",
+                f"Agent: {p['assignedTo']}" if p.get("assignedTo") else "",
+                f"Tags: {', '.join(t for t in (p.get('tags') or []) if not self._managed(t))}" if p.get("tags") else ""]
+        parts.append(". ".join(b for b in bits if b) + ".")
+        for path, key, fmt in (
+            ("/v1/events", "events", lambda e: f"{(e.get('created') or '')[:10]} {e.get('type') or 'Activity'}"
+             + (f": {(e.get('property') or {}).get('street')}" if isinstance(e.get("property"), dict) and (e.get("property") or {}).get("street") else "")
+             + (f" — {e['message'][:160]}" if e.get("message") else "")),
+            ("/v1/notes", "notes", lambda n: f"Note {(n.get('created') or '')[:10]}: {(n.get('body') or '')[:300]}"),
+            ("/v1/calls", "calls", lambda c: f"Call {(c.get('created') or '')[:10]}: {c.get('outcome') or ('incoming' if c.get('isIncoming') else 'outgoing')}"
+             + (f", {int(c['duration'])}s" if c.get("duration") else "") + (f" — {(c.get('note') or '')[:160]}" if c.get("note") else "")),
+        ):
+            try:
+                rows = (await http.request("GET", path, params={"personId": int(external_id), "limit": 3, "sort": "-created"})).get(key) or []
+                parts += [fmt(r) for r in rows]
+            except CrmError:
+                pass
+        return "\n".join(x for x in parts if x.strip(". "))[:1500]
+
+    can_activity = True
+    _HOT_EVENTS = {"viewed property", "saved property", "property inquiry", "seller inquiry", "general inquiry",
+                   "registration", "visited open house", "property search", "inquiry"}
+
+    async def recent_activity(self, http, config, since):
+        out, req = [], ("/v1/events", {"sort": "-created", "limit": 100})
+        seen: set[str] = set()
+        while req:
+            page = await http.request("GET", req[0], params=req[1])
+            rows = page.get("events") or []
+            stop = False
+            for e in rows:
+                when = _parse_time(e.get("created"))
+                if when and when <= since:
+                    stop = True
+                    break
+                kind = (e.get("type") or "").strip()
+                pid = str(e.get("personId") or "")
+                if not pid or pid in seen or kind.lower() not in self._HOT_EVENTS:
+                    continue
+                seen.add(pid)
+                prop = (e.get("property") or {}).get("street") if isinstance(e.get("property"), dict) else ""
+                out.append({"external_id": pid, "kind": kind + (f" · {prop}" if prop else ""), "at": when})
+            req = None if stop or len(rows) < 100 else _fub_next(page)
+        for item in out:
+            p = await self._person(http, item["external_id"], "id,name,firstName,lastName,phones,emails,stage,tags")
+            phones = [x["value"] for x in p.get("phones") or [] if x.get("value")]
+            tags = p.get("tags") or []
+            emails = [x.get("value") for x in p.get("emails") or [] if x.get("value")]
+            name = p.get("name") or " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x)
+            item["contact"] = Contact(name, phones[0], (emails or [""])[0], "", item["external_id"], stage=p.get("stage") or "",
+                                      tags=tags, dnc=(p.get("stage") or "").lower() == "trash" or bool(_DNC_TAGS & {t.lower() for t in tags})) if phones else None
+        return [i for i in out if i.get("contact")]
 
     async def log_call(self, http, config, external_id, call):
         body = {"personId": int(external_id), "phone": call.phone, "isIncoming": False,
@@ -752,6 +876,20 @@ class FollowUpBoss(Provider):
         if call.connected and call.summary:
             await http.request("POST", "/v1/notes", json={"personId": int(external_id),
                                                          "subject": f"AI call: {call.outcome_label}", "body": call.note()})
+        # Hand the human a task when there's something to do next.
+        task = {"meeting_booked": ("Prep for meeting booked by AI" + (f": {call.meeting_time}" if call.meeting_time else ""), 0),
+                "callback": ("Call back: asked for a callback on an AI call", 1),
+                "interested": ("Follow up: interested on an AI call", 0)}.get(call.outcome)
+        if task:
+            try:
+                person = await self._person(http, external_id, "id,assignedUserId")
+                due = (dt.datetime.now(UTC) + dt.timedelta(days=task[1])).strftime("%Y-%m-%d")
+                body_t = {"personId": int(external_id), "name": task[0], "type": "Follow Up", "dueDate": due}
+                if person.get("assignedUserId"):
+                    body_t["assignedUserId"] = person["assignedUserId"]
+                await http.request("POST", "/v1/tasks", json=body_t)
+            except CrmError:
+                pass
 
     async def import_options(self, http, config):
         async def get(path, key):

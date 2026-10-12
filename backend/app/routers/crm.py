@@ -70,7 +70,8 @@ def conn_to_dict(c: CrmConnection) -> dict:
     return {
         "provider": c.provider, "method": c.method, "account_label": c.account_label, "status": c.status,
         "last_error": c.last_error, "last_synced_at": _iso(c.last_synced_at), "created_at": _iso(c.created_at),
-        "settings": {k: s[k] for k in ("log_calls", "create_contacts", "only_connected", "speed_to_lead_agent_id")},
+        "settings": {k: s.get(k) for k in ("log_calls", "create_contacts", "only_connected", "speed_to_lead_agent_id",
+                                             "activity_agent_id")},
         "pending_calls": len(s.get("pending") or []),
         "installs": [{"agent_id": i["agent_id"], "agent_name": i.get("agent_name", ""), "pipeline_id": i["pipeline"]["id"],
                       "pipeline_name": i["pipeline"]["name"], "stages": [st["label"] for st in i["pipeline"]["stages"]]}
@@ -103,7 +104,8 @@ async def overview(ctx: ManagerDep, db: DbDep):
         "key": p.key, "name": p.name, "category": p.category, "description": p.description,
         "native": p.native, "oauth": any(n in nango_providers for n in p.nango_providers),
         "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
-        "pipeline_noun": p.pipeline_noun, "can_install": p.can_install,
+        "pipeline_noun": p.pipeline_noun, "can_install": p.can_install, "install_style": p.install_style,
+        "can_activity": p.can_activity,
         "fields": [{"name": f.name, "label": f.label, "secret": f.secret, "placeholder": f.placeholder, "help": f.help}
                    for f in p.auth_fields],
     } for p in PROVIDERS.values()]
@@ -295,6 +297,7 @@ class SettingsIn(BaseModel):
     create_contacts: bool | None = None
     only_connected: bool | None = None
     speed_to_lead_agent_id: str | None = None  # "" turns it off
+    activity_agent_id: str | None = None  # "" turns it off
     location_id: str | None = Field(default=None, max_length=100)
     spreadsheet: str | None = Field(default=None, max_length=500)
 
@@ -325,6 +328,23 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
             s["speed_to_lead_agent_id"] = agent_id
         else:
             s["speed_to_lead_agent_id"], s["pending"] = None, []
+    if "activity_agent_id" in data:
+        aid = (data["activity_agent_id"] or "").strip()
+        if aid:
+            if not p.can_activity:
+                raise HTTPException(status_code=400, detail=f"{p.name} doesn't send activity yet.")
+            try:
+                a = await db.get(Agent, uuid.UUID(aid))
+            except ValueError:
+                a = None
+            if not a or a.org_id != ctx.org.id:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if s.get("activity_agent_id") != aid:
+                s["activity_since"] = dt.datetime.now(dt.timezone.utc).isoformat()
+                s["activity_pending"] = []
+            s["activity_agent_id"] = aid
+        else:
+            s["activity_agent_id"], s["activity_pending"] = None, []
     cfg = dict(conn.config or {})
     for k in ("location_id", "spreadsheet"):
         if data.get(k) is not None:

@@ -81,7 +81,7 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
             f"you're an AI assistant for {company}. Never claim to be human."
         )
 
-    hidden = {"crm_context", "crm_context_at", "bs_deal", "bs_install", "bs_tries"}
+    hidden = {"crm_context", "crm_context_at", "bs_deal", "bs_install", "bs_tries", "crm_trigger"}
     ctx_lines = [f"- {k}: {v}" for k, v in (variables or {}).items() if v not in (None, "") and k not in hidden]
     if ctx_lines:
         parts.append("# CONTACT CONTEXT\n" + "\n".join(ctx_lines))

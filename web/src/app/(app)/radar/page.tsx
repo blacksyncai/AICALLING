@@ -28,6 +28,7 @@ interface Play {
 }
 interface Scan {
   id: string;
+  quick?: boolean;
   provider: string;
   created_at: string;
   scanned: number;
@@ -63,12 +64,12 @@ export default function RadarPage() {
   const crm = data?.crms.find((c) => c.provider === crmKey) ?? data?.crms[0];
   const scan = fresh && crm && fresh.provider === crm.provider ? fresh : crm?.last_scan ?? null;
 
-  const runScan = async () => {
+  const runScan = async (quick = false) => {
     if (!crm) return;
     setScanning(true);
     setScanErr("");
     try {
-      setFresh(await post<Scan>(`/api/radar/${crm.provider}/scan`));
+      setFresh(await post<Scan>(`/api/radar/${crm.provider}/scan${quick ? "?quick=true" : ""}`));
       void mutate();
     } catch (e) {
       setScanErr(e instanceof Error ? e.message : "Scan failed");
@@ -83,9 +84,14 @@ export default function RadarPage() {
       description="Scans your CRM for the people worth calling right now — and hands them to an agent in one tap."
       action={
         crm ? (
-          <Button variant="primary" loading={scanning} onClick={() => void runScan()}>
-            <RefreshCw className="h-4 w-4" /> {scan ? "Scan again" : `Scan ${crm.name}`}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={scanning} onClick={() => void runScan(true)} title="Newest 300 leads — who came in lately and hasn't been touched">
+              <Zap className="h-4 w-4" /> Quick scan
+            </Button>
+            <Button variant="primary" loading={scanning} onClick={() => void runScan()}>
+              <RefreshCw className="h-4 w-4" /> {scan ? "Full scan" : `Scan ${crm.name}`}
+            </Button>
+          </div>
         ) : undefined
       }
     />
@@ -133,10 +139,12 @@ export default function RadarPage() {
           {scan ? (
             <p className="text-sm text-zinc-600">
               <span className="font-semibold text-zinc-900">{total.toLocaleString()}</span> of {scan.scanned.toLocaleString()} contacts in {crm?.name} are worth a call ·
-              scanned {timeAgo(scan.created_at)}
+              {scan.quick ? "quick scan" : "scanned"} {timeAgo(scan.created_at)}
             </p>
           ) : (
-            <p className="text-sm text-zinc-600">Run your first scan — it reads the last 6 months of activity and takes a few seconds.</p>
+            <p className="text-sm text-zinc-600">
+              Quick scan checks your newest 300 leads for anyone not contacted yet or showing interest (seconds). Full scan reads the last 6 months of activity.
+            </p>
           )}
         </div>
         {scanErr && <Notice tone="red">{scanErr}</Notice>}

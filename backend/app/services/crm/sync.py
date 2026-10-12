@@ -38,7 +38,7 @@ CALL_HOURS = (8, 21)  # local time window for speed-to-lead calls
 
 def defaults() -> dict:
     return {"log_calls": True, "create_contacts": True, "only_connected": False,
-            "speed_to_lead_agent_id": None, "speed_to_lead_since": None}
+            "speed_to_lead_agent_id": None, "speed_to_lead_since": None, "activity_agent_id": None}
 
 
 def conn_settings(conn: CrmConnection) -> dict:
@@ -488,18 +488,82 @@ async def check_new_leads(db, conn: CrmConnection, now: dt.datetime | None = Non
     return started
 
 
+async def check_activity(db, conn: CrmConnection, now: dt.datetime | None = None) -> int:
+    """Call people who just showed interest (viewed/saved a listing, inquired, registered). Returns calls started."""
+    now = now or dt.datetime.now(UTC)
+    cfg = conn_settings(conn)
+    agent_id = cfg.get("activity_agent_id")
+    p = provider_of(conn)
+    if not agent_id or not p.can_activity:
+        return 0
+    agent = await db.get(Agent, uuid.UUID(agent_id))
+    if not agent or agent.org_id != conn.org_id:
+        conn.settings = {**cfg, "activity_agent_id": None}
+        return 0
+    since = dt.datetime.fromisoformat(cfg["activity_since"]) if cfg.get("activity_since") else now
+    pending: list[str] = list(cfg.get("activity_pending") or [])
+    try:
+        _, http = http_for(conn)
+        hits = await p.recent_activity(http, conn.config or {}, since)
+    except CrmError as exc:
+        await add_log(db, conn, "new_lead", "error", f"Couldn't check {p.name} activity: {exc}")
+        return 0
+    newest = max([h["at"] for h in hits if h.get("at")] + [since])
+    for h in hits:
+        c: Contact = h["contact"]
+        created, _ = await save_contacts(db, conn, [c], "Showed interest")
+        lead = created[0] if created else (await db.execute(select(Lead).where(
+            Lead.org_id == conn.org_id, Lead.phone == normalize_phone(c.phone)))).scalars().first()
+        if not lead or lead.do_not_call or c.dnc:
+            continue
+        last = lead.last_called_at
+        if last and last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        if last and now - last < dt.timedelta(hours=24):
+            continue  # called in the last day — don't pile on
+        lead.custom_fields = {**(lead.custom_fields or {}), "crm_trigger": f"{h['kind']} ({h['at']:%b %-d, %-I:%M %p} UTC)"}
+        await add_log(db, conn, "new_lead", "ok", f"{lead.name}: {h['kind']}.", external_id=c.external_id)
+        if str(lead.id) not in pending:
+            pending.append(str(lead.id))
+    started = 0
+    org = await db.get(Organization, conn.org_id)
+    if pending and _in_hours(org, now):
+        for lid in pending[:5]:
+            pending.remove(lid)
+            lead = await db.get(Lead, uuid.UUID(lid))
+            if not lead or lead.do_not_call:
+                continue
+            try:
+                await refresh_context(db, conn, lead)
+            except CrmError:
+                pass
+            trigger = (lead.custom_fields or {}).get("crm_trigger")
+            if trigger:
+                lead.custom_fields = {**(lead.custom_fields or {}), "crm_context":
+                                      f"Why we're calling now: {trigger}.\n" + (lead.custom_fields or {}).get("crm_context", "")}
+            try:
+                await _call_lead(db, conn, agent, lead)
+                started += 1
+                await add_log(db, conn, "new_lead", "ok", f"{agent.name} is calling {lead.name} — {trigger or 'showed interest'}.")
+            except Exception as exc:
+                await add_log(db, conn, "new_lead", "error", f"Couldn't call {lead.name}: {exc}")
+    conn.settings = {**cfg, "activity_since": newest.isoformat(), "activity_pending": pending[-200:]}
+    return started
+
+
 async def poll_once() -> None:
     from app.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
         conns = (await db.execute(select(CrmConnection))).scalars().all()
-        ids = [c.id for c in conns if (c.settings or {}).get("speed_to_lead_agent_id") or (c.settings or {}).get("installs")]
+        ids = [c.id for c in conns if any((c.settings or {}).get(k) for k in ("speed_to_lead_agent_id", "installs", "activity_agent_id"))]
     for cid in ids:
         async with AsyncSessionLocal() as db:
             conn = await db.get(CrmConnection, cid)
             if conn:
                 try:
                     await check_new_leads(db, conn)
+                    await check_activity(db, conn)
                     await process_queue(db, conn)
                     await db.commit()
                 except Exception as exc:

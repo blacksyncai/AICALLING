@@ -514,3 +514,71 @@ def test_fub_follows_next_link_and_radar_scans(monkeypatch):
     assert plays["hot"]["count"] == 1 and "12 Oak St" in plays["hot"]["items"][0]["reason"]
     contacts = asyncio.run(p.list_contacts(http, {}, limit=500))
     assert len(contacts) == 101
+
+
+def test_fub_tags_queue_activity_trigger_and_tasks(client, monkeypatch):
+    monkeypatch.setattr(settings, "secrets_encryption_key", Fernet.generate_key().decode())
+    now = dt.datetime.now(dt.timezone.utc)
+    people = {
+        "11": {"id": 11, "name": "Tagged Tina", "phones": [{"value": "+14155558011"}], "tags": ["Buyer"], "stage": "Lead",
+               "assignedUserId": 7},
+        "12": {"id": 12, "name": "Browsing Bob", "phones": [{"value": "+14155558012"}], "tags": [], "stage": "Lead"},
+    }
+    posts = []
+
+    def handler(request: httpx.Request):
+        path, q = request.url.path, dict(request.url.params)
+        body = json.loads(request.content) if request.content else None
+        if path == "/v1/me":
+            return httpx.Response(200, json={"name": "Jo", "account": {"name": "Acme"}})
+        if path == "/v1/people" and request.method == "GET":
+            tag = q.get("tags")
+            rows = [p for p in people.values() if not tag or tag in p["tags"]]
+            return httpx.Response(200, json={"people": rows, "_metadata": {}})
+        if path.startswith("/v1/people/"):
+            pid = path.rsplit("/", 1)[1]
+            if request.method == "PUT":
+                people[pid]["tags"] = body["tags"]
+            return httpx.Response(200, json=people[pid])
+        if path == "/v1/events":
+            if q.get("personId"):
+                return httpx.Response(200, json={"events": []})
+            return httpx.Response(200, json={"events": [{"personId": 12, "type": "Viewed Property", "property": {"street": "9 Elm St"},
+                                                         "created": (now + dt.timedelta(seconds=5)).isoformat()}], "_metadata": {}})
+        if path in ("/v1/notes", "/v1/calls") and request.method == "GET":
+            return httpx.Response(200, json={path.rsplit("/", 1)[1]: []})
+        posts.append((path, body))
+        return httpx.Response(200, json={"id": 1})
+
+    monkeypatch.setattr(BaseHttp, "client_factory",
+                        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    assert client.post("/api/integrations/crm/followupboss/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    agent = client.post("/api/agents/", json={"template": "blank", "name": "Marissa"}).json()
+    inst = client.post("/api/integrations/crm/followupboss/install", json={"agent_id": agent["id"]}).json()["installs"][0]
+    assert inst["stages"][0] == "AI Call - Marissa"
+    client.patch("/api/integrations/crm/followupboss", json={"activity_agent_id": agent["id"]})
+
+    people["11"]["tags"].append("AI Call - Marissa")  # someone tags Tina in FUB
+    dialed = []
+
+    async def fake_call(db, conn, agent_, lead):
+        dialed.append((lead.name, (lead.custom_fields or {}).get("crm_context", "")))
+        return "c"
+
+    monkeypatch.setattr(sync, "_call_lead", fake_call)
+    monkeypatch.setattr(sync, "_in_hours", lambda org, now: True)
+    asyncio.run(sync.poll_once())
+    names = [d[0] for d in dialed]
+    assert "Tagged Tina" in names and "Browsing Bob" in names
+    assert "Viewed Property · 9 Elm St" in dict(dialed)["Browsing Bob"]
+    assert people["11"]["tags"] == ["Buyer", "AI Calling"]
+
+    lead = client.get("/api/contacts?q=4155558011").json()["items"][0]
+    org_id = client.get("/api/auth/me").json()["org"]["id"]
+    asyncio.run(sync.push_call(uuid.UUID(org_id), {"call_id": str(uuid.uuid4()), "outcome": "meeting_booked",
+                "meeting_time": "Tue 3 PM", "duration_seconds": 80, "to_phone": "+14155558011",
+                "contact": {"id": lead["id"], "name": "Tagged Tina", "phone": "+14155558011"}}))
+    assert people["11"]["tags"] == ["Buyer", "AI Booked"]
+    task = next(b for p, b in posts if p == "/v1/tasks")
+    assert task["personId"] == 11 and task["assignedUserId"] == 7 and "Tue 3 PM" in task["name"]
+    client.delete("/api/integrations/crm/followupboss")

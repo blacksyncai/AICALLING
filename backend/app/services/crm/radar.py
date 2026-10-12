@@ -61,6 +61,7 @@ class Signals:
     won_at: dt.datetime | None = None
     status: str = ""
     dnc: bool = False
+    contacted: bool | None = None  # the CRM's own "has anyone contacted them" flag, when it keeps one
     extra: dict = field(default_factory=dict)
 
 
@@ -85,8 +86,8 @@ def classify(s: Signals, now: dt.datetime) -> tuple[str, str] | None:
         return None
     if s.won_at and not s.deal_open:
         return ("past_client", f"Won {_when(s.won_at)}") if _days(s.won_at, now) >= 180 else None
-    if s.calls == 0 and s.created_at and _days(s.created_at, now) >= 1:
-        return "never_called", f"Added {_when(s.created_at)}, never called"
+    if s.calls == 0 and s.contacted is not True and s.created_at and _days(s.created_at, now) >= 1:
+        return "never_called", f"Added {_when(s.created_at)}, " + ("nobody has contacted them" if s.contacted is False else "never called")
     if 1 <= s.calls <= 5 and s.connected_calls == 0 and s.last_call_at and _days(s.last_call_at, now) >= 3:
         res = f" ({s.last_call_result})" if s.last_call_result else ""
         return "unreached", f"{s.calls} call{'s' if s.calls > 1 else ''}, never reached · last try {_when(s.last_call_at)}{res}"

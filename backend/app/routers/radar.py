@@ -52,14 +52,14 @@ async def _conn(db, org_id, key: str) -> CrmConnection:
 
 
 @router.post("/{key}/scan")
-async def scan(key: str, ctx: ManagerDep, db: DbDep):
+async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False):
     conn = await _conn(db, ctx.org.id, key)
     p = PROVIDERS[key]
     if not p.can_scan:
         raise HTTPException(status_code=400, detail=f"Radar doesn't support {p.name} yet.")
     try:
         _, http = sync.http_for(conn)
-        signals = await p.scan_signals(http, conn.config or {})
+        signals = await p.scan_signals(http, conn.config or {}, quick=quick)
     except CrmError as exc:
         raise HTTPException(status_code=400, detail=f"Couldn't scan {p.name}: {exc}") from exc
     # Skip anyone already on BlackSync's do-not-call list.
@@ -68,7 +68,7 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep):
     for s in signals:
         if normalize_phone(s.phone) in dnc:
             s.dnc = True
-    result = radar.build_plays(signals)
+    result = {**radar.build_plays(signals), "quick": quick}
     row = CrmScan(org_id=ctx.org.id, connection_id=conn.id, result=result)
     db.add(row)
     total = sum(pl["count"] for pl in result["plays"])

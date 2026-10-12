@@ -29,6 +29,8 @@ interface Provider {
   /** "opportunity" / "deal" / "stage" when the CRM has pipelines to sync; "" otherwise. */
   pipeline_noun: string;
   can_install: boolean;
+  install_style: "pipeline" | "tags";
+  can_activity: boolean;
   fields: ProviderField[];
 }
 interface Connection {
@@ -38,7 +40,10 @@ interface Connection {
   status: "connected" | "error";
   last_error: string | null;
   last_synced_at: string | null;
-  settings: { log_calls: boolean; create_contacts: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null };
+  settings: {
+    log_calls: boolean; create_contacts: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null;
+    activity_agent_id: string | null;
+  };
   pending_calls: number;
   config: Record<string, string>;
   pipeline: { id: string; name: string; mapped: number } | null;
@@ -370,6 +375,25 @@ function ConnectedRow({
 
           {p.pipeline_noun && <PipelineSync p={p} c={c} onSaved={onChange} />}
 
+          {p.can_activity && (
+            <div className="rounded-xl bg-red-50/50 p-4 ring-1 ring-red-100">
+              <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+                <Zap className="h-4 w-4 text-red-500" /> Call when they show interest
+              </div>
+              <p className="mt-1 text-xs text-zinc-600">
+                When someone in {p.name} views or saves a listing, sends an inquiry or registers, this agent calls them within about a minute and
+                knows what they looked at. Skips anyone called in the last 24 hours. 8 AM – 9 PM. Uses calling credits.
+              </p>
+              <Select className="mt-3" value={s.activity_agent_id ?? ""} onChange={(e) => void save({ activity_agent_id: e.target.value })}
+                aria-label="Agent for interest calls">
+                <option value="">Off</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>Call with {a.name}</option>
+                ))}
+              </Select>
+            </div>
+          )}
+
           {p.can_new_leads && (
             <div className="rounded-xl bg-brand-50/50 p-4 ring-1 ring-brand-100">
               <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
@@ -596,6 +620,7 @@ function BlackSyncPipelines({
   const [msg, setMsg] = useState<{ tone: "green" | "red"; text: string } | null>(null);
   const installed = new Set(c.installs.map((i) => i.agent_id));
   const free = agents.filter((a) => !installed.has(a.id));
+  const tags = p.install_style === "tags";
 
   const install = async () => {
     if (!agentId) return;
@@ -604,7 +629,12 @@ function BlackSyncPipelines({
     try {
       await post(`/api/integrations/crm/${p.key}/install`, { agent_id: agentId });
       const name = agents.find((a) => a.id === agentId)?.name ?? "your agent";
-      setMsg({ tone: "green", text: `Done — open ${p.name}, find the “BlackSync AI · ${name}” pipeline and drag anyone into “Queued for AI call”.` });
+      setMsg({
+        tone: "green",
+        text: tags
+          ? `Done — in ${p.name}, add the tag “AI Call - ${name}” to anyone (or bulk-tag a smart list) and ${name} calls them.`
+          : `Done — open ${p.name}, find the “BlackSync AI · ${name}” pipeline and drag anyone into “Queued for AI call”.`,
+      });
       setAgentId("");
       onChange();
     } catch (e) {
@@ -627,13 +657,22 @@ function BlackSyncPipelines({
     <div className="space-y-4 rounded-xl bg-zinc-950 p-4 text-white ring-1 ring-white/10 bg-[radial-gradient(420px_200px_at_0%_0%,rgba(249,115,22,0.18),transparent_70%)]">
       <div>
         <div className="flex items-center gap-2 text-sm font-semibold">
-          <Zap className="h-4 w-4 text-brand-400" /> Call straight from your {p.name} pipeline
+          <Zap className="h-4 w-4 text-brand-400" /> Call straight from {tags ? `${p.name} tags` : `your ${p.name} pipeline`}
         </div>
-        <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-          We create a <span className="text-zinc-200">BlackSync AI</span> pipeline in {p.name} for an agent. Drag any lead into
-          {" "}<span className="text-zinc-200">Queued for AI call</span> and the agent calls them within a minute, already knowing their notes and
-          history. The card then moves itself: Voicemail left, Talked, Meeting booked… No answers are retried up to 3 times.
-        </p>
+        {tags ? (
+          <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+            Pick an agent and you get a tag like <span className="text-zinc-200">AI Call - Marissa</span>. Tag anyone in {p.name} — one person or a
+            whole smart list — and the agent calls them within a minute, already knowing their stage, notes, calls and the homes they viewed. The
+            tag then flips to the result (<span className="text-zinc-200">AI Booked, AI Voicemail, AI Talked…</span>) so you can build smart
+            lists on it, and the person&apos;s agent gets a task for callbacks and booked meetings. No answers are retried up to 3 times.
+          </p>
+        ) : (
+          <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+            We create a <span className="text-zinc-200">BlackSync AI</span> pipeline in {p.name} for an agent. Drag any lead into
+            {" "}<span className="text-zinc-200">Queued for AI call</span> and the agent calls them within a minute, already knowing their notes and
+            history. The card then moves itself: Voicemail left, Talked, Meeting booked… No answers are retried up to 3 times.
+          </p>
+        )}
       </div>
 
       {c.installs.map((i) => (
@@ -674,7 +713,7 @@ function BlackSyncPipelines({
             ))}
           </Select>
           <Button variant="primary" loading={busy === "install"} disabled={!agentId} onClick={() => void install()}>
-            Create pipeline in {p.name}
+            {tags ? "Create the tag" : `Create pipeline in ${p.name}`}
           </Button>
         </div>
       )}
