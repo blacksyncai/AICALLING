@@ -4,6 +4,7 @@ import { Hash, Phone, Search, Star } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
+import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, PageHeader, Spinner } from "@/components/ui";
 import { api, fetcher, patch, post } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
@@ -59,6 +60,17 @@ export default function PhoneNumbersPage() {
         <NumbersList numbers={data.numbers} manager={manager} refresh={() => void mutate()} />
         {manager && (
           <div className="flex min-w-0 flex-col gap-6">
+            {data.numbers.length === 0 && (
+              <MatteAlertFeedback
+                cardTitle="Caller ID"
+                pillText="Shared line"
+                cardDescription="Your calls go out from the shared BlackSync line until you add a number."
+                alertTitle="Get your own number"
+                alertDetail="A local number of your own gets more pickups, keeps your caller reputation separate, and lets contacts call you back."
+                showControls={false}
+                persistKey="phone-shared-line"
+              />
+            )}
             {full ? (
               <Card className="p-5 text-sm text-zinc-600">This account has reached its limit of {data.max_numbers} numbers. Contact support for more.</Card>
             ) : data.self_serve ? (
