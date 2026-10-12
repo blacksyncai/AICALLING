@@ -57,7 +57,10 @@ async def lifespan(app: FastAPI):
     crm_task = start_poll_loop()
     from app.services.outbound_call import fix_mislabeled_outcomes
     repair_task = asyncio.create_task(fix_mislabeled_outcomes() if settings.run_startup_jobs else asyncio.sleep(0))
+    from app.services.outbound_call import start_orphan_sweeper
+    sweeper_task = start_orphan_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     yield
+    sweeper_task.cancel()
     refresh_task.cancel()
     crm_task.cancel()
     repair_task.cancel()

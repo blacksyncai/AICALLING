@@ -543,3 +543,54 @@ async def emit_call_events(call_id: uuid.UUID) -> None:
 # Singleton (name kept for existing imports)
 call_service = CallService()
 outbound_call_service = call_service
+
+
+async def close_orphaned_calls(min_age_minutes: int = 2) -> int:
+    """Close calls still marked live whose LiveKit room is gone — the worker's outcome report was lost (e.g. a
+    restart right after hang-up). Otherwise the call shows "in progress" forever and holds a campaign slot."""
+    from app.database import AsyncSessionLocal
+
+    if not settings.livekit_ready:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CallLog).where(
+            CallLog.status.in_(("initiated", "ringing", "connected")), CallLog.ended_at.is_(None),
+            CallLog.started_at < cutoff,
+        ).limit(200))).scalars().all()
+    if not rows:
+        return 0
+    lk = _lk()
+    try:
+        live = {r.name for r in (await lk.room.list_rooms(api.ListRoomsRequest())).rooms}
+    finally:
+        await lk.aclose()
+    closed = 0
+    for call in rows:
+        if call.livekit_room_name and call.livekit_room_name in live:
+            continue
+        # Unknown talk time: end it at pickup so nobody is billed for time we can't account for.
+        start = call.answered_at or call.started_at
+        if start and start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        async with AsyncSessionLocal() as db:
+            await outbound_call_service.update_call_outcome(
+                call_log_id=str(call.id), outcome="completed" if call.answered_at else "no_answer",
+                transcript=call.transcript, meeting_link=None, qualification_score=None, db=db,
+                ended_at=start.timestamp() if start else None,
+            )
+        closed += 1
+        log.info("orphaned_call_closed", call_log_id=str(call.id), room=call.livekit_room_name)
+    return closed
+
+
+def start_orphan_sweeper(interval: float = 60.0) -> asyncio.Task:
+    async def _loop() -> None:
+        while True:
+            try:
+                await close_orphaned_calls()
+            except Exception as exc:
+                log.warning("orphan_sweep_failed", error=str(exc)[:200])
+            await asyncio.sleep(interval)
+
+    return asyncio.create_task(_loop())

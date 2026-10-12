@@ -1156,7 +1156,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session.on("user_state_changed", _activity("user"))
         silence_task = asyncio.create_task(_hang_up_on_silence())
 
+    finished = {"done": False}
+
     async def _shutdown() -> None:
+        if finished["done"]:
+            return
+        finished["done"] = True
         timer.cancel()
         if silence_task:
             silence_task.cancel()
@@ -1179,6 +1184,16 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         await _post_run_outcome(run, outcome)
 
     ctx.add_shutdown_callback(_shutdown)
+
+    # Report as soon as the conversation ends — the job's own teardown can take ~20 s, and a restart in that
+    # window would lose the outcome (the call would look "in progress" forever).
+    def _on_session_close(_ev) -> None:
+        async def _later() -> None:
+            await asyncio.sleep(1.0)  # let the last transcript items land
+            await _shutdown()
+        asyncio.create_task(_later())
+
+    session.on("close", _on_session_close)
 
     # When the browser tester leaves, end the job so the outcome is saved promptly.
     if call_type == "web":
