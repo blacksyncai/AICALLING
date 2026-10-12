@@ -265,7 +265,7 @@ def test_close_pipeline_stage_and_smart_view(http_mock):
                                           "contacts": [{"name": f"P {i}", "phones": [{"phone": f"+1415555200{i}"}]}]}
     state["responses"] = {
         ("GET", "/v1/status/lead/"): {"data": [{"label": "Potential"}, {"label": "Bad Fit"}]},
-        ("GET", "/v1/pipeline/"): {"data": [{"name": "Sales", "statuses": [{"id": "stat_1", "label": "Demo booked"}]}]},
+        ("GET", "/v1/pipeline/"): {"data": [{"id": "pipe_1", "name": "Sales", "statuses": [{"id": "stat_1", "label": "Demo booked"}]}]},
         ("GET", "/v1/saved_search/"): {"data": [{"id": "save_1", "name": "Hot", "s_query": {"type": "and"}}]},
         ("GET", "/v1/opportunity/"): {"data": [{"lead_id": "lead_1"}, {"lead_id": "lead_2"}], "has_more": False},
         ("GET", "/v1/lead/lead_1/"): lead(1),
@@ -282,10 +282,13 @@ def test_close_pipeline_stage_and_smart_view(http_mock):
         by_stage = await p.list_contacts(http, {}, filters={"opp_status": ["stat_1"]})
         stage_and_status = await p.list_contacts(http, {}, filters={"opp_status": ["stat_1"], "status": ["Potential"]})
         view = await p.list_contacts(http, {}, filters={"view": ["save_1"]})
+        whole_pipeline = await p.list_contacts(http, {}, filters={"pipeline": ["pipe_1"]})
+        assert {c.external_id for c in whole_pipeline} == {"lead_1", "lead_2"}
         return opts, by_stage, stage_and_status, view
 
     opts, by_stage, both, view = asyncio.run(run())
-    assert opts["opp_status"]["options"][0]["label"] == "Sales · Demo booked" and opts["view"]["options"][0]["value"] == "save_1"
+    pipe = opts["pipeline"]["options"][0]
+    assert pipe["label"] == "Sales" and pipe["stages"][0]["label"] == "Demo booked" and opts["view"]["options"][0]["value"] == "save_1"
     assert {c.external_id for c in by_stage} == {"lead_1", "lead_2"}
     assert [c.external_id for c in both] == ["lead_1"]  # in the stage AND the status
     assert [c.external_id for c in view] == ["lead_3", "lead_4"]

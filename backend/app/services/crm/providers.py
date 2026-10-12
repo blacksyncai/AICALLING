@@ -229,10 +229,14 @@ class Close(Provider):
             pass
         try:
             pipes = (await http.request("GET", "/v1/pipeline/")).get("data") or []
-            opts = [{"value": st["id"], "label": f"{p.get('name') or 'Pipeline'} · {st.get('label') or st['id']}"}
-                    for p in pipes for st in p.get("statuses") or [] if st.get("id")]
+            opts = [{"value": p["id"], "label": p.get("name") or "Pipeline",
+                     "stages": [{"value": st["id"], "label": st.get("label") or st["id"], "kind": st.get("type") or "active"}
+                                for st in p.get("statuses") or [] if st.get("id")]}
+                    for p in pipes if p.get("id")]
             if opts:
-                out.append({"key": "opp_status", "label": "Pipeline stage (opportunities)", "type": "multi", "options": opts})
+                # Pick a pipeline, then any of its stages (the "opp_status" filter); no stages = the whole pipeline.
+                out.insert(0, {"key": "pipeline", "label": "Pipeline", "type": "pipeline", "stage_key": "opp_status",
+                               "options": opts})
         except CrmError:
             pass
         try:
@@ -312,6 +316,10 @@ class Close(Provider):
         statuses = set(f.get("status") or [])
         view = (f.get("view") or [""])[0] if isinstance(f.get("view"), list) else (f.get("view") or "")
         stage_ids = list(f.get("opp_status") or [])
+        pipeline = (f.get("pipeline") or [""])[0] if isinstance(f.get("pipeline"), list) else (f.get("pipeline") or "")
+        if pipeline and not stage_ids:
+            pipes = (await http.request("GET", "/v1/pipeline/")).get("data") or []
+            stage_ids = [st["id"] for p in pipes if p.get("id") == pipeline for st in p.get("statuses") or []]
         stage_leads = set(await self._stage_lead_ids(http, stage_ids)) if stage_ids else None
         cap = max(limit * 3, 300)
 

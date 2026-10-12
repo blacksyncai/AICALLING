@@ -11,9 +11,64 @@ import { cn } from "@/lib/utils";
 interface FilterDef {
   key: string;
   label: string;
-  type: "multi" | "single";
+  type: "multi" | "single" | "pipeline";
   free?: boolean;
-  options: { value: string; label: string }[];
+  /** type "pipeline": the filter key the chosen stages go in. */
+  stage_key?: string;
+  options: { value: string; label: string; stages?: { value: string; label: string; kind: string }[] }[];
+}
+
+/** Pick a pipeline, then any of its stages (none = the whole pipeline). */
+function PipelinePicker({
+  f, pipeline, stages, onChange,
+}: {
+  f: FilterDef; pipeline: string; stages: string[]; onChange: (pipeline: string, stages: string[]) => void;
+}) {
+  const current = f.options.find((o) => o.value === pipeline);
+  const chip = (on: boolean) =>
+    cn(
+      "rounded-full border px-2.5 py-1 text-xs transition-colors",
+      on ? "border-brand-500 bg-brand-50 font-medium text-brand-700" : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300",
+    );
+  return (
+    <div className="space-y-3 md:col-span-2">
+      <Field label={f.label}>
+        <Select value={pipeline} onChange={(e) => onChange(e.target.value, [])}>
+          <option value="">Any pipeline</option>
+          {f.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label} · {o.stages?.length ?? 0} stages
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {current && (
+        <div>
+          <div className="mb-1.5 text-xs font-medium text-zinc-700">Stages in {current.label}</div>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" className={chip(stages.length === 0)} onClick={() => onChange(pipeline, [])} aria-pressed={stages.length === 0}>
+              All stages
+            </button>
+            {(current.stages ?? []).map((s) => {
+              const on = stages.includes(s.value);
+              return (
+                <button
+                  key={s.value}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => onChange(pipeline, on ? stages.filter((x) => x !== s.value) : [...stages, s.value])}
+                  className={chip(on)}
+                >
+                  {s.label}
+                  {s.kind !== "active" && <span className="ml-1 text-zinc-400">({s.kind})</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 interface Preview {
   found: number;
@@ -206,7 +261,15 @@ export function CrmImportModal({ open, onClose, onDone, initialKey }: { open: bo
           ) : (
             <div className="grid gap-5 md:grid-cols-2">
               {opts.filters.map((f) =>
-                f.type === "multi" ? (
+                f.type === "pipeline" ? (
+                  <PipelinePicker
+                    key={f.key}
+                    f={f}
+                    pipeline={filters[f.key]?.[0] ?? ""}
+                    stages={filters[f.stage_key ?? "stages"] ?? []}
+                    onChange={(pl, st) => setFilters({ ...filters, [f.key]: pl ? [pl] : [], [f.stage_key ?? "stages"]: st })}
+                  />
+                ) : f.type === "multi" ? (
                   <MultiPicker key={f.key} f={f} value={filters[f.key] ?? []} onChange={(v) => setFilters({ ...filters, [f.key]: v })} />
                 ) : (
                   <Field key={f.key} label={f.label}>
