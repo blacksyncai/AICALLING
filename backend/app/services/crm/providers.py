@@ -770,7 +770,10 @@ class FollowUpBoss(Provider):
         agent = name.split("·", 1)[-1].strip() or "Agent"
         out = []
         for st in stages:
-            tag = f"AI Call - {agent}" if st["key"] == "queued" else self._TAG_LABELS.get(st["key"], f"AI {st['label']}")
+            if st.get("custom"):
+                tag = st["label"]  # the user named this tag
+            else:
+                tag = f"AI Call - {agent}" if st["key"] == "queued" else self._TAG_LABELS.get(st["key"], f"AI {st['label']}")
             out.append({"id": tag, "label": tag, "kind": st.get("kind", "active"), "key": st["key"]})
         await http.request("GET", "/v1/me")  # the key still works
         return {"id": f"tags:{agent}", "name": f"Tags for {agent}", "stages": out}
@@ -1049,6 +1052,61 @@ class HubSpot(Provider):
                               "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 3}]}]})
         return f"Deal created in {label}"
 
+    can_install = True
+
+    async def install_pipeline(self, http, config, name, stages):
+        def meta(kind: str) -> dict:
+            return {"probability": "1.0" if kind == "won" else "0.0" if kind == "lost" else "0.5"}
+
+        pipes = (await http.request("GET", "/crm/v3/pipelines/deals")).get("results") or []
+        pipe = next((p for p in pipes if (p.get("label") or "").strip().lower() == name.strip().lower()), None)
+        if pipe is None:
+            pipe = await http.request("POST", "/crm/v3/pipelines/deals", json={
+                "label": name, "displayOrder": len(pipes),
+                "stages": [{"label": st["label"], "displayOrder": i, "metadata": meta(st.get("kind", "active"))}
+                           for i, st in enumerate(stages)]})
+        have = {(st.get("label") or "").lower(): st for st in pipe.get("stages") or []}
+        out = []
+        for i, st in enumerate(stages):
+            found = have.get(st["label"].lower())
+            if not found:
+                found = await http.request("POST", f"/crm/v3/pipelines/deals/{pipe['id']}/stages", json={
+                    "label": st["label"], "displayOrder": i, "metadata": meta(st.get("kind", "active"))})
+            out.append({"id": str(found["id"]), "label": st["label"], "kind": st.get("kind", "active"), "key": st["key"]})
+        return {"id": str(pipe["id"]), "name": name, "stages": out}
+
+    async def queued(self, http, config, stage_id, limit=10):
+        res = await http.request("POST", "/crm/v3/objects/deals/search", json={
+            "filterGroups": [{"filters": [{"propertyName": "dealstage", "operator": "EQ", "value": stage_id}]}],
+            "properties": ["dealstage", "dealname"], "limit": limit})
+        out = []
+        for d in res.get("results") or []:
+            assoc = await http.request("GET", f"/crm/v4/objects/deals/{d['id']}/associations/contacts", params={"limit": 1})
+            cid = next((str(r.get("toObjectId")) for r in assoc.get("results") or [] if r.get("toObjectId")), None)
+            if not cid:
+                continue
+            ct = await http.request("GET", f"/crm/v3/objects/contacts/{cid}",
+                                    params={"properties": "firstname,lastname,phone,mobilephone,email,company"})
+            pr = ct.get("properties") or {}
+            phone = pr.get("mobilephone") or pr.get("phone") or ""
+            pick = Contact(" ".join(x for x in (pr.get("firstname"), pr.get("lastname")) if x), phone, pr.get("email") or "",
+                           pr.get("company") or "", cid) if phone else None
+            out.append({"deal_id": str(d["id"]), "external_id": cid, "contact": pick})
+        return out
+
+    async def move_deal(self, http, config, deal_id, stage_id):
+        await http.request("PATCH", f"/crm/v3/objects/deals/{deal_id}", json={"properties": {"dealstage": stage_id}})
+
+    async def enqueue(self, http, config, external_id, pipeline, stage_id):
+        await self.set_stage(http, config, external_id, pipeline, stage_id, create=True, forward_only=False)
+        assoc = await http.request("GET", f"/crm/v4/objects/contacts/{external_id}/associations/deals", params={"limit": 50})
+        ids = [str(r.get("toObjectId")) for r in assoc.get("results") or [] if r.get("toObjectId")]
+        return ids[-1] if ids else ""
+
+    async def deal_stage(self, http, config, deal_id):
+        d = await http.request("GET", f"/crm/v3/objects/deals/{deal_id}", params={"properties": "dealstage"})
+        return (d.get("properties") or {}).get("dealstage")
+
     async def log_call(self, http, config, external_id, call):
         ts = (call.started_at or dt.datetime.now(UTC)).astimezone(UTC).isoformat()
         await http.request("POST", "/crm/v3/objects/calls", json={
@@ -1182,6 +1240,57 @@ class Pipedrive(Provider):
         await http.request("POST", "/v1/deals", json={"title": f"{name or 'Contact'} (BlackSync AI)",
                                                      "person_id": int(external_id), "stage_id": int(stage_id)})
         return f"Deal created in {label}"
+
+    can_install = True
+
+    async def install_pipeline(self, http, config, name, stages):
+        pipes = (await http.request("GET", "/v1/pipelines")).get("data") or []
+        pipe = next((p for p in pipes if (p.get("name") or "").strip().lower() == name.strip().lower()), None)
+        if pipe is None:
+            pipe = (await http.request("POST", "/v1/pipelines", json={"name": name})).get("data") or {}
+        have = {(st.get("name") or "").lower(): st for st in (await http.request(
+            "GET", "/v1/stages", params={"pipeline_id": pipe["id"]})).get("data") or []}
+        out = []
+        for st in stages:
+            found = have.get(st["label"].lower())
+            if not found:
+                found = (await http.request("POST", "/v1/stages", json={"name": st["label"], "pipeline_id": pipe["id"]})).get("data") or {}
+            out.append({"id": str(found["id"]), "label": st["label"], "kind": st.get("kind", "active"), "key": st["key"]})
+        return {"id": str(pipe["id"]), "name": name, "stages": out}
+
+    async def queued(self, http, config, stage_id, limit=10):
+        deals = (await http.request("GET", "/v1/deals", params={"stage_id": int(stage_id), "status": "open", "limit": limit})).get("data") or []
+        out = []
+        for d in deals:
+            pid = d.get("person_id")
+            pid = pid.get("value") if isinstance(pid, dict) else pid
+            if not pid:
+                continue
+            person = (await http.request("GET", f"/v1/persons/{int(pid)}")).get("data") or {}
+            phones = [x.get("value") for x in person.get("phone") or [] if x.get("value")]
+            emails = [x.get("value") for x in person.get("email") or [] if x.get("value")]
+            pick = Contact(person.get("name") or "", phones[0], (emails or [""])[0], person.get("org_name") or "", str(pid)) if phones else None
+            out.append({"deal_id": str(d["id"]), "external_id": str(pid), "contact": pick})
+        return out
+
+    async def move_deal(self, http, config, deal_id, stage_id):
+        await http.request("PUT", f"/v1/deals/{int(deal_id)}", json={"stage_id": int(stage_id)})
+
+    async def enqueue(self, http, config, external_id, pipeline, stage_id):
+        ids = {st["id"] for st in pipeline.get("stages") or []}
+        deals = (await http.request("GET", f"/v1/persons/{int(external_id)}/deals", params={"status": "open"})).get("data") or []
+        mine = next((d for d in deals if str(d.get("stage_id")) in ids), None)
+        if mine:
+            if str(mine.get("stage_id")) != stage_id:
+                await self.move_deal(http, config, str(mine["id"]), stage_id)
+            return str(mine["id"])
+        created = (await http.request("POST", "/v1/deals", json={"title": "BlackSync AI call", "person_id": int(external_id),
+                                                               "stage_id": int(stage_id)})).get("data") or {}
+        return str(created["id"])
+
+    async def deal_stage(self, http, config, deal_id):
+        d = (await http.request("GET", f"/v1/deals/{int(deal_id)}")).get("data") or {}
+        return str(d.get("stage_id")) if d.get("stage_id") is not None else None
 
     async def log_call(self, http, config, external_id, call):
         m, s = divmod(int(call.duration_seconds or 0), 60)

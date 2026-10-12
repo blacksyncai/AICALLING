@@ -71,7 +71,10 @@ export interface Connection {
   pending_calls: number;
   config: Record<string, string>;
   pipeline: { id: string; name: string; mapped: number } | null;
-  installs: { agent_id: string; agent_name: string; pipeline_id: string; pipeline_name: string; stages: string[] }[];
+  installs: {
+    agent_id: string; agent_name: string; pipeline_id: string; pipeline_name: string; stages: string[];
+    retry: { max_tries: number; after_hours: number; voicemail: boolean };
+  }[];
 }
 interface Overview {
   providers: Provider[];
@@ -498,34 +501,13 @@ export function BlackSyncPipelines({
 }: {
   p: Provider; c: Connection; agents: { id: string; name: string }[]; onChange: () => void;
 }) {
-  const [agentId, setAgentId] = useState("");
+  const [wizard, setWizard] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "green" | "red"; text: string } | null>(null);
   const installed = new Set(c.installs.map((i) => i.agent_id));
   const free = agents.filter((a) => !installed.has(a.id));
   const tags = p.install_style === "tags";
 
-  const install = async () => {
-    if (!agentId) return;
-    setBusy("install");
-    setMsg(null);
-    try {
-      await post(`/api/integrations/crm/${p.key}/install`, { agent_id: agentId });
-      const name = agents.find((a) => a.id === agentId)?.name ?? "your agent";
-      setMsg({
-        tone: "green",
-        text: tags
-          ? `Done — in ${p.name}, add the tag “AI Call - ${name}” to anyone (or bulk-tag a smart list) and ${name} calls them.`
-          : `Done — open ${p.name}, find the “BlackSync AI · ${name}” pipeline and drag anyone into “Queued for AI call”.`,
-      });
-      setAgentId("");
-      onChange();
-    } catch (e) {
-      setMsg({ tone: "red", text: errText(e) });
-    } finally {
-      setBusy(null);
-    }
-  };
   const remove = async (id: string) => {
     setBusy(id);
     try {
@@ -563,7 +545,9 @@ export function BlackSyncPipelines({
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{i.pipeline_name}</div>
-              <div className="text-xs text-zinc-400">Calls with {i.agent_name}</div>
+              <div className="text-xs text-zinc-400">
+                Calls with {i.agent_name} · retries no-answers{i.retry.voicemail ? " and voicemails" : ""} up to {i.retry.max_tries}× every {i.retry.after_hours}h
+              </div>
             </div>
             <button
               type="button"
@@ -586,21 +570,168 @@ export function BlackSyncPipelines({
       ))}
 
       {free.length > 0 && (
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="sm:flex-1" aria-label="Agent for the pipeline">
-            <option value="">{c.installs.length ? "Add a pipeline for another agent…" : "Pick the agent that should call…"}</option>
-            {free.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </Select>
-          <Button variant="primary" loading={busy === "install"} disabled={!agentId} onClick={() => void install()}>
-            {tags ? "Create the tag" : `Create pipeline in ${p.name}`}
-          </Button>
+        <Button variant="primary" onClick={() => setWizard(true)}>
+          <Zap className="h-4 w-4" /> {c.installs.length ? "Add another AI calling " + (tags ? "tag set" : "pipeline") : tags ? `Set up AI calling tags in ${p.name}` : `Create an AI calling pipeline in ${p.name}`}
+        </Button>
+      )}
+      {wizard && (
+        <div className="text-zinc-900">
+        <InstallWizard
+          p={p}
+          agents={free}
+          onClose={() => setWizard(false)}
+          onDone={(text) => {
+            setWizard(false);
+            setMsg({ tone: "green", text });
+            onChange();
+          }}
+        />
         </div>
       )}
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
+  );
+}
+
+interface InstallPreview {
+  supported: boolean;
+  style: "pipeline" | "tags";
+  noun: string;
+  stages: { key: string; label: string; kind: string; what: string }[];
+}
+
+/** Preview the AI calling pipeline (or tags) BlackSync will create in the CRM, tweak it, then allow it. */
+function InstallWizard({ p, agents, onClose, onDone }: { p: Provider; agents: { id: string; name: string }[]; onClose: () => void; onDone: (msg: string) => void }) {
+  const { data: preview, error } = useSWR<InstallPreview>(`/api/integrations/crm/${p.key}/install/preview`, fetcher);
+  const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
+  const agentName = agents.find((a) => a.id === agentId)?.name ?? "Agent";
+  const [name, setName] = useState("");
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [tries, setTries] = useState(3);
+  const [hours, setHours] = useState(4);
+  const [retryVm, setRetryVm] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const tags = p.install_style === "tags";
+  const defaultName = tags ? agentName : `BlackSync AI calling · ${agentName}`;
+
+  const allow = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await post(`/api/integrations/crm/${p.key}/install`, {
+        agent_id: agentId, name: name.trim() || defaultName, labels: Object.fromEntries(Object.entries(labels).filter(([, v]) => v.trim())),
+        max_tries: tries, retry_hours: hours, retry_voicemail: retryVm,
+      });
+      const first = labels.queued?.trim() || (tags ? `AI Call - ${name.trim() || agentName}` : preview?.stages[0]?.label);
+      onDone(
+        tags
+          ? `Done — in ${p.name}, add the tag “${first}” to anyone (or bulk-tag a smart list) and ${agentName} calls them.`
+          : `Done — open ${p.name}, find “${name.trim() || defaultName}” and move anyone into “${first}”. ${agentName} calls them within a minute.`,
+      );
+    } catch (e) {
+      setErr(errText(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={tags ? `AI calling tags in ${p.name}` : `Create an AI calling pipeline in ${p.name}`} wide>
+      {error ? (
+        <Notice tone="red">{errText(error)}</Notice>
+      ) : !preview ? (
+        <div className="flex justify-center py-10">
+          <Spinner />
+        </div>
+      ) : (
+        <div className="space-y-5">
+          <p className="text-sm text-zinc-600">
+            {tags
+              ? `BlackSync will use these tags in ${p.name}. Tag anyone with the first one and the agent calls them; the tag then flips to the result.`
+              : `BlackSync will create this pipeline in ${p.name}. Move anyone into the first stage and the agent calls them — then the card moves itself through the stages below.`}{" "}
+            Rename anything you like before you allow it.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Agent that calls">
+              <Select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label={tags ? "Name used in the tags" : "Pipeline name"}>
+              <Input value={name} maxLength={60} placeholder={tags ? agentName : `e.g. BlackSync AI calling — Expired`} onChange={(e) => setName(e.target.value)} />
+            </Field>
+          </div>
+
+          <div>
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">{tags ? "Tags" : "Stages"} — what happens in each</div>
+            <ol className="divide-y divide-zinc-100 rounded-xl ring-1 ring-zinc-200">
+              {preview.stages.map((st, i) => (
+                <li key={st.key} className="grid gap-2 px-3 py-2.5 sm:grid-cols-[28px_220px_minmax(0,1fr)] sm:items-center">
+                  <span className={cn("flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold", i === 0 ? "bg-brand-600 text-white" : "bg-zinc-100 text-zinc-600")}>{i + 1}</span>
+                  <Input
+                    value={labels[st.key] ?? ""}
+                    placeholder={tags && st.key === "queued" ? `AI Call - ${name.trim() || agentName}` : st.label}
+                    maxLength={60}
+                    onChange={(e) => setLabels({ ...labels, [st.key]: e.target.value })}
+                    className="h-8 text-sm"
+                    aria-label={`Name for ${st.label}`}
+                  />
+                  <span className="text-xs text-zinc-500">
+                    {st.kind === "lost" && <Badge tone="gray">closed</Badge>} {st.what}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className="rounded-xl bg-zinc-50 p-4 ring-1 ring-zinc-100">
+            <div className="text-sm font-medium text-zinc-900">Call back people who don&apos;t pick up</div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-zinc-700">
+              Try up to
+              <span className="inline-block w-20">
+              <Select value={String(tries)} onChange={(e) => setTries(Number(e.target.value))}>
+                {[1, 2, 3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
+              </span>
+              times, waiting
+              <span className="inline-block w-32">
+              <Select value={String(hours)} onChange={(e) => setHours(Number(e.target.value))}>
+                {[1, 2, 4, 8, 24, 48].map((n) => (
+                  <option key={n} value={n}>
+                    {n < 24 ? `${n} hour${n > 1 ? "s" : ""}` : `${n / 24} day${n > 24 ? "s" : ""}`}
+                  </option>
+                ))}
+              </Select>
+              </span>
+              between calls.
+            </div>
+            <div className="mt-3">
+              <Toggle checked={retryVm} onChange={setRetryVm} label="Retry voicemails too" description="Off = only no-answers get another call." />
+            </div>
+          </div>
+
+          {err && <Notice tone="red">{err}</Notice>}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4">
+            <p className="text-xs text-zinc-500">Nothing in {p.name} changes until you allow it. Existing {tags ? "tags" : "pipelines"} with the same names are reused, not duplicated.</p>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button variant="primary" loading={busy} disabled={!agentId} onClick={() => void allow()}>
+                Allow &amp; create in {p.name}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }

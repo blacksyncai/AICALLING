@@ -57,6 +57,12 @@ async def lifespan(app: FastAPI):
     crm_task = start_poll_loop()
     from app.services.outbound_call import fix_mislabeled_outcomes
     repair_task = asyncio.create_task(fix_mislabeled_outcomes() if settings.run_startup_jobs else asyncio.sleep(0))
+    if settings.run_startup_jobs:
+        from app.agent.templates import refresh_welcome_agents
+        try:
+            log.info("welcome_agents_refreshed", count=await refresh_welcome_agents())
+        except Exception as exc:
+            log.warning("welcome_agents_refresh_failed", error=str(exc))
     from app.services.outbound_call import start_orphan_sweeper
     sweeper_task = start_orphan_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     yield

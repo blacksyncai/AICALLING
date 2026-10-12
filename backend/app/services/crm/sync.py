@@ -393,13 +393,27 @@ def _stage(install: dict, key: str) -> str | None:
     return next((st["id"] for st in install["pipeline"]["stages"] if st.get("key") == key), None)
 
 
-async def install_pipeline(db, conn: CrmConnection, agent: Agent) -> dict:
+def install_stages(labels: dict | None = None) -> list[dict]:
+    """The stages a BlackSync pipeline gets, with any renamed labels applied."""
+    labels = labels or {}
+    out = []
+    for st in BLACKSYNC_STAGES:
+        custom = str(labels.get(st["key"]) or "").strip()[:60]
+        out.append({**st, "label": custom or st["label"], "custom": bool(custom and custom != st["label"])})
+    return out
+
+
+async def install_pipeline(db, conn: CrmConnection, agent: Agent, name: str = "", labels: dict | None = None,
+                           max_tries: int = MAX_TRIES, retry_hours: float = RETRY_AFTER.total_seconds() / 3600,
+                           retry_voicemail: bool = True) -> dict:
     p, http = http_for(conn)
     if not p.can_install:
         raise CrmError(f"{p.name} doesn't support a BlackSync pipeline yet.")
-    pipe = await p.install_pipeline(http, conn.config or {}, f"BlackSync AI · {agent.name}"[:60], BLACKSYNC_STAGES)
+    pipe = await p.install_pipeline(http, conn.config or {}, (name.strip() or f"BlackSync AI · {agent.name}")[:60],
+                                    install_stages(labels))
     installs = [i for i in _installs(conn) if i.get("agent_id") != str(agent.id)]
-    installs.append({"agent_id": str(agent.id), "agent_name": agent.name, "pipeline": pipe})
+    installs.append({"agent_id": str(agent.id), "agent_name": agent.name, "pipeline": pipe,
+                     "retry": {"max_tries": int(max_tries), "after_hours": float(retry_hours), "voicemail": bool(retry_voicemail)}})
     conn.settings = {**(conn.settings or {}), "installs": installs}
     await add_log(db, conn, "test", "ok", f"Created the “{pipe['name']}” pipeline in {p.name}. Drag a card into "
                   f"“Queued for AI call” and {agent.name} calls them.")
@@ -460,9 +474,12 @@ async def process_queue(db, conn: CrmConnection, now: dt.datetime | None = None)
         queue_id, calling_id = _stage(inst, "queued"), _stage(inst, "calling")
         if not agent or agent.org_id != conn.org_id or not queue_id:
             continue
-        # Retry no-answers: back into the queue after RETRY_AFTER, up to MAX_TRIES calls in total.
-        no_answer_id = _stage(inst, "no_answer")
-        if no_answer_id:
+        # Retry people who didn't pick up: back into the queue after the wait, up to the max tries in total.
+        retry = inst.get("retry") or {}
+        max_tries = int(retry.get("max_tries") or MAX_TRIES)
+        wait = dt.timedelta(hours=float(retry.get("after_hours") or RETRY_AFTER.total_seconds() / 3600))
+        retry_stages = [s for s in (_stage(inst, "no_answer"), _stage(inst, "voicemail") if retry.get("voicemail", True) else None) if s]
+        for no_answer_id in retry_stages:
             try:
                 for it in await p.queued(http, conn.config or {}, no_answer_id, limit=25):
                     c0 = it.get("contact")
@@ -474,7 +491,7 @@ async def process_queue(db, conn: CrmConnection, now: dt.datetime | None = None)
                     last = lead0.last_called_at if lead0 else None
                     if last and last.tzinfo is None:
                         last = last.replace(tzinfo=UTC)
-                    if lead0 and tries < MAX_TRIES and (not last or now - last >= RETRY_AFTER):
+                    if lead0 and tries < max_tries and (not last or now - last >= wait):
                         await p.move_deal(http, conn.config or {}, it["deal_id"], queue_id)
             except CrmError as exc:
                 log.warning("blacksync_retry_failed", error=str(exc))

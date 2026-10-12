@@ -693,3 +693,54 @@ def test_hubspot_deal_stage_sync(http_mock):
     assert patched[-1] == {"properties": {"dealstage": "qual"}}
     # Forward-only: never move back down the board.
     assert asyncio.run(hs.set_stage(http, {}, "901", pipes[0], "appt", create=True, forward_only=True)) is None
+
+
+def test_custom_ai_pipeline_on_pipedrive_with_retry_settings(client, http_mock, monkeypatch):
+    state, calls = http_mock
+    ids = iter(range(100, 200))
+
+    def factory():
+        def handler(request):
+            if request.method == "POST" and request.url.path.endswith("/v1/stages"):
+                calls.append((request.method, request.url.path, request))
+                return httpx.Response(200, json={"data": {"id": next(ids)}})
+            return mock(state["responses"], calls)(request)
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    state["responses"] = {**RESPONSES["pipedrive"], ("GET", "/v1/pipelines"): {"data": []},
+                          ("POST", "/v1/pipelines"): {"data": {"id": 9}}, ("GET", "/v1/stages"): {"data": []}}
+    assert client.post("/api/integrations/crm/pipedrive/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    monkeypatch.setattr(BaseHttp, "client_factory", staticmethod(factory))
+    prev = client.get("/api/integrations/crm/pipedrive/install/preview").json()
+    assert prev["supported"] and prev["stages"][0]["key"] == "queued" and prev["stages"][0]["what"]
+
+    agent = client.post("/api/agents/", json={"template": "blank", "name": "Exp"}).json()
+    r = client.post("/api/integrations/crm/pipedrive/install", json={
+        "agent_id": agent["id"], "name": "BlackSync AI calling — Expired", "labels": {"queued": "New lead", "follow_up": "Contacted"},
+        "max_tries": 5, "retry_hours": 2, "retry_voicemail": False})
+    assert r.status_code == 200, r.text
+    inst = r.json()["installs"][0]
+    assert inst["pipeline_name"] == "BlackSync AI calling — Expired"
+    assert inst["stages"][0] == "New lead" and "Contacted" in inst["stages"]
+    assert inst["retry"] == {"max_tries": 5, "after_hours": 2.0, "voicemail": False}
+    posted = [json.loads(c[2].content)["name"] for c in calls if c[0] == "POST" and c[1].endswith("/v1/stages")]
+    assert posted[0] == "New lead" and len(posted) == 8
+    client.delete("/api/integrations/crm/pipedrive")
+
+
+def test_hubspot_creates_ai_pipeline(http_mock):
+    from app.services.crm.http import NativeHttp
+    from app.services.crm.providers import HubSpot
+    from app.services.crm.sync import install_stages
+
+    state, calls = http_mock
+    state["responses"] = {
+        ("GET", "/crm/v3/pipelines/deals"): {"results": []},
+        ("POST", "/crm/v3/pipelines/deals"): {"id": "777", "label": "BlackSync AI", "stages": [
+            {"id": f"s{i}", "label": st["label"]} for i, st in enumerate(install_stages())]},
+    }
+    pipe = asyncio.run(HubSpot().install_pipeline(NativeHttp("https://api.hubapi.com"), {}, "BlackSync AI", install_stages()))
+    assert pipe["id"] == "777" and [s["key"] for s in pipe["stages"]][:2] == ["queued", "calling"]
+    body = [json.loads(c[2].content) for c in calls if c[0] == "POST"][0]
+    probs = {st["label"]: st["metadata"]["probability"] for st in body["stages"]}
+    assert probs["Not interested"] == "0.0" and probs["Queued for AI call"] == "0.5"

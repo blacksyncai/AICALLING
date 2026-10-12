@@ -79,7 +79,8 @@ def conn_to_dict(c: CrmConnection) -> dict:
                          for r in s.get("auto_imports") or []],
         "pending_calls": len(s.get("pending") or []),
         "installs": [{"agent_id": i["agent_id"], "agent_name": i.get("agent_name", ""), "pipeline_id": i["pipeline"]["id"],
-                      "pipeline_name": i["pipeline"]["name"], "stages": [st["label"] for st in i["pipeline"]["stages"]]}
+                      "pipeline_name": i["pipeline"]["name"], "stages": [st["label"] for st in i["pipeline"]["stages"]],
+                      "retry": i.get("retry") or {"max_tries": 3, "after_hours": 4, "voicemail": True}}
                      for i in s.get("installs") or []],
         "pipeline": ({"id": s["pipeline"]["id"], "name": (s["pipeline"].get("snapshot") or {}).get("name", ""),
                       "mapped": len(s["pipeline"].get("map") or {})} if s.get("pipeline") else None),
@@ -268,6 +269,29 @@ async def save_pipeline_sync(key: str, body: PipelineSyncIn, ctx: ManagerDep, db
 
 class InstallIn(BaseModel):
     agent_id: uuid.UUID
+    name: str = Field(default="", max_length=60)
+    labels: dict[str, str] = Field(default_factory=dict)  # stage key → custom label
+    max_tries: int = Field(default=3, ge=1, le=6)
+    retry_hours: float = Field(default=4, ge=0.5, le=72)
+    retry_voicemail: bool = True
+
+
+@router.get("/{key}/install/preview")
+async def install_preview(key: str, ctx: ManagerDep, db: DbDep):
+    """What "Create the AI calling pipeline" will make, before the user allows it."""
+    p = _provider(key)
+    await _require_conn(db, ctx.org.id, key)
+    what = {"queued": "Move anyone here and the agent calls them within a minute (8 AM – 9 PM).",
+            "calling": "The agent is on the phone with them.",
+            "no_answer": "Didn't pick up — goes back to the queue after your wait, until the tries run out.",
+            "voicemail": "Reached voicemail (left your message or hung up, per the agent's setting).",
+            "follow_up": "They talked — interested, callback or questions. Your team takes it from here.",
+            "booked": "The agent booked a meeting on your calendar.",
+            "not_interested": "Said no, wrong number or not a fit.",
+            "dnc": "Asked not to be called again — never dialed again."}
+    return {"supported": p.can_install, "style": p.install_style, "noun": p.pipeline_noun or "pipeline",
+            "stages": [{"key": st["key"], "label": st["label"], "kind": st["kind"], "what": what.get(st["key"], "")}
+                       for st in sync.BLACKSYNC_STAGES]}
 
 
 @router.post("/{key}/install")
@@ -278,7 +302,8 @@ async def install(key: str, body: InstallIn, ctx: ManagerDep, db: DbDep):
     if not agent or agent.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Agent not found")
     try:
-        await sync.install_pipeline(db, conn, agent)
+        await sync.install_pipeline(db, conn, agent, name=body.name, labels=body.labels, max_tries=body.max_tries,
+                                    retry_hours=body.retry_hours, retry_voicemail=body.retry_voicemail)
     except CrmError as exc:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Couldn't create the pipeline: {exc}") from exc
