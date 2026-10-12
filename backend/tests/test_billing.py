@@ -482,7 +482,7 @@ def test_lookup_free_allowance_then_confirmed_paid_balance(client, make_client, 
         c.post("/api/billing/lookups/checkout", json={"amount": "lookup_5"})
         assert stripe.sessions[-1]["metadata"]["purchase_type"] == "lookup_funds"
         _hook(client, "checkout.session.completed", _paid_session(stripe))
-        assert c.get("/api/billing/lookups").json()["balance_cents"] == 500
+        assert c.get("/api/billing/lookups").json()["balance_cents"] == 500  # $5 pack: no volume bonus
 
         lf._hits.clear()
         assert c.post("/api/lead-finder/lookups", json={**_addr(9), "expected_price_cents": 25}).status_code == 200

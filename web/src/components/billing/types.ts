@@ -89,7 +89,7 @@ export interface Catalog {
   stripe_ready: boolean;
   plans: Plan[];
   packs: Pack[];
-  lookup_funds: { key: string; name: string; amount_cents: number; available: boolean }[];
+  lookup_funds: { key: string; name: string; amount_cents: number; available: boolean; per_record_cents?: number; records?: number; grant_cents?: number }[];
   phone_addon: { amount_cents: number; available: boolean };
   current_plan: PlanInfo;
 }

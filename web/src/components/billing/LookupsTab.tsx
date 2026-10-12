@@ -72,18 +72,31 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
       </div>
 
       <div>
-        <PricingHeading title="Add lookup funds" description="Prepaid balance for lead data only. Separate from calling credits." />
+        <PricingHeading
+          title="Lead lookups"
+          description="Find owner phone numbers for property addresses. Bigger packs cost less per record, and you're never charged for a lookup that finds no one."
+        />
         <div className="grid gap-4 sm:grid-cols-3">
           {cat.lookup_funds.map((f, i) => {
-            const n = price ? Math.floor(f.amount_cents / price) : null;
+            const records = f.records ?? (price ? Math.floor(f.amount_cents / price) : null);
             const featured = i === 1;
             return (
               <PricingCard
                 key={f.key}
                 index={i}
                 name={["Starter", "Standard", "Bulk"][i] ?? "Top-up"}
-                description={n != null ? `About ${n.toLocaleString()} paid lookups at today's price` : "Added to your lookup balance"}
+                description={
+                  records != null
+                    ? `${records.toLocaleString()} records${f.per_record_cents ? ` · ${f.per_record_cents}¢ per record` : ""}`
+                    : "Added to your lookup balance"
+                }
                 cents={f.amount_cents}
+                features={[
+                  "Single addresses: owner numbers in seconds, saved to Contacts in one click",
+                  "Bulk: drop in a CSV of addresses, get phone numbers back",
+                  "Do Not Call flags on every number",
+                  "No charge when no owner is found",
+                ]}
                 highlighted={featured}
                 badge={featured ? <PillBadge>Popular</PillBadge> : null}
                 footer={

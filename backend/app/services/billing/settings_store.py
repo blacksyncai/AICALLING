@@ -18,7 +18,7 @@ _LEGACY_MODEL_RATES = [
 
 DEFAULTS: dict = {
     # None = paid lookups are OFF until an admin confirms a retail price.
-    "property_lookup_price_cents": None,
+    "property_lookup_price_cents": 12,
     # "match" = charge only when an owner is found; "completed" = every completed lookup.
     "lookup_charge_policy": "match",
     "lookup_free_daily": 5,

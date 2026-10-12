@@ -81,7 +81,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
               key={p.key}
               index={i}
               name={p.name}
-              description={`${p.credits.toLocaleString()} credits · ${p.cents_per_credit.toFixed(1)}¢ each`}
+              description={`${p.credits.toLocaleString()} AI calling credits`}
               cents={p.amount_cents}
               highlighted={p.suggested}
               badge={p.suggested ? <PillBadge>Popular</PillBadge> : null}

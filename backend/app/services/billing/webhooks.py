@@ -175,7 +175,8 @@ async def _claw_back(db: AsyncSession, p: Purchase, cents: int, *, kind: str, no
     """Take back what `cents` of this purchase bought, as far as it's unused. Returns units taken."""
     org = await db.get(Organization, p.org_id)
     if p.kind == "lookup_funds":
-        want = min(cents, p.amount_cents)
+        grant = p.credits or p.amount_cents  # bonus balance is taken back in proportion
+        want = min(grant, round(grant * cents / p.amount_cents)) if p.amount_cents else 0
         applied = await purchases.add_lookup_funds(db, org, -want, kind=kind, note=note, purchase_id=p.id, stripe_ref=ref)
         taken = -applied
         p.unrecovered += want - taken

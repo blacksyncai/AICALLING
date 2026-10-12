@@ -111,7 +111,9 @@ async def checkout_lookup_funds(db: AsyncSession, org: Organization, user_id: uu
         price = await catalog.sellable_price(key)
     except catalog.NotSellable as exc:
         raise BillingError(str(exc), 409)
-    return await _checkout(db, org, user_id, kind="lookup_funds", item=item, price_id=price, credits_n=0,
+    # The balance this pack adds is fixed when it's bought (kept on the purchase for refunds).
+    grant = catalog.lookup_grant_cents(item)
+    return await _checkout(db, org, user_id, kind="lookup_funds", item=item, price_id=price, credits_n=grant,
                            return_path="/billing")
 
 
@@ -168,7 +170,9 @@ async def fulfill(db: AsyncSession, purchase_id: uuid.UUID, *, payment_intent: s
                               (" (auto-recharge)" if p.kind == "auto_recharge" else ""),
                               amount_paid_cents=p.amount_cents, purchase_id=p.id, stripe_ref=payment_intent)
     elif p.kind == "lookup_funds":
-        await add_lookup_funds(db, org, p.amount_cents, kind="funding", note=f"Added ${p.amount_cents / 100:,.2f}",
+        grant = p.credits or p.amount_cents
+        bonus = f" (${p.amount_cents / 100:,.2f} paid)" if grant > p.amount_cents else ""
+        await add_lookup_funds(db, org, grant, kind="funding", note=f"Added ${grant / 100:,.2f}{bonus}",
                                purchase_id=p.id, stripe_ref=payment_intent)
     log.info("purchase_fulfilled", purchase_id=str(p.id), kind=p.kind, org_id=str(org.id))
     return True

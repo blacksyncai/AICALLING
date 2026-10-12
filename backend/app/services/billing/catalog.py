@@ -39,22 +39,38 @@ PLAN_ORDER = ["solo", "teams"]
 CREDIT_PACKS: dict[str, dict] = {
     "credits_75": {"key": "credits_75", "name": "Quick Top-Up", "credits": 75, "amount_cents": 2900,
                    "lookup_key": "credits_75_one_time", "price_id": "price_1UPKcKR0Rid8tnhHK5Hgkfc5",
-                    "blurb": "For occasional use and inbound agents."},
+                    "blurb": "Runs up to 225–300 dials."},
     "credits_500": {"key": "credits_500", "name": "Standard", "credits": 500, "amount_cents": 13900,
                     "lookup_key": "credits_500_one_time", "price_id": "price_1UPKcPR0Rid8tnhHKkgMDP69",
-                    "blurb": "For regular calling.", "suggested": True},
+                    "blurb": "Runs up to 1,500–2,000 dials.", "suggested": True},
     "credits_1000": {"key": "credits_1000", "name": "Volume", "credits": 1000, "amount_cents": 26000,
                      "lookup_key": "credits_1000_one_time", "price_id": "price_1UPKcRR0Rid8tnhHrol6d9g3",
-                     "blurb": "For higher-volume campaigns."},
+                     "blurb": "Runs up to 3,000–4,000 dials."},
 }
 PACK_ORDER = ["credits_75", "credits_500", "credits_1000"]
 
 # One-time lead-lookup balance top-ups. These need matching Stripe prices before they can be sold.
+# Bigger packs add bonus balance: at the 12¢ list price, $5 buys ~41 records (12¢ each),
+# $10 buys 100 (10¢ each) and $25 buys 312 (8¢ each).
+LOOKUP_LIST_CENTS = 12
 LOOKUP_FUNDS: dict[str, dict] = {
-    "lookup_5": {"key": "lookup_5", "name": "$5", "amount_cents": 500, "lookup_key": "lookup_funds_5_one_time"},
-    "lookup_10": {"key": "lookup_10", "name": "$10", "amount_cents": 1000, "lookup_key": "lookup_funds_10_one_time"},
-    "lookup_25": {"key": "lookup_25", "name": "$25", "amount_cents": 2500, "lookup_key": "lookup_funds_25_one_time"},
+    "lookup_5": {"key": "lookup_5", "name": "$5", "amount_cents": 500, "lookup_key": "lookup_funds_5_one_time",
+                 "per_record_cents": 12},
+    "lookup_10": {"key": "lookup_10", "name": "$10", "amount_cents": 1000, "lookup_key": "lookup_funds_10_one_time",
+                  "per_record_cents": 10},
+    "lookup_25": {"key": "lookup_25", "name": "$25", "amount_cents": 2500, "lookup_key": "lookup_funds_25_one_time",
+                  "per_record_cents": 8},
 }
+for _f in LOOKUP_FUNDS.values():
+    _f["grant_cents"] = _f["amount_cents"] * LOOKUP_LIST_CENTS // _f["per_record_cents"]
+    _f["records"] = _f["grant_cents"] // LOOKUP_LIST_CENTS
+
+
+def lookup_grant_cents(item: dict) -> int:
+    """Lookup balance a pack adds (paid amount plus its volume bonus)."""
+    return item.get("grant_cents") or item["amount_cents"]
+
+
 FUNDS_ORDER = ["lookup_5", "lookup_10", "lookup_25"]
 
 PHONE_ADDON = {"key": "phone_number", "name": "Additional phone number", "amount_cents": 350, "interval": "month",
