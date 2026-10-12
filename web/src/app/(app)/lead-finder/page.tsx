@@ -180,6 +180,26 @@ export default function LeadFinderPage() {
         )}
       </div>
 
+      {usage?.enabled && !usage.unlimited && (
+        <div className="mb-4 grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm sm:grid-cols-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Price</p>
+            <p className="mt-0.5 font-semibold text-zinc-900">8¢–12¢ per lookup</p>
+            <p className="text-xs text-zinc-500">12¢ on $5 · 10¢ on $10 · 8¢ on $25 packs</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Example</p>
+            <p className="mt-0.5 font-semibold text-zinc-900">100 addresses ≈ $8–$12</p>
+            <p className="text-xs text-zinc-500">Plus {usage.free_daily} free lookups every day</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">No match, no charge</p>
+            <p className="mt-0.5 font-semibold text-emerald-700">Failed addresses are free</p>
+            <p className="text-xs text-zinc-500">You only pay when an owner is found</p>
+          </div>
+        </div>
+      )}
+
       <div className="mb-4 w-full sm:w-72">
         <Tabs<Mode>
           value={mode}
