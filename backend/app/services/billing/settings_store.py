@@ -8,7 +8,8 @@ from app.models.billing import BillingAudit, PlatformSetting
 
 # Credits per connected minute, by LLM model (1.0–1.3). Admin-editable; these are the starting values.
 DEFAULT_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.2,
-                       "claude-haiku-5-5": 1.0, "claude-sonnet-5-5": 1.3}
+                       "claude-haiku-5-5": 1.0, "claude-sonnet-5-5": 1.3,
+                       "gpt-oss-120b": 1.2, "qwen-3.8-27b": 1.0}
 # Earlier defaults; a saved copy of one of them follows the current defaults instead.
 _LEGACY_MODEL_RATES = [
     {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.4, "gpt-4o": 1.5},

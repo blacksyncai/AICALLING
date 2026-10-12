@@ -38,3 +38,16 @@ def test_agent_saves_voice_tuning(client):
     assert r.status_code == 200, r.text
     vt = r.json()["voice_tuning"]
     assert vt["volume"] == 1.2 and "interruption" not in vt and vt["pronunciations"] == [{"word": "BlackSync", "say": "Black Sync"}]
+
+
+def test_blacksync_super_intelligence_models(monkeypatch):
+    from app.agent import models
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "cerebras_api_key", "csk-test")
+    key, url, temp = models.llm_endpoint("gpt-oss-120b")
+    assert key == "csk-test" and "cerebras" in url and temp is True
+    names = {m["id"]: m["name"] for m in models.model_catalog()}
+    assert names["gpt-oss-120b"].startswith("BlackSync Super Intelligence")
+    monkeypatch.setattr(settings, "cerebras_api_key", "")
+    assert "gpt-oss-120b" not in {m["id"] for m in models.model_catalog()}

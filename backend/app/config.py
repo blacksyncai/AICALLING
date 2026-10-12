@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     # Claude models for agents (Haiku/Sonnet); hidden from the model picker when unset.
     anthropic_api_key: str = ""
+    # Cerebras (OpenAI-compatible): the "BlackSync Super Intelligence" models; hidden when unset.
+    cerebras_api_key: str = ""
     # Nango (OAuth for CRMs like Salesforce, HubSpot, Close); integrations configured in Nango show up in the app.
     nango_secret_key: str = ""
     # One-off repair jobs at startup (off in tests).

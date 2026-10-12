@@ -26,6 +26,24 @@ RUNTIME_DEFAULT_MODEL = "gpt-4.1-nano"
 #   general · booking (calendar tools) · transfer (call transfer tool) · complex_scripts
 LLM_MODELS: list[dict] = [
     {
+        "id": "gpt-oss-120b",
+        "name": "BlackSync Super Intelligence · Ultra",
+        "provider": "BlackSync",
+        "description": "Our flagship voice brain on wafer-scale AI chips: near-instant replies, strong reasoning and tool use.",
+        "speed": "fast",
+        "tags": ["recommended", "fast"],
+        "recommended_for": ["general", "booking", "complex_scripts"],
+    },
+    {
+        "id": "qwen-3.8-27b",
+        "name": "BlackSync Super Intelligence · Flash",
+        "provider": "BlackSync",
+        "description": "Lightning-fast BlackSync model for short, high-volume calls.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": ["general"],
+    },
+    {
         "id": "gpt-4.1-mini",
         "name": "GPT-4.1 mini",
         "description": "Fast and low-cost, good at following call scripts.",
@@ -87,6 +105,9 @@ LLM_MODELS: list[dict] = [
 
 
 ANTHROPIC_OPENAI_BASE_URL = "https://api.anthropic.com/v1"
+CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+# Served on Cerebras wafer-scale hardware, branded as BlackSync's own models.
+CEREBRAS_MODELS = {"gpt-oss-120b", "qwen-3.8-27b"}
 
 
 def is_anthropic_model(model_id: str | None) -> bool:
@@ -102,6 +123,8 @@ def llm_endpoint(model_id: str | None) -> tuple[str, str, bool]:
     """
     if is_anthropic_model(model_id):
         return settings.anthropic_api_key, ANTHROPIC_OPENAI_BASE_URL, False
+    if model_id in CEREBRAS_MODELS:
+        return settings.cerebras_api_key, CEREBRAS_BASE_URL, True
     return settings.openai_api_key, settings.openai_base_url, True
 
 GROUPS: list[tuple[str, str]] = [
@@ -155,7 +178,8 @@ def model_catalog() -> list[dict]:
     models = [
         {"provider": "OpenAI", **m, "status": "available", "group": m["tags"][0]}
         for m in LLM_MODELS
-        if not is_anthropic_model(m["id"]) or settings.anthropic_api_key
+        if (not is_anthropic_model(m["id"]) or settings.anthropic_api_key)
+        and (m["id"] not in CEREBRAS_MODELS or settings.cerebras_api_key)
     ]
     known = {m["id"] for m in models}
     for extra in dict.fromkeys([settings.llm_model]):
