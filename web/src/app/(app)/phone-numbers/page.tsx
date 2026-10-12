@@ -1,7 +1,7 @@
 "use client";
 
 import { Hash, Phone, Search, Star } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
@@ -23,7 +23,7 @@ type Pricing = MyPhoneNumbers["pricing"];
 function nextNumberCost(p: Pricing): { free: boolean; text: string } {
   if (!p) return { free: false, text: "" };
   const unit = `$${(p.unit_cents / 100).toFixed(2)}/mo`;
-  if (!p.subscribed) return { free: false, text: `Your first ${p.included_on_plan === 1 ? "number is" : `${p.included_on_plan} numbers are`} included with any plan. Extra numbers are ${unit} each.` };
+  if (!p.subscribed) return { free: false, text: `${unit} per number — no plan needed. Or get your first ${p.included_on_plan === 1 ? "number" : `${p.included_on_plan} numbers`} included with any plan.` };
   if (p.active < p.included) return { free: true, text: `Included with your plan — no extra charge. Extra numbers after that are ${unit} each.` };
   return { free: false, text: `You've used your included number. Each extra number is ${unit}, billed with your plan.` };
 }
@@ -41,7 +41,13 @@ function fmtDate(iso: string | null) {
 export default function PhoneNumbersPage() {
   const { session } = useSession();
   const manager = canManage(session);
-  const { data, mutate, error } = useSWR<MyPhoneNumbers>("/api/phone-numbers", fetcher);
+  const [returned, setReturned] = useState<"success" | "canceled" | null>(null);
+  useEffect(() => {
+    const v = new URLSearchParams(window.location.search).get("checkout");
+    if (v === "success" || v === "canceled") setReturned(v);
+  }, []);
+  // Right after checkout, poll briefly while the payment webhook buys the number.
+  const { data, mutate, error } = useSWR<MyPhoneNumbers>("/api/phone-numbers", fetcher, { refreshInterval: returned === "success" ? 3000 : 0 });
 
   if (error) return <Notice tone="red">{error.message}</Notice>;
   if (!data)
@@ -55,6 +61,16 @@ export default function PhoneNumbersPage() {
 
   return (
     <>
+      {returned === "success" && (
+        <div className="mb-4">
+          <Notice tone="green">Payment received — your number is being added. It shows up below in a few seconds.</Notice>
+        </div>
+      )}
+      {returned === "canceled" && (
+        <div className="mb-4">
+          <Notice tone="amber">Checkout was canceled — nothing was charged.</Notice>
+        </div>
+      )}
       <PageHeader title="Phone numbers" description="The numbers your agents call from. Pick a default, or set one per agent under Agent → Actions." />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <NumbersList numbers={data.numbers} manager={manager} refresh={() => void mutate()} />
@@ -230,11 +246,20 @@ function BuyNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => void
 
   async function buy(n: Available) {
     const cost = nextNumberCost(pricing);
-    const note = cost.free ? "It's included with your plan." : pricing ? `It's billed at $${(pricing.unit_cents / 100).toFixed(2)}/mo with your plan.` : "It will be billed as an additional number.";
+    const unit = pricing ? `$${(pricing.unit_cents / 100).toFixed(2)}/mo` : "$3.50/mo";
+    const note = cost.free
+      ? "It's included with your plan."
+      : pricing && !pricing.subscribed
+        ? `It's ${unit} — you'll pay securely with Stripe, then the number is added right away. Cancel any time in Billing.`
+        : `It's billed at ${unit} with your plan.`;
     if (!window.confirm(`Add ${n.friendly} to this account? ${note}`)) return;
     setBuying(n.number);
     try {
-      await post("/api/phone-numbers/purchase", { number: n.number });
+      const r = await post<{ checkout_url?: string }>("/api/phone-numbers/purchase", { number: n.number });
+      if (r?.checkout_url) {
+        window.location.href = r.checkout_url;
+        return;
+      }
       setResults(null);
       setArea("");
       refresh();

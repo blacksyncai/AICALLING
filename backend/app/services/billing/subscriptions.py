@@ -107,6 +107,8 @@ async def on_invoice_paid(db: AsyncSession, inv: dict) -> uuid.UUID | None:
     if inv.get("billing_reason") not in ("subscription_create", "subscription_cycle"):
         return org_id
     sub = await stripe_api.retrieve_subscription(sub_id)
+    if ((sub.get("metadata") or {}).get("purchase_type")) == "phone_number":
+        return org_id  # a number bought on its own — not a plan, no included credits
     row = await sync_from_stripe(db, sub, org_id)
     if row.plan_key:
         org = await db.get(Organization, org_id)
@@ -196,7 +198,8 @@ async def phone_summary(db: AsyncSession, org_id: uuid.UUID) -> dict:
     from app.services.telephony import active_numbers
 
     included = int(await settings_store.get(db, "included_phone_numbers") or 0)
-    active = len(await active_numbers(db, org_id))
+    # Numbers bought on their own already have their own $3.50/mo subscription.
+    active = len([n for n in await active_numbers(db, org_id) if not n.stripe_subscription_id])
     row = await db.get(BillingSubscription, org_id)
     subscribed = bool(row and row.status in LIVE)
     return {"active": active, "included": included if subscribed else 0,

@@ -106,8 +106,16 @@ def test_self_serve_purchase_respects_limit(client, make_client, twilio, monkeyp
     try:
         _, owner = _account(client, make_client, "Self Serve Co")
         assert owner.get("/api/phone-numbers/available", params={"area_code": "415"}).status_code == 200
-        # No plan → no self-serve number (it would never be billed).
-        assert owner.post("/api/phone-numbers/purchase", json={"number": n}).status_code == 402
+        # No plan → the number is sold on its own through Checkout (bought once paid).
+        from app.services.billing import purchases
+
+        async def fake_checkout(db, org, user_id, number):
+            return f"https://checkout.test/{number}"
+
+        monkeypatch.setattr(purchases, "checkout_phone_number", fake_checkout)
+        r = owner.post("/api/phone-numbers/purchase", json={"number": n})
+        assert r.status_code == 200 and r.json()["checkout_url"].startswith("https://checkout.test/")
+        assert owner.get("/api/phone-numbers").json()["numbers"] == []  # nothing bought before payment
         real = subscriptions.phone_summary
 
         async def on_plan(db, org_id):

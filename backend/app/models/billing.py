@@ -200,6 +200,8 @@ class PhoneNumber(Base):
     # Who answers calls to this number (set by a live inbound campaign).
     inbound_agent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     inbound_campaign_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Bought on its own ($3.50/mo subscription, no plan): cancelling that subscription releases the number.
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

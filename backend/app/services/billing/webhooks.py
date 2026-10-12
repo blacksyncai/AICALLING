@@ -74,6 +74,12 @@ async def _dispatch(db: AsyncSession, etype: str, obj: dict) -> uuid.UUID | None
         return await _checkout(db, etype, obj)
     if etype.startswith("payment_intent."):
         return await _payment_intent(db, etype, obj)
+    if etype.startswith("customer.subscription.") and purchases.is_number_only(obj):
+        org_id = await purchases.org_for_customer(db, obj.get("customer"))
+        if etype == "customer.subscription.deleted" or obj.get("status") in ("canceled", "unpaid", "incomplete_expired"):
+            await purchases.release_number_for(db, obj["id"])
+            await db.commit()
+        return org_id
     if etype.startswith("customer.subscription."):
         org_id = await purchases.org_for_customer(db, obj.get("customer"))
         if org_id:
@@ -114,6 +120,14 @@ async def _purchase_for_session(db: AsyncSession, session: dict) -> Purchase | N
 
 
 async def _checkout(db: AsyncSession, etype: str, session: dict) -> uuid.UUID | None:
+    if session.get("mode") == "subscription" and purchases.is_number_only(session):
+        org_id = await purchases.org_for_customer(db, session.get("customer"))
+        number = (session.get("metadata") or {}).get("number") or ""
+        if org_id and session.get("subscription") and etype == "checkout.session.completed" \
+                and session.get("payment_status") in ("paid", "no_payment_required"):
+            await purchases.provision_number(db, org_id, number, session["subscription"])
+            await db.commit()
+        return org_id
     if session.get("mode") == "subscription":
         org_id = await purchases.org_for_customer(db, session.get("customer"))
         if org_id and session.get("subscription"):

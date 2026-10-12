@@ -140,6 +140,70 @@ async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID,
     return session["url"]
 
 
+def is_number_only(obj: dict | None) -> bool:
+    """A $3.50/mo subscription for one phone number (bought without a plan) — never treated as a plan."""
+    return ((obj or {}).get("metadata") or {}).get("purchase_type") == "phone_number"
+
+
+async def checkout_phone_number(db: AsyncSession, org: Organization, user_id: uuid.UUID, number: str) -> str:
+    """No plan: buy one number on its own for the monthly add-on price (the number is bought once paid)."""
+    try:
+        price = await catalog.sellable_price(catalog.PHONE_ADDON["key"])
+    except catalog.NotSellable as exc:
+        raise BillingError(str(exc), 409)
+    cid = await ensure_customer(db, org)
+    meta = {"org_id": str(org.id), "purchase_type": "phone_number", "number": number, "user_id": str(user_id)}
+    session = await stripe_api.create_checkout_session(
+        mode="subscription", customer=cid, line_items=[{"price": price, "quantity": 1}],
+        metadata=meta, client_reference_id=str(org.id), subscription_data={"metadata": meta},
+        success_url=app_url("/phone-numbers?checkout=success"), cancel_url=app_url("/phone-numbers?checkout=canceled"),
+        idempotency_key=f"bs-number-{org.id}-{number}-{int(_now().timestamp() // 600)}",
+    )
+    log.info("number_checkout_created", org_id=str(org.id), number=number)
+    return session["url"]
+
+
+async def provision_number(db: AsyncSession, org_id: uuid.UUID, number: str, subscription_id: str) -> None:
+    """After payment: buy the chosen number (or another in the same area code if it was taken meanwhile)."""
+    from app.models.billing import PhoneNumber
+    from app.services import telephony
+
+    done = (await db.execute(select(PhoneNumber).where(PhoneNumber.stripe_subscription_id == subscription_id)))        .scalar_one_or_none()
+    if done:
+        return
+    candidates = [number]
+    digits = "".join(ch for ch in number if ch.isdigit())
+    area = digits[1:4] if len(digits) == 11 else digits[:3]
+    try:
+        candidates += [n["number"] for n in await telephony.search_available(area)][:5]
+    except Exception:
+        pass
+    last_error = None
+    for cand in dict.fromkeys(candidates):
+        try:
+            row = await telephony.purchase(db, org_id, cand)
+        except Exception as exc:
+            last_error = exc
+            continue
+        row.stripe_subscription_id = subscription_id
+        await db.commit()
+        log.info("number_provisioned", org_id=str(org_id), number=cand, subscription=subscription_id)
+        return
+    log.error("number_provision_failed", org_id=str(org_id), number=number, error=str(last_error))
+    raise RuntimeError(f"Couldn't buy a number for subscription {subscription_id}: {last_error}")
+
+
+async def release_number_for(db: AsyncSession, subscription_id: str) -> None:
+    from app.models.billing import PhoneNumber
+    from app.services import telephony
+
+    row = (await db.execute(select(PhoneNumber).where(PhoneNumber.stripe_subscription_id == subscription_id,
+                                                      PhoneNumber.status == "active"))).scalar_one_or_none()
+    if row:
+        await telephony.release(db, row, return_to_twilio=True)
+        log.info("number_released_subscription_ended", number=row.number, subscription=subscription_id)
+
+
 # ── Fulfilment (idempotent) ───────────────────────────────────────────────────
 
 

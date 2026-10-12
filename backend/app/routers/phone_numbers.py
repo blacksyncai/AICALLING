@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 
 import structlog
+from fastapi.responses import JSONResponse
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -160,9 +161,15 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
     await _room_for_another(db, ctx.org.id)
     from app.services.billing.subscriptions import phone_summary
 
-    # Numbers are billed through the plan — without one, a self-serve number would never be charged.
+    # No plan: buy the number on its own ($3.50/mo) through Stripe Checkout; it's bought once paid.
     if not (await phone_summary(db, ctx.org.id))["subscribed"]:
-        raise HTTPException(status_code=402, detail="Start a plan first — it includes your first number.")
+        from app.services.billing import purchases
+
+        try:
+            url = await purchases.checkout_phone_number(db, ctx.org, ctx.user.id, telephony.normalize(body.number))
+        except purchases.BillingError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+        return JSONResponse(status_code=200, content={"checkout_url": url})
     try:
         row = await telephony.purchase(db, ctx.org.id, body.number, body.label)
     except (telephony.TelephonyError, ValueError) as exc:
