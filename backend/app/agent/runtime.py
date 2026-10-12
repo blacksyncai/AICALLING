@@ -201,7 +201,9 @@ _VOICEMAIL_STRICT = (
     "leave a message", "leave your message", "after the tone", "after the beep", "at the tone", "voicemail",
     "voice mail", "record your message", "please record", "mailbox", "automated voice messaging",
     "voice messaging system", "not available to take your call", "can't take your call", "cannot take your call",
-    "can't come to the phone", "cannot come to the phone",
+    "can't come to the phone", "cannot come to the phone", "leave your name", "leave me your name",
+    "leave a brief message", "leave me a brief message", "and a brief message", "leave me a message",
+    "leave your number", "your name and number", "your name, number", "name, number and", "name and phone number",
 )
 
 

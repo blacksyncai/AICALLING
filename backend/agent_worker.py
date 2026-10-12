@@ -991,7 +991,13 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         vm["heard"] += " " + text
         # A recorded greeting ("Hey, it's Sam, can't talk right now, I'll call you back") is the first
         # thing heard after pickup; a live person says hello first.
-        personal = first and run.t0 and _time.monotonic() - run.t0 < 15 and looks_like_personal_greeting(text)
+        # Greetings arrive in pieces ("Hi, reached Valerie." … "I'll get back to you"), so judge everything heard
+        # in the first 20 s — unless the contact's first words were a live "hello?".
+        elapsed = _time.monotonic() - run.t0 if run.t0 else 0
+        if first:
+            vm["live_hello"] = len(text.split()) <= 3 and "?" in text
+        personal = (run.t0 and elapsed < 20 and not vm.get("live_hello")
+                    and looks_like_personal_greeting(vm["heard"]))
         if is_voicemail_greeting(vm["heard"]) or personal:
             vm["detected"] = True
             asyncio.create_task(_handle_voicemail())
@@ -1081,8 +1087,38 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     timer = asyncio.create_task(_enforce_max_duration())
 
+    # Phone calls: hang up after a long silence (a voicemail that's recording, or a dead line) instead of
+    # sitting on the line — and billing — until the carrier cuts it off.
+    silence = {"agent": "", "user": "", "since": _time.monotonic()}
+
+    def _activity(kind: str):
+        def _on(ev) -> None:
+            silence[kind] = getattr(ev, "new_state", "")
+            silence["since"] = _time.monotonic()
+        return _on
+
+    async def _hang_up_on_silence(limit: float = 20.0) -> None:
+        while True:
+            await asyncio.sleep(2)
+            quiet = silence["agent"] in ("listening", "") and silence["user"] != "speaking"
+            if quiet and _time.monotonic() - silence["since"] > limit:
+                log.info("silence_hangup", room=ctx.room.name, seconds=limit)
+                run.transcript.append({"role": "tool", "tool": "end_call", "args": {"reason": "silence"},
+                                       "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
+                _mark_ended()
+                await _delete_room(ctx.room.name)
+                return
+
+    silence_task = None
+    if call_type == "outbound":
+        session.on("agent_state_changed", _activity("agent"))
+        session.on("user_state_changed", _activity("user"))
+        silence_task = asyncio.create_task(_hang_up_on_silence())
+
     async def _shutdown() -> None:
         timer.cancel()
+        if silence_task:
+            silence_task.cancel()
         task = bg_state.get("task")
         if task:
             task.cancel()
