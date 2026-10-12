@@ -1062,6 +1062,47 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                                             reason=str(getattr(ev, "reason", "")), error=str(getattr(ev, "error", "") or "")[:300]))
     await session.start(agent, room=ctx.room)
 
+    # Answering-machine detection: LiveKit's AMD classifies the first seconds after pickup (human / voicemail /
+    # IVR / mailbox full) and holds the agent's opening line until it decides. Phrase matching stays as backup.
+    if call_type == "outbound" and vm_action != "ignore" and settings.openai_api_key:
+        try:
+            from livekit.agents.voice.amd import AMD
+
+            detector = AMD(
+                session,
+                llm=openai.LLM(model="gpt-4.1-mini", api_key=settings.openai_api_key, base_url=settings.openai_base_url),
+                stt=deepgram.STT(model="nova-3", language="en", api_key=settings.deepgram_api_key),
+                interrupt_on_machine=True, ivr_detection=False, suppress_compatibility_warning=True,
+                wait_until_finished=(vm_action == "leave_message"),
+                # People often answer without speaking; don't hold the opening line longer than ~3 s.
+                detection_options={"no_speech_threshold": 3.0},
+            )
+            await detector.__aenter__()
+
+            async def _amd_flow() -> None:
+                try:
+                    result = await detector.execute()
+                    cat = getattr(result.category, "value", str(result.category))
+                    log.info("amd_result", room=ctx.room.name, category=cat, reason=result.reason[:200],
+                             delay=round(result.delay, 2))
+                    run.transcript.append({"role": "tool", "tool": "answer_detection",
+                                           "args": {"result": cat, "reason": result.reason[:160]},
+                                           "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
+                    if result.is_machine and not vm["detected"]:
+                        vm["detected"] = True
+                        await _handle_voicemail()
+                except Exception as exc:
+                    log.warning("amd_failed", room=ctx.room.name, error=str(exc)[:200])
+                finally:
+                    try:
+                        await detector.aclose()
+                    except Exception:
+                        pass
+
+            asyncio.create_task(_amd_flow())
+        except Exception as exc:
+            log.warning("amd_unavailable", error=str(exc)[:200])
+
     asyncio.create_task(_push_live_event(run.call_log_id, {
         "type": "call_started", "session_id": ctx.room.name, "agent_type": cfg.get("name", "agent"),
         "direction": call_type, "caller_phone": variables.get("phone", ""),
