@@ -3,7 +3,7 @@
 import { ArrowLeft, FileUp, Pause, Phone, Play, Plus, Trash2, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { CallingRulesCard, CallingStatus } from "@/components/campaigns/CallingRules";
@@ -19,9 +19,23 @@ const SAMPLE_CSV = `name,phone,company,email,city
 Jane Cooper,+14155550123,Acme Inc,jane@acme.com,San Francisco
 Marcus Lee,+14155550188,Globex,marcus@globex.com,Austin`;
 
-function ImportModal({ open, onClose, campaignId, onDone }: { open: boolean; onClose: () => void; campaignId: string; onDone: () => void }) {
+/** Reads a dropped file if it's a CSV; returns null for anything else. */
+async function readDroppedCsv(e: React.DragEvent): Promise<string | null> {
+  const f = e.dataTransfer.files?.[0];
+  if (!f) return null;
+  if (!/\.(csv|txt)$/i.test(f.name) && !/csv|text\/plain/.test(f.type)) return null;
+  return f.text();
+}
+
+const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types || []).includes("Files");
+
+function ImportModal({ open, onClose, campaignId, onDone, initialCsv }: { open: boolean; onClose: () => void; campaignId: string; onDone: () => void; initialCsv?: string }) {
   const toast = useToast();
   const [csv, setCsv] = useState("");
+  const [over, setOver] = useState(false);
+  useEffect(() => {
+    if (open && initialCsv) setCsv(initialCsv);
+  }, [open, initialCsv]);
   const [busy, setBusy] = useState(false);
   const rows = csv.trim() ? csv.trim().split(/\r?\n/).length - 1 : 0;
 
@@ -65,7 +79,25 @@ function ImportModal({ open, onClose, campaignId, onDone }: { open: boolean; onC
             Use sample
           </Button>
         </div>
-        <Textarea rows={10} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder={SAMPLE_CSV} className="font-mono text-xs" />
+        <div
+          className={`relative rounded-lg ${over ? "ring-2 ring-brand-500 ring-offset-2" : ""}`}
+          onDragOver={(e) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            setOver(true);
+          }}
+          onDragLeave={() => setOver(false)}
+          onDrop={async (e) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            setOver(false);
+            const text = await readDroppedCsv(e);
+            if (text == null) toast("Drop a .csv file", "error");
+            else setCsv(text);
+          }}
+        >
+          <Textarea rows={10} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder={`Drop a CSV here, paste it, or choose a file\n\n${SAMPLE_CSV}`} className="font-mono text-xs" />
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-xs text-zinc-500">{rows > 0 ? `${rows} rows` : "Paste CSV or choose a file"}</span>
           <Button variant="primary" onClick={submit} loading={busy} disabled={rows < 1}>
@@ -141,6 +173,8 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
   const [importOpen, setImportOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [droppedCsv, setDroppedCsv] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
@@ -285,7 +319,32 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
 
       <CallingRulesCard campaign={campaign} onSaved={refreshCampaign} />
 
-      <Card className="mb-6">
+      <Card
+        className="relative mb-6"
+        onDragOver={(e: React.DragEvent) => {
+          if (!hasFiles(e) || importOpen) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e: React.DragEvent) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={async (e: React.DragEvent) => {
+          if (!hasFiles(e) || importOpen) return;
+          e.preventDefault();
+          setDragging(false);
+          const text = await readDroppedCsv(e);
+          if (text == null) return toast("Drop a .csv file", "error");
+          setDroppedCsv(text);
+          setImportOpen(true);
+        }}
+      >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-[inherit] border-2 border-dashed border-brand-500 bg-brand-50/90 text-brand-700">
+            <FileUp className="h-6 w-6" />
+            <span className="text-sm font-semibold">Drop your CSV to import contacts</span>
+          </div>
+        )}
         <CardHeader
           title={`Contacts (${leads.length})`}
           action={
@@ -326,7 +385,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
           <EmptyState
             icon={<Users className="h-5 w-5" />}
             title="No contacts yet"
-            description="Import a CSV or add contacts one by one."
+            description="Drag a CSV here, import one, or add contacts one by one."
             action={
               <Button variant="primary" onClick={() => setImportOpen(true)}>
                 <FileUp className="h-4 w-4" /> Import CSV
@@ -421,7 +480,16 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         )}
       </Card>
 
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} campaignId={id} onDone={refresh} />
+      <ImportModal
+        open={importOpen}
+        onClose={() => {
+          setImportOpen(false);
+          setDroppedCsv("");
+        }}
+        campaignId={id}
+        onDone={refresh}
+        initialCsv={droppedCsv}
+      />
       <AddLeadModal open={addOpen} onClose={() => setAddOpen(false)} campaignId={id} onDone={refresh} />
     </>
   );
