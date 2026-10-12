@@ -360,7 +360,7 @@ function ConnectedRow({
                 checked={s.create_contacts}
                 onChange={(v) => void save({ create_contacts: v })}
                 label="Create missing contacts"
-                description={`If the number isn't in ${p.name} yet, add it.`}
+                description={`Off by default. When on, a called number that isn't in ${p.name} is added quietly (no new-lead alerts). Leave off while testing with your own phone.`}
               />
             )}
             <Toggle

@@ -37,7 +37,8 @@ CALL_HOURS = (8, 21)  # local time window for speed-to-lead calls
 
 
 def defaults() -> dict:
-    return {"log_calls": True, "create_contacts": True, "only_connected": False,
+    # create_contacts is off by default: a test call to your own number shouldn't add a "lead" to the CRM.
+    return {"log_calls": True, "create_contacts": False, "only_connected": False,
             "speed_to_lead_agent_id": None, "speed_to_lead_since": None, "activity_agent_id": None}
 
 

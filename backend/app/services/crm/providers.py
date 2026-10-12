@@ -659,15 +659,15 @@ class FollowUpBoss(Provider):
         if not create:
             return None
         first, last = split_name(c.name)
-        # /events is FUB's lead-intake endpoint: it de-duplicates and runs the account's lead routing.
-        person: dict = {"firstName": first, "lastName": last}
+        # Plain /people (not /events): adds the contact quietly — no "New lead" texts, lead routing
+        # or action plans firing on the team because of an AI call.
+        person: dict = {"firstName": first or c.phone, "lastName": last, "source": "BlackSync AI"}
         if c.phone:
             person["phones"] = [{"value": c.phone}]
         if c.email:
             person["emails"] = [{"value": c.email}]
-        ev = await http.request("POST", "/v1/events", json={"source": "BlackSync AI", "system": "BlackSync",
-                                                            "type": "General Inquiry", "person": person})
-        pid = (ev.get("person") or {}).get("id") or ev.get("personId") or ev.get("id")
+        created = await http.request("POST", "/v1/people", params={"deduplicate": "true"}, json=person)
+        pid = created.get("id") or (created.get("person") or {}).get("id")
         if not pid:
             raise CrmError("Follow Up Boss didn't return the new person.")
         return str(pid)

@@ -25,7 +25,7 @@ RESPONSES = {
     "followupboss": {
         ("GET", "/v1/me"): {"name": "Jo", "email": "jo@acme.com", "account": {"name": "Acme"}},
         ("GET", "/v1/people"): {"people": []},
-        ("POST", "/v1/events"): {"person": {"id": 42}},
+        ("POST", "/v1/people"): {"id": 42},
         ("POST", "/v1/calls"): {"id": 1},
         ("POST", "/v1/notes"): {"id": 1},
     },
@@ -141,6 +141,9 @@ def test_connect_push_import_and_disconnect(client, http_mock):
     assert r.json()["account_label"] == "Acme · Jo · jo@acme.com" and "fka_secret" not in r.text
     assert "fka_secret" not in client.get("/api/integrations/crm").text
 
+    # By default a number that isn't in FUB is left alone (no surprise "new lead" in the CRM).
+    assert client.get("/api/integrations/crm").json()["connections"][0]["settings"]["create_contacts"] is False
+    client.patch("/api/integrations/crm/followupboss", json={"create_contacts": True})
     # A finished call is logged in FUB and the contact remembers its FUB id.
     lead = client.post("/api/contacts", json={"name": "Jamie Rivera", "phone": "+14155550199"}).json()
     data = {"call_id": str(uuid.uuid4()), "outcome": "interested", "summary": "Interested.", "duration_seconds": 40,
