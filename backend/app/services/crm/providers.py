@@ -211,12 +211,22 @@ class Provider:
     async def move_deal(self, http: BaseHttp, config: dict, deal_id: str, stage_id: str) -> None:
         return None
 
+    async def enqueue(self, http: BaseHttp, config: dict, external_id: str, pipeline: dict, stage_id: str) -> str:
+        """Put a contact into a BlackSync pipeline stage (reuse its card there, or create one). Returns the deal id."""
+        raise CrmError(f"{self.name} can't queue contacts yet.")
+
     async def deal_stage(self, http: BaseHttp, config: dict, deal_id: str) -> str | None:
         return None
 
     async def context(self, http: BaseHttp, config: dict, external_id: str) -> str:
         """What the CRM knows about this contact, condensed for the agent (notes, last touches, stage)."""
         return ""
+
+    can_scan = False
+
+    async def scan_signals(self, http: BaseHttp, config: dict, limit: int = 1000) -> list:
+        """Radar input: a radar.Signals per contact (created, inbound, calls, deals)."""
+        return []
 
 
 # ── Close ─────────────────────────────────────────────────────────────────────
@@ -324,6 +334,19 @@ class Close(Provider):
     async def move_deal(self, http, config, deal_id, stage_id):
         await http.request("PUT", f"/v1/opportunity/{deal_id}/", json={"status_id": stage_id})
 
+    async def enqueue(self, http, config, external_id, pipeline, stage_id):
+        ids = {st["id"] for st in pipeline.get("stages") or []}
+        opps = (await http.request("GET", "/v1/opportunity/", params={
+            "lead_id": external_id, "_fields": "id,status_id", "_limit": 50})).get("data") or []
+        mine = next((o for o in opps if o.get("status_id") in ids), None)
+        if mine:
+            if mine.get("status_id") != stage_id:
+                await self.move_deal(http, config, mine["id"], stage_id)
+            return mine["id"]
+        created = await http.request("POST", "/v1/opportunity/", json={
+            "lead_id": external_id, "status_id": stage_id, "note": "Queued by BlackSync Radar."})
+        return created["id"]
+
     async def deal_stage(self, http, config, deal_id):
         return (await http.request("GET", f"/v1/opportunity/{deal_id}/", params={"_fields": "status_id"})).get("status_id")
 
@@ -356,6 +379,80 @@ class Close(Provider):
         except CrmError:
             pass
         return "\n".join(parts)[:1500]
+
+    can_scan = True
+
+    async def _activities(self, http, kind: str, since: dt.datetime, cap: int) -> list[dict]:
+        out, skip = [], 0
+        while len(out) < cap:
+            page = await http.request("GET", f"/v1/activity/{kind}/", params={
+                "date_created__gte": since.strftime("%Y-%m-%dT%H:%M:%S"), "_limit": 100, "_skip": skip})
+            rows = page.get("data") or []
+            out += rows
+            if not page.get("has_more") or not rows:
+                break
+            skip += 100
+        return out
+
+    async def scan_signals(self, http, config, limit=1000):
+        from app.services.crm.radar import Signals
+
+        now = dt.datetime.now(UTC)
+        leads, skip = [], 0
+        while len(leads) < limit:
+            page = await http.request("GET", "/v1/lead/", params={
+                "_limit": 100, "_skip": skip,
+                "_fields": "id,display_name,contacts,date_created,date_updated,status_label,opportunities"})
+            leads += page.get("data") or []
+            if not page.get("has_more"):
+                break
+            skip += 100
+        calls = await self._activities(http, "call", now - dt.timedelta(days=180), 4000)
+        inbound: dict[str, tuple[dt.datetime, str]] = {}
+        for kind, label, is_in in (("email", "Emailed you", lambda a: a.get("direction") == "incoming"),
+                                   ("sms", "Texted you", lambda a: a.get("direction") == "inbound"),
+                                   ("form_submission", "Filled out a form", lambda a: True)):
+            try:
+                for a in await self._activities(http, kind, now - dt.timedelta(days=30), 1500):
+                    when = _parse_time(a.get("date_created"))
+                    if a.get("lead_id") and when and is_in(a) and (a["lead_id"] not in inbound or when > inbound[a["lead_id"]][0]):
+                        inbound[a["lead_id"]] = (when, label)
+            except CrmError:
+                pass
+        by_lead: dict[str, list[dict]] = {}
+        for c in calls:
+            if c.get("lead_id"):
+                by_lead.setdefault(c["lead_id"], []).append(c)
+                if c.get("direction") == "inbound":
+                    when = _parse_time(c.get("date_created"))
+                    if when and (c["lead_id"] not in inbound or when > inbound[c["lead_id"]][0]):
+                        inbound[c["lead_id"]] = (when, "Called you")
+        out = []
+        for lead in leads[:limit]:
+            contacts = self._contacts_of(lead)
+            if not contacts:
+                continue
+            c0 = contacts[0]
+            lc = [c for c in by_lead.get(lead["id"], []) if c.get("direction") != "inbound"]
+            connected = [c for c in lc if (c.get("disposition") in ("answered", None) and (c.get("duration") or 0) >= 30)]
+            last = max(lc, key=lambda c: c.get("date_created") or "") if lc else None
+            opps = lead.get("opportunities") or []
+            open_opps = [o for o in opps if o.get("status_type") == "active"]
+            won = [o for o in opps if o.get("status_type") == "won"]
+            o0 = max(open_opps, key=lambda o: o.get("date_updated") or "") if open_opps else None
+            inb = inbound.get(lead["id"])
+            out.append(Signals(
+                external_id=lead["id"], name=c0.name, phone=c0.phone, company=lead.get("display_name", ""), email=c0.email,
+                created_at=_parse_time(lead.get("date_created")), last_activity_at=_parse_time(lead.get("date_updated")),
+                last_inbound_at=inb[0] if inb else None, inbound_kind=inb[1] if inb else "",
+                calls=len(lc), connected_calls=len(connected),
+                last_call_at=_parse_time(last.get("date_created")) if last else None,
+                last_call_result=((last.get("disposition") or "").replace("-", " ").replace("vm ", "voicemail ")) if last else "",
+                deal_stage=(o0 or {}).get("status_label") or "", deal_open=bool(o0),
+                deal_updated_at=_parse_time((o0 or {}).get("date_updated")),
+                won_at=_parse_time(max((o.get("date_won") or o.get("date_updated") or "") for o in won)) if won else None,
+                status=lead.get("status_label") or "", dnc=c0.dnc))
+        return out
 
     async def log_call(self, http, config, external_id, call):
         body = {"lead_id": external_id, "direction": "outbound", "status": "completed",
@@ -571,6 +668,70 @@ class FollowUpBoss(Provider):
             return None
         await http.request("PUT", f"/v1/people/{int(external_id)}", json={"stage": stage_id})
         return f"Stage set to {stage_id}"
+
+    can_scan = True
+
+    async def _pages(self, http, path: str, key: str, cap: int, params: dict) -> list[dict]:
+        out, offset = [], 0
+        while len(out) < cap:
+            page = await http.request("GET", path, params={**params, "limit": 100, "offset": offset})
+            rows = page.get(key) or []
+            out += rows
+            if len(rows) < 100:
+                break
+            offset += 100
+        return out
+
+    async def scan_signals(self, http, config, limit=1000):
+        from app.services.crm.radar import Signals
+
+        people = await self._pages(http, "/v1/people", "people", limit, {
+            "sort": "-updated", "fields": "id,name,firstName,lastName,phones,emails,created,updated,stage,tags,lastActivity,contacted,price"})
+        calls = await self._pages(http, "/v1/calls", "calls", 4000, {"sort": "-created"})
+        # FUB's lead events are the gold: website visits, property views/saves, inquiries.
+        events = await self._pages(http, "/v1/events", "events", 2000, {"sort": "-created"})
+        by_person: dict[str, list[dict]] = {}
+        for c in calls:
+            if c.get("personId"):
+                by_person.setdefault(str(c["personId"]), []).append(c)
+        inbound: dict[str, tuple[dt.datetime, str]] = {}
+        for e in events:
+            pid, when = str(e.get("personId") or ""), _parse_time(e.get("created"))
+            if pid and when and (pid not in inbound or when > inbound[pid][0]):
+                kind = e.get("type") or "Activity"
+                prop = ((e.get("property") or {}).get("street") or "") if isinstance(e.get("property"), dict) else ""
+                inbound[pid] = (when, f"{kind}{(' · ' + prop) if prop else ''}")
+        for c in calls:
+            if c.get("isIncoming") and c.get("personId"):
+                pid, when = str(c["personId"]), _parse_time(c.get("created"))
+                if when and (pid not in inbound or when > inbound[pid][0]):
+                    inbound[pid] = (when, "Called you")
+        out = []
+        for p in people[:limit]:
+            phones = [x for x in p.get("phones") or [] if x.get("value")]
+            if not phones:
+                continue
+            pid = str(p["id"])
+            tags = {t.lower() for t in p.get("tags") or [] if isinstance(t, str)}
+            lc = [c for c in by_person.get(pid, []) if not c.get("isIncoming")]
+            connected = [c for c in lc if (c.get("duration") or 0) >= 45 or c.get("outcome") in ("Interested", "Not Interested")]
+            last = max(lc, key=lambda c: c.get("created") or "") if lc else None
+            stage = p.get("stage") or ""
+            inb = inbound.get(pid)
+            name = p.get("name") or " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x)
+            emails = [x.get("value") for x in p.get("emails") or [] if x.get("value")]
+            out.append(Signals(
+                external_id=pid, name=name, phone=phones[0]["value"], email=(emails or [""])[0],
+                created_at=_parse_time(p.get("created")), last_activity_at=_parse_time(p.get("lastActivity") or p.get("updated")),
+                last_inbound_at=inb[0] if inb else None, inbound_kind=inb[1] if inb else "",
+                calls=len(lc), connected_calls=len(connected),
+                last_call_at=_parse_time(last.get("created")) if last else None,
+                last_call_result=(last.get("outcome") or "") if last else "",
+                deal_stage=stage, deal_open=stage.lower() not in ("closed", "past client", "trash", "sphere"),
+                deal_updated_at=None,
+                won_at=_parse_time(p.get("updated")) if stage.lower() in ("closed", "past client") else None,
+                status=stage, dnc=stage.lower() == "trash" or bool(_DNC_TAGS & tags)))
+        return out
 
     async def log_call(self, http, config, external_id, call):
         body = {"personId": int(external_id), "phone": call.phone, "isIncoming": False,

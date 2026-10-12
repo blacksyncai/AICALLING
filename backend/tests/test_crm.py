@@ -410,3 +410,67 @@ def test_blacksync_pipeline_install_queue_and_card_moves(client, http_mock, monk
     prompt = build_instructions({"system_prompt": "Hi"}, {"name": "Katie", "crm_context": "67 sales last year", "bs_deal": "x"})
     assert "WHAT THE CRM SAYS" in prompt and "67 sales" in prompt and "bs_deal" not in prompt
     client.delete("/api/integrations/crm/close")
+
+
+def test_radar_plays_rules():
+    from app.services.crm.radar import Signals, build_plays
+
+    now = dt.datetime(2026, 10, 12, tzinfo=dt.timezone.utc)
+    d = lambda days: now - dt.timedelta(days=days)
+    sig = [
+        Signals("1", "Hot", "+14155550001", created_at=d(40), last_inbound_at=d(1), inbound_kind="Viewed Property · 12 Oak St"),
+        Signals("2", "Fresh", "+14155550002", created_at=d(3)),
+        Signals("3", "Ghost", "+14155550003", created_at=d(20), calls=2, last_call_at=d(13), last_call_result="no answer"),
+        Signals("4", "Cold", "+14155550004", created_at=d(90), calls=3, connected_calls=1, last_call_at=d(45), deal_open=True),
+        Signals("5", "Stuck", "+14155550005", created_at=d(60), calls=1, connected_calls=1, last_call_at=d(10),
+                deal_open=True, deal_stage="Proposal Sent", deal_updated_at=d(30)),
+        Signals("6", "Client", "+14155550006", created_at=d(400), won_at=d(200)),
+        Signals("7", "Old", "+14155550007", created_at=d(300), calls=0, last_activity_at=d(200)),
+        Signals("8", "Lost", "+14155550008", created_at=d(30), status="Lost"),
+        Signals("9", "DNC", "+14155550009", created_at=d(30), dnc=True),
+        Signals("10", "Just called", "+14155550010", created_at=d(30), calls=1, last_call_at=d(1)),
+    ]
+    plays = {p["key"]: p for p in build_plays(sig, now)["plays"]}
+    names = {k: [i["name"] for i in p["items"]] for k, p in plays.items()}
+    assert names["hot"] == ["Hot"] and "Viewed Property" in plays["hot"]["items"][0]["reason"]
+    # "Old" was never called, so it lands in never_called (the first matching play wins).
+    assert set(names["never_called"]) == {"Fresh", "Old"}
+    assert names["unreached"] == ["Ghost"] and names["went_cold"] == ["Cold"] and names["stuck"] == ["Stuck"]
+    assert names["past_client"] == ["Client"]
+    flat = sum(names.values(), [])
+    assert not {"Lost", "DNC", "Just called"} & set(flat)
+
+
+def test_radar_scan_and_launch_campaign(client, http_mock):
+    state, _ = http_mock
+    now = dt.datetime.now(dt.timezone.utc)
+    iso = lambda days: (now - dt.timedelta(days=days)).isoformat()
+    state["responses"] = {
+        **RESPONSES["close"],
+        ("GET", "/v1/lead/"): {"has_more": False, "data": [
+            {"id": "lead_a", "display_name": "Alpha", "date_created": iso(10), "status_label": "Potential",
+             "contacts": [{"name": "Al", "phones": [{"phone": "+14155556001"}]}], "opportunities": []},
+            {"id": "lead_b", "display_name": "Beta", "date_created": iso(20), "status_label": "Potential",
+             "contacts": [{"name": "Bo", "phones": [{"phone": "+14155556002"}]}], "opportunities": []}]},
+        ("GET", "/v1/activity/call/"): {"has_more": False, "data": [
+            {"lead_id": "lead_b", "date_created": iso(13), "disposition": "no-answer", "direction": "outbound"}]},
+        ("GET", "/v1/activity/email/"): {"has_more": False, "data": []},
+        ("GET", "/v1/activity/sms/"): {"has_more": False, "data": []},
+        ("GET", "/v1/activity/form_submission/"): {"has_more": False, "data": []},
+    }
+    assert client.post("/api/integrations/crm/close/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    scan = client.post("/api/radar/close/scan").json()
+    plays = {p["key"]: p for p in scan["plays"]}
+    assert plays["never_called"]["count"] == 1 and plays["unreached"]["count"] == 1
+    assert "1 call, never reached" in plays["unreached"]["items"][0]["reason"]
+    assert client.get("/api/radar").json()["crms"][0]["last_scan"]["id"] == scan["id"]
+
+    agent = client.post("/api/agents/", json={"template": "blank"}).json()
+    r = client.post(f"/api/radar/scans/{scan['id']}/launch", json={"play": "unreached", "agent_id": agent["id"], "mode": "campaign"})
+    assert r.status_code == 200 and r.json()["contacts"] == 1
+    camp = client.get(f"/api/campaigns/{r.json()['campaign_id']}").json()
+    assert camp["status"] == "draft" and camp["agent_id"] == agent["id"]
+    # Pipeline mode needs the BlackSync pipeline first.
+    r = client.post(f"/api/radar/scans/{scan['id']}/launch", json={"play": "unreached", "agent_id": agent["id"], "mode": "pipeline"})
+    assert r.status_code == 400 and "pipeline" in r.json()["detail"]
+    client.delete("/api/integrations/crm/close")

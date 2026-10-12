@@ -62,3 +62,19 @@ class CrmSyncLog(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False, default="")
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)
+
+
+class CrmScan(Base):
+    """A Radar scan of a connected CRM: people grouped into plays (see services/crm/radar.py)."""
+
+    __tablename__ = "crm_scans"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    connection_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("crm_connections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)

@@ -2,7 +2,7 @@
 
 import {
   ArrowRight, ArrowUp, BarChart3, BookOpen, Bot, CalendarCheck, ChevronLeft, ChevronsUpDown, Coins, Contact, CreditCard, Hash, LayoutDashboard, LogOut, Megaphone, Menu,
-  PhoneCall, Plug, Search, UserRound, UserSearch, X,
+  PhoneCall, Plug, Radar, Search, UserRound, UserSearch, X,
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
@@ -29,6 +29,7 @@ const NAV: { title: string | null; items: NavItem[] }[] = [
     title: "Reach",
     items: [
       { href: "/contacts", label: "Contacts", icon: Contact },
+      { href: "/radar", label: "Radar", icon: Radar, managersOnly: true, badge: "New" },
       { href: "/lead-finder", label: "Lead Finder", icon: UserSearch, leadFinder: true },
       { href: "/campaigns", label: "Campaigns", icon: Megaphone },
     ],
@@ -45,7 +46,7 @@ const NAV: { title: string | null; items: NavItem[] }[] = [
     title: "Account",
     items: [
       { href: "/billing", label: "Billing & Usage", icon: CreditCard },
-      { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true, badge: "New" },
+      { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true },
     ],
   },
 ];
