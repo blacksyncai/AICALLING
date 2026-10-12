@@ -16,6 +16,23 @@ interface Available {
   region: string;
 }
 
+type Pricing = MyPhoneNumbers["pricing"];
+
+/** What the next number costs: free while it's within the plan's included count, else the monthly add-on. */
+function nextNumberCost(p: Pricing): { free: boolean; text: string } {
+  if (!p) return { free: false, text: "" };
+  const unit = `$${(p.unit_cents / 100).toFixed(2)}/mo`;
+  if (!p.subscribed) return { free: false, text: `Your first ${p.included_on_plan === 1 ? "number is" : `${p.included_on_plan} numbers are`} included with any plan. Extra numbers are ${unit} each.` };
+  if (p.active < p.included) return { free: true, text: `Included with your plan — no extra charge. Extra numbers after that are ${unit} each.` };
+  return { free: false, text: `You've used your included number. Each extra number is ${unit}, billed with your plan.` };
+}
+
+function PriceLine({ pricing }: { pricing: Pricing }) {
+  const c = nextNumberCost(pricing);
+  if (!c.text) return null;
+  return <p className={`px-5 pb-4 text-xs ${c.free ? "text-emerald-700" : "text-zinc-500"}`}>{c.text}</p>;
+}
+
 function fmtDate(iso: string | null) {
   return iso ? new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" }) : "";
 }
@@ -45,9 +62,9 @@ export default function PhoneNumbersPage() {
             {full ? (
               <Card className="p-5 text-sm text-zinc-600">This account has reached its limit of {data.max_numbers} numbers. Contact support for more.</Card>
             ) : data.self_serve ? (
-              <BuyNumber refresh={() => void mutate()} />
+              <BuyNumber pricing={data.pricing} refresh={() => void mutate()} />
             ) : (
-              <RequestNumber refresh={() => void mutate()} />
+              <RequestNumber pricing={data.pricing} refresh={() => void mutate()} />
             )}
             {data.requests.length > 0 && (
               <Card>
@@ -143,7 +160,7 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
   );
 }
 
-function RequestNumber({ refresh }: { refresh: () => void }) {
+function RequestNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => void }) {
   const toast = useToast();
   const [area, setArea] = useState("");
   const [busy, setBusy] = useState(false);
@@ -168,17 +185,18 @@ function RequestNumber({ refresh }: { refresh: () => void }) {
       <CardHeader title="Get a number" description="Tell us the area code you want and we'll set it up for you." />
       <form onSubmit={submit} className="flex items-end gap-2 p-5">
         <Field label="Area code (optional)" className="flex-1">
-          <Input value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))} placeholder="e.g. 415" inputMode="numeric" />
+          <Input value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))} placeholder="e.g. 689" inputMode="numeric" />
         </Field>
         <Button variant="primary" loading={busy}>
           Request number
         </Button>
       </form>
+      <PriceLine pricing={pricing} />
     </Card>
   );
 }
 
-function BuyNumber({ refresh }: { refresh: () => void }) {
+function BuyNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => void }) {
   const toast = useToast();
   const [area, setArea] = useState("");
   const [results, setResults] = useState<Available[] | null>(null);
@@ -199,7 +217,9 @@ function BuyNumber({ refresh }: { refresh: () => void }) {
   }
 
   async function buy(n: Available) {
-    if (!window.confirm(`Add ${n.friendly} to this account? It will be billed as an additional number.`)) return;
+    const cost = nextNumberCost(pricing);
+    const note = cost.free ? "It's included with your plan." : pricing ? `It's billed at $${(pricing.unit_cents / 100).toFixed(2)}/mo with your plan.` : "It will be billed as an additional number.";
+    if (!window.confirm(`Add ${n.friendly} to this account? ${note}`)) return;
     setBuying(n.number);
     try {
       await post("/api/phone-numbers/purchase", { number: n.number });
@@ -219,12 +239,13 @@ function BuyNumber({ refresh }: { refresh: () => void }) {
       <CardHeader title="Get a number" description="Search by area code and add one instantly." />
       <form onSubmit={search} className="flex items-end gap-2 p-5 pb-3">
         <Field label="Area code" className="flex-1">
-          <Input value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))} placeholder="e.g. 415" inputMode="numeric" />
+          <Input value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))} placeholder="e.g. 689" inputMode="numeric" />
         </Field>
         <Button loading={searching} disabled={area.length !== 3}>
           <Search className="h-4 w-4" /> Search
         </Button>
       </form>
+      <PriceLine pricing={pricing} />
       {results && (
         <ul className="max-h-80 divide-y divide-zinc-100 overflow-y-auto border-t border-zinc-100">
           {results.length === 0 && <li className="px-5 py-4 text-sm text-zinc-500">No numbers available in that area code. Try a nearby one.</li>}

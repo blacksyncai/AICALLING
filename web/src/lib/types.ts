@@ -78,6 +78,7 @@ export interface MyPhoneNumbers {
   self_serve: boolean;
   max_numbers: number;
   recordings_enabled: boolean;
+  pricing?: { active: number; included: number; included_on_plan: number; unit_cents: number; subscribed: boolean };
 }
 
 export interface AgentTemplate {

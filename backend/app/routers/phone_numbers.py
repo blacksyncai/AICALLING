@@ -98,8 +98,13 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
         select(PhoneNumberRequest).where(PhoneNumberRequest.org_id == ctx.org.id)
         .order_by(PhoneNumberRequest.created_at.desc()).limit(20)
     )).scalars().all()
+    from app.services.billing.subscriptions import phone_summary
+
     cfg = await settings_store.get_all(db)
+    pricing = await phone_summary(db, ctx.org.id)
+    pricing["included_on_plan"] = int(cfg.get("included_phone_numbers") or 0)
     return {
+        "pricing": pricing,
         "numbers": [telephony.number_to_dict(n) for n in numbers],
         "requests": [_request_to_dict(r) for r in requests],
         "self_serve": bool(cfg["self_serve_numbers"]) and settings.twilio_ready,
@@ -153,6 +158,11 @@ async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = ""):
 async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
     await _require_self_serve(db)
     await _room_for_another(db, ctx.org.id)
+    from app.services.billing.subscriptions import phone_summary
+
+    # Numbers are billed through the plan — without one, a self-serve number would never be charged.
+    if not (await phone_summary(db, ctx.org.id))["subscribed"]:
+        raise HTTPException(status_code=402, detail="Start a plan first — it includes your first number.")
     try:
         row = await telephony.purchase(db, ctx.org.id, body.number, body.label)
     except (telephony.TelephonyError, ValueError) as exc:

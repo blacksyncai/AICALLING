@@ -98,12 +98,22 @@ def test_self_serve_off_means_request_then_admin_fulfills(client, make_client, t
     assert mine["requests"][0]["status"] == "fulfilled" and len(mine["numbers"]) == 1
 
 
-def test_self_serve_purchase_respects_limit(client, make_client, twilio):
+def test_self_serve_purchase_respects_limit(client, make_client, twilio, monkeypatch):
+    from app.services.billing import subscriptions
+
     n, n2 = _num(), _num()
     client.patch("/api/admin/telephony/settings", json={"self_serve_numbers": True, "max_numbers_per_org": 1})
     try:
         _, owner = _account(client, make_client, "Self Serve Co")
         assert owner.get("/api/phone-numbers/available", params={"area_code": "415"}).status_code == 200
+        # No plan → no self-serve number (it would never be billed).
+        assert owner.post("/api/phone-numbers/purchase", json={"number": n}).status_code == 402
+        real = subscriptions.phone_summary
+
+        async def on_plan(db, org_id):
+            return {**await real(db, org_id), "subscribed": True}
+
+        monkeypatch.setattr(subscriptions, "phone_summary", on_plan)
         assert owner.post("/api/phone-numbers/purchase", json={"number": n}).status_code == 201
         assert owner.post("/api/phone-numbers/purchase", json={"number": n2}).status_code == 400
     finally:
