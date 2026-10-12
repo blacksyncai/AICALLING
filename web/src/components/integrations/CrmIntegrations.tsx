@@ -1,6 +1,7 @@
 "use client";
 
-import { CheckCircle2, ChevronDown, Download, ExternalLink, Plug, RefreshCw, Trash2, Zap } from "lucide-react";
+import { CheckCircle2, ChevronRight, Download, ExternalLink, RefreshCw, Trash2, Zap } from "lucide-react";
+import type React from "react";
 import { useState } from "react";
 import useSWR from "swr";
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Toggle } from "@/components/ui";
@@ -56,12 +57,40 @@ const BRAND: Record<string, string> = {
   google_sheets: "bg-[#0f9d58]", slack: "bg-[#4a154b]",
 };
 
+const DOMAIN: Record<string, string> = {
+  followupboss: "followupboss.com", close: "close.com", hubspot: "hubspot.com", highlevel: "gohighlevel.com",
+  pipedrive: "pipedrive.com", salesforce: "salesforce.com", zoho: "zoho.com", attio: "attio.com",
+  google_sheets: "sheets.google.com", slack: "slack.com",
+};
+
 function Logo({ p }: { p: Provider }) {
+  const [failed, setFailed] = useState(false);
   const initials = p.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const domain = DOMAIN[p.key];
+  if (domain && !failed) {
+    return (
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-white ring-1 ring-zinc-200/80">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`} alt="" className="h-6 w-6" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
   return (
-    <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white", BRAND[p.key] ?? "bg-zinc-700")}>
+    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-xs font-bold text-white", BRAND[p.key] ?? "bg-zinc-700")}>
       {initials}
     </span>
+  );
+}
+
+/** Rounded grouped list with dividers inset past the logo (iOS settings style). */
+function Group({ title, children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      {title && <div className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">{title}</div>}
+      <ul className="overflow-hidden rounded-2xl bg-white ring-1 ring-zinc-200/80 [&>li+li]:before:absolute [&>li+li]:before:left-[68px] [&>li+li]:before:right-4 [&>li+li]:before:top-0 [&>li+li]:before:h-px [&>li+li]:before:bg-zinc-100">
+        {children}
+      </ul>
+    </div>
   );
 }
 
@@ -91,9 +120,9 @@ export function CrmIntegrations() {
         title="CRM & apps"
         description="Every AI call is logged in your CRM with the summary, outcome and recording link. Import contacts to call, and have an agent call new leads within a minute."
       />
-      <div className="space-y-6 p-5">
+      <div className="space-y-6 p-3 sm:p-5">
         {connected.length > 0 && (
-          <div className="space-y-3">
+          <Group title="Connected">
             {connected.map((p) => (
               <ConnectedRow
                 key={p.key}
@@ -106,40 +135,36 @@ export function CrmIntegrations() {
                 onReconnect={() => setConnecting(p)}
               />
             ))}
-          </div>
+          </Group>
         )}
-        <div>
-          {connected.length > 0 && <div className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">Add another</div>}
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {available.map((p) => {
-              const ready = p.native || p.oauth;
-              return (
-                <div key={p.key} className="flex flex-col gap-3 rounded-xl border border-zinc-200 p-4">
-                  <div className="flex items-start gap-3">
-                    <Logo p={p} />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 font-medium text-zinc-900">
-                        {p.name}
-                        {p.category === "crm" && p.can_new_leads && <Badge tone="brand">Speed to lead</Badge>}
-                      </div>
-                      <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">{p.description}</p>
-                    </div>
-                  </div>
-                  <div className="mt-auto flex items-center justify-between gap-2">
-                    <span className="text-xs text-zinc-400">{p.native ? (p.oauth ? "API key or OAuth" : "API key") : "OAuth"}</span>
-                    {ready ? (
-                      <Button size="sm" variant="primary" onClick={() => setConnecting(p)}>
-                        <Plug className="h-3.5 w-3.5" /> Connect
-                      </Button>
-                    ) : (
-                      <Badge tone="gray">Coming soon</Badge>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <Group title={connected.length ? "Available" : undefined}>
+          {available.map((p) => {
+            const ready = p.native || p.oauth;
+            return (
+              <li key={p.key} className="relative">
+                <button
+                  type="button"
+                  disabled={!ready}
+                  onClick={() => setConnecting(p)}
+                  className="group flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-zinc-50 disabled:cursor-default disabled:hover:bg-transparent"
+                >
+                  <Logo p={p} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[15px] font-medium text-zinc-900">{p.name}</span>
+                    <span className="block truncate text-xs text-zinc-500">{p.description}</span>
+                  </span>
+                  {ready ? (
+                    <span className="flex shrink-0 items-center gap-1.5 text-sm text-zinc-500 transition-colors group-hover:text-brand-600">
+                      Connect <ExternalLink className="h-4 w-4" />
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-sm text-zinc-400">Coming soon</span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </Group>
       </div>
       {connecting && (
         <ConnectModal
@@ -282,19 +307,12 @@ function ConnectedRow({
   const s = c.settings;
 
   return (
-    <div className="rounded-xl border border-zinc-200">
-      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 p-4 text-left hover:bg-zinc-50/60">
+    <li className="relative">
+      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-zinc-50">
         <Logo p={p} />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2 font-medium text-zinc-900">
+          <div className="flex flex-wrap items-center gap-2 text-[15px] font-medium text-zinc-900">
             {p.name}
-            {c.status === "connected" ? (
-              <Badge tone="green">
-                <CheckCircle2 className="h-3 w-3" /> Connected
-              </Badge>
-            ) : (
-              <Badge tone="red">Needs attention</Badge>
-            )}
             {s.speed_to_lead_agent_id && (
               <Badge tone="brand">
                 <Zap className="h-3 w-3" /> Speed to lead
@@ -306,10 +324,18 @@ function ConnectedRow({
             {c.last_synced_at ? ` · last sync ${timeAgo(c.last_synced_at)}` : ""}
           </div>
         </div>
-        <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-400 transition", open && "rotate-180")} />
+        {c.status === "connected" ? (
+          <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Connected</span>
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">Needs attention</span>
+        )}
+        <ChevronRight className={cn("h-5 w-5 shrink-0 text-zinc-400 transition-transform", open && "rotate-90")} />
       </button>
       {open && (
-        <div className="space-y-5 border-t border-zinc-100 p-4">
+        <div className="space-y-5 border-t border-zinc-100 bg-zinc-50/50 p-4 sm:pl-[68px]">
           {c.status === "error" && c.last_error && <Notice tone="red">{c.last_error}</Notice>}
           <div className="grid gap-3 md:grid-cols-2">
             <Toggle
@@ -418,6 +444,6 @@ function ConnectedRow({
           </div>
         </div>
       )}
-    </div>
+    </li>
   );
 }
