@@ -28,7 +28,7 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-2xl border border-zinc-200/80 bg-white p-7 shadow-[0_1px_2px_rgba(33,27,24,0.04),0_12px_32px_-12px_rgba(33,27,24,0.12)]">
+    <form onSubmit={submit} className="w-full space-y-4">
       {error && <Notice tone="red">{error}</Notice>}
       <Field label="Email">
         <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
