@@ -1,4 +1,4 @@
-import { CalendarCheck, Mic, PhoneCall, ShieldCheck, Sparkles } from "lucide-react";
+import { CalendarCheck, Mic, PhoneCall, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { FullScreenSignup } from "@/components/ui/full-screen-signup";
 
@@ -10,6 +10,8 @@ const POINTS = [
 
 /** Clerk's form, flattened to sit inside the auth card (the card supplies the title). */
 export const authFormAppearance = {
+  // Hides Clerk's "Development mode" badge (shown while the site runs on a Clerk development instance).
+  layout: { unsafe_disableDevelopmentModeWarnings: true },
   elements: {
     // `!` (important): Clerk's own styles otherwise win over utility classes.
     rootBox: "w-full!",
@@ -39,7 +41,6 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
           <ShieldCheck className="h-4 w-4" /> Your data stays private to your workspace.
         </span>
       }
-      icon={Sparkles}
       title={title}
       subtitle={subtitle}
     >
