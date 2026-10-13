@@ -5,12 +5,15 @@ import { clerkEnabled } from "@/lib/clerk-server";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Create your login" };
+export const metadata = { title: "Start your free trial" };
 
 export default function SignUpPage() {
   if (!clerkEnabled()) redirect("/login");
   return (
-    <AuthShell title="Create your login" subtitle="Use the email your BlackSync invite was sent to.">
+    <AuthShell
+      title="Start your free trial"
+      subtitle="Create your BlackSync account in seconds — no card needed. Invited by a teammate? Use the email your invite was sent to."
+    >
       <SignUp fallbackRedirectUrl="/dashboard" appearance={authFormAppearance} />
     </AuthShell>
   );

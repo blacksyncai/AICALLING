@@ -20,6 +20,7 @@ import structlog
 
 from app.agent import catalog
 from app.config import settings
+from app.agent.spec import question_last
 
 log = structlog.get_logger(__name__)
 
@@ -654,14 +655,14 @@ USER INSTRUCTION:
 <instruction>{instruction}</instruction>
 
 Return JSON: {{"summary": "one or two plain sentences describing what you changed",
-"first_message": "the full first message (unchanged unless the instruction concerns it; max {MAX_FIRST_MESSAGE} chars)",
+"first_message": "the full first message (unchanged unless the instruction concerns it; max {MAX_FIRST_MESSAGE} chars; spoken in one go, so any question goes last)",
 "changed_sections": {{"<section key>": "full new text of each section you changed"}}}}
 Only include sections you actually changed. Valid keys: {', '.join(keys)}."""
 
         def validate(p: dict) -> dict:
             return {
                 "summary": _str(p.get("summary"), "summary", 500),
-                "first_message": _str(p.get("first_message"), "first_message", MAX_FIRST_MESSAGE),
+                "first_message": question_last(_str(p.get("first_message"), "first_message", MAX_FIRST_MESSAGE)),
                 "changed": _sections(p.get("changed_sections", {}), keys=keys, partial=True,
                                      max_len=12000 if v2 else MAX_SECTION),
             }
@@ -698,13 +699,13 @@ USER INSTRUCTION:
 <instruction>{instruction}</instruction>
 
 Return JSON: {{"summary": "one or two plain sentences describing what you changed",
-"first_message": "the full first message (max {MAX_FIRST_MESSAGE} chars)",
+"first_message": "the full first message (max {MAX_FIRST_MESSAGE} chars; spoken in one go, so any question goes last)",
 "system_prompt": "the full updated system prompt"}}"""
 
     def validate_plain(p: dict) -> dict:
         return {
             "summary": _str(p.get("summary"), "summary", 500),
-            "first_message": _str(p.get("first_message"), "first_message", MAX_FIRST_MESSAGE),
+            "first_message": question_last(_str(p.get("first_message"), "first_message", MAX_FIRST_MESSAGE)),
             "system_prompt": _str(p.get("system_prompt"), "system_prompt", 20000),
         }
 

@@ -5,8 +5,18 @@ import { NextResponse, type NextRequest } from "next/server";
 // and sign-in, sign-up and invite links must open while signed out.
 const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/login", "/invite(.*)", "/pricing", "/api/(.*)"]);
 
+// New visitors land on sign-up (existing customers tap "Sign in" there); other pages go to sign-in.
+const isFrontDoor = createRouteMatcher(["/", "/dashboard"]);
+
 const withClerk = clerkMiddleware(async (auth, req) => {
-  if (!isPublic(req)) await auth.protect();
+  if (isPublic(req)) return;
+  if (isFrontDoor(req) && !(await auth()).userId) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/sign-up";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+  await auth.protect();
 });
 
 // Until CLERK_SECRET_KEY is set, fall back to the built-in session cookie.

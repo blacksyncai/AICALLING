@@ -113,6 +113,24 @@ export function StepLaunch({
         </Link>
       </div>
 
+      {/* Starting point: set expectations and invite edits */}
+      {!live && (
+        <div className="mb-5 rounded-xl border border-brand-200 bg-brand-50/60 p-4">
+          <p className="text-sm font-semibold text-zinc-900">This is your starting point</p>
+          <p className="mt-1 text-sm text-zinc-700">
+            Test {agent.name} a few times — most agents need a couple of tweaks before they sound just right. Change anything you like,
+            and if you have a call script, objection answers or talking points you already use, paste them in with Improve with AI or add
+            them in the full editor.
+          </p>
+          <Link
+            href={`/agents/${agentId}`}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+          >
+            Open full editor <ArrowUpRight className="h-4 w-4" />
+          </Link>
+        </div>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
         {/* Summary */}
         <section className="rounded-xl border border-zinc-200 bg-white">
@@ -125,7 +143,7 @@ export function StepLaunch({
             <Row label="Knowledge" value={knowledge.length ? knowledge.join(" · ") : "None yet — add it anytime in Knowledge"} />
             <Row label="On the call" value={actions.join(" · ") || "Conversation only"} />
           </dl>
-          <div className="border-t border-zinc-100 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-4 py-3">
             <ImproveWithAI
               agent={agent}
               beforeImprove={async () => true}
@@ -134,6 +152,12 @@ export function StepLaunch({
                 void refreshReadiness();
               }}
             />
+            <Link
+              href={`/agents/${agentId}`}
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              Open full editor <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
         </section>
 

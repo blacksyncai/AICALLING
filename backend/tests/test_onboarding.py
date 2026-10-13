@@ -90,3 +90,19 @@ def test_signup_sends_welcome_then_walkthrough_offer_a_day_later(client, make_cl
     assert asyncio.run(sweep(now + timedelta(hours=25))) == 1         # the next day
     assert sent[-1][0] == email and "walkthrough" in sent[-1][2] and "cal.com" in sent[-1][2]
     assert asyncio.run(sweep(now + timedelta(hours=26))) == 0         # only once
+
+
+def test_funeral_home_onboarding(client, make_client):
+    c = _orphan_login(client, make_client)
+    opts = c.get("/api/onboarding/options").json()
+    fh = next(i for i in opts["industries"] if i["key"] == "funeral_services")
+    assert fh["label"] == "Funeral Homes" and "cremation" in fh["hint"]
+    goals = [s["key"] for s in opts["specialties"]["funeral_services"]] if "specialties" in opts else ["first_call_answering"]
+    assert "first_call_answering" in goals
+    r = c.post("/api/onboarding/start", json={"company": "Peaceful Rest Funeral Home", "industry": "funeral_services",
+                                              "goals": ["first_call_answering", "preplanning_inquiries"],
+                                              "website": "peacefulrest.example"})
+    assert r.status_code == 201, r.text
+    assert r.json()["org"]["industry"] == "funeral_services"
+    demo = c.get(f"/api/agents/{c.get('/api/agents/').json()[0]['id']}").json()
+    assert "Funeral Homes" in demo["system_prompt"] and "24/7 First Call Answering" in demo["system_prompt"]

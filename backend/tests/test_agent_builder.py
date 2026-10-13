@@ -68,7 +68,7 @@ def test_catalog_shape(client):
     cat = client.get("/api/agent-builder/catalog").json()
     keys = [i["key"] for i in cat["industries"]]
     assert keys == ["real_estate", "mortgage", "home_services", "healthcare", "insurance", "financial_services",
-                    "recruiting", "logistics", "automotive", "professional_services", "other"]
+                    "recruiting", "logistics", "automotive", "professional_services", "funeral_services", "other"]
     for key in keys:
         ucs = cat["use_cases"][key]
         directions = {u["direction"] for u in ucs}
@@ -512,3 +512,20 @@ def test_transfer_request_without_number_is_flagged():
                      "assistant": [{"id": "q", "question": "Then?", "answer": "Warm transfer hot leads to my team"}]}}
     assert generator.transfer_requested(data)
     assert not generator.transfer_requested({"goal": {"custom": {"description": "Book appointments only"}}})
+
+
+def test_first_message_question_goes_last():
+    from app.agent.spec import question_last
+
+    assert question_last("Hi, is this {{name}}? This is Ethan, the AI assistant calling with the Mirelo Team.") == \
+        "Hi, this is Ethan, the AI assistant calling with the Mirelo Team. Is this {{name}}?"
+    assert question_last("Hey there! This is Sam from Acme. Do you have a minute?") == \
+        "Hey there! This is Sam from Acme. Do you have a minute?"
+    assert question_last("Thanks for calling Acme, how can I help?") == "Thanks for calling Acme, how can I help?"
+
+
+def test_guardrails_are_added_at_call_time_not_to_the_prompt():
+    from app.agent.runtime import build_instructions
+
+    text = build_instructions({"system_prompt": "You are Sam.", "business_name": "Acme"}, {})
+    assert "STAYING ON TOPIC" in text and "BlackSync AI" in text and "not one of those AI chatbots" in text

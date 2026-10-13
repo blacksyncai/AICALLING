@@ -26,6 +26,7 @@ INDUSTRIES: list[dict] = [
     {"key": "logistics", "label": "Logistics and Freight", "icon": "truck"},
     {"key": "automotive", "label": "Automotive", "icon": "car"},
     {"key": "professional_services", "label": "Professional Services", "icon": "briefcase"},
+    {"key": "funeral_services", "label": "Funeral Homes", "icon": "flower"},
     {"key": "other", "label": "Something Else", "icon": "sparkles"},
 ]
 
@@ -85,6 +86,57 @@ _OLD_LEAD_AGE = _choice("lead_age", "How old are these leads, roughly?",
 # ── Use cases per industry ────────────────────────────────────────────────────
 
 USE_CASES: dict[str, list[dict]] = {
+    # Funeral homes: mostly answering calls, always calm and compassionate — never salesy.
+    "funeral_services": [
+        _uc("first_call_answering", "24/7 First Call Answering", "inbound",
+            "Answers every call day and night with compassion, takes the details of a death and connects the "
+            "on-call funeral director right away.",
+            ["Answer calmly and offer condolences", "Take down who has passed, where they are and how to reach the caller",
+             "Connect the on-call director immediately, or promise a prompt callback"],
+            ["May I have your name and the best number to reach you?", "Who has passed, and where are they now?",
+             "Are you the next of kin, or calling on behalf of the family?", "Has the attending physician or hospice been notified?"],
+            ["transfer", "callback"],
+            [_bool("transfer_first_calls", "Transfer death calls to the on-call director right away?", True),
+             _text("on_call_number_note", "Anything the agent should know about who's on call? (optional)",
+                   placeholder="e.g. after 6 PM calls go to our on-call director")]),
+        _uc("service_inquiries", "Service & Arrangement Inquiries", "inbound",
+            "Answers questions about upcoming services, visitation times, directions, obituaries and flowers, "
+            "and books arrangement conferences with families.",
+            ["Answer from the funeral home's own information", "Help families find service and visitation details",
+             "Book an arrangement conference or connect a director"],
+            ["Which service or family are you calling about?", "Would you like to set up a time to meet with a funeral director?",
+             "What day and time would work best for your family?"],
+            ["book_appointment", "transfer", "callback", "send_info"],
+            [_bool("share_service_times", "Share service and visitation times when asked?", True),
+             _bool("discuss_pricing", "Answer general pricing questions (and offer the price list)?", False)]),
+        _uc("preplanning_inquiries", "Pre-Planning Inquiries", "inbound",
+            "Helps people who call about planning ahead: answers common questions and books a pre-planning meeting.",
+            ["Answer questions about pre-planning simply and warmly", "Understand what they're hoping to plan",
+             "Book a pre-planning meeting with a counselor"],
+            ["Are you planning for yourself or for a loved one?", "Are you thinking about burial, cremation, or not sure yet?",
+             "Would you prefer to meet in person, by phone or by video?"],
+            ["book_appointment", "callback", "send_info"],
+            [_bool("offer_planning_guide", "Offer to send a free planning guide?", True),
+             _bool("mention_payment_plans", "Mention that payment plans are available?", False)]),
+        _uc("preplanning_follow_up", "Pre-Planning Follow-Up", "outbound",
+            "Gently follows up with people who asked for pre-planning information or attended a seminar.",
+            ["Thank them for their interest", "Answer any questions", "Offer a no-pressure pre-planning meeting"],
+            ["Did you get a chance to look at the planning information?", "Is there anything you'd like to know more about?",
+             "Would it help to sit down with one of our counselors?"],
+            ["book_appointment", "callback", "send_info"],
+            [_text("event_name", "Seminar or event to mention? (optional)", placeholder="e.g. our planning-ahead workshop"),
+             _bool("offer_planning_guide", "Offer to send a free planning guide?", True)]),
+        _uc("aftercare_check_ins", "Family Aftercare Check-Ins", "outbound",
+            "Calls families a few weeks after a service to check in, share grief support resources and see if they need anything.",
+            ["Check in warmly on how the family is doing", "Offer grief support resources and upcoming events",
+             "Make sure nothing is left unfinished, like certificates or memorial items"],
+            ["How have you and your family been holding up?", "Would grief support resources be helpful?",
+             "Is there anything still outstanding we can help with?"],
+            ["callback", "send_info", "transfer"],
+            [_bool("mention_memorial_event", "Mention an upcoming memorial or remembrance event?", False),
+             _bool("ask_for_review", "Ask, gently, if they'd share feedback about their experience?", False)]),
+        _custom("Funeral Homes"),
+    ],
     "real_estate": [
         _uc("buyer_follow_up", "Buyer Lead Follow-Up", "outbound",
             "Follows up with buyer leads to learn what they want and get them in front of an agent.",
@@ -875,6 +927,14 @@ def _sp(key: str, label: str, direction: str, use_cases: list[str], mission: str
 
 
 _CURATED: dict[str, list[dict]] = {
+    "funeral_services": [
+        _sp("first_call_answering", "24/7 First Call Answering", "inbound", ["first_call_answering"]),
+        _sp("service_inquiries", "Service & Arrangement Inquiries", "inbound", ["service_inquiries"]),
+        _sp("after_hours_answering", "After-Hours Answering", "inbound", ["first_call_answering", "service_inquiries"]),
+        _sp("preplanning_inquiries", "Pre-Planning Inquiries", "inbound", ["preplanning_inquiries"]),
+        _sp("preplanning_follow_up", "Pre-Planning Follow-Up", "outbound", ["preplanning_follow_up"]),
+        _sp("aftercare_check_ins", "Family Aftercare Check-Ins", "outbound", ["aftercare_check_ins"]),
+    ],
     "real_estate": [
         _sp("real_estate_isa", "Real Estate ISA", "outbound", ["speed_to_lead", "buyer_follow_up", "seller_follow_up"]),
         _sp("expired_listings", "Expired Listings", "outbound", ["expired_listings"]),

@@ -49,7 +49,7 @@ def welcome_email(user: User, org_name: str) -> tuple[str, str]:
         for n, s in enumerate([
             "<strong style=\"color:#1C1917;\">Talk to your welcome agent</strong> — she's ready to test right in your browser.",
             "<strong style=\"color:#1C1917;\">Build your agent</strong> — tell us about your business and BlackSync writes the script.",
-            "<strong style=\"color:#1C1917;\">Make your first call</strong> — have it call your own phone to hear what your leads will hear.",
+            "<strong style=\"color:#1C1917;\">Test it right in your browser</strong> — talk to your agent live and hear exactly what your callers will hear.",
         ], start=1)
     )
     body = t.layout(

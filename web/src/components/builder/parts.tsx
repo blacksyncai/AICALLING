@@ -16,6 +16,7 @@ import {
   UserSearch,
   Wrench,
   type LucideIcon,
+  Flower2,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
@@ -68,6 +69,8 @@ const ICONS: Record<string, LucideIcon> = {
   car: Car,
   automotive: Car,
   briefcase: Briefcase,
+  flower: Flower2,
+  funeral_services: Flower2,
   professional_services: Briefcase,
   building: Building2,
   "building-2": Building2,

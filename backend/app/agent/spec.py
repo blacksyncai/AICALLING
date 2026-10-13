@@ -248,9 +248,32 @@ def _steps(v, name: str) -> list[dict]:
     return steps
 
 
+_GREETING = re.compile(r"^(hi|hey|hello|hiya|good (?:morning|afternoon|evening))(\s+there)?\s*[,!.]\s*", re.I)
+
+
+def question_last(text: str) -> str:
+    """The first message is spoken in one go before the contact can reply, so a question must come last.
+    "Hi, is this {{name}}? This is Ethan with Mirelo." -> "Hi, this is Ethan with Mirelo. Is this {{name}}?"
+    """
+    text = (text or "").strip()
+    parts = [p.strip() for p in re.findall(r"[^.!?]+[.!?]+|[^.!?]+$", text) if p.strip()]
+    if len(parts) < 2 or not any(p.endswith("?") for p in parts[:-1]):
+        return text
+    questions = [p for p in parts if p.endswith("?")]
+    statements = [p for p in parts if not p.endswith("?")]
+    greeting = ""
+    m = _GREETING.match(questions[0])
+    if m and statements:
+        greeting = m.group(1)[0].upper() + m.group(1)[1:] + ", "
+        rest = questions[0][m.end():]
+        questions[0] = rest[:1].upper() + rest[1:]
+        statements[0] = statements[0][:1].lower() + statements[0][1:]
+    return (greeting + " ".join(statements + questions)).strip()
+
+
 def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: set[str], direction: str,
                           flags: dict) -> dict:
-    out = {"first_message": _s(p.get("first_message"), "first_message", 300)}
+    out = {"first_message": question_last(_s(p.get("first_message"), "first_message", 300))}
     out["opening"] = _steps(p.get("opening"), "opening")
     if not any(s["wait"] for s in out["opening"]):
         raise InvalidOutput("the opening needs at least one line that waits for the contact's reply (wait: true)")

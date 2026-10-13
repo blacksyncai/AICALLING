@@ -40,6 +40,7 @@ HINTS = {
     "automotive": "Dealers and service centers",
     "healthcare": "Clinics, dental and wellness",
     "professional_services": "Agencies, consultants and law firms",
+    "funeral_services": "Funeral homes, cremation and memorial services",
     "other": "Tell us what you do",
 }
 TEAM_SIZES = ("just_me", "2_5", "6_20", "21_plus")

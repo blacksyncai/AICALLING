@@ -47,6 +47,15 @@ STAGES = [
     ("save", "Saving your agent"),
 ]
 
+# Extra guidance for industries where the default (sales) tone would be wrong.
+INDUSTRY_TONE = {
+    "funeral_services": (
+        "\n- Tone: callers are often grieving. Be calm, warm, patient and unhurried — never salesy or upbeat. Offer "
+        "condolences, use plain gentle language, never pressure, and for a death (a \"first call\") take the essentials "
+        "and connect the on-call funeral director right away."
+    ),
+}
+
 
 class GenerationError(generator.GenerationError):
     pass
@@ -265,7 +274,7 @@ def _context_block(ctx: dict) -> str:
     unavailable += ["sending texts or emails", "updating CRM records during the call", "taking payments"]
     return f"""BUSINESS
 - Name: {b['name']}
-- Industry: {b['industry_label'] or '(not given)'}
+- Industry: {b['industry_label'] or '(not given)'}{INDUSTRY_TONE.get(b.get('industry') or '', '')}
 - Website: {b['website'] or '(none)'}
 - Description (from the user): {b['description'] or '(none)'}
 
@@ -350,8 +359,10 @@ Sizes: 4-8 qualification questions (fewer for light depth), 4-6 stages, 6-10 dis
 
 _CONVERSATION_SHAPE = """Return ONE JSON object with exactly these keys:
 {
- "first_message": "the exact first thing the agent says when the call connects (max 300 chars). Outbound: a short
-                   greeting that confirms the person and waits; inbound: greet as the business and ask how to help",
+ "first_message": "the exact first thing the agent says when the call connects (max 300 chars). It's spoken in one
+                   go before the contact can reply, so at most ONE question and it must be the very last sentence (never
+                   ask something and keep talking). Outbound: a short greeting that says who's calling, then confirms the
+                   person and waits; inbound: greet as the business and ask how to help",
  "opening": [{"say": "exact line", "do": "optional instruction", "wait": true}],
  "branches": [{"key": "branch key", "when": "what the contact says or does", "steps": [{"say": "...", "do": "...", "wait": true}], "outcome": "outcome code if the call ends here, else ''"}],
  "objections": [{"objection": "what they say", "response": "short spoken answer", "if_they_persist": "what to do"}],
