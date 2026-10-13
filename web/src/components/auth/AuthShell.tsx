@@ -11,11 +11,12 @@ const POINTS = [
 /** Clerk's form, flattened to sit inside the auth card (the card supplies the title). */
 export const authFormAppearance = {
   elements: {
-    rootBox: "w-full",
-    cardBox: "w-full max-w-none shadow-none border-0 rounded-none",
-    card: "shadow-none border-0 bg-transparent p-0",
-    header: "hidden",
-    footer: "bg-none bg-transparent [&>div]:bg-transparent",
+    // `!` (important): Clerk's own styles otherwise win over utility classes.
+    rootBox: "w-full!",
+    cardBox: "w-full! max-w-none! shadow-none! border-0! rounded-none! bg-transparent!",
+    card: "shadow-none! border-0! bg-transparent! px-0! pt-0!",
+    header: "hidden!",
+    footer: "bg-none! bg-transparent! [&>div]:bg-transparent! [&>div]:px-0!",
   },
 };
 
