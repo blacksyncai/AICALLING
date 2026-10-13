@@ -238,3 +238,16 @@ def test_mistral_voice_listed_as_premium_and_audio_converts(client, cartesia):
     assert m["name"] == "Marissa M 2.0" and m["category"] == "premium" and m["provider"] == "mistral"
     assert f32le_to_s16le(struct.pack("<3f", 0.0, 1.0, -2.0)) == struct.pack("<3h", 0, 32767, -32767)
     assert wav_header(10)[:4] == b"RIFF" and len(wav_header(10)) == 44
+
+
+def test_mistral_reply_grouping():
+    from app.agent.mistral_tts import take_chunk
+
+    # First request: one sentence (long enough), so speech starts fast.
+    assert take_chunk("Hi. Thanks for picking up, this is Hamza. How are", final=False, first=True) == \
+        ("Hi. Thanks for picking up, this is Hamza. ", "How are")
+    # After that: every complete buffered sentence in one request.
+    assert take_chunk("How are you? I wanted to ask. Quick", final=False, first=False) == \
+        ("How are you? I wanted to ask. ", "Quick")
+    assert take_chunk("no end yet", final=False, first=False) == ("", "no end yet")
+    assert take_chunk("tail", final=True, first=False) == ("tail", "")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import struct
 
 import httpx
@@ -82,14 +83,46 @@ async def synthesize_wav(voice_id: str, text: str) -> bytes:
     return wav_header(len(pcm)) + pcm
 
 
+_SENTENCE_END = re.compile(r"[.!?…](?:[\"')\]]*)\s")
+_FIRST_CHUNK_MIN = 25  # chars — don't send a lone "Hi." as its own request
+
+
+def take_chunk(buf: str, *, final: bool, first: bool) -> tuple[str, str]:
+    """Split the next request off the buffered reply: (chunk, rest).
+
+    The first request is one sentence so the agent starts talking quickly; after that, every
+    complete sentence that's buffered goes out together so intonation carries across sentences."""
+    if final:
+        return buf, ""
+    ends = [m.end() for m in _SENTENCE_END.finditer(buf)]
+    if first:
+        ends = [e for e in ends if e >= _FIRST_CHUNK_MIN][:1]
+    if not ends:
+        return "", buf
+    cut = ends[-1]
+    return buf[:cut], buf[cut:]
+
+
 def make_livekit_tts(voice_id: str):
-    """A LiveKit TTS speaking with a Mistral voice (imported lazily so the API doesn't need livekit)."""
+    """A LiveKit TTS speaking with a Mistral voice (imported lazily so the API doesn't need livekit).
+
+    Mistral takes whole text per request, so the reply is grouped (first sentence, then the rest)
+    instead of LiveKit's default of one request per sentence, which restarts intonation each time."""
+    import asyncio
+
     from livekit.agents import APIConnectionError, APIStatusError, APITimeoutError, tts, utils
     from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 
+    def _api_errors(exc: httpx.HTTPError) -> Exception:
+        if isinstance(exc, httpx.TimeoutException):
+            return APITimeoutError()
+        if isinstance(exc, httpx.HTTPStatusError):
+            return APIStatusError(str(exc), status_code=exc.response.status_code, body=exc.response.text)
+        return APIConnectionError()
+
     class MistralTTS(tts.TTS):
         def __init__(self) -> None:
-            super().__init__(capabilities=tts.TTSCapabilities(streaming=False),
+            super().__init__(capabilities=tts.TTSCapabilities(streaming=True),
                              sample_rate=SAMPLE_RATE, num_channels=1)
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
 
@@ -104,6 +137,9 @@ def make_livekit_tts(voice_id: str):
         def synthesize(self, text: str, *, conn_options=DEFAULT_API_CONNECT_OPTIONS):
             return _Chunked(tts=self, input_text=text, conn_options=conn_options)
 
+        def stream(self, *, conn_options=DEFAULT_API_CONNECT_OPTIONS):
+            return _Stream(tts=self, conn_options=conn_options)
+
         async def aclose(self) -> None:
             await self._client.aclose()
 
@@ -115,11 +151,52 @@ def make_livekit_tts(voice_id: str):
                 async for chunk in iter_pcm16(self._tts._client, voice_id, self._input_text):
                     output_emitter.push(chunk)
                 output_emitter.flush()
-            except httpx.TimeoutException as exc:
-                raise APITimeoutError() from exc
-            except httpx.HTTPStatusError as exc:
-                raise APIStatusError(str(exc), status_code=exc.response.status_code, body=exc.response.text) from exc
             except httpx.HTTPError as exc:
-                raise APIConnectionError() from exc
+                raise _api_errors(exc) from exc
+
+    class _Stream(tts.SynthesizeStream):
+        async def _run(self, output_emitter) -> None:
+            output_emitter.initialize(request_id=utils.shortuuid(), sample_rate=SAMPLE_RATE,
+                                      num_channels=1, mime_type="audio/pcm", stream=True)
+            output_emitter.start_segment(segment_id=utils.shortuuid())
+            state = {"buf": "", "done": False, "flush": False}
+            wake = asyncio.Event()
+
+            async def forward() -> None:
+                async for data in self._input_ch:
+                    if isinstance(data, self._FlushSentinel):
+                        state["flush"] = True
+                    else:
+                        state["buf"] += data
+                    wake.set()
+                state["done"] = True
+                wake.set()
+
+            async def speak() -> None:
+                first = True
+                while True:
+                    wake.clear()
+                    final = state["done"] or state["flush"]
+                    chunk, rest = take_chunk(state["buf"], final=final, first=first)
+                    if not chunk.strip():
+                        if state["done"]:
+                            return
+                        state["flush"] = False
+                        await wake.wait()
+                        continue
+                    state["buf"], state["flush"], first = rest, False, False
+                    try:
+                        async for pcm in iter_pcm16(self._tts._client, voice_id, chunk.strip()):
+                            output_emitter.push(pcm)
+                    except httpx.HTTPError as exc:
+                        raise _api_errors(exc) from exc
+                    output_emitter.flush()
+
+            tasks = [asyncio.create_task(forward()), asyncio.create_task(speak())]
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                await utils.aio.cancel_and_wait(*tasks)
+            output_emitter.end_segment()
 
     return MistralTTS()
