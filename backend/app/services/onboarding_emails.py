@@ -41,26 +41,125 @@ def _first(user: User) -> str:
     return html.escape((user.first_name or "").strip())
 
 
-def welcome_email(user: User, org_name: str) -> tuple[str, str]:
-    first, company = _first(user), html.escape(org_name)
-    href = f"{_app_url()}/dashboard"
-    steps = "".join(
-        t.p(f"<strong style=\"color:{t.INK};\">{n}.</strong> {s}", margin="0 0 10px 0")
-        for n, s in enumerate([
-            "<strong style=\"color:#1C1917;\">Talk to your welcome agent</strong> — she's ready to test right in your browser.",
-            "<strong style=\"color:#1C1917;\">Build your agent</strong> — tell us about your business and BlackSync writes the script.",
-            "<strong style=\"color:#1C1917;\">Test it right in your browser</strong> — talk to your agent live and hear exactly what your callers will hear.",
-        ], start=1)
-    )
-    body = t.layout(
-        title="Welcome to BlackSync",
-        preheader="Your AI calling workspace is ready — here's how to hear it in action.",
-        heading=f"Welcome to BlackSync{', ' + first if first else ''}",
-        body_html=t.p(f"Your workspace for <strong style=\"color:{t.INK};\">{company}</strong> is ready. "
-                      "Here's the fastest way to see it work:")
-        + steps + t.button(href, "Open BlackSync") + t.divider()
-        + t.p("Questions? Use the chat in the corner of the app and we'll help.", size=12, margin="0"),
-    )
+def _step(n: str, title: str, text: str, pad: str) -> str:
+    return f"""<tr>
+                  <td style="padding:{pad};vertical-align:top;width:36px;color:#e95420;font-size:19px;font-weight:700;">{n}</td>
+                  <td style="padding:{pad.split(' ')[0]} 20px {pad.split(' ')[2]} 0;">
+                    <h3 style="margin:0 0 6px;font-size:16px;color:#222;">{title}</h3>
+                    <p style="margin:0;font-size:14px;line-height:1.6;color:#666;">{text}</p>
+                  </td>
+                </tr>"""
+
+
+_RULE = """<tr><td colspan="2" style="padding:0 20px;"><div style="border-top:1px solid #e9dfd8;"></div></td></tr>"""
+
+
+def welcome_email(user: User, org_name: str, industry_label: str | None = None,
+                  booking_url: str | None = None) -> tuple[str, str]:
+    """The sign-up welcome: workspace ready, three steps, open the app — and a setup call for anyone who wants help.
+
+    The call link is the same one as "Have an expert build it" (the expert_booking_url setting)."""
+    first = _first(user)
+    industry = html.escape(industry_label or "")
+    company = html.escape(org_name.strip())
+    workspace = (f"Your <strong>{industry}</strong> workspace for {company} is ready" if industry
+                 else f"Your workspace for <strong>{company}</strong> is ready")
+    href = html.escape(f"{_app_url()}/dashboard", quote=True)
+    steps = (_step("01", "Meet Marissa", "Your AI onboarding assistant will learn about your business and help you get started.",
+                   "22px 20px 16px") + _RULE
+             + _step("02", "Build your agent", "Choose a voice, describe your business, and let AI help create your first agent.",
+                     "18px 20px 16px") + _RULE
+             + _step("03", "Test it live", "Speak to your agent right in your browser and hear how it handles real conversations.",
+                     "18px 20px 22px"))
+    help_block = ""
+    if booking_url:
+        book = html.escape(booking_url, quote=True)
+        help_block = f"""<tr><td style="padding:0 28px;"><div style="border-top:1px solid #ece8e4;"></div></td></tr>
+          <tr>
+            <td style="padding:28px;">
+              <h2 style="margin:0 0 10px;font-size:19px;color:#222;">Prefer a little help?</h2>
+              <p style="margin:0 0 20px;font-size:14px;line-height:1.8;color:#666;">
+                Want a quick walkthrough or prefer to have our team build your agent for you? We're happy to help.
+              </p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td align="center" style="border:1px solid #e2d6ce;border-radius:10px;">
+                    <a href="{book}" target="_blank" style="display:block;padding:15px 20px;color:#bc481d;text-decoration:none;font-size:15px;font-weight:700;">Book a Free Setup Call &rarr;</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:23px 0 0;text-align:center;font-size:12px;color:#888;">Questions? Use the support chat inside BlackSync.</p>
+            </td>
+          </tr>"""
+    body = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome to BlackSync</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f1ed;font-family:Arial,Helvetica,sans-serif;color:#242424;">
+  <div style="display:none;font-size:1px;color:#f4f1ed;max-height:0;overflow:hidden;opacity:0;">
+    Your BlackSync workspace is ready. Build and test your first AI agent.
+  </div>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f4f1ed;">
+    <tr>
+      <td align="center" style="padding:30px 14px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;">
+          <tr>
+            <td style="background:#171513;padding:22px 28px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background:#f15a24;border-radius:9px;width:38px;height:38px;text-align:center;color:#fff;font-size:25px;font-weight:800;">B</td>
+                  <td style="padding-left:12px;color:#fff;font-size:22px;font-weight:700;">BlackSync</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:34px 28px 18px;">
+              <p style="margin:0 0 16px;font-size:11px;font-weight:700;letter-spacing:1.5px;color:#e95420;">YOUR WORKSPACE IS READY</p>
+              <h1 style="margin:0 0 16px;font-size:28px;line-height:1.25;letter-spacing:-0.7px;color:#171717;">Welcome to BlackSync{', ' + first if first else ''}.</h1>
+              <p style="margin:0;font-size:15px;line-height:1.8;color:#555555;">
+                {workspace}, and you've got <strong>complimentary calling credits</strong> to build, customize, and test
+                your first AI agent. No credit card required.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 28px 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#faf6f2;border-radius:12px;">
+                {steps}
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:0 28px 30px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td align="center" bgcolor="#e95420" style="border-radius:10px;">
+                    <a href="{href}" target="_blank" style="display:block;padding:17px 20px;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;">Open My Workspace &rarr;</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:14px 0 0;color:#888;font-size:12px;">No credit card required &bull; Complimentary calling credits included</p>
+            </td>
+          </tr>
+          {help_block}
+        </table>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:560px;">
+          <tr>
+            <td align="center" style="padding:22px 16px;">
+              <p style="margin:0 0 6px;font-size:12px;color:#888;">BlackSync AI &bull; Your AI calling platform</p>
+              <a href="https://blacksync.ai" style="font-size:12px;color:#888;text-decoration:none;">blacksync.ai</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
     return "Welcome to BlackSync — your workspace is ready", body
 
 
@@ -94,7 +193,11 @@ async def send_welcome(db, user_id: uuid.UUID, org_id: uuid.UUID) -> bool:
     user, org = await db.get(User, user_id), await db.get(Organization, org_id)
     if not user or not org:
         return False
-    subject, body = welcome_email(user, org.name)
+    from app.agent import catalog
+    from app.services.billing import settings_store
+
+    booking = await settings_store.get(db, "expert_booking_url")
+    subject, body = welcome_email(user, org.name, catalog.industry_label(org.industry or "") or None, booking)
     ok = await send_email(user.email, subject, body)
     log.info("welcome_email", user_id=str(user_id), sent=ok)
     return ok
