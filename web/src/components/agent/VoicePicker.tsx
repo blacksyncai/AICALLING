@@ -295,6 +295,7 @@ export function VoicePicker({
           <div
             role="dialog"
             aria-label="Choose a voice"
+            data-solid
             className={cn(
               inline
                 ? "relative mt-2 flex max-h-[min(26rem,65vh)] flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
@@ -308,23 +309,29 @@ export function VoicePicker({
               </button>
             </div>
 
-            <div role="tablist" aria-label="Voice category" className="flex gap-1 border-b border-zinc-100 px-3 pt-3">
+            <div role="tablist" aria-label="Voice category" className="flex gap-2 px-3 pt-3">
               {(["premium", "standard"] as Cat[]).map((c) => (
                 <button
                   key={c}
                   type="button"
                   role="tab"
                   aria-selected={tab === c}
+                  title={labels[c]}
                   onClick={() => {
                     setTab(c);
                     searchRef.current?.focus();
                   }}
                   className={cn(
-                    "-mb-px flex-1 truncate border-b-2 px-2 pb-2 text-xs font-medium transition sm:flex-none sm:text-sm",
-                    tab === c ? "border-brand-600 text-brand-700" : "border-transparent text-zinc-500 hover:text-zinc-800",
+                    "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-2 text-[13px] font-semibold transition sm:flex-none sm:px-3 sm:text-sm",
+                    tab === c
+                      ? "border-brand-600 bg-brand-600 text-white shadow-sm"
+                      : "border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100",
                   )}
                 >
-                  {labels[c]} <span className="text-zinc-400">({counts[c]})</span>
+                  {c === "premium" ? "Premium voices" : "Standard voices"}
+                  <span className={cn("rounded-full px-1.5 text-[11px] font-medium tabular-nums", tab === c ? "bg-white/20 text-white" : "bg-zinc-200/70 text-zinc-600")}>
+                    {counts[c]}
+                  </span>
                 </button>
               ))}
             </div>

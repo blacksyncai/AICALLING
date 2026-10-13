@@ -124,6 +124,7 @@ export function ModelPicker({
         <div
           role="dialog"
           aria-label="Choose a model"
+          data-solid
           className="absolute inset-x-0 top-full z-50 mt-2 flex max-h-[min(26rem,70vh)] min-w-[min(20rem,calc(100vw-2rem))] flex-col rounded-xl border border-zinc-200 bg-white shadow-xl"
         >
           <div className="border-b border-zinc-100 p-2">
