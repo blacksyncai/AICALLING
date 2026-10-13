@@ -16,6 +16,9 @@ import type { Agent, SettingsStatus } from "@/lib/types";
 const key = (orgId: string) => `blacksync:welcome-demo-hidden:${orgId}`;
 
 /** First visit: pick a voice for Marissa (the welcome demo agent) and talk to her in the browser. */
+// Hamza (Version 1) right after the selected voice on the demo.
+const DEMO_PINNED = ["95280ca0-610a-41c9-8457-1dcec809da61"];
+
 export function WelcomeDemo() {
   const { session } = useSession();
   const toast = useToast();
@@ -86,7 +89,7 @@ export function WelcomeDemo() {
       <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="min-w-0">
           <p className="mb-2 text-xs font-medium text-zinc-700">1. Choose her voice</p>
-          <VoiceCards voices={voices} value={voice ?? demo.voice_id} language={demo.language || "en"} onChange={(id) => void pickVoice(id)} />
+          <VoiceCards voices={voices} value={voice ?? demo.voice_id} language={demo.language || "en"} onChange={(id) => void pickVoice(id)} pinned={DEMO_PINNED} />
         </div>
         <div className="min-w-0">
           <p className="mb-2 text-xs font-medium text-zinc-700">2. Say hi</p>

@@ -14,7 +14,7 @@ import type { VoicesResponse } from "./StepPersonality";
 const PREVIEW_LINE = "Hey there, this is a quick preview of how I'll sound on your calls. Does this work for you?";
 
 /** Up to four voices to show up front: the chosen one, then house voices in the agent's language. */
-export function suggestedVoices(voices: VoicesResponse | undefined, language: string, selected: string): Voice[] {
+export function suggestedVoices(voices: VoicesResponse | undefined, language: string, selected: string, pinned: string[] = []): Voice[] {
   const all = [...(voices?.featured ?? []), ...(voices?.voices ?? [])];
   const seen = new Set<string>();
   const unique = all.filter((v) => (seen.has(v.id) ? false : (seen.add(v.id), true)));
@@ -26,8 +26,11 @@ export function suggestedVoices(voices: VoicesResponse | undefined, language: st
   const premium = pool.filter((v) => v.category === "premium");
   const picks = [...standard.slice(0, 3), ...premium.slice(0, 1)];
   const chosen = unique.find((v) => v.id === selected);
-  const out = chosen && !picks.some((v) => v.id === chosen.id) ? [chosen, ...picks.slice(0, 3)] : picks;
-  return out.slice(0, 4);
+  // The chosen voice first, then any pinned ones (e.g. the house clone on the welcome demo), then the picks.
+  const pins = pinned.map((id) => unique.find((v) => v.id === id)).filter((v): v is Voice => !!v);
+  const ordered = chosen ? [chosen, ...pins, ...picks] : [...pins, ...picks];
+  const ids = new Set<string>();
+  return ordered.filter((v) => (ids.has(v.id) ? false : (ids.add(v.id), true))).slice(0, 4);
 }
 
 function usePreview(language: string) {
@@ -91,11 +94,14 @@ export function VoiceCards({
   value,
   language,
   onChange,
+  pinned,
 }: {
   voices: VoicesResponse | undefined;
   value: string;
   language: string;
   onChange: (id: string) => void;
+  /** Voice ids to show right after the selected one. */
+  pinned?: string[];
 }) {
   const [libraryOpen, setLibraryOpen] = useState(false);
   // Voices in the library, counting a speaker with several tones or versions once (as the picker shows them).
@@ -105,7 +111,7 @@ export function VoiceCards({
   );
   const { data: rates } = useSWR<{ premium_voice_surcharge: number }>("/api/billing/rates", fetcher, { revalidateOnFocus: false });
   const { playing, loading, error, toggle, stop } = usePreview(language);
-  const picks = useMemo(() => suggestedVoices(voices, language, value), [voices, language, value]);
+  const picks = useMemo(() => suggestedVoices(voices, language, value, pinned), [voices, language, value, pinned]);
   const surcharge = rates?.premium_voice_surcharge ?? 0;
   const canPreview = voices?.source !== "fallback";
 
