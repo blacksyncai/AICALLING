@@ -13,8 +13,9 @@ export const authFormAppearance = {
   elements: {
     // `!` (important): Clerk's own styles otherwise win over utility classes.
     rootBox: "w-full!",
-    cardBox: "w-full! max-w-none! shadow-none! border-0! rounded-none! bg-transparent!",
-    card: "shadow-none! border-0! bg-transparent! px-0! pt-0!",
+    cardBox: "w-full! max-w-none! shadow-none! border-0! rounded-none! bg-transparent! overflow-visible!",
+    // Keep some top padding: the Google button's border and Clerk's "Last used" tag sit at the very top.
+    card: "shadow-none! border-0! bg-transparent! px-1! pt-4! overflow-visible!",
     header: "hidden!",
     footer: "bg-none! bg-transparent! [&>div]:bg-transparent! [&>div]:px-0!",
   },
