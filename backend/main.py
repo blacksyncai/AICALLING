@@ -21,7 +21,7 @@ from app.config import settings
 from app.database import create_all_tables
 from app.routers import (
     account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, internal, lead_finder, meetings, phone_numbers, speech,
-    public_api, search,
+    public_api, search, support,
     settings as settings_router,
 )
 
@@ -36,6 +36,13 @@ async def lifespan(app: FastAPI):
     log.info("pounce_starting", environment=settings.environment)
     await create_all_tables()
     log.info("database_tables_ready")
+    try:
+        from app.database import AsyncSessionLocal as _S
+        from app.services.support.kb_seed import seed as _seed_help
+        async with _S() as _db:
+            await _seed_help(_db)
+    except Exception as exc:
+        log.warning("help_center_seed_failed", error=str(exc)[:200])
     from app.database import AsyncSessionLocal
     from app.services.accounts import bootstrap
     from app.services.auth import load_signing_key
@@ -115,11 +122,12 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-for r in (auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, integrations, public_api, search,
+for r in (auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, integrations, public_api, search, support,
           settings_router, internal):
     app.include_router(r.router)
 app.include_router(phone_numbers.admin_router)
 app.include_router(billing.admin_router)
+app.include_router(support.admin_router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

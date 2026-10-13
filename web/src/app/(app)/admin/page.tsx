@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Building2, CreditCard, Hash, Lock, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
+import { BookOpen, Building2, CreditCard, Hash, LifeBuoy, Lock, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
@@ -61,6 +61,11 @@ function AdminPortal() {
         description="Every BlackSync account, its usage and credits."
         action={
           <div className="flex flex-wrap items-center gap-2">
+            <Link href="/admin/support">
+              <Button>
+                <LifeBuoy className="h-4 w-4" /> Support
+              </Button>
+            </Link>
             <Link href="/settings">
               <Button>
                 <Settings className="h-4 w-4" /> Platform settings

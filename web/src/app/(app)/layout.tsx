@@ -1,5 +1,6 @@
 import { AccountGate } from "@/components/AccountGate";
 import { UpgradePrompt } from "@/components/billing/UpgradePrompt";
+import { SupportWidget } from "@/components/support/SupportWidget";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { Sidebar } from "@/components/Sidebar";
@@ -19,6 +20,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </AccountGate>
       <CommandPalette />
       <UpgradePrompt />
+      <SupportWidget />
     </SessionProvider>
   );
 }

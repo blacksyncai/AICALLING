@@ -149,6 +149,19 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from: str = "BlackSync <onboarding@resend.dev>"
 
+    # ── Support (in-app help widget) ──────────────────────────────────────────
+    # Model for the support assistant (any model the backend has a key for: OpenAI, Cerebras or Claude).
+    # Empty = gpt-oss-120b on Cerebras when CEREBRAS_API_KEY is set, else gpt-4.1-mini.
+    support_ai_model: str = ""
+    support_ai_enabled: bool = True
+    support_ai_max_tokens: int = 500
+    support_ai_context_messages: int = 12
+    # AI replies allowed per user per hour (support usage never touches calling credits).
+    support_ai_hourly_limit: int = 30
+    # Staff notifications by email (Resend); empty address or false turns them off.
+    support_notify_email: str = "sales@blacksync.ai"
+    support_email_notifications: bool = True
+
     @model_validator(mode="after")
     def _clean_values(self):
         """Pasted keys often carry stray spaces/quotes; a bare LiveKit host needs a scheme."""
