@@ -64,7 +64,8 @@ export const ReadinessCard = forwardRef<
   const warnings = checks.filter((c) => c.status === "warning").length;
   const toFix = blockers + warnings;
   const [open, setOpen] = useState<boolean | null>(null);
-  const expanded = open ?? toFix > 0;
+  // Starts closed so it doesn't take over the editor; the summary line invites a look.
+  const expanded = open ?? false;
 
   useEffect(() => {
     if (forceOpen) setOpen(true);
@@ -105,6 +106,12 @@ export const ReadinessCard = forwardRef<
                   ? "Everything checks out."
                   : [blockers && `${blockers} must fix`, warnings && `${warnings} suggestion${warnings === 1 ? "" : "s"}`].filter(Boolean).join(" · ")
                 : "Looking at your script, voice, phone line and credits"}
+            {data && toFix > 0 && (
+              <span className="font-medium text-brand-600">
+                {" · "}
+                {expanded ? "Hide" : `See ${toFix === 1 ? "it" : `all ${toFix}`}`}
+              </span>
+            )}
           </div>
         </button>
         <button onClick={onRefresh} className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" aria-label="Re-check readiness">
