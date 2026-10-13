@@ -106,12 +106,20 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
     tools.append("Never say a tool's name or its arguments out loud — just use the tool.")
     parts.append("# TOOLS\n" + "\n".join(tools))
 
-    now = datetime.now(timezone.utc)
+    # Dates in the booking calendar's time zone when set, so "today"/"tomorrow" match the slots offered.
+    tz_name = "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo((cfg.get("calendar_timezone") or "").strip() or "UTC")
+        tz_name = zone.key
+    except Exception:
+        zone = timezone.utc
+    now = datetime.now(zone)
     days = ", ".join(
         (now + timedelta(days=i)).strftime("%a %b %-d = %Y-%m-%d") for i in range(1, 15)
     )
     parts.append(
-        f"# CONTEXT\nToday is {now.strftime('%A, %B %-d, %Y')} (UTC). Channel: {channel}.\n"
+        f"# CONTEXT\nToday is {now.strftime('%A, %B %-d, %Y')} ({tz_name}). Channel: {channel}.\n"
         f"Upcoming dates (use these, don't calculate): {days}."
     )
     return "\n\n".join(p for p in parts if p)

@@ -140,3 +140,25 @@ def test_analytics_funnel(client, make_client):
     _, other_email = _new_account(client, name="Empty Analytics Co")
     other = _login(make_client, other_email)
     assert other.get("/api/analytics?days=90").json()["funnel"]["dialed"] == 0
+
+
+def test_calendar_booked_meeting_uses_agent_calendar_timezone():
+    from types import SimpleNamespace
+
+    from app.agent.runtime import build_instructions
+    from app.routers.meetings import meeting_to_dict
+
+    booked = datetime(2026, 10, 13, 12, 0, tzinfo=timezone.utc)
+    call = SimpleNamespace(
+        id=uuid.uuid4(), extracted_data={}, agreed_meeting_time="Wed Oct 14 at 3:00 PM",
+        meeting_link="https://cal.com/booking/x", ended_at=booked, started_at=booked, to_phone=None,
+        prospect_email=None, agent_id=None, campaign_id=None, call_type="outbound", summary=None,
+        follow_up_status=None,
+    )
+    agent = SimpleNamespace(name="A", calendar_timezone="America/New_York")
+    # Org is in Jordan; the agent booked in New York time → 3 PM New York = 19:00 UTC.
+    m = meeting_to_dict(call, None, agent, None, "Asia/Amman")
+    assert datetime.fromisoformat(m["start"]).astimezone(timezone.utc).hour == 19
+
+    text = build_instructions({"calendar_timezone": "America/New_York"}, {}, channel="phone")
+    assert "(America/New_York)" in text

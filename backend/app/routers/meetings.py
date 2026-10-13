@@ -65,7 +65,9 @@ def meeting_start(c: CallLog, tz_name: str | None) -> tuple[datetime | None, str
 
 def meeting_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: Campaign | None,
                     tz_name: str | None = None) -> dict:
-    start, source = meeting_start(c, (campaign.timezone if campaign else None) or tz_name)
+    # A time booked through the calendar tool was spoken in the agent's calendar time zone.
+    booked_tz = agent.calendar_timezone if (agent and c.meeting_link and getattr(agent, "calendar_timezone", None)) else None
+    start, source = meeting_start(c, booked_tz or (campaign.timezone if campaign else None) or tz_name)
     data = c.extracted_data or {}
     return {
         "start": start.isoformat() if start else None,
