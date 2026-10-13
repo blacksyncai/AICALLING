@@ -104,8 +104,8 @@ def test_voice_metadata_fields(client, cartesia, monkeypatch):
     for v in voices.values():
         assert {"id", "name", "provider", "category", "language", "accent", "gender", "description",
                 "is_clone", "preview", "models", "status"} <= v.keys()
-        assert v["provider"] == "cartesia"
-        assert v["models"] == ["sonic-3"]
+        assert v["provider"] == ("mistral" if v["id"].startswith("mistral:") else "cartesia")
+        assert v["models"] == (["voxtral-mini-tts-latest"] if v["provider"] == "mistral" else ["sonic-3"])
         assert v["status"] == "available"
         assert v["preview"] is True
     assert voices["pub-1"]["accent"] == "British"
@@ -225,3 +225,14 @@ def test_language_mismatch_rules():
     assert model_mod.language_mismatch("en", "multi") is False
     assert model_mod.language_mismatch(None, "es") is False
     assert model_mod.language_mismatch("", "es") is False
+
+
+def test_mistral_voice_listed_as_premium_and_audio_converts(client, cartesia):
+    from app.agent.mistral_tts import f32le_to_s16le, wav_header
+    import struct
+
+    voices = _by_id(client.get("/api/settings/voices").json())
+    h = voices["mistral:01a133e4-93c6-7540-98b5-a917a4da562e"]
+    assert h["name"] == "Hamza 2.0" and h["category"] == "premium" and h["provider"] == "mistral"
+    assert f32le_to_s16le(struct.pack("<3f", 0.0, 1.0, -2.0)) == struct.pack("<3h", 0, 32767, -32767)
+    assert wav_header(10)[:4] == b"RIFF" and len(wav_header(10)) == 44

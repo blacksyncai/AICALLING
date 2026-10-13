@@ -26,6 +26,8 @@ FEATURED_VOICES: list[dict] = [
      "description": "The original Paul — thoughtful, steady and confident. Built for sales calls."},
     {"id": "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc", "name": "Ava"},
     {"id": "710feaa3-b550-42f3-b3eb-6f37f2a7cc0a", "name": "Jake"},
+    {"id": "mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "name": "Hamza 2.0", "gender": "masculine",
+     "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza", "gender": "masculine",
      "description": "Live voice clone.", "clone": True},
     {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M", "gender": "feminine",

@@ -34,6 +34,7 @@ from livekit.agents import (
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from app.agent.prompt import build_system_prompt
+from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
 from app.agent.voices import DEFAULT_VOICE_ID
 from app.agent.state import CallState
 from app.config import settings
@@ -919,6 +920,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     language = cfg.get("language") or "en"
     tuning = voice_tuning(cfg.get("voice_tuning"))
     model = cfg.get("llm_model") or "gpt-4.1-nano"
+    voice_id = cfg.get("voice_id") or DEFAULT_VOICE_ID
     api_key, base_url, sends_temperature = llm_endpoint(model)
     llm_kwargs = dict(model=model, api_key=api_key, base_url=base_url)
     if sends_temperature:
@@ -929,9 +931,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             api_key=settings.deepgram_api_key,
         ),
         llm=openai.LLM(**llm_kwargs),
-        tts=cartesia.TTS(
+        tts=make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia.TTS(
             model="sonic-3",
-            voice=cfg.get("voice_id") or DEFAULT_VOICE_ID,
+            voice=DEFAULT_VOICE_ID if is_mistral_voice(voice_id) else voice_id,
             language=None if language in ("en", "multi") else language,
             speed=float(cfg.get("voice_speed") or 1.0),
             volume=tuning["volume"] if tuning["volume"] != 1.0 else None,

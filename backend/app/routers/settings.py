@@ -15,6 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.agent.models import LANGUAGES, RUNTIME_DEFAULT_MODEL, model_catalog, model_groups
+from app.agent.mistral_tts import MISTRAL_TTS_MODEL, is_mistral_voice, synthesize_wav
 from app.agent.voices import FEATURED_VOICES, VOICE_MODELS
 from app.config import settings
 from app.services.auth import get_current_user
@@ -66,7 +67,7 @@ async def _fetch_cartesia_voices() -> tuple[list[dict], list[dict]]:
     premium/standard ids — one request each, rather than the whole public library."""
     import asyncio
 
-    wanted = list(dict.fromkeys([v["id"] for v in FEATURED_VOICES] + _ids(settings.premium_voice_ids)
+    wanted = list(dict.fromkeys([v["id"] for v in FEATURED_VOICES if not v.get("provider")] + _ids(settings.premium_voice_ids)
                                 + _ids(settings.standard_voice_ids)))[:50]
     async with httpx.AsyncClient(timeout=10.0) as client:
         async def one(vid: str) -> dict | None:
@@ -128,7 +129,7 @@ def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> d
     out = {
         "id": raw.get("id"),
         "name": raw.get("name") or raw.get("id"),
-        "provider": "cartesia",
+        "provider": raw.get("provider") or "cartesia",
         "category": "premium" if premium else "standard",
         "language": (raw.get("language") or None),
         "accent": _accent(raw),
@@ -136,7 +137,7 @@ def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> d
         "description": (raw.get("description") or "")[:200],
         "is_clone": owned,
         "preview": can_preview,
-        "models": list(VOICE_MODELS),
+        "models": [MISTRAL_TTS_MODEL] if raw.get("provider") == "mistral" else list(VOICE_MODELS),
         "status": "available",
     }
     if owned:
@@ -282,12 +283,30 @@ async def _synthesize(payload: dict) -> bytes:
     return resp.content
 
 
+async def _preview_mistral(voice_id: str, text: str) -> Response:
+    if not settings.mistral_api_key:
+        raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
+    key = (voice_id, text)
+    if key not in _preview_cache:
+        try:
+            _preview_cache[key] = await synthesize_wav(voice_id, text)
+        except httpx.HTTPError as exc:
+            log.warning("mistral_preview_failed", error=str(exc))
+            raise HTTPException(status_code=502, detail="Couldn't generate a voice preview — try again.")
+        while len(_preview_cache) > _PREVIEW_CACHE_MAX:
+            _preview_cache.popitem(last=False)
+    _preview_cache.move_to_end(key)
+    return Response(content=_preview_cache[key], media_type="audio/wav")
+
+
 @router.post("/voices/preview")
 async def preview_voice(body: VoicePreview):
     """Speak a short line in the chosen voice (WAV) so it can be auditioned in the editor."""
+    voice_id = body.voice_id.strip()
+    if is_mistral_voice(voice_id):
+        return await _preview_mistral(voice_id, body.text)
     if not settings.cartesia_api_key:
         raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
-    voice_id = body.voice_id.strip()
     lang = body.language if body.language not in ("multi", "") else "en"
     key = (voice_id, round(body.speed, 2), lang, body.text)
     if key in _preview_cache:
