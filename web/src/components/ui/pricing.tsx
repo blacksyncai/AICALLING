@@ -145,7 +145,7 @@ export function PricingCard({
     <Reveal index={index} className="h-full">
       <div
         className={cn(
-          "relative flex h-full flex-col overflow-hidden rounded-3xl p-7 transition-shadow",
+          "relative flex h-full flex-col overflow-hidden rounded-3xl p-5 transition-shadow xl:p-7",
           dark
             ? "bg-zinc-950 text-white shadow-xl shadow-brand-900/20 ring-1 ring-brand-500/40"
             : highlighted
@@ -159,17 +159,17 @@ export function PricingCard({
             <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(45deg,#a1a1aa_0px_1px,transparent_1px_12px)] opacity-[0.07] mask-[radial-gradient(ellipse_70%_50%_at_100%_0%,#000_60%,transparent_100%)]" />
           </>
         )}
-        <div className="relative flex items-start justify-between gap-2">
+        <div className="relative flex flex-wrap items-start justify-between gap-2">
           <h3 className={cn("text-xl font-semibold", dark ? "text-white" : "text-zinc-900")}>{name}</h3>
           {badge}
         </div>
         {description && <p className={cn("relative mt-1 text-sm", dark ? "text-zinc-400" : "text-zinc-600")}>{description}</p>}
         {pricePrefix && <div className={cn("relative mt-5 -mb-4 text-xs font-medium uppercase tracking-wider", dark ? "text-zinc-400" : "text-zinc-500")}>{pricePrefix}</div>}
         {priceLabel ? (
-          <div className={cn("relative mt-5 font-display text-5xl font-semibold tracking-tight", dark ? "text-white" : "text-zinc-900")}>{priceLabel}</div>
+          <div className={cn("relative mt-5 font-display text-4xl font-semibold tracking-tight xl:text-5xl", dark ? "text-white" : "text-zinc-900")}>{priceLabel}</div>
         ) : (
           <div className="relative mt-5 flex items-baseline gap-1">
-            <Price cents={cents} className="text-5xl" dark={dark} />
+            <Price cents={cents} className="text-4xl xl:text-5xl" dark={dark} />
             {period && <span className={cn("text-sm", dark ? "text-zinc-400" : "text-zinc-500")}>/{period}</span>}
           </div>
         )}

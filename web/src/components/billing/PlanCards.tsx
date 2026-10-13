@@ -46,7 +46,7 @@ export function PlanCards({ plans, currentKey, action, focus }: {
   focus?: string | null;
 }) {
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {plans.map((p, i) => {
         const current = currentKey === p.key;
         const dark = !!p.recommended;
