@@ -791,23 +791,31 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     tools = [function_tool(end_call)]
 
     if cfg.get("enable_booking"):
-        async def check_availability(preferred_date: str = "") -> str:
-            """Look up open appointment slots. Only ever offer the slots this returns.
+        async def check_availability(preferred_date: str = "", time_of_day: str = "", time: str = "") -> str:
+            """Look up open appointment times. Only ever offer times this returns. Call it again whenever they want
+            other options (another day, morning/afternoon/evening, or a specific time) — each call returns times
+            not offered yet.
 
             Args:
-                preferred_date: The day the contact prefers, as YYYY-MM-DD. Empty for the soonest.
+                preferred_date: The day they want, as YYYY-MM-DD. Empty for the soonest.
+                time_of_day: "morning", "afternoon" or "evening" if they said so, else empty.
+                time: A specific time they asked about, 24h "HH:MM" (e.g. "15:00"), else empty.
             """
             session = session_ref.get("session")
             if session:
                 session.say("One sec, let me check the calendar.", allow_interruptions=True)
             found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
-                                           cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
+                                           cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
+                                           time_of_day=time_of_day, time=time,
+                                           exclude={s["start"] for s in run.slots})
             run.slots = _cal.remember_slots(run.slots, found)
-            _record("check_availability", {"preferred_date": preferred_date},
+            _record("check_availability", {"preferred_date": preferred_date, "time_of_day": time_of_day, "time": time},
                     {"slots": [s["label"] for s in found]})
             if not found:
-                return "Nothing is open around then. Offer to check another day."
-            return "Open slots: " + " or ".join(s["label"] for s in found)
+                return ("No new openings for that. Offer a different day or time of day"
+                        + (", or one of the times already offered." if run.slots else "."))
+            return ("Open: " + "; ".join(s["label"] for s in found)
+                    + ". Offer two or three of these naturally. All times offered so far can be booked.")
 
         async def book_appointment(slot: str, email: str) -> str:
             """Book one of the slots from check_availability. Confirm the email spelling first.

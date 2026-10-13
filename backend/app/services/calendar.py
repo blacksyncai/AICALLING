@@ -70,13 +70,90 @@ def mock_slots(preferred_date: str = "", tz: str | None = None) -> list[dict]:
     return out
 
 
-async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None,
-                      api_key: str | None = None, tz: str | None = None) -> list[dict]:
-    """Return up to 2 open slots ({start, label}) from the requested date onward."""
-    etype, key = _event_type(event_type_id), _key(api_key)
-    if not key or not etype:
-        return mock_slots(preferred_date, tz)
+PARTS = {"morning": (0, 12), "afternoon": (12, 17), "evening": (17, 24)}
 
+
+def _all_mock(start: dt.date, tz: str | None) -> list[str]:
+    """Without Cal.com: hourly weekday openings 9 AM–5 PM (in the calendar's zone) for 10 days."""
+    zone, out = _zone(tz), []
+    for i in range(10):
+        day = start + dt.timedelta(days=i)
+        if day.weekday() >= 5:
+            continue
+        for hour in range(9, 17):
+            out.append(dt.datetime.combine(day, dt.time(hour), tzinfo=zone).astimezone(dt.timezone.utc).isoformat())
+    return out
+
+
+def _spread(items: list, n: int) -> list:
+    """n items evenly across the list (first, middle, last …) so options cover the day."""
+    if len(items) <= n:
+        return items
+    if n == 1:
+        return [items[len(items) // 2]]
+    return [items[round(i * (len(items) - 1) / (n - 1))] for i in range(n)]
+
+
+def choose_slots(starts: list[str], tz: str | None, preferred_date: str = "", time_of_day: str = "",
+                 time: str = "", exclude: set[str] | None = None, count: int = 3) -> list[str]:
+    """Pick what to offer from every open start time:
+    - a preferred day → up to `count` times spread across that day (else the next days that have room)
+    - time_of_day (morning/afternoon/evening) or an exact time ("15:00") narrows it
+    - times already offered on this call are skipped, so asking again gives new options."""
+    zone, exclude = _zone(tz), exclude or set()
+    local = []
+    for st in starts:
+        try:
+            d = dt.datetime.fromisoformat(st.replace("Z", "+00:00")).astimezone(zone)
+        except ValueError:
+            continue
+        if st in exclude:
+            continue
+        local.append((d, st))
+    local.sort()
+    part = PARTS.get((time_of_day or "").strip().lower())
+    if part:
+        local = [x for x in local if part[0] <= x[0].hour < part[1]]
+    want_day = None
+    try:
+        if preferred_date:
+            want_day = dt.date.fromisoformat(preferred_date.strip()[:10])
+    except ValueError:
+        pass
+    target = None
+    m = __import__("re").match(r"^\s*(\d{1,2})(?::(\d{2}))?", time or "")
+    if m:
+        target = int(m.group(1)) * 60 + int(m.group(2) or 0)
+    by_day: dict[dt.date, list] = {}
+    for d, st in local:
+        by_day.setdefault(d.date(), []).append((d, st))
+    days = sorted(by_day)
+    if want_day:
+        days = [x for x in days if x >= want_day]
+    if not days:
+        return []
+    first = days[0]
+    todays = by_day[first]
+    if target is not None:
+        todays = sorted(todays, key=lambda x: abs(x[0].hour * 60 + x[0].minute - target))[:count]
+        todays.sort()
+        picks = todays
+    else:
+        picks = _spread(todays, count)
+    out = [st for _, st in picks]
+    # Not much room that day: add the next day's options so there's still a choice.
+    for nxt in days[1:]:
+        if len(out) >= 2:
+            break
+        out += [st for _, st in _spread(by_day[nxt], count - len(out))]
+    return out[:count]
+
+
+async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None,
+                      api_key: str | None = None, tz: str | None = None, *, time_of_day: str = "",
+                      time: str = "", exclude: set[str] | None = None, count: int = 3) -> list[dict]:
+    """Open slots ({start, label}) to offer, from Cal.com's full availability (see choose_slots)."""
+    etype, key = _event_type(event_type_id), _key(api_key)
     today = dt.datetime.now(dt.timezone.utc).date()
     start = today
     try:
@@ -86,32 +163,30 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
     except ValueError:
         pass
 
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(
-                "https://api.cal.com/v2/slots",
-                headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-09-04"},
-                params={
-                    "eventTypeId": etype,
-                    "start": start.isoformat(),
-                    "end": (start + dt.timedelta(days=10)).isoformat(),
-                    "timeZone": _zone(tz).key,
-                },
-            )
-            resp.raise_for_status()
-            data = (resp.json() or {}).get("data") or {}
-        picks: list[str] = []
-        for day in sorted(data.keys()):
-            starts = [(s.get("start") if isinstance(s, dict) else s) for s in data[day]]
-            starts = [s for s in starts if s]
-            if starts:
-                picks.append(starts[len(starts) // 2])
-            if len(picks) >= 2:
-                break
-        return [{"start": s, "label": _label(s, tz)} for s in picks]
-    except Exception as exc:
-        log.warning("calcom_fetch_failed", error=str(exc))
-        return []
+    if not key or not etype:
+        starts = _all_mock(start if start > today else today + dt.timedelta(days=1), tz)
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(
+                    "https://api.cal.com/v2/slots",
+                    headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-09-04"},
+                    params={
+                        "eventTypeId": etype,
+                        "start": start.isoformat(),
+                        "end": (start + dt.timedelta(days=14)).isoformat(),
+                        "timeZone": _zone(tz).key,
+                    },
+                )
+                resp.raise_for_status()
+                data = (resp.json() or {}).get("data") or {}
+            starts = [(x.get("start") if isinstance(x, dict) else x) for day in data.values() for x in day]
+            starts = [x for x in starts if x]
+        except Exception as exc:
+            log.warning("calcom_fetch_failed", error=str(exc))
+            return []
+    picks = choose_slots(starts, tz, preferred_date, time_of_day, time, exclude, count)
+    return [{"start": x, "label": _label(x, tz)} for x in picks]
 
 
 async def create_booking(start: str, email: str, name: str, event_type_id: str | None = None,

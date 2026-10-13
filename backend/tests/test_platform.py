@@ -52,7 +52,7 @@ def test_playground_runs_booking_tools(client, agent_id, monkeypatch):
     assert r.status_code == 200, body
     assert body["reply"] == "I have two slots — which works?"
     assert body["tool_events"][0]["tool"] == "check_availability"
-    assert len(body["state"]["slots"]) == 2  # mock slots when Cal.com isn't configured
+    assert len(body["state"]["slots"]) == 3  # mock slots when Cal.com isn't configured
     system = sent[0]["messages"][0]["content"]
     assert "Jamie" in system and "Globex" in system and "KNOWLEDGE BASE" in system
     assert {t["function"]["name"] for t in sent[0]["tools"]} == {"end_call", "check_availability", "book_appointment"}
@@ -215,3 +215,24 @@ def test_failed_dial_is_recorded_with_reason(client, agent_id, monkeypatch):
     # The worker's later empty "no_answer" report must not overwrite the reason.
     client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": "no_answer", "transcript": []})
     assert client.get(f"/api/calls/{call_id}").json()["outcome"] == "failed"
+
+
+def test_calendar_offers_spread_new_and_specific_times():
+    import datetime as dt
+
+    from app.services.calendar import choose_slots
+
+    tz = "America/New_York"
+    utc = dt.timezone.utc
+    starts = [dt.datetime(2030, 1, 10, h, 0, tzinfo=utc).isoformat() for h in range(14, 22)]  # Thu 9 AM–4 PM ET
+    starts += [dt.datetime(2030, 1, 11, 15, 0, tzinfo=utc).isoformat()]  # Fri 10 AM ET
+    hour = lambda xs: [dt.datetime.fromisoformat(x).astimezone(dt.timezone(dt.timedelta(hours=-5))).hour for x in xs]  # noqa: E731
+
+    first = choose_slots(starts, tz, "2030-01-10")
+    assert hour(first) == [9, 13, 16]  # spread across the day, not one middle slot
+    again = choose_slots(starts, tz, "2030-01-10", exclude=set(first))
+    assert not set(again) & set(first) and len(again) == 3  # "anything else?" gives new times
+    assert hour(choose_slots(starts, tz, "2030-01-10", time_of_day="afternoon")) == [12, 14, 16]
+    assert 15 in hour(choose_slots(starts, tz, "2030-01-10", time="15:00"))
+    # A full day falls through to the next one with room.
+    assert hour(choose_slots(starts, tz, "2030-01-10", exclude=set(starts[:8]))) == [10]

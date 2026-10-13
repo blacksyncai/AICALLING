@@ -122,7 +122,10 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
     tools = ["- end_call(outcome): hangs up. Say your goodbye in the same reply, then call it. "
              "Pick the outcome that best describes the call."]
     if cfg.get("enable_booking"):
-        tools.append("- check_availability(preferred_date): get real open slots. Only offer slots it returns.")
+        tools.append("- check_availability(preferred_date, time_of_day, time): get real open times. Only offer times it "
+                     "returns. If they want other options (\"anything later?\", \"Thursday afternoon?\", \"do you "
+                     "have 3?\"), call it again with that — it returns times you haven't offered yet. Never say "
+                     "there's only one time unless it comes back empty.")
         tools.append("- book_appointment(slot, email): only AFTER the contact has explicitly picked one offered slot "
                      "AND told you their email. Pass the slot's exact label from check_availability. "
                      "Never say a meeting is booked until this tool confirms it.")

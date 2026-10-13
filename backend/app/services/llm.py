@@ -70,10 +70,15 @@ def _tool_specs(cfg: dict) -> list[dict]:
                 "type": "function",
                 "function": {
                     "name": "check_availability",
-                    "description": "Get open appointment slots on/after a date.",
+                    "description": "Get open appointment times. Call again for other options — each call returns "
+                                   "times not offered yet.",
                     "parameters": {
                         "type": "object",
-                        "properties": {"preferred_date": {"type": "string", "description": "YYYY-MM-DD"}},
+                        "properties": {
+                            "preferred_date": {"type": "string", "description": "YYYY-MM-DD, empty for the soonest"},
+                            "time_of_day": {"type": "string", "enum": ["", "morning", "afternoon", "evening"]},
+                            "time": {"type": "string", "description": "A specific time asked about, 24h HH:MM"},
+                        },
                     },
                 },
             },
@@ -143,10 +148,13 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                     ended, outcome = True, args.get("outcome", "completed")
                     result = "Call ended."
             elif name == "check_availability":
-                slots = await calendar.fetch_slots(args.get("preferred_date", ""), cfg.get("calcom_event_type_id"),
-                                             cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
+                slots = await calendar.fetch_slots(
+                    args.get("preferred_date", ""), cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"),
+                    cfg.get("calendar_timezone"), time_of_day=args.get("time_of_day", ""), time=args.get("time", ""),
+                    exclude={x["start"] for x in state.get("slots") or []})
                 state["slots"] = calendar.remember_slots(state.get("slots") or [], slots)
-                result = "Open slots: " + "; ".join(s["label"] for s in slots)
+                result = ("Open: " + "; ".join(s["label"] for s in slots)) if slots else \
+                    "No new openings for that. Offer a different day or time of day."
             elif name == "book_appointment":
                 slot = calendar.pick_slot(state.get("slots") or [], args.get("slot", ""))
                 user_turns = [m["content"] for m in history if m.get("role") == "user"]
