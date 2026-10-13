@@ -31,8 +31,8 @@ type TestTab = "voice" | "chat" | "phone";
 
 const SECTIONS: { value: Section; label: string; icon: typeof Brain }[] = [
   { value: "prompt", label: "Prompt", icon: Brain },
-  { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "voice", label: "Voice & Model", icon: Mic },
+  { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "actions", label: "Actions", icon: Zap },
   { value: "analysis", label: "Post-call analysis", icon: Sparkles },
 ];
