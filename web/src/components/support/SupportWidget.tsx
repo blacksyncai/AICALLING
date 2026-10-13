@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ArrowLeft, BookOpen, ChevronRight, ImagePlus, Inbox, LifeBuoy, Loader2, MessageCircle, Minus, Search, Send, Sparkles,
+  ArrowLeft, BookOpen, ChevronLeft, ChevronRight, ImagePlus, Inbox, LifeBuoy, Loader2, MessageCircle, Minus, Search, Send, Sparkles,
   Ticket as TicketIcon, UserRound, X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -34,6 +34,7 @@ interface State {
 }
 
 const STORE = "bs-support";
+const TUCK_KEY = "bs-support-tucked";
 function load(): { open: boolean; view: View } {
   try {
     const v = JSON.parse(localStorage.getItem(STORE) || "{}");
@@ -49,6 +50,20 @@ export function SupportWidget() {
   const [view, setView] = useState<View>({ name: "home" });
   const [history, setHistory] = useState<View[]>([]);
   const ready = useRef(false);
+  // The × on the button tucks it into a small tab at the screen edge (remembered on this device).
+  const [tucked, setTucked] = useState(false);
+  useEffect(() => {
+    try {
+      setTucked(localStorage.getItem(TUCK_KEY) === "1");
+    } catch {}
+  }, []);
+  const tuck = (v: boolean) => {
+    setTucked(v);
+    try {
+      if (v) localStorage.setItem(TUCK_KEY, "1");
+      else localStorage.removeItem(TUCK_KEY);
+    } catch {}
+  };
   const { data: st, mutate: refreshState } = useSWR<State>("/api/support/state", fetcher, { refreshInterval: open ? 20000 : 45000 });
 
   useEffect(() => {
@@ -64,7 +79,10 @@ export function SupportWidget() {
     } catch {}
   }, [open, view]);
   useEffect(() => {
-    const on = () => setOpen(true);
+    const on = () => {
+      tuck(false);
+      setOpen(true);
+    };
     window.addEventListener("open-support", on);
     return () => window.removeEventListener("open-support", on);
   }, []);
@@ -101,13 +119,27 @@ export function SupportWidget() {
           </div>
         </div>
       )}
+      {tucked && !open ? (
+        <button
+          type="button"
+          aria-label="Show support chat"
+          onClick={() => {
+            tuck(false);
+            setOpen(true);
+          }}
+          className="fixed bottom-24 right-0 z-[61] flex h-12 w-6 items-center justify-center rounded-l-xl bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-600/30 transition hover:w-8"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          {!!st?.unread && <span className="absolute -left-1 -top-1 h-3 w-3 rounded-full bg-zinc-950 ring-2 ring-white" />}
+        </button>
+      ) : (
+      <div className={cn("fixed bottom-5 right-5 z-[61]", open && "max-sm:hidden")}>
       <button
         type="button"
         aria-label={open ? "Close support" : "Open support"}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "fixed bottom-5 right-5 z-[61] flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-600/30 transition hover:scale-105 active:scale-95",
-          open && "max-sm:hidden",
+          "flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-600/30 transition hover:scale-105 active:scale-95",
         )}
       >
         {open ? <Minus className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
@@ -117,6 +149,18 @@ export function SupportWidget() {
           </span>
         )}
       </button>
+      {!open && (
+        <button
+          type="button"
+          aria-label="Hide support button"
+          onClick={() => tuck(true)}
+          className="absolute -left-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-white shadow ring-2 ring-white hover:bg-zinc-950"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+      </div>
+      )}
     </>
   );
 }
