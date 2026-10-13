@@ -2,8 +2,11 @@
 
 import {
   ArrowRight, ArrowUp, BarChart3, BookOpen, Bot, CalendarCheck, ChevronLeft, ChevronsUpDown, Coins, Contact, CreditCard, Hash, LayoutDashboard, LogOut, Megaphone, Menu,
-  PhoneCall, Plug, Radar, Search, UserRound, UserSearch, X,
+  Lock, PhoneCall, Plug, Radar, Search, UserRound, UserSearch, X,
 } from "lucide-react";
+import useSWR from "swr";
+import type { Entitlements } from "@/components/billing/types";
+import { fetcher } from "@/lib/api";
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -13,7 +16,9 @@ import { cn } from "@/lib/utils";
 import { openCommandPalette } from "./CommandPalette";
 import { Logo, LogoMark } from "./Logo";
 
-type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; badge?: string };
+type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; badge?: string;
+  /** A plan feature: shown to everyone, with a lock when the account's plan doesn't include it. */
+  feature?: "radar" };
 
 const NAV: { title: string | null; items: NavItem[] }[] = [
   { title: null, items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] },
@@ -29,7 +34,7 @@ const NAV: { title: string | null; items: NavItem[] }[] = [
     title: "Reach",
     items: [
       { href: "/contacts", label: "Contacts", icon: Contact },
-      { href: "/radar", label: "Radar", icon: Radar, managersOnly: true, badge: "New" },
+      { href: "/radar", label: "Radar", icon: Radar, managersOnly: true, badge: "New", feature: "radar" },
       { href: "/lead-finder", label: "Lead Finder", icon: UserSearch, leadFinder: true },
       { href: "/campaigns", label: "Campaigns", icon: Megaphone },
     ],
@@ -52,9 +57,9 @@ const NAV: { title: string | null; items: NavItem[] }[] = [
 ];
 
 function NavLink({
-  href, label, icon: Icon, badge, collapsed, onClick, onHover,
+  href, label, icon: Icon, badge, locked, collapsed, onClick, onHover,
 }: {
-  href: string; label: string; icon: typeof Bot; badge?: string; collapsed: boolean; onClick: () => void;
+  href: string; label: string; icon: typeof Bot; badge?: string; locked?: boolean; collapsed: boolean; onClick: () => void;
   onHover: (el: HTMLElement | null, label: string) => void;
 }) {
   const pathname = usePathname();
@@ -79,7 +84,11 @@ function NavLink({
         {badge && collapsed && <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-brand-500 shadow-[0_0_6px_rgba(249,115,22,0.9)]" />}
       </span>
       <span className={cn("flex-1 truncate whitespace-nowrap transition-opacity duration-200", collapsed ? "sr-only" : "opacity-100", active && "font-semibold")}>{label}</span>
-      {badge && !collapsed && (
+      {locked && !collapsed ? (
+        <span title="Included from the Growth plan" className="flex items-center gap-1 rounded-full bg-white/[0.06] px-1.5 py-px text-[10px] font-semibold text-brand-300 ring-1 ring-brand-500/30">
+          <Lock className="h-2.5 w-2.5" /> Pro
+        </span>
+      ) : badge && !collapsed && (
         <span className="rounded-full bg-brand-500 px-1.5 py-px text-[10px] font-semibold text-white shadow-[0_0_10px_rgba(249,115,22,0.55)]">{badge}</span>
       )}
     </Link>
@@ -220,6 +229,8 @@ export function Sidebar() {
   const { session } = useSession();
   const pathname = usePathname();
   const manager = canManage(session);
+  // Same server-side entitlements the API enforces; refreshed when the account changes.
+  const { data: ent } = useSWR<Entitlements>(manager && session?.org ? `/api/billing/entitlements?org=${session.org.id}` : null, fetcher);
   const close = () => setOpen(false);
   // The mobile drawer is always full width.
   const collapsed = collapsedPref && !open;
@@ -351,7 +362,8 @@ export function Sidebar() {
                 ))}
               <div className="space-y-0.5">
                 {items.map((n) => (
-                  <NavLink key={n.href} href={n.href} label={n.label} icon={n.icon} badge={n.badge} collapsed={collapsed} onClick={close} onHover={onHover} />
+                  <NavLink key={n.href} href={n.href} label={n.label} icon={n.icon} badge={n.badge}
+                    locked={!!n.feature && !!ent && !ent.limits[n.feature]} collapsed={collapsed} onClick={close} onHover={onHover} />
                 ))}
               </div>
             </div>

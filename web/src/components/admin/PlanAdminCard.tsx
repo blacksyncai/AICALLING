@@ -36,7 +36,7 @@ const KEYS: { key: string; label: string; kind: "number" | "flag" | "plan" }[] =
   { key: "advanced_workflows", label: "Webhooks & API", kind: "flag" },
   { key: "roles", label: "Member roles", kind: "flag" },
   { key: "team_reporting", label: "Team analytics", kind: "flag" },
-  { key: "plan", label: "All entitlements of a plan", kind: "plan" },
+  { key: "radar", label: "Radar", kind: "flag" },
 ];
 
 const show = (v: unknown) => (v === null ? "unlimited" : typeof v === "boolean" ? (v ? "on" : "off") : String(v));
@@ -109,7 +109,7 @@ export function PlanAdminCard({ orgId }: { orgId: string }) {
   return (
     <Card className="min-w-0">
       <CardHeader
-        title="Plan & entitlements"
+        title="Limits & overrides"
         description={e.unlimited ? "House account — no limits." : `${e.plan_name ?? "No plan"} · limits from ${e.limits_plan}${e.source === "override" ? " (override)" : ""}`}
       />
       <div className="flex flex-col gap-5 p-5 pt-2 text-sm">

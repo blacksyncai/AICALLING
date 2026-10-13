@@ -86,6 +86,7 @@ export interface PlanLimits {
   advanced_workflows: boolean;
   roles: boolean;
   team_reporting: boolean;
+  radar: boolean;
 }
 
 export interface Plan {
@@ -117,6 +118,9 @@ export interface Entitlements {
   plan_name: string | null;
   limits_plan: string;
   source: "subscription" | "no_plan" | "override";
+  /** What Stripe bills — can differ from the access plan when BlackSync assigned one. */
+  billing: { plan: string | null; name: string | null; status: string; live: boolean; amount_cents: number | null };
+  override: { plan: string; expires_at: string | null } | null;
   unlimited: boolean;
   limits: PlanLimits;
   agent_slots: number;

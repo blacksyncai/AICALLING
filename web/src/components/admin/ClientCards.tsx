@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, ChevronRight, Hash, LogIn, Minus, Plus, Wallet } from "lucide-react";
+import { Bot, ChevronRight, Crown, Hash, LogIn, Minus, Plus, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { Badge, Button, Field, Input, Modal } from "@/components/ui";
@@ -9,6 +9,7 @@ import { patch, post } from "@/lib/api";
 import { switchOrg } from "@/lib/session";
 import type { AdminOrg } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ManagePlanModal } from "./ManagePlan";
 import { PhoneNumbersCard } from "./PhoneNumbersCard";
 import { fmt } from "./shared";
 
@@ -18,13 +19,15 @@ type Adjust = { org: AdminOrg; kind: "credits" | "lookup"; sign: 1 | -1 };
 export function ClientCards({ orgs, onChanged }: { orgs: AdminOrg[]; onChanged: () => void }) {
   const [adjust, setAdjust] = useState<Adjust | null>(null);
   const [numbersFor, setNumbersFor] = useState<AdminOrg | null>(null);
+  const [planFor, setPlanFor] = useState<AdminOrg | null>(null);
   return (
     <>
       <div className="flex flex-col gap-4">
         {orgs.map((o) => (
-          <ClientCard key={o.id} org={o} onChanged={onChanged} onAdjust={setAdjust} onNumbers={() => setNumbersFor(o)} />
+          <ClientCard key={o.id} org={o} onChanged={onChanged} onAdjust={setAdjust} onNumbers={() => setNumbersFor(o)} onPlan={() => setPlanFor(o)} />
         ))}
       </div>
+      {planFor && <ManagePlanModal orgId={planFor.id} open onClose={() => setPlanFor(null)} onSaved={onChanged} />}
       <AdjustModal adjust={adjust} onClose={() => setAdjust(null)} onDone={onChanged} />
       <Modal open={!!numbersFor} onClose={() => { setNumbersFor(null); onChanged(); }} title={numbersFor ? `Phone numbers — ${numbersFor.name}` : ""} wide>
         {numbersFor && <PhoneNumbersCard orgId={numbersFor.id} />}
@@ -44,8 +47,8 @@ function talkTime(minutes: number) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
-function ClientCard({ org: o, onChanged, onAdjust, onNumbers }: {
-  org: AdminOrg; onChanged: () => void; onAdjust: (a: Adjust) => void; onNumbers: () => void;
+function ClientCard({ org: o, onChanged, onAdjust, onNumbers, onPlan }: {
+  org: AdminOrg; onChanged: () => void; onAdjust: (a: Adjust) => void; onNumbers: () => void; onPlan: () => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
@@ -92,6 +95,13 @@ function ClientCard({ org: o, onChanged, onAdjust, onNumbers }: {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onPlan}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-900 px-2.5 text-xs font-medium text-white hover:bg-zinc-800"
+          >
+            <Crown className="h-3.5 w-3.5 text-brand-400" /> Manage Plan
+          </button>
           <button
             type="button"
             onClick={onNumbers}

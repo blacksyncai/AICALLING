@@ -213,6 +213,28 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
           </a>
         </Card>
       )}
+      {ent?.source === "override" && (
+        <Card className="flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl p-5 text-sm">
+          <div>
+            <div className="text-xs text-zinc-500">Current access</div>
+            <div className="text-base font-semibold text-zinc-900">
+              {ent.plan_name}
+              {ent.override?.expires_at && <span className="ml-2 text-xs font-normal text-zinc-500">until {fmtDate(ent.override.expires_at)}</span>}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-500">Billing</div>
+            <div className="text-base font-semibold text-zinc-900">
+              {ent.billing.live && ent.billing.name
+                ? <>{ent.billing.name}{ent.billing.amount_cents != null && <span className="font-normal text-zinc-600"> — {usd(ent.billing.amount_cents, 0)}/month</span>}</>
+                : "No paid plan"}
+            </div>
+          </div>
+          <p className="basis-full text-xs text-zinc-500 sm:basis-auto sm:flex-1">
+            BlackSync set up {ent.plan_name} access for your account. You&apos;re only billed for what&apos;s shown under Billing.
+          </p>
+        </Card>
+      )}
       <PricingHeading title="A plan that fits your team" description="Every plan includes calling credits each month. Buy more any time — they never expire." />
       <PlanCards plans={data.plans} currentKey={live ? current.plan_key : null} action={action} focus={focus} />
       <p className="text-xs text-zinc-500">

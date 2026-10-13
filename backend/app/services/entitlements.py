@@ -29,7 +29,7 @@ from app.services.billing import catalog
 
 LIVE = ("active", "trialing", "past_due")
 NUMERIC = ("agents", "seats", "numbers", "crm", "concurrency")
-FLAGS = ("workflows", "advanced_workflows", "roles", "team_reporting")
+FLAGS = ("workflows", "advanced_workflows", "roles", "team_reporting", "radar")
 OVERRIDE_KEYS = NUMERIC + FLAGS + ("plan",)
 # The welcome guide every new account starts with never counts against the agent limit.
 EXEMPT_TEMPLATES = ("welcome_demo",)
@@ -37,7 +37,7 @@ EXEMPT_TEMPLATES = ("welcome_demo",)
 _FEATURE_LABELS = {
     "agents": "active agents", "seats": "team members", "numbers": "included phone numbers",
     "crm": "CRM integrations", "concurrency": "calls at once", "workflows": "workflow automations",
-    "advanced_workflows": "webhooks and the API", "roles": "member roles and permissions",
+    "advanced_workflows": "webhooks and the API", "roles": "member roles and permissions", "radar": "Radar",
     "team_reporting": "team analytics",
 }
 
@@ -88,18 +88,42 @@ async def _no_plan_key(db: AsyncSession) -> str:
     return key if key in catalog.PLANS else "teams"
 
 
+def billing_plan(row: BillingSubscription | None) -> dict:
+    """What Stripe says the account pays for. Never changed by admin overrides."""
+    live = bool(row and row.status in LIVE)
+    plan = catalog.PLANS.get((row.plan_key if row else None) or "") if live else None
+    return {"plan": row.plan_key if live and plan else None, "name": plan["name"] if plan else None,
+            "status": row.status if row else "none", "live": live,
+            "amount_cents": plan["amount_cents"] if plan and row.custom_credits is None else None}
+
+
+def _plan_override(overrides: list[EntitlementOverride]) -> EntitlementOverride | None:
+    return next((o for o in reversed(overrides) if o.key == "plan" and o.value in catalog.PLANS), None)
+
+
+async def radar_plans(db: AsyncSession) -> list[str]:
+    from app.services.billing import settings_store
+
+    value = await settings_store.get(db, "radar_plans")
+    return [p for p in (value or []) if p in catalog.PLANS]
+
+
 async def effective(db: AsyncSession, org: Organization) -> dict:
-    """{plan, plan_name, source, unlimited, limits{…}, agent_slots, overrides[…]}."""
+    """The effective access plan: an active admin plan override, else the paid (Stripe) plan, else the
+    no-plan entitlements. {plan, plan_name, source, billing, override, unlimited, limits{…}, agent_slots, overrides[…]}."""
     row = await db.get(BillingSubscription, org.id)
     subscribed = bool(row and row.status in LIVE and row.plan_key in catalog.PLANS)
     plan_key = row.plan_key if subscribed else None
     source = "subscription" if subscribed else "no_plan"
     overrides = await active_overrides(db, org.id)
-    plan_override = next((o.value for o in reversed(overrides) if o.key == "plan" and o.value in catalog.PLANS), None)
-    if plan_override:
-        plan_key, source = plan_override, "override"
+    plan_ov = _plan_override(overrides)
+    if plan_ov:
+        plan_key, source = plan_ov.value, "override"
     limits_key = plan_key or await _no_plan_key(db)
     limits = catalog.plan_limits(limits_key) or {}
+    # Radar needs a real plan (paid or admin-assigned) on the configured list; no plan = the demo preview.
+    radar_key = catalog.PLANS.get(limits_key, {}).get("limits_from") or limits_key
+    limits["radar"] = source != "no_plan" and radar_key in await radar_plans(db)
     slots = int((row.agent_slots or 0) if subscribed else 0)
     if limits.get("agents") is not None:
         limits["agents"] += slots
@@ -115,8 +139,90 @@ async def effective(db: AsyncSession, org: Organization) -> dict:
     return {
         "plan": plan_key, "plan_name": shown["name"] if shown else None, "limits_plan": limits_key,
         "source": source, "unlimited": unlimited, "limits": limits, "agent_slots": slots,
+        "billing": billing_plan(row),
+        "override": ({"mode": plan_ov.mode or "manual", "plan": plan_ov.value, "expires_at": override_to_dict(plan_ov)["expires_at"],
+                      "assigned_at": override_to_dict(plan_ov)["created_at"]} if plan_ov else None),
         "overrides": [override_to_dict(o) for o in overrides],
     }
+
+
+# ── Admin plan assignment (never touches Stripe or credits) ───────────────────
+
+
+def _plan_label(key: str | None) -> str:
+    plan = catalog.PLANS.get(key or "")
+    return plan["name"] if plan else "No plan"
+
+
+async def set_plan_override(db: AsyncSession, org: Organization, admin_id: uuid.UUID | None, *, mode: str,
+                            plan: str | None, expires_at: datetime | None, reason: str) -> dict:
+    """mode: billing (remove the override) | manual | complimentary. Replaces any earlier plan override,
+    audits the change and commits. Stripe subscriptions, invoices and credit balances are left alone."""
+    from app.models.billing import BillingAudit
+
+    before = await effective(db, org)
+    now = _now()
+    for o in await active_overrides(db, org.id):
+        if o.key == "plan":
+            o.revoked_at, o.revoked_by = now, admin_id
+    if mode != "billing":
+        if plan not in catalog.PLANS or catalog.PLANS[plan].get("legacy"):
+            raise ValueError("Pick one of the plans.")
+        db.add(EntitlementOverride(org_id=org.id, key="plan", value=plan, mode=mode, reason=reason,
+                                   expires_at=expires_at, created_by=admin_id))
+    await db.flush()
+    after = await effective(db, org)
+    until = f" (until {expires_at.date().isoformat()})" if expires_at and mode != "billing" else ""
+    db.add(BillingAudit(admin_id=admin_id, org_id=org.id, target="plan",
+                        previous=f"{_plan_label(before['limits_plan'])} ({before['source']})"[:64],
+                        adjustment={"billing": "removed", "manual": "manual_override", "complimentary": "complimentary"}[mode],
+                        new=f"{_plan_label(after['limits_plan'])} ({after['source']})"[:64],
+                        reason=((reason or ("Returned to billing plan" if mode == "billing" else "Plan assigned by admin")) + until)[:500]))
+    await db.commit()
+    return after
+
+
+async def expire_overrides(db: AsyncSession) -> int:
+    """Close overrides whose end date passed (access already ignores them) and record it in the audit log."""
+    from app.models.billing import BillingAudit
+
+    now = _now()
+    rows = (await db.execute(select(EntitlementOverride).where(
+        EntitlementOverride.revoked_at.is_(None), EntitlementOverride.expires_at.isnot(None)))).scalars().all()
+    n = 0
+    for o in rows:
+        if _aware(o.expires_at) > now:
+            continue
+        o.revoked_at = _aware(o.expires_at)
+        org = await db.get(Organization, o.org_id)
+        after = (await effective(db, org)) if org else None
+        db.add(BillingAudit(admin_id=None, org_id=o.org_id, target="plan" if o.key == "plan" else "entitlements",
+                            previous=f"{o.key}={o.value}"[:64], adjustment="expired",
+                            new=(f"{_plan_label(after['limits_plan'])} ({after['source']})" if after else "")[:64],
+                            reason=f"Override ended on {o.revoked_at.date().isoformat()} ({o.reason or 'no note'})"[:500]))
+        n += 1
+    if n:
+        await db.commit()
+    return n
+
+
+def start_expiry_sweeper(interval: float = 300.0):
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+
+    async def _loop() -> None:
+        while True:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await expire_overrides(db)
+            except Exception as exc:  # never let the loop die
+                import structlog
+
+                structlog.get_logger(__name__).warning("override_expiry_failed", error=str(exc)[:200])
+            await asyncio.sleep(interval)
+
+    return asyncio.create_task(_loop())
 
 
 def override_to_dict(o: EntitlementOverride) -> dict:

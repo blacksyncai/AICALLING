@@ -71,7 +71,10 @@ async def lifespan(app: FastAPI):
             log.warning("inbound_numbers_sync_failed", error=str(exc))
     from app.services.outbound_call import start_orphan_sweeper
     sweeper_task = start_orphan_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services.entitlements import start_expiry_sweeper
+    expiry_task = start_expiry_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     yield
+    expiry_task.cancel()
     sweeper_task.cancel()
     refresh_task.cancel()
     crm_task.cancel()

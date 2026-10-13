@@ -12,6 +12,7 @@ from app.models.agent import Agent
 from app.models.campaign import Campaign
 from app.models.crm import CrmConnection, CrmScan
 from app.models.lead import Lead
+from app.services import entitlements
 from app.services.auth import DbDep, ManagerDep
 from app.services.contacts import normalize_phone
 from app.services.crm import radar, sync
@@ -21,6 +22,12 @@ from app.services.crm.providers import PROVIDERS, Contact
 router = APIRouter(prefix="/api/radar", tags=["radar"])
 
 
+async def _require_radar(ctx, db) -> None:
+    """Radar is a plan feature (Growth, Teams, Managed by default — see entitlements). Everyone else gets
+    the in-app demo, which never calls these endpoints."""
+    await entitlements.require(db, ctx.org, "radar", "Radar is included from the Growth plan.")
+
+
 def _scan_out(scan: CrmScan, provider: str) -> dict:
     return {"id": str(scan.id), "provider": provider, "created_at": scan.created_at.isoformat() if scan.created_at else None,
             **scan.result}
@@ -28,6 +35,7 @@ def _scan_out(scan: CrmScan, provider: str) -> dict:
 
 @router.get("")
 async def overview(ctx: ManagerDep, db: DbDep):
+    await _require_radar(ctx, db)
     conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == ctx.org.id))).scalars().all()
     out = []
     for c in conns:
@@ -53,6 +61,7 @@ async def _conn(db, org_id, key: str) -> CrmConnection:
 
 @router.post("/{key}/scan")
 async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False):
+    await _require_radar(ctx, db)
     conn = await _conn(db, ctx.org.id, key)
     p = PROVIDERS[key]
     if not p.can_scan:
@@ -88,6 +97,7 @@ class LaunchIn(BaseModel):
 
 @router.post("/scans/{scan_id}/launch")
 async def launch(scan_id: uuid.UUID, body: LaunchIn, ctx: ManagerDep, db: DbDep):
+    await _require_radar(ctx, db)
     row = await db.get(CrmScan, scan_id)
     if not row or row.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Scan not found")

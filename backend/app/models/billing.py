@@ -237,6 +237,8 @@ class EntitlementOverride(Base):
     # Number (None = unlimited), bool, or plan key — replaces the plan's value while active.
     value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # For key="plan": manual (a different tier than the one paid for) | complimentary (no subscription needed).
+    mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)

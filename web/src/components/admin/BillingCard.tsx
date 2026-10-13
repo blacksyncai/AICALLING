@@ -21,7 +21,7 @@ interface OrgBilling {
 
 const TARGET: Record<string, string> = {
   calling_credits: "Calling credits", lookup_balance: "Lookup balance", phone_numbers: "Phone numbers", pricing: "Pricing",
-  entitlements: "Entitlements", managed: "Managed plan", quote: "Quote",
+  entitlements: "Entitlements", managed: "Managed plan", quote: "Quote", plan: "Access plan",
 };
 
 /** Admin: one account's subscription, balances, purchases, usage and the audit trail, plus lookup-balance adjustments. */

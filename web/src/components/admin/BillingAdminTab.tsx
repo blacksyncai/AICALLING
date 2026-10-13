@@ -21,6 +21,7 @@ interface BillingSettings {
   min_ai_billable_seconds?: number;
   auto_recharge_max_monthly_cents: number;
   no_plan_entitlements?: string;
+  radar_plans?: string[];
   sales_booking_url?: string;
   onboarding_booking_url?: string;
   expert_booking_url?: string;
@@ -202,6 +203,7 @@ function PricingCard() {
         free: String(data.lookup_free_daily),
         surcharge: String(data.premium_voice_surcharge),
         noPlan: data.no_plan_entitlements ?? "teams",
+        radar: (data.radar_plans ?? ["growth", "teams", "managed"]).join(","),
         sales: data.sales_booking_url ?? "",
         onboarding: data.onboarding_booking_url ?? "",
         expert: data.expert_booking_url ?? "",
@@ -237,6 +239,7 @@ function PricingCard() {
         lookup_free_daily: Number(form.free),
         premium_voice_surcharge: Number(form.surcharge),
         no_plan_entitlements: form.noPlan,
+        radar_plans: form.radar.split(",").filter(Boolean),
         ...(form.sales.trim() ? { sales_booking_url: form.sales.trim() } : {}),
         ...(form.onboarding.trim() ? { onboarding_booking_url: form.onboarding.trim() } : {}),
         ...(form.expert.trim() ? { expert_booking_url: form.expert.trim() } : {}),
@@ -280,6 +283,20 @@ function PricingCard() {
                 <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)} limits</option>
               ))}
             </Select>
+          </Field>
+          <Field label="Plans with Radar" hint="Paid or admin-assigned. Others see the Radar demo.">
+            <div className="flex flex-wrap gap-1.5">
+              {["solo", "growth", "teams", "managed"].map((p) => {
+                const on = form.radar.split(",").includes(p);
+                return (
+                  <button key={p} type="button"
+                    onClick={() => set("radar", (on ? form.radar.split(",").filter((x) => x !== p) : [...form.radar.split(",").filter(Boolean), p]).join(","))}
+                    className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${on ? "bg-zinc-900 text-white ring-zinc-900" : "bg-white text-zinc-600 ring-zinc-200"}`}>
+                    {p[0].toUpperCase() + p.slice(1)}
+                  </button>
+                );
+              })}
+            </div>
           </Field>
           <Field label="Sales booking link (Managed → Contact Sales)">
             <Input value={form.sales} onChange={(e) => set("sales", e.target.value)} placeholder="https://cal.com/…" />

@@ -182,8 +182,12 @@ async def public_plans(db: DbDep):
 async def my_entitlements(ctx: CtxDep, db: DbDep):
     from app.services import entitlements
 
-    return {**await entitlements.summary(db, ctx.org), "managed_onboarding": ctx.org.managed_onboarding,
-            "links": await _booking_links(db)}
+    out = await entitlements.summary(db, ctx.org)
+    # Admin notes on overrides are internal; the customer sees only the access they have.
+    out.pop("overrides", None)
+    if out.get("override"):
+        out["override"] = {k: v for k, v in out["override"].items() if k in ("plan", "expires_at")}
+    return {**out, "managed_onboarding": ctx.org.managed_onboarding, "links": await _booking_links(db)}
 
 
 @router.get("/rates")
@@ -430,6 +434,7 @@ class BillingSettingsIn(BaseModel):
     min_ai_billable_seconds: int | None = Field(default=None, ge=0, le=120)
     auto_recharge_max_monthly_cents: int | None = Field(default=None, ge=0, le=10_000_000)
     no_plan_entitlements: str | None = Field(default=None, pattern="^(solo|growth|teams|managed)$")
+    radar_plans: list[str] | None = None
     sales_booking_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
     onboarding_booking_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
     expert_booking_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
@@ -509,6 +514,8 @@ async def admin_add_override(org_id: uuid.UUID, body: OverrideIn, admin: AdminDe
     org = await _org_or_404(db, org_id)
     if body.key not in entitlements.OVERRIDE_KEYS:
         raise HTTPException(status_code=400, detail=f"Key must be one of {', '.join(entitlements.OVERRIDE_KEYS)}.")
+    if body.key == "plan":
+        raise HTTPException(status_code=400, detail="Use Manage Plan to change an account's access plan.")
     value = body.value
     if body.key == "plan" and value not in catalog.PLANS:
         raise HTTPException(status_code=400, detail="Pick a plan.")
@@ -543,6 +550,76 @@ async def admin_revoke_override(org_id: uuid.UUID, override_id: uuid.UUID, admin
                             adjustment="revoked", new="", reason=f"Override revoked ({row.reason})"[:500]))
         await db.commit()
     return entitlements.override_to_dict(row)
+
+
+# ── Admin: Manage Plan (access tier without touching Stripe or credits) ──────
+
+
+async def _plan_view(db, org: Organization) -> dict:
+    from app.models.account import Membership, User
+
+    eff = await entitlements.effective(db, org)
+    owner = (await db.execute(select(User).join(Membership, Membership.user_id == User.id)
+                              .where(Membership.org_id == org.id, Membership.role == "owner")
+                              .order_by(Membership.created_at).limit(1))).scalar_one_or_none()
+    row = await db.get(BillingSubscription, org.id)
+    history = (await db.execute(select(BillingAudit).where(BillingAudit.org_id == org.id, BillingAudit.target == "plan")
+                                .order_by(BillingAudit.created_at.desc()).limit(20))).scalars().all()
+    plan_ov = next((o for o in reversed(await entitlements.active_overrides(db, org.id)) if o.key == "plan"), None)
+    return {
+        "org": {"id": str(org.id), "name": org.name,
+                "owner": {"name": owner.full_name, "email": owner.email} if owner else None},
+        "billing": eff["billing"], "subscription_id": row.stripe_subscription_id if row else None,
+        "current_period_end": _iso(row.current_period_end) if row else None,
+        "effective": {"plan": eff["limits_plan"], "name": catalog.PLANS.get(eff["limits_plan"], {}).get("name"),
+                      "source": eff["source"], "unlimited": eff["unlimited"], "limits": eff["limits"]},
+        "controlled_by": "admin_override" if plan_ov else ("stripe" if eff["billing"]["live"] else "no_plan"),
+        "override": ({"id": str(plan_ov.id), "mode": plan_ov.mode or "manual", "plan": plan_ov.value, "reason": plan_ov.reason,
+                      "expires_at": _iso(plan_ov.expires_at), "assigned_at": _iso(plan_ov.created_at),
+                      "assigned_by": str(plan_ov.created_by) if plan_ov.created_by else None} if plan_ov else None),
+        "assigned_at": _iso(plan_ov.created_at) if plan_ov else (_iso(row.updated_at) if row else _iso(org.created_at)),
+        "credits_balance": None if org.unlimited_credits else (await credits.breakdown(db, org))["balance"],
+        "plans": [{"key": k, "name": catalog.PLANS[k]["name"], "amount_cents": catalog.PLANS[k]["amount_cents"]}
+                  for k in catalog.PLAN_ORDER],
+        "history": [{"previous": a.previous, "change": a.adjustment, "new": a.new, "reason": a.reason,
+                     "admin_id": str(a.admin_id) if a.admin_id else None, "at": _iso(a.created_at)} for a in history],
+    }
+
+
+@admin_router.get("/billing/orgs/{org_id}/plan")
+async def admin_plan(org_id: uuid.UUID, _: AdminDep, db: DbDep):
+    return await _plan_view(db, await _org_or_404(db, org_id))
+
+
+class PlanAssignIn(BaseModel):
+    # billing = access follows the paid subscription; manual = a different tier than the one paid for;
+    # complimentary = plan access without a subscription.
+    mode: str = Field(pattern="^(billing|manual|complimentary)$")
+    plan: str | None = None
+    expires_at: datetime | None = None
+    reason: str = Field(default="", max_length=500)
+
+
+@admin_router.put("/billing/orgs/{org_id}/plan")
+async def admin_assign_plan(org_id: uuid.UUID, body: PlanAssignIn, admin: AdminDep, db: DbDep):
+    """Assign an access plan. Never creates or changes a Stripe subscription, invoice or charge,
+    and never adds or removes calling credits."""
+    org = await _org_or_404(db, org_id)
+    expires = body.expires_at
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if body.mode != "billing":
+        if body.plan not in catalog.PLAN_ORDER:
+            raise HTTPException(status_code=400, detail="Pick a plan.")
+        if expires is not None and expires <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="The end date is in the past.")
+    try:
+        await entitlements.set_plan_override(db, org, admin.id, mode=body.mode, plan=body.plan,
+                                             expires_at=expires if body.mode != "billing" else None, reason=body.reason.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("admin_plan_assigned", org_id=str(org.id), mode=body.mode, plan=body.plan, by=str(admin.id))
+    return await _plan_view(db, org)
 
 
 class ManagedIn(BaseModel):
@@ -639,6 +716,11 @@ async def admin_update_billing_settings(body: BillingSettingsIn, admin: AdminDep
     changes = body.model_dump(exclude_none=True, exclude={"reason", "clear_lookup_price"})
     if body.clear_lookup_price:
         changes["property_lookup_price_cents"] = None
+    if "radar_plans" in changes:
+        plans = [p for p in dict.fromkeys(changes["radar_plans"]) if p in catalog.PLAN_ORDER]
+        if len(plans) != len(changes["radar_plans"]):
+            raise HTTPException(status_code=400, detail="Radar plans must be from: " + ", ".join(catalog.PLAN_ORDER))
+        changes["radar_plans"] = plans
     if "model_credit_rates" in changes:
         rates = {k.strip(): float(v) for k, v in changes["model_credit_rates"].items() if k.strip()}
         if not rates or any(v <= 0 or v > 20 for v in rates.values()):

@@ -4,6 +4,8 @@ import { ArrowRight, Flame, Ghost, Gift, Hourglass, Radar as RadarIcon, RefreshC
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
+import type { Entitlements } from "@/components/billing/types";
+import { RadarPreview } from "@/components/radar/RadarPreview";
 import { Badge, Button, Card, EmptyState, Notice, PageHeader, Select, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
@@ -54,7 +56,10 @@ const TONE: Record<string, string> = {
 export default function RadarPage() {
   const { session } = useSession();
   const allowed = canManage(session);
-  const { data, error, mutate } = useSWR<{ crms: Crm[] }>(allowed ? "/api/radar" : null, fetcher);
+  // The server decides who has Radar (plan or admin-assigned access); everyone else gets the demo.
+  const { data: ent } = useSWR<Entitlements>(allowed ? "/api/billing/entitlements" : null, fetcher);
+  const entitled = !!ent?.limits.radar;
+  const { data, error, mutate } = useSWR<{ crms: Crm[] }>(allowed && entitled ? "/api/radar" : null, fetcher);
   const { data: agents } = useSWR<{ id: string; name: string }[]>("/api/agents/", fetcher);
   const [crmKey, setCrmKey] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -105,6 +110,8 @@ export default function RadarPage() {
       </>
     );
   }
+  if (!ent) return (<div className="flex justify-center py-20"><Spinner /></div>);
+  if (!entitled) return <RadarPreview />;
   if (error) return (<>{header}<Notice tone="red">{(error as Error).message}</Notice></>);
   if (!data) return (<>{header}<div className="flex justify-center py-20"><Spinner /></div></>);
   if (!data.crms.length) {
