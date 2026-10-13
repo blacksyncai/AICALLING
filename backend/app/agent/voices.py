@@ -30,6 +30,8 @@ FEATURED_VOICES: list[dict] = [
      "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza", "gender": "masculine",
      "description": "Live voice clone.", "clone": True},
+    {"id": "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd", "name": "Marissa M 2.0", "gender": "feminine",
+     "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M", "gender": "feminine",
      "description": "Live voice clone.", "clone": True},
 ]
