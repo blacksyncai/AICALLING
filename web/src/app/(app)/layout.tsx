@@ -1,4 +1,4 @@
-import { AccountGate } from "@/components/AccountGate";
+import { AccountGate, WhenInAccount } from "@/components/AccountGate";
 import { UpgradePrompt } from "@/components/billing/UpgradePrompt";
 import { SupportWidget } from "@/components/support/SupportWidget";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -20,7 +20,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </AccountGate>
       <CommandPalette />
       <UpgradePrompt />
-      <SupportWidget />
+      {/* Not over the onboarding questions (it covered the Continue button on phones). */}
+      <WhenInAccount>
+        <SupportWidget />
+      </WhenInAccount>
     </SessionProvider>
   );
 }

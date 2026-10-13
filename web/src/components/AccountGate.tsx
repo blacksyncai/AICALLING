@@ -9,3 +9,9 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
   if (!session || session.org) return <>{children}</>;
   return <Onboarding />;
 }
+
+/** Renders its children only once the login belongs to an account (not during onboarding). */
+export function WhenInAccount({ children }: { children: React.ReactNode }) {
+  const { session } = useSession();
+  return session?.org ? <>{children}</> : null;
+}

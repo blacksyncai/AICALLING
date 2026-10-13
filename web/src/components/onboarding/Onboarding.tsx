@@ -1,7 +1,7 @@
 "use client";
 
 import { UserButton } from "@clerk/nextjs";
-import { ArrowLeft, ArrowRight, Check, Coins, Headphones, Loader2, Sparkles, UserSearch } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Check, Clock, Coins, Globe, Headphones, Loader2, Sparkles, User, UserSearch, Users, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
@@ -21,11 +21,11 @@ type Options = {
   trial_credits: number;
 };
 
-const TEAM: { value: string; label: string }[] = [
-  { value: "just_me", label: "Just me" },
-  { value: "2_5", label: "2–5" },
-  { value: "6_20", label: "6–20" },
-  { value: "21_plus", label: "21+" },
+const TEAM: { value: string; label: string; icon: typeof User }[] = [
+  { value: "just_me", label: "Just me", icon: User },
+  { value: "2_5", label: "2–5", icon: Users },
+  { value: "6_20", label: "6–20", icon: UsersRound },
+  { value: "21_plus", label: "21+", icon: Building2 },
 ];
 
 const STEPS = ["Your business", "Industry", "Goals"] as const;
@@ -97,7 +97,7 @@ export function Onboarding() {
         <div className="relative max-w-md">
           <p className="text-xs font-semibold uppercase tracking-widest text-brand-400">Free trial</p>
           <h2 className="mt-3 font-display text-4xl font-semibold leading-[1.1] tracking-tight">Let&apos;s set up your workspace.</h2>
-          <p className="mt-3 text-sm text-zinc-400">Three quick questions and we&apos;ll tailor BlackSync to how you sell.</p>
+          <p className="mt-3 text-sm text-zinc-400">Just a few quick questions and we&apos;ll tailor BlackSync to how you sell.</p>
           <ul className="mt-10 space-y-4">
             {includes.map(({ icon: Icon, text, on }) => (
               <li key={text} className={cn("flex items-center gap-3 transition-opacity duration-500", on ? "opacity-100" : "opacity-35")}>
@@ -115,13 +115,36 @@ export function Onboarding() {
         </div>
       </section>
 
-      <section className="app-canvas flex flex-col px-4 py-8 sm:px-10">
+      <section className="app-canvas flex flex-col px-4 pt-6 sm:px-10 sm:py-8">
         <div className="flex items-center justify-between lg:hidden">
           <Logo />
           <UserButton />
         </div>
-        <div className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center py-8">
+        <div className="mx-auto flex w-full max-w-xl flex-1 flex-col pt-6 lg:justify-center lg:py-8">
+          {/* Phones: the "what you get" panel, compact, above the questions. */}
+          {step === 0 && (
+            <div className="relative mb-6 overflow-hidden rounded-3xl bg-zinc-950 p-5 text-white shadow-lg shadow-zinc-900/10 lg:hidden">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(320px_200px_at_0%_0%,rgba(236,101,60,0.35),transparent_70%),radial-gradient(260px_180px_at_100%_100%,rgba(245,158,11,0.18),transparent_70%)]" />
+              <div className="relative">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-brand-300">
+                  <Clock className="h-3.5 w-3.5" /> Takes about a minute
+                </div>
+                <p className="mt-2 font-display text-xl font-semibold leading-snug">Your free trial includes</p>
+                <ul className="mt-3 space-y-2.5">
+                  {includes.slice(0, 3).map(({ icon: Icon, text }) => (
+                    <li key={text} className="flex items-center gap-2.5 text-[13px] text-zinc-200">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-500/15 ring-1 ring-inset ring-brand-400/30">
+                        <Icon className="h-3.5 w-3.5 text-brand-300" />
+                      </span>
+                      {text}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
           {/* Progress */}
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-brand-600">Step {step + 1} of {STEPS.length}</div>
           <div className="mb-8 flex items-center gap-2" aria-label={`Step ${step + 1} of ${STEPS.length}`}>
             {STEPS.map((s, i) => (
               <div key={s} className="flex flex-1 flex-col gap-1.5">
@@ -134,7 +157,7 @@ export function Onboarding() {
           <div key={step} className="transition duration-300 ease-out starting:translate-y-2 starting:opacity-0">
             {step === 0 && (
               <div className="space-y-6">
-                <Header title="Welcome to BlackSync" subtitle="First, tell us a little about your business." />
+                <Header title="Welcome to BlackSync 👋" subtitle="Just a few quick questions so we can set up your workspace and your first AI agent." />
                 <Field label="Company name">
                   <Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="e.g. Summit Realty" autoFocus maxLength={120} />
                   {showErrors && !valid[0] && <span className="mt-1 block text-xs text-red-600">Please enter your company name.</span>}
@@ -149,17 +172,21 @@ export function Onboarding() {
                         onClick={() => setTeam(t.value)}
                         aria-pressed={team === t.value}
                         className={cn(
-                          "h-10 rounded-xl border text-sm font-medium transition",
+                          "flex flex-col items-center justify-center gap-1 rounded-2xl border py-3 text-sm font-medium shadow-sm transition",
                           team === t.value ? "border-brand-500 bg-brand-50 text-brand-800 ring-1 ring-brand-500" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
                         )}
                       >
+                        <t.icon className={cn("h-4 w-4", team === t.value ? "text-brand-600" : "text-zinc-400")} />
                         {t.label}
                       </button>
                     ))}
                   </div>
                 </div>
-                <Field label="Website (optional)" hint="We can read it later to teach your agents about your business.">
+                <Field label="Website (optional)">
                   <Input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="yourbusiness.com" inputMode="url" />
+                  <span className="mt-1.5 flex items-center gap-1.5 text-xs text-zinc-500">
+                    <Globe className="h-3.5 w-3.5 text-brand-500" /> We&apos;ll read it to teach your agents about your business.
+                  </span>
                 </Field>
               </div>
             )}
@@ -252,14 +279,14 @@ export function Onboarding() {
             )}
           </div>
 
-          <div className="mt-8 flex items-center justify-between gap-3">
+          <div className="sticky bottom-0 -mx-4 mt-8 flex items-center justify-between gap-3 border-t border-zinc-200/70 bg-[#f8f6f3]/90 px-4 py-3 backdrop-blur max-lg:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:-mx-10 sm:px-10 lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
             {step > 0 ? (
               <Button variant="ghost" onClick={() => setStep(step - 1)} disabled={saving}>
                 <ArrowLeft className="h-4 w-4" /> Back
               </Button>
             ) : (
-              <button type="button" onClick={signOut} className="text-xs text-zinc-500 hover:text-zinc-800">
-                Have an invite instead? Use a different login
+              <button type="button" onClick={signOut} className="max-w-[45%] text-left text-xs leading-snug text-zinc-500 hover:text-zinc-800">
+                Have an invite? <span className="underline underline-offset-2">Use a different login</span>
               </button>
             )}
             <Button variant="primary" className="rounded-full! px-6" onClick={next} disabled={saving}>
