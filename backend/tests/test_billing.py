@@ -108,11 +108,11 @@ def stripe(monkeypatch):
 
 
 def _account(client, make_client, name, credits=0):
-    """A fresh account whose starter agent runs at 1 credit/min (gpt-4.1-mini)."""
+    """A fresh account whose starter agent runs at 1 credit/min (gpt-4.1-nano)."""
     org, email = _new_account(client, name=name, credits=credits)
     c = _login(make_client, email)
     for a in c.get("/api/agents/").json():
-        c.patch(f"/api/agents/{a['id']}", json={"llm_model": "gpt-4.1-mini"})
+        c.patch(f"/api/agents/{a['id']}", json={"llm_model": "gpt-4.1-nano"})
     return org, c
 
 
@@ -273,7 +273,7 @@ def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="compl
 def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     org, c = _account(client, make_client, "Meter Co", credits=10)
     agent = c.get("/api/agents/").json()[0]
-    c.patch(f"/api/agents/{agent['id']}", json={"llm_model": "gpt-4.1"})  # 1.2 credits/min by default
+    c.patch(f"/api/agents/{agent['id']}", json={"llm_model": "gpt-4o"})  # 1.2 credits/min by default
     rate = c.get(f"/api/billing/agents/{agent['id']}/rate").json()
     assert rate["credits_per_minute"] == 1.2
 

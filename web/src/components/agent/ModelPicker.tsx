@@ -1,7 +1,9 @@
 "use client";
 
-import { Check, ChevronDown, Loader2, Search } from "lucide-react";
+import { Check, ChevronDown, Crown, Loader2, Search } from "lucide-react";
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import type { ModelCatalog, ModelOption } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Input } from "../ui";
@@ -15,6 +17,29 @@ const TRAIT_LABELS: Record<string, string> = {
   transfer: "call transfers",
   complex_scripts: "complex scripts",
 };
+
+const SUPER = "BlackSync Super Intelligence";
+
+/** Model name, with "BlackSync Super Intelligence" in purple. */
+export function ModelName({ name, className }: { name: string; className?: string }) {
+  if (!name.startsWith(SUPER)) return <span className={cn("font-medium text-zinc-900", className)}>{name}</span>;
+  return (
+    <span className={cn("font-medium text-zinc-900", className)}>
+      <span className="font-semibold text-violet-600">{SUPER}</span>
+      {name.slice(SUPER.length)}
+    </span>
+  );
+}
+
+/** Crown for premium models (more than 1 credit per minute). */
+function PremiumCrown({ rate }: { rate?: number }) {
+  if (rate === undefined || rate <= 1) return null;
+  return (
+    <span title={`Premium model · ${rate} credits per minute`} aria-label="Premium model" className="inline-flex">
+      <Crown className="h-3.5 w-3.5 fill-amber-400 text-amber-500" />
+    </span>
+  );
+}
 
 function customModel(id: string): ModelOption {
   return { id, name: id, provider: "Custom", description: "Saved on this agent; not in the model catalog.", speed: null, tags: [], recommended_for: [], status: "unknown", group: "other" };
@@ -50,6 +75,9 @@ export function ModelPicker({
   const listRef = useRef<HTMLDivElement>(null);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(-1);
+  // Same per-model credit rates billing uses (admin-editable).
+  const { data: rates } = useSWR<{ model_rates: Record<string, number> }>("/api/billing/rates", fetcher, { revalidateOnFocus: false });
+  const rateOf = (id: string) => rates?.model_rates[id];
 
   const models = useMemo(() => {
     const list: ModelOption[] = catalog?.models?.length ? catalog.models : fallbackIds.map(customModel).map((m) => ({ ...m, provider: "OpenAI", description: "" }));
@@ -109,7 +137,10 @@ export function ModelPicker({
         )}
       >
         <span className="min-w-0 flex-1 truncate">
-          <span className="font-medium text-zinc-900">{selected?.name ?? value}</span>
+          <span className="inline-flex items-center gap-1 align-middle">
+            <ModelName name={selected?.name ?? value} />
+            <PremiumCrown rate={rateOf(value)} />
+          </span>
           {selected && (
             <span className="text-zinc-500">
               {" · "}
@@ -173,7 +204,8 @@ export function ModelPicker({
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-1.5 text-sm">
-                              <span className="font-medium text-zinc-900">{m.name}</span>
+                              <ModelName name={m.name} />
+                              <PremiumCrown rate={rateOf(m.id)} />
                               <span className="text-xs text-zinc-400">{m.provider}</span>
                               {m.speed && <span className="text-xs text-zinc-500">· {m.speed === "fast" ? "Fast" : "Standard speed"}</span>}
                               {m.tags.includes("recommended") && (

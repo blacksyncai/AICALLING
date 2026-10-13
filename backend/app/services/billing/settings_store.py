@@ -6,11 +6,10 @@ from sqlalchemy import select
 
 from app.models.billing import BillingAudit, PlatformSetting
 
-# Credits per connected minute, by LLM model (1.0–1.3). Admin-editable; these are the starting values.
-DEFAULT_MODEL_RATES = {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.2,
-                       "claude-haiku-5-5": 1.0, "claude-sonnet-5-5": 1.3,
-                       "gpt-oss-120b": 1.45, "qwen-3.8-27b": 1.2,
-                       "ministral-8b-latest": 1.0, "ministral-3b-latest": 1.0, "ministral-14b-latest": 1.0}
+# Credits per connected minute, by LLM model (0.8–1.3). Admin-editable; these are the starting values.
+DEFAULT_MODEL_RATES = {"ministral-3b-latest": 0.8, "ministral-8b-latest": 0.9, "gpt-4.1-mini": 0.9, "claude-haiku-5-5": 0.9,
+                       "gpt-4.1-nano": 1.0, "gpt-4o-mini": 1.0, "ministral-14b-latest": 1.0,
+                       "qwen-3.8-27b": 1.1, "gpt-4.1": 1.1, "gpt-4o": 1.2, "gpt-oss-120b": 1.2, "claude-sonnet-5-5": 1.3}
 # Earlier defaults; a saved copy of one of them follows the current defaults instead.
 _LEGACY_MODEL_RATES = [
     {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.4, "gpt-4o": 1.5},
@@ -18,7 +17,8 @@ _LEGACY_MODEL_RATES = [
     {"gpt-4.1-nano": 1.0, "gpt-4.1-mini": 1.0, "gpt-4o-mini": 1.0, "gpt-4.1": 1.2, "gpt-4o": 1.2},
 ]
 # Per-model rates that were once the default; a saved copy follows the current default instead.
-_SUPERSEDED_RATES = {"gpt-oss-120b": [1.6]}
+_SUPERSEDED_RATES = {"gpt-oss-120b": [1.6, 1.45], "qwen-3.8-27b": [1.2], "gpt-4.1": [1.2, 1.4], "gpt-4.1-mini": [1.0],
+                     "claude-haiku-5-5": [1.0], "ministral-8b-latest": [1.0], "ministral-3b-latest": [1.0]}
 
 DEFAULTS: dict = {
     # None = paid lookups are OFF until an admin confirms a retail price.
