@@ -302,3 +302,33 @@ def test_blacksync_flash_models_route_to_mistral(monkeypatch):
     names = {m["id"]: m["name"] for m in models.model_catalog()}
     assert names["ministral-8b-latest"] == "BlackSync Flash" and names["mistral-medium-latest"] == "BlackSync Flash Pro"
     assert models.llm_endpoint("ministral-3b-latest") == ("test-key", "https://api.mistral.ai/v1", True)
+
+
+def test_help_center_seed_adds_new_articles_and_keeps_admin_edits():
+    from sqlalchemy import delete, select
+
+    from app.models.support import KbArticle
+    from app.services.support import kb_seed
+
+    async def go(db):
+        await kb_seed.seed(db)
+        rows = {a.slug: a for a in (await db.execute(select(KbArticle))).scalars().all()}
+        assert {a["slug"] for a in kb_seed.ARTICLES} <= set(rows)
+        # An unedited copy of an older version is refreshed; an admin-edited article is left alone.
+        old = kb_seed._PREVIOUS_BODIES["buy-more-credits"][0]
+        rows["buy-more-credits"].body = old
+        rows["how-calling-credits-work"].body = "Edited by an admin."
+        await db.execute(delete(KbArticle).where(KbArticle.slug == "latency-and-response-speed"))
+        await db.commit()
+        assert await kb_seed.seed(db) == 2
+        rows = {a.slug: a for a in (await db.execute(select(KbArticle))).scalars().all()}
+        assert "one credit pack" in rows["buy-more-credits"].body
+        assert rows["how-calling-credits-work"].body == "Edited by an admin."
+        assert "liquid-cooled" in rows["latency-and-response-speed"].body
+        assert await kb_seed.seed(db) == 0
+    _db(go)
+
+
+def test_ai_reply_is_plain_text():
+    assert ai.clean("Go to **Billing & Usage** → **Credits**.\n* **Ultra** (1.2/min)\n### Steps [[OFFER_PERSON]]") == (
+        "Go to Billing & Usage → Credits.\n- Ultra (1.2/min)\nSteps", True)

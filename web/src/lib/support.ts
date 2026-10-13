@@ -106,7 +106,15 @@ export const KB_CATEGORY: Record<string, string> = {
 export const categoryLabel = (k: string) => TICKET_CATEGORIES.find(([v]) => v === k)?.[1] ?? k;
 
 /** Strip the AI's "offer a person" marker (also while it's half-streamed). */
-export const cleanAi = (t: string) => t.replace(/\[\[OFFER_PERSON\]\]/g, "").replace(/\[\[[A-Z_]*\]?$/, "").trimEnd();
+/** Text of an AI reply as it streams in: no escalation marker, no markdown (the chat shows plain text). */
+export const cleanAi = (t: string) =>
+  t
+    .replace(/\[\[OFFER_PERSON\]\]/g, "")
+    .replace(/\[\[[A-Z_]*\]?$/, "")
+    .replace(/\*\*|__/g, "")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^(\s*)[*•]\s+/gm, "$1- ")
+    .trimEnd();
 
 export function newClientId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;

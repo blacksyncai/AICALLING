@@ -143,4 +143,12 @@ def clean(text: str) -> tuple[str, bool]:
     text = text.replace(ESCALATE_MARK, "").strip()
     # Some reasoning models leak a scratchpad — keep only the answer.
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
-    return text, offer
+    return plain(text), offer
+
+
+def plain(text: str) -> str:
+    """The chat shows plain text: drop markdown emphasis and headings, use simple bullets."""
+    text = re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: m.group(1) or m.group(2), text, flags=re.S)
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.M)
+    text = re.sub(r"^(\s*)[*•]\s+", r"\1- ", text, flags=re.M)
+    return text.replace("**", "").strip()
