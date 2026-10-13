@@ -93,7 +93,7 @@ async def start(body: StartBody, user: UserDep, db: DbDep):
     if credits:
         from app.services.billing.credits import add_lot
 
-        await add_lot(db, org, credits, source="grant", kind="grant", note=f"Free trial — {credits} calling credits",
+        await add_lot(db, org, credits, source="grant", kind="grant", note=f"Welcome credits — {credits} calling credits",
                       created_by=user.id)
     org.industry = body.industry
     org.lead_finder_enabled = body.industry in LEAD_FINDER_INDUSTRIES

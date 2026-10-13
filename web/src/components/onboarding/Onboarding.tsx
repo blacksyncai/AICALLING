@@ -80,7 +80,7 @@ export function Onboarding() {
   }
 
   const includes = [
-    { icon: Coins, text: `${opts?.trial_credits ?? 30} free calling credits — no card needed`, on: true },
+    { icon: Coins, text: `${opts?.trial_credits ?? 30} calling credits to start — no card needed`, on: true },
     { icon: Headphones, text: "Marissa, a demo agent you can talk to right away", on: true },
     { icon: Sparkles, text: industryLabel ? `Build with AI, set up for ${industryLabel}` : "Build with AI, set up for your industry", on: !!industry },
     { icon: UserSearch, text: "Lead Finder — look up property owners", on: leadFinder },
@@ -95,7 +95,7 @@ export function Onboarding() {
           <Logo className="text-white" />
         </div>
         <div className="relative max-w-md">
-          <p className="text-xs font-semibold uppercase tracking-widest text-brand-400">Free trial</p>
+          <p className="text-xs font-semibold uppercase tracking-widest text-brand-400">Getting started</p>
           <h2 className="mt-3 font-display text-4xl font-semibold leading-[1.1] tracking-tight">Let&apos;s set up your workspace.</h2>
           <p className="mt-3 text-sm text-zinc-400">Just a few quick questions and we&apos;ll tailor BlackSync to how you sell.</p>
           <ul className="mt-10 space-y-4">
@@ -129,7 +129,7 @@ export function Onboarding() {
                 <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-brand-300">
                   <Clock className="h-3.5 w-3.5" /> Takes about a minute
                 </div>
-                <p className="mt-2 font-display text-xl font-semibold leading-snug">Your free trial includes</p>
+                <p className="mt-2 font-display text-xl font-semibold leading-snug">Your account includes</p>
                 <ul className="mt-3 space-y-2.5">
                   {includes.slice(0, 3).map(({ icon: Icon, text }) => (
                     <li key={text} className="flex items-center gap-2.5 text-[13px] text-zinc-200">
@@ -296,7 +296,7 @@ export function Onboarding() {
                 </>
               ) : step === STEPS.length - 1 ? (
                 <>
-                  Start my free trial <ArrowRight className="h-4 w-4" />
+                  Create my account <ArrowRight className="h-4 w-4" />
                 </>
               ) : (
                 <>

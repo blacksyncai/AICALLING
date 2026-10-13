@@ -52,9 +52,21 @@ INDUSTRY_TONE = {
     "funeral_services": (
         "\n- Tone: callers are often grieving. Be calm, warm, patient and unhurried — never salesy or upbeat. Offer "
         "condolences, use plain gentle language, never pressure, and for a death (a \"first call\") take the essentials "
-        "and connect the on-call funeral director right away."
+        "and connect the on-call funeral director right away. For calls coming in, the first message is: \"Hi, thank "
+        "you for calling <business>. This is <agent name>, a virtual assistant here to make sure we get your call. "
+        "Who do I have the pleasure of speaking with?\""
     ),
 }
+
+
+def recommended_opener(ctx: dict, spec: dict) -> str | None:
+    """The house opener for industries that have one (funeral homes answering calls), else None."""
+    if (ctx["business"].get("industry") or "") != "funeral_services" or ctx["direction"] == "outbound":
+        return None
+    name = (spec["strategy"].get("agent_name") or "").strip() or "your assistant"
+    business = (ctx["business"].get("name") or "").strip() or "us"
+    return (f"Hi, thank you for calling {business}. This is {name}, a virtual assistant here to make sure we get "
+            "your call. Who do I have the pleasure of speaking with?")
 
 
 class GenerationError(generator.GenerationError):
@@ -445,6 +457,9 @@ async def run(ctx: dict, on_stage: StageCallback = _noop) -> dict:
 
     await on_stage("quality")
     for attempt in range(MAX_REPAIRS + 1):
+        opener = recommended_opener(ctx, spec)
+        if opener:
+            spec["conversation"]["first_message"] = opener
         composed = composer.compose(spec, ctx)
         report = quality.run(spec, composed, ctx)
         if report["passed"]:

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronRight, ExternalLink, Plus, Puzzle, Zap } from "lucide-react";
+import { CheckCircle2, ChevronRight, ExternalLink, Puzzle, Zap } from "lucide-react";
 import type React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -122,23 +122,23 @@ export function Logo({ p }: { p: Provider }) {
 
 // Native connectors on the roadmap (shown as "coming soon" next to the ones the API lists as not ready yet).
 const UPCOMING = [
-  { key: "monday", name: "Monday.com", domain: "monday.com" },
-  { key: "boldtrail", name: "BoldTrail / kvCORE", domain: "boldtrail.com" },
-  { key: "lofty", name: "Lofty", domain: "lofty.com" },
-  { key: "calendly", name: "Calendly", domain: "calendly.com" },
+  { key: "monday", name: "Monday.com", domain: "monday.com", description: "Log AI calls on items and import contacts from boards." },
+  { key: "boldtrail", name: "BoldTrail / kvCORE", domain: "boldtrail.com", description: "Log AI calls on leads and auto-call new ones." },
+  { key: "lofty", name: "Lofty", domain: "lofty.com", description: "Log AI calls and notes on leads, and import leads to call." },
+  { key: "calendly", name: "Calendly", domain: "calendly.com", description: "Book meetings straight into your Calendly event types." },
 ];
 
-function SmallLogo({ name, domain }: { name: string; domain?: string }) {
+function SoonLogo({ name, domain }: { name: string; domain?: string }) {
   const [failed, setFailed] = useState(false);
   if (domain && !failed) {
     return (
-      <span className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-zinc-200">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-white opacity-70 ring-1 ring-zinc-200/80 grayscale-[40%]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`} alt="" className="h-3.5 w-3.5" onError={() => setFailed(true)} />
+        <img src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`} alt="" className="h-6 w-6" onError={() => setFailed(true)} />
       </span>
     );
   }
-  return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-200 text-[9px] font-bold text-zinc-600">{name[0]}</span>;
+  return <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-zinc-200 text-xs font-bold text-zinc-600">{name[0]}</span>;
 }
 
 /** Rounded grouped list with dividers inset past the logo (iOS settings style). */
@@ -226,31 +226,31 @@ export function CrmIntegrations() {
         )}
 
         {live.length > 0 && (
-          <div>
-            <div className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">{connected.length ? "Add another" : "Connect in a click"}</div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {live.map((p) => (
+          <Group title={connected.length ? "Add another" : "Connect in a click"}>
+            {live.map((p) => (
+              <li key={p.key} className="relative">
                 <button
-                  key={p.key}
                   type="button"
                   onClick={() => setConnecting(p)}
-                  className="group relative flex flex-col rounded-2xl bg-white p-4 text-left ring-1 ring-zinc-200/80 transition-all hover:-translate-y-0.5 hover:shadow-[0_10px_30px_-12px_rgba(33,27,24,0.25)] hover:ring-brand-300"
+                  className="group flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-zinc-50"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <Logo p={p} />
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live
+                  <Logo p={p} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="text-[15px] font-medium text-zinc-900">{p.name}</span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live
+                      </span>
                     </span>
-                  </div>
-                  <span className="mt-3 block text-[15px] font-semibold text-zinc-900">{p.name}</span>
-                  <span className="mt-1 line-clamp-2 block flex-1 text-xs leading-relaxed text-zinc-500">{p.description}</span>
-                  <span className="mt-4 inline-flex items-center gap-1.5 self-start rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors group-hover:bg-brand-600">
-                    <Plus className="h-3.5 w-3.5" /> Connect
+                    <span className="block truncate text-xs text-zinc-500">{p.description}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1.5 text-sm text-zinc-500 transition-colors group-hover:text-brand-600">
+                    Connect <ExternalLink className="h-4 w-4" />
                   </span>
                 </button>
-              ))}
-            </div>
-          </div>
+              </li>
+            ))}
+          </Group>
         )}
 
         {/* Don't see yours: API + webhooks, and our team can wire it up. */}
@@ -276,20 +276,18 @@ export function CrmIntegrations() {
           </div>
         </div>
 
-        {(soon.length > 0 || UPCOMING.length > 0) && (
-          <div>
-            <div className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Coming soon</div>
-            <div className="flex flex-wrap gap-2">
-              {[...soon.map((p) => ({ key: p.key, name: p.name, p })), ...UPCOMING.map((u) => ({ ...u, p: null }))].map((x) => (
-                <span key={x.key} className="inline-flex items-center gap-2 rounded-full bg-white py-1 pl-1 pr-3 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200/80">
-                  {x.p ? <SmallLogo name={x.name} domain={DOMAIN[x.key]} /> : <SmallLogo name={x.name} domain={(x as { domain?: string }).domain} />}
-                  {x.name}
-                  <span className="rounded-full bg-zinc-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Soon</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+        <Group title="Coming soon">
+          {[...soon.map((p) => ({ key: p.key, name: p.name, description: p.description, domain: DOMAIN[p.key] })), ...UPCOMING].map((x) => (
+            <li key={x.key} className="relative flex items-center gap-4 px-4 py-3.5">
+              <SoonLogo name={x.name} domain={x.domain} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[15px] font-medium text-zinc-700">{x.name}</span>
+                <span className="block truncate text-xs text-zinc-500">{x.description}</span>
+              </span>
+              <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">Coming soon</span>
+            </li>
+          ))}
+        </Group>
       </div>
       {connecting && (
         <ConnectModal

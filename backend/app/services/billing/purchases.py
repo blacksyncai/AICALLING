@@ -92,7 +92,7 @@ async def _checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, 
 
 
 TRIAL_PACK_LIMIT = 1  # credit packs an account may buy before it's on a plan
-TRIAL_PACK_USED = "You've used your one trial credit pack. Choose a BlackSync AI plan to buy more credits."
+TRIAL_PACK_USED = "You've used the one credit pack available before choosing a plan. Choose a BlackSync AI plan to buy more credits."
 
 
 async def pack_access(db: AsyncSession, org: Organization) -> dict:

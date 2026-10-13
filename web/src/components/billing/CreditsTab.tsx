@@ -82,7 +82,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
         ) : (
           access && !access.on_plan && (
             <p className="mb-4 text-sm text-zinc-500">
-              On the free trial you can buy one credit pack. After that, choose a{" "}
+              Before you're on a plan, you can buy one credit pack. After that, choose a{" "}
               <Link href="/billing?tab=plans" className="font-medium text-brand-600 hover:text-brand-700">
                 BlackSync AI plan
               </Link>{" "}

@@ -247,7 +247,7 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
         <Card>
           <CardHeader
             title="Your plan's limits"
-            description={ent.source === "no_plan" ? "You're on the free trial — these are the limits until you choose a plan." : ent.source === "override" ? "Your account has a custom setup from BlackSync." : undefined}
+            description={ent.source === "no_plan" ? "You're not on a plan yet — these are your starting limits until you choose one." : ent.source === "override" ? "Your account has a custom setup from BlackSync." : undefined}
           />
           <Usage ent={ent} />
           {ent.over_limit.includes("agents") && (

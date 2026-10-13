@@ -396,3 +396,15 @@ def test_mission_suggestion_uses_ai_and_falls_back(client, monkeypatch):
     monkeypatch.setattr(llm, "_chat", broken)
     r = client.post(f"/api/agent-builder/drafts/{draft['id']}/mission").json()
     assert r["source"] == "template" and r["mission"]
+
+
+def test_funeral_homes_get_the_house_opener():
+    from app.agent.pipeline import recommended_opener
+
+    spec = {"strategy": {"agent_name": "Grace"}}
+    ctx = {"business": {"name": "Hillside Funeral Home", "industry": "funeral_services"}, "direction": "inbound"}
+    assert recommended_opener(ctx, spec) == (
+        "Hi, thank you for calling Hillside Funeral Home. This is Grace, a virtual assistant here to make sure we "
+        "get your call. Who do I have the pleasure of speaking with?")
+    assert recommended_opener({**ctx, "direction": "outbound"}, spec) is None  # aftercare calls go out
+    assert recommended_opener({**ctx, "business": {"name": "X", "industry": "real_estate"}}, spec) is None

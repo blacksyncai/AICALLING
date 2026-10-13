@@ -99,10 +99,10 @@ If credits run out, campaigns pause until you add more.""",
     },
     {
         "slug": "buy-more-credits", "category": "credits_billing", "title": "Buy more credits and auto-recharge",
-        "summary": "Packs of 75 ($29), 500 ($139) or 1,000 ($260). One pack on the trial; plans can buy any time and use auto-recharge.",
+        "summary": "Packs of 75 ($29), 500 ($139) or 1,000 ($260). One pack before you pick a plan; plans can buy any time and use auto-recharge.",
         "body": """Go to Billing & Usage → Calling Credits and choose a pack: 75 credits for $29, 500 for $139, or 1,000 for $260. Payment is through secure Stripe checkout and the credits are added once the payment is confirmed. Bought credits never expire.
 
-On the free trial (no plan yet) you can buy one credit pack. After that, choose a BlackSync AI plan to keep buying credits — on a plan you can buy packs any time.
+Before you're on a plan, you can buy one credit pack. After that, choose a BlackSync AI plan to keep buying credits — on a plan you can buy packs any time.
 
 Auto-recharge (plans only) buys a pack you choose whenever your balance drops below a threshold, with a monthly spending cap. It's off until an account owner or admin turns it on and confirms, and it uses the card saved from your first purchase.""",
     },
@@ -298,11 +298,11 @@ Set a test contact (name, company) to see how personalisation sounds. After each
 Find everything under Call Logs. Analytics shows trends across calls — where calls drop off, which agents and campaigns book the most meetings, and the best hours to call. If your CRM is connected, outcomes and summaries can be sent back automatically.""",
     },
     {
-        "slug": "free-trial", "category": "getting_started", "title": "How the free trial works",
-        "summary": "New accounts start with free calling credits and a welcome agent. Buy one credit pack on the trial; plans unlock more.",
-        "body": """New accounts start with free trial calling credits and a ready-to-test welcome agent, so you can hear BlackSync on a real call in minutes.
+        "slug": "free-trial", "category": "getting_started", "title": "Getting started with your new account",
+        "summary": "New accounts start with calling credits and a welcome agent. Buy one credit pack before choosing a plan; plans unlock more.",
+        "body": """New accounts start with calling credits and a ready-to-test welcome agent, so you can hear BlackSync on a real call in minutes.
 
-During the trial you can build and test agents, run campaigns with your trial credits, and buy one credit pack if you need more minutes. To keep buying credits, turn on auto-recharge and get monthly included credits, numbers and more agents and users, choose a plan under Billing & Usage → Plans.
+Right away you can build and test agents, run campaigns with your starting credits, and buy one credit pack if you need more minutes. To keep buying credits, turn on auto-recharge and get monthly included credits, numbers and more agents and users, choose a plan under Billing & Usage → Plans.
 
 Want help setting up? Book a free walkthrough from the Plans page or ask here.""",
     },
@@ -426,6 +426,8 @@ Want us to set up your agent with you? Book a free walkthrough from Billing & Us
 # Earlier wording of articles we've since updated. A help center still showing one of these exact texts
 # (never edited by an admin) gets the new version; edited articles are left alone.
 _PREVIOUS_BODIES: dict[str, list[str]] = {
+    'buy-more-credits': ["Go to Billing & Usage → Calling Credits and choose a pack: 75 credits for $29, 500 for $139, or 1,000 for $260. Payment is through secure Stripe checkout and the credits are added once the payment is confirmed. Bought credits never expire.\n\nOn the free trial (no plan yet) you can buy one credit pack. After that, choose a BlackSync AI plan to keep buying credits — on a plan you can buy packs any time.\n\nAuto-recharge (plans only) buys a pack you choose whenever your balance drops below a threshold, with a monthly spending cap. It's off until an account owner or admin turns it on and confirms, and it uses the card saved from your first purchase."],
+    'free-trial': ['New accounts start with free trial calling credits and a ready-to-test welcome agent, so you can hear BlackSync on a real call in minutes.\n\nDuring the trial you can build and test agents, run campaigns with your trial credits, and buy one credit pack if you need more minutes. To keep buying credits, turn on auto-recharge and get monthly included credits, numbers and more agents and users, choose a plan under Billing & Usage → Plans.\n\nWant help setting up? Book a free walkthrough from the Plans page or ask here.'],
     'plans-overview': ['Solo — $98/month: 150 credits, 2 agents, 1 user, 1 phone number.\nGrowth — $197/month: 400 credits, 4 agents, 4 users, 2 numbers, 1 CRM integration, workflow automations, Radar.\nTeams — $349/month: 900 credits, 8 agents, 10 users, 4 numbers, multiple CRMs, webhooks and the API, member roles, team analytics.\nManaged — starting at $797/month: 1,500 credits, 12 agents, 15 users and hands-on setup by our team. Book a call with sales from the Plans page.\n\nExtra agent slots are $19/month each. See Billing & Usage → Plans for the full comparison and to change plans.'],
     'plan-limits-explained': ["What each plan includes:\n\n- Solo ($98/mo): 150 credits, 2 active agents, 1 user, 1 phone number, 2 calls at once.\n- Growth ($197/mo): 400 credits, 4 agents, 4 users, 2 numbers, 1 CRM, 3 calls at once, workflows, Radar.\n- Teams ($349/mo): 900 credits, 8 agents, 10 users, 4 numbers, unlimited CRMs, 5 calls at once, advanced workflows, roles, team reporting, Radar.\n- Managed (from $797/mo): 1,500 credits, 12 agents, 15 users, 4 numbers, unlimited CRMs, 8 calls at once, everything in Teams, set up with our team.\n\nExtra agent slots are $19/month and extra phone numbers $3.50/month. Paused agents don't count toward the agent limit. See Billing & Usage → Plans to compare and switch."],
     'how-calling-credits-work': ["Calls use calling credits for connected time. On Standard models a credit is about one minute of calling; Premium models use a little more per minute. You can see the rate for each agent in the agent editor. Phone calls also include a small phone-line fee per started minute. Calls that don't connect don't use credits.\n\nPlans include credits every month (Solo 150, Growth 400, Teams 900, Managed 1,500). Plan credits are added each paid billing period and expire at the end of it. Credits you buy separately never expire and are used after your plan credits.\n\nIf credits run out, campaigns pause until you add more."],
@@ -443,7 +445,7 @@ async def seed(db: AsyncSession) -> int:
             db.add(KbArticle(published=True, **a))
             changed += 1
         elif row.body in _PREVIOUS_BODIES.get(a["slug"], []):
-            row.body, row.summary = a["body"], a["summary"]
+            row.body, row.summary, row.title = a["body"], a["summary"], a["title"]
             changed += 1
     if changed:
         await db.commit()
