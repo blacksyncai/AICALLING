@@ -140,6 +140,8 @@ def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> d
         "models": [MISTRAL_TTS_MODEL] if raw.get("provider") == "mistral" else list(VOICE_MODELS),
         "status": "available",
     }
+    if raw.get("family"):  # one speaker offered in several tones (picker groups these into one row)
+        out["family"], out["tone"] = raw["family"], raw.get("tone")
     if owned:
         out["mine"] = True  # kept for older clients
     return out

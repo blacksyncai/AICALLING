@@ -225,6 +225,9 @@ export interface Voice {
   status?: string;
   /** Legacy alias of is_clone. */
   mine?: boolean;
+  /** One speaker offered in several tones: the picker shows one row per family with tone chips. */
+  family?: string | null;
+  tone?: string | null;
 }
 
 export interface VoiceCategory {

@@ -12,6 +12,26 @@ const MAX_ROWS = 200;
 const DEFAULT_LABELS: Record<Cat, string> = { premium: "Premium Human Voices", standard: "Standard AI Voices" };
 
 type Cat = "premium" | "standard";
+/** One list row: a single voice, or one speaker's tones grouped together. */
+type Row = { key: string; voices: Voice[] };
+
+const rowKey = (v: Voice) => (v.family ? `family:${v.family}` : v.id);
+
+function groupRows(list: Voice[]): Row[] {
+  const rows: Row[] = [];
+  const at = new Map<string, Row>();
+  for (const v of list) {
+    const k = rowKey(v);
+    const row = at.get(k);
+    if (row) row.voices.push(v);
+    else {
+      const r = { key: k, voices: [v] };
+      at.set(k, r);
+      rows.push(r);
+    }
+  }
+  return rows;
+}
 
 function voiceMeta(v: Voice) {
   return [v.gender && capitalize(v.gender), v.accent, languageName(v.language)].filter(Boolean).join(" · ");
@@ -75,8 +95,8 @@ export function VoicePicker({
     standard: categories?.find((c) => c.key === "standard")?.label ?? DEFAULT_LABELS.standard,
   };
   const counts: Record<Cat, number> = {
-    premium: all.filter((v) => catOf(v) === "premium").length,
-    standard: all.filter((v) => catOf(v) === "standard").length,
+    premium: new Set(all.filter((v) => catOf(v) === "premium").map(rowKey)).size,
+    standard: new Set(all.filter((v) => catOf(v) === "standard").map(rowKey)).size,
   };
 
   const [tab, setTab] = useState<Cat>("premium");
@@ -86,6 +106,8 @@ export function VoicePicker({
   const [active, setActive] = useState(-1);
   const [pasting, setPasting] = useState(false);
   const [pasted, setPasted] = useState("");
+  // Tone picked per grouped row while the list is open (the row's play button previews it).
+  const [toneOf, setToneOf] = useState<Record<string, string>>({});
 
   // Preview state: one clip at a time, object URLs cached per (voice, speed, language).
   const [playing, setPlaying] = useState<string | null>(null);
@@ -192,8 +214,11 @@ export function VoicePicker({
     },
     [q, effLang, effAccent],
   );
-  const filtered = useMemo(() => inTab.filter(matches), [inTab, matches]);
+  const filtered = useMemo(() => groupRows(inTab.filter(matches)), [inTab, matches]);
   const shown = filtered.slice(0, MAX_ROWS);
+  // The voice a row stands for: the agent's voice if it's in the row, else the tone last clicked, else the first.
+  const current = (r: Row) =>
+    r.voices.find((v) => v.id === value) ?? r.voices.find((v) => v.id === toneOf[r.key]) ?? r.voices[0];
   const otherTab: Cat = tab === "premium" ? "standard" : "premium";
   const otherMatches = useMemo(
     () => (q.trim() ? all.filter((v) => catOf(v) === otherTab && matches(v)).length : 0),
@@ -203,7 +228,7 @@ export function VoicePicker({
   // Keep the active row on the selected voice (or first row) as the list changes.
   useEffect(() => {
     if (!open) return;
-    const i = shown.findIndex((v) => v.id === value);
+    const i = shown.findIndex((r) => r.voices.some((v) => v.id === value));
     setActive(i >= 0 ? i : shown.length ? 0 : -1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tab, q, effLang, effAccent, shown.length]);
@@ -218,7 +243,7 @@ export function VoicePicker({
     close();
   }
 
-  const onKeyDown = listKeyHandler(shown.length, active, setActive, (i) => choose(shown[i].id));
+  const onKeyDown = listKeyHandler(shown.length, active, setActive, (i) => choose(current(shown[i]).id));
   const optionId = (i: number) => `${uid}-opt-${i}`;
   const mismatch = selected && languageMismatch(selected.language, agentLanguage ?? language);
 
@@ -395,13 +420,16 @@ export function VoicePicker({
                   </div>
                 </li>
               )}
-              {shown.map((v, i) => {
-                const isSel = v.id === value;
+              {shown.map((r, i) => {
+                const v = current(r);
+                const grouped = r.voices.length > 1 || !!v.family;
+                const title = grouped ? v.family ?? v.name : v.name;
+                const isSel = r.voices.some((x) => x.id === value);
                 const previewable = canPreview(v);
                 const meta = voiceMeta(v);
                 return (
                   <li
-                    key={v.id}
+                    key={r.key}
                     id={optionId(i)}
                     data-index={i}
                     role="option"
@@ -414,10 +442,10 @@ export function VoicePicker({
                       isSel && "bg-brand-50",
                     )}
                   >
-                    <Avatar name={v.name} premium={catOf(v) === "premium"} />
+                    <Avatar name={title} premium={catOf(v) === "premium"} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 text-sm font-medium text-zinc-900">
-                        <span className="truncate">{v.name}</span>
+                        <span className="truncate">{title}</span>
                         {catOf(v) === "premium" && (
                           <span className="shrink-0 rounded bg-brand-50 px-1.5 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-100">Premium</span>
                         )}
@@ -428,6 +456,36 @@ export function VoicePicker({
                       {(meta || v.description) && (
                         <div className="truncate text-xs text-zinc-500" title={v.description || undefined}>
                           {[meta, v.description].filter(Boolean).join(" · ")}
+                        </div>
+                      )}
+                      {grouped && (
+                        <div className="mt-1.5 flex flex-wrap gap-1" role="radiogroup" aria-label={`${title} tone`}>
+                          {r.voices.map((t) => {
+                            const on = t.id === v.id;
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                role="radio"
+                                aria-checked={on}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (playing || fetching) stop();
+                                  setToneOf((m) => ({ ...m, [r.key]: t.id }));
+                                  onChange(t.id); // pick it, but keep the list open to compare tones
+                                }}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                className={cn(
+                                  "rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition",
+                                  on
+                                    ? "border-brand-600 bg-brand-600 text-white"
+                                    : "border-zinc-200 bg-white text-zinc-600 hover:border-brand-500 hover:text-brand-600",
+                                )}
+                              >
+                                {t.tone ?? t.name}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
