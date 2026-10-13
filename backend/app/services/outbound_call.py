@@ -300,6 +300,12 @@ class CallService:
             status="initiated",
             started_at=datetime.now(timezone.utc),
         )
+        record = recordings.enabled_for(agent)
+        if record and settings.recording_via_twilio:
+            # The Twilio trunk records the call; it's copied into the bucket after the call ends.
+            from app.services import twilio_recordings
+
+            twilio_recordings.mark_pending(call_log)
         db.add(call_log)
         await db.flush()
 
@@ -341,7 +347,9 @@ class CallService:
         )
         log.info("livekit_sip_dialing", room=room_name, to=phone, from_number=from_number or "trunk default",
                  trunk=settings.livekit_sip_outbound_trunk_id)
-        recording_key = recordings.key_for(org.id, call_log.id) if recordings.enabled_for(agent) else None
+        # LiveKit egress only when Twilio isn't recording (egress is capped by concurrency and monthly minutes).
+        recording_key = (recordings.key_for(org.id, call_log.id)
+                         if record and not settings.recording_via_twilio else None)
         task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name,
                                                    recording_key))
         _BACKGROUND.add(task)

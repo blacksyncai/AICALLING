@@ -81,7 +81,7 @@ def _exists(key: str) -> bool:
 def _presign(key: str) -> str:
     return _s3().generate_presigned_url(
         "get_object",
-        Params={"Bucket": settings.recordings_s3_bucket, "Key": key, "ResponseContentType": "audio/ogg"},
+        Params={"Bucket": settings.recordings_s3_bucket, "Key": key, "ResponseContentType": "audio/mpeg" if key.endswith(".mp3") else "audio/ogg"},
         ExpiresIn=URL_TTL_SECONDS,
     )
 

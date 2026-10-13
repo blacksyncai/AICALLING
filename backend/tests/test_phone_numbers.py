@@ -202,6 +202,7 @@ def test_call_uses_account_number_and_records(client, make_client, twilio, monke
         return "EG_1"
 
     monkeypatch.setattr(recordings, "start", fake_start)
+    monkeypatch.setattr(settings, "recording_provider", "livekit")
 
     agent = owner.post("/api/agents/", json={"template": "sales_sdr"}).json()
     r = owner.post(f"/api/agents/{agent['id']}/phone-call", json={"to_phone": "(555) 123-4567"})
@@ -279,3 +280,30 @@ def test_test_call_can_pick_which_number_it_calls_from(client, make_client, twil
     # Only the account's own numbers can be used.
     r = owner.post(f"/api/agents/{agent['id']}/phone-call", json={"to_phone": "+15551234567", "from_number": "+19998887777"})
     assert r.status_code == 400 and "number" in r.json()["detail"]
+
+
+def test_twilio_records_instead_of_egress(client, make_client, twilio, monkeypatch):
+    org, owner = _account(client, make_client, "Trunk Rec Co", credits=50)
+    log: list = []
+    monkeypatch.setattr(outbound_call, "_lk", lambda: _FakeLK(log))
+    monkeypatch.setattr(settings, "livekit_sip_outbound_trunk_id", "ST_test")
+    for k, v in {"recordings_s3_bucket": "b", "recordings_s3_access_key": "k", "recordings_s3_secret_key": "s"}.items():
+        monkeypatch.setattr(settings, k, v)
+    monkeypatch.setattr(settings, "recording_provider", "")  # auto → Twilio (credentials are set)
+    started = []
+
+    async def fake_start(room, key):
+        started.append(key)
+        return "EG_1"
+
+    monkeypatch.setattr(recordings, "start", fake_start)
+    agent = owner.post("/api/agents/", json={"template": "sales_sdr"}).json()
+    call_id = owner.post(f"/api/agents/{agent['id']}/phone-call", json={"to_phone": "+15551234567"}).json()["call_id"]
+    for _ in range(20):
+        if any(k == "sip" for k, _ in log):
+            break
+        time.sleep(0.05)
+    time.sleep(0.1)
+    assert not started  # no LiveKit egress
+    rec = owner.get(f"/api/calls/{call_id}/recording").json()
+    assert rec["status"] == "processing"  # pending until the trunk recording is copied over

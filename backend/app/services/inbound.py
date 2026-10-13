@@ -141,6 +141,12 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
                    campaign_id=row.inbound_campaign_id, call_type="inbound", livekit_room_name=room,
                    to_phone=row.number, from_phone=caller or from_number, status="connected", started_at=now, answered_at=now,
                    credits_reserved=reserved, credit_rate=rate)
+    from app.services import recordings
+
+    if recordings.enabled_for(agent) and settings.recording_via_twilio:
+        from app.services import twilio_recordings
+
+        twilio_recordings.mark_pending(call)
     db.add(call)
     await db.commit()
     variables = lead_variables(lead) if lead else {"phone": caller}

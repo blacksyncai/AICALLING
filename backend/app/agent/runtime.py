@@ -213,22 +213,42 @@ _VOICEMAIL_HINTS = (
 
 # How people record their own greeting. Only trusted when it's the contact's very first, long-ish
 # utterance right after pickup (a live person says "Hello?" first).
-_PERSONAL_GREETING = (
-    "can't get to the phone", "can't come to the phone", "can't answer", "can't talk right now", "can't talk at the moment",
-    "unable to come to the phone", "unable to answer", "i'll call you back", "i will call you back", "call you back as soon",
-    "get back to you as soon", "text me", "send me a text", "shoot me a text", "away from my phone", "not available right now",
-    "you've reached", "you have reached", "sorry i missed your call", "sorry i missed you",
+# Strong: only a recording says these. Weak: a live person busy at the moment says them too ("I can't talk right
+# now, text me"), so it takes two of them.
+_PERSONAL_STRONG = (
+    "can't get to the phone", "can't come to the phone", "unable to come to the phone", "call you back as soon",
+    "get back to you as soon", "away from my phone", "you've reached", "you have reached", "sorry i missed your call",
+    "sorry i missed you",
 )
+_PERSONAL_WEAK = (
+    "can't answer", "can't talk right now", "can't talk at the moment", "unable to answer", "i'll call you back",
+    "i will call you back", "text me", "send me a text", "shoot me a text", "not available right now",
+)
+_PERSONAL_GREETING = _PERSONAL_STRONG + _PERSONAL_WEAK
+
+
+def personal_greeting_match(text: str) -> str | None:
+    """The phrase that marks this as a recorded personal greeting, or None."""
+    t = (text or "").lower().replace("’", "'")
+    if len(t.split()) < 7 or "?" in t:  # live people ask ("can you text me?"); recordings don't
+        return None
+    strong = [h for h in _PERSONAL_STRONG if h in t]
+    if strong:
+        return strong[0]
+    weak = [h for h in _PERSONAL_WEAK if h in t]
+    return "+".join(weak[:2]) if len(weak) >= 2 else None
 
 
 def looks_like_personal_greeting(text: str) -> bool:
-    t = (text or "").lower().replace("’", "'")
-    return len(t.split()) >= 7 and any(h in t for h in _PERSONAL_GREETING)
+    return personal_greeting_match(text) is not None
 
 # Phrases only an answering machine says — strict, because hearing one ends a live call.
 _VOICEMAIL_STRICT = (
-    "leave a message", "leave your message", "after the tone", "after the beep", "at the tone", "voicemail",
-    "voice mail", "record your message", "please record", "mailbox", "automated voice messaging",
+    "leave a message", "leave your message", "after the tone", "after the beep", "at the tone",
+    # Not a bare "voicemail": a live person says "I got your voicemail".
+    "voicemail box", "voice mailbox", "voice mail box", "mailbox is full", "forwarded to voicemail",
+    "forwarded to voice mail", "the voicemail of", "voicemail for", "record your message", "please record",
+    "automated voice messaging",
     "voice messaging system", "not available to take your call", "can't take your call", "cannot take your call",
     "can't come to the phone", "cannot come to the phone", "leave your name", "leave me your name",
     "leave a brief message", "leave me a brief message", "and a brief message", "leave me a message",
@@ -236,9 +256,13 @@ _VOICEMAIL_STRICT = (
 )
 
 
-def is_voicemail_greeting(text: str) -> bool:
+def voicemail_greeting_match(text: str) -> str | None:
     t = (text or "").lower().replace("’", "'")
-    return any(h in t for h in _VOICEMAIL_STRICT)
+    return next((h for h in _VOICEMAIL_STRICT if h in t), None)
+
+
+def is_voicemail_greeting(text: str) -> bool:
+    return voicemail_greeting_match(text) is not None
 
 NO_CONVERSATION_OUTCOMES = ("no_answer", "voicemail")
 
@@ -272,3 +296,33 @@ def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str
     if outcome in NO_CONVERSATION_OUTCOMES and person_answered(transcript):
         return "completed"
     return outcome
+
+
+# ── Hanging up ───────────────────────────────────────────────────────────────
+
+# Outcomes that end the call by nature: hang up whenever the agent decides to.
+_FINAL_OUTCOMES = ("meeting_booked", "not_qualified", "not_interested", "callback", "transferred", "voicemail",
+                   "no_answer", "failed")
+# Things a contact says when the conversation is wrapping up.
+_ENDING_CUES = (
+    "bye", "thank", "thanks", "take care", "have a good", "have a great", "have a nice", "that's all", "that's it",
+    "all set", "nothing else", "that's everything", "gotta go", "got to go", "have to go", "need to go", "busy",
+    "talk soon", "talk later", "later", "not interested", "no interest", "remove", "stop calling", "don't call",
+    "do not call", "wrong number", "no thank", "no thanks", "appreciate it", "sounds good", "perfect", "cheers",
+)
+
+
+def should_hold_hangup(outcome: str, last_contact: str) -> bool:
+    """True when end_call looks premature: an open outcome while the contact is still talking, not wrapping up.
+
+    The models sometimes reply "Gotcha" to an interested contact and hang up; this catches that once.
+    """
+    if outcome in _FINAL_OUTCOMES:
+        return False
+    t = (last_contact or "").lower().replace("’", "'").strip()
+    if not t:
+        return False  # they haven't said anything (silence) — nothing to hold for
+    if "?" in t:
+        return True  # they just asked something
+    words = set(re.findall(r"[a-z']+", t))
+    return not any((c in words) if " " not in c else (c in t) for c in _ENDING_CUES)

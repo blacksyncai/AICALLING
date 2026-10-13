@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     recordings_s3_access_key: str = ""
     recordings_s3_secret_key: str = ""
     recordings_s3_force_path_style: bool = False
+    # Who records calls: "twilio" (trunk recording, copied into the bucket), "livekit" (egress) or "" = auto
+    # (Twilio when its credentials are set — no LiveKit egress limits).
+    recording_provider: str = ""
     # Small hosts (e.g. a 512 MB free instance): no pre-warmed job processes,
     # no turn-detector model (VAD-only end-of-turn), never report as "busy".
     low_resource_mode: bool = False
@@ -178,6 +181,11 @@ class Settings(BaseSettings):
     @property
     def twilio_ready(self) -> bool:
         return bool(self.twilio_account_sid and self.twilio_auth_token)
+
+    @property
+    def recording_via_twilio(self) -> bool:
+        p = (self.recording_provider or "").lower()
+        return p == "twilio" or (p == "" and self.twilio_ready)
 
     @property
     def recordings_ready(self) -> bool:

@@ -95,9 +95,13 @@ class CallLog(Base):
     # Exact credits this call used, in thousandths (AI time + phone line fee), set when it's billed.
     credits_used_milli: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # When call.completed / meeting.booked webhooks went out (sent once per call).
-    # Recording (LiveKit egress): object key in the recordings bucket.
+    # Recording: object key in the recordings bucket (Twilio trunk recording, or LiveKit egress before that).
     recording_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     egress_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Recording via Twilio trunk recording: pending → ready / none (no recording) / missing (gave up).
+    recording_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    recording_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    twilio_call_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     events_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────────────────

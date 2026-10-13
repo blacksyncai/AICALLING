@@ -26,6 +26,7 @@ from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
+    RunContext,
     StopResponse,
     WorkerOptions,
     cli,
@@ -36,6 +37,7 @@ from livekit.plugins import cartesia, deepgram, openai, silero
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
 from app.agent.models import NEEDS_USER_TURN
+from app.agent.runtime import should_hold_hangup
 
 CALL_CONNECTED_CUE = "[The call just connected.]"
 from app.agent.voices import DEFAULT_VOICE_ID
@@ -643,6 +645,14 @@ _END_OUTCOMES = (
 )
 
 
+def _last_contact_turn(transcript: list[dict]) -> str:
+    """What the contact said most recently (empty if they haven't spoken)."""
+    for t in reversed(transcript or []):
+        if t.get("role") == "user" and (t.get("text") or "").strip():
+            return t["text"].strip()
+    return ""
+
+
 class _CallRun:
     """Per-call mutable state for a configurable agent."""
 
@@ -738,13 +748,22 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             "ts": round(_t.monotonic() - run.t0, 2) if run.t0 else 0.0,
         })
 
-    def _hangup(delay: float) -> None:
+    def _hangup(context: RunContext | None) -> None:
         async def _go() -> None:
-            await asyncio.sleep(delay)
+            # Hang up once the goodbye has actually finished playing (a fixed delay cut long goodbyes
+            # off and left short ones hanging), plus a beat so it doesn't feel abrupt.
+            try:
+                if context is not None:
+                    await asyncio.wait_for(context.wait_for_playout(), timeout=20)
+            except Exception:
+                pass
+            await asyncio.sleep(1.2)
             await _delete_room(ctx.room.name)
         asyncio.create_task(_go())
 
-    async def end_call(outcome: str) -> str:
+    guard = {"refused": False}
+
+    async def end_call(outcome: str, context: RunContext) -> str:
         """Hang up the call. Call this only AFTER you've said goodbye.
 
         Args:
@@ -754,10 +773,19 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
         if outcome == "meeting_booked" and not run.meeting_time:
             return "Not ended: no meeting is booked yet. Finish booking first, or pick another outcome."
+        last = _last_contact_turn(run.transcript)
+        if not guard["refused"] and should_hold_hangup(outcome, last):
+            # Hanging up on an engaged contact ("gotcha" → click) loses the call. Push back once.
+            guard["refused"] = True
+            log.info("end_call_held", room=ctx.room.name, outcome=outcome, contact_words=len(last.split()))
+            return ("Not ended: the contact is still engaged and hasn't said goodbye. Don't hang up — respond to "
+                    "what they just said and keep the conversation going. Only end after a clear goodbye.")
         run.outcome = outcome
         _record("end_call", {"outcome": outcome})
+        log.info("end_call", room=ctx.room.name, outcome=outcome, contact_words=len(last.split()),
+                 turns=sum(1 for t in run.transcript if t.get("role") in ("user", "assistant")))
         asyncio.create_task(_post_run_outcome(run, outcome))
-        _hangup(4.0)
+        _hangup(context)
         return "Call is ending. Do not say anything else."
 
     tools = [function_tool(end_call)]
@@ -984,7 +1012,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     channel = "web" if call_type == "web" else "phone"
 
     # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
-    from app.agent.runtime import is_voicemail_greeting, looks_like_personal_greeting
+    from app.agent.runtime import personal_greeting_match, voicemail_greeting_match
 
     vm = {"detected": False, "heard": "", "speaking": False, "changed": _time.monotonic()}
     vm_action = (cfg.get("voicemail_action") or "hang_up")
@@ -1037,10 +1065,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         elapsed = _time.monotonic() - run.t0 if run.t0 else 0
         if first:
             vm["live_hello"] = len(text.split()) <= 3 and "?" in text
-        personal = (run.t0 and elapsed < 20 and not vm.get("live_hello")
-                    and looks_like_personal_greeting(vm["heard"]))
-        if is_voicemail_greeting(vm["heard"]) or personal:
+        match = voicemail_greeting_match(vm["heard"])
+        if not match and run.t0 and elapsed < 20 and not vm.get("live_hello"):
+            match = personal_greeting_match(vm["heard"])
+        if match:
             vm["detected"] = True
+            # The matched phrase (not what was said) — enough to spot a false positive in the logs.
+            log.info("voicemail_match", room=ctx.room.name, phrase=match, after_s=round(elapsed, 1),
+                     words=len(vm["heard"].split()))
             asyncio.create_task(_handle_voicemail())
 
     def _on_user_state(ev) -> None:
@@ -1084,6 +1116,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             if role not in ("user", "assistant") or not text or text == CALL_CONNECTED_CUE:
                 return
             run.transcript.append({"role": role, "text": text, "ts": round(_time.monotonic() - run.t0, 2)})
+            # Per-turn trace for diagnosing dropped calls: the agent's words, only a word count for the contact.
+            log.info("turn", room=ctx.room.name, role=role, words=len(text.split()),
+                     t=round(_time.monotonic() - run.t0, 1), **({"text": text[:80]} if role == "assistant" else {}))
             asyncio.create_task(_push_live_event(run.call_log_id, {
                 "type": "transcript_turn", "session_id": ctx.room.name,
                 "role": "agent" if role == "assistant" else "caller", "text": text, "ts": str(_time.time()),
