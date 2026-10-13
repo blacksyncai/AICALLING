@@ -202,3 +202,30 @@ async def join_invite(token: str, user: Annotated[User, Depends(get_current_user
     await db.commit()
     log.info("invite_joined", user_id=str(user.id), org_id=str(invite.org_id))
     return await session_payload(db, user)
+
+
+# ── Clerk's emails, sent from our own address ───────────────────────────────────
+
+
+@router.post("/clerk/email-webhook", include_in_schema=False)
+async def clerk_email_webhook(request: Request):
+    """Clerk `email.created` webhook: send the email from EMAIL_FROM (see services/clerk_emails.py)."""
+    from app.services import clerk_emails
+    from app.services.email import send_email
+
+    body = await request.body()
+    try:
+        clerk_emails.verify({k.lower(): v for k, v in request.headers.items()}, body)
+    except clerk_emails.BadSignature as exc:
+        log.warning("clerk_email_webhook_rejected", reason=str(exc))
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    import json
+
+    msg = clerk_emails.to_send(json.loads(body or b"{}"))
+    if msg is None:
+        return {"sent": False}
+    ok = await send_email(*msg)
+    log.info("clerk_email_relayed", sent=ok, slug=(json.loads(body).get("data") or {}).get("slug"))
+    if not ok:
+        raise HTTPException(status_code=502, detail="Email provider error")  # Clerk/Svix retries
+    return {"sent": True}
