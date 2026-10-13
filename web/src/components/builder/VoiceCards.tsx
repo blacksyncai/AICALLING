@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Library, Loader2, Pause, Play } from "lucide-react";
+import { Check, ChevronRight, Library, Loader2, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { VoicePicker } from "@/components/agent/VoicePicker";
@@ -98,6 +98,11 @@ export function VoiceCards({
   onChange: (id: string) => void;
 }) {
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // Voices in the library, counting a speaker with several tones or versions once (as the picker shows them).
+  const libraryCount = useMemo(
+    () => new Set([...(voices?.featured ?? []), ...(voices?.voices ?? [])].map((v) => (v.family ? `f:${v.family}` : v.id))).size,
+    [voices],
+  );
   const { data: rates } = useSWR<{ premium_voice_surcharge: number }>("/api/billing/rates", fetcher, { revalidateOnFocus: false });
   const { playing, loading, error, toggle, stop } = usePreview(language);
   const picks = useMemo(() => suggestedVoices(voices, language, value), [voices, language, value]);
@@ -182,20 +187,26 @@ export function VoiceCards({
         })}
       </div>
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-zinc-500">{picks.length ? `Suggested for ${languageName(language)} calls. You can change it any time.` : "No voices for this language yet."}</p>
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          onClick={() => {
-            stop();
-            setLibraryOpen(true);
-          }}
-        >
-          <Library className="h-3.5 w-3.5" /> Explore all voices
-        </Button>
-      </div>
+      <p className="mt-3 text-xs text-zinc-500">{picks.length ? `Suggested for ${languageName(language)} calls. You can change it any time.` : "No voices for this language yet."}</p>
+      <button
+        type="button"
+        onClick={() => {
+          stop();
+          setLibraryOpen(true);
+        }}
+        className="group mt-3 flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/60 px-4 py-3.5 text-left transition hover:border-brand-500 hover:bg-brand-50"
+      >
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-md shadow-brand-600/25">
+          <Library className="h-5 w-5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-zinc-900">Explore the full voice library</span>
+          <span className="block text-xs text-zinc-600">
+            {libraryCount > 4 ? `${libraryCount} voices` : "More voices"} — accents, tones and premium cloned voices
+          </span>
+        </span>
+        <ChevronRight className="h-5 w-5 shrink-0 text-brand-600 transition group-hover:translate-x-0.5" />
+      </button>
 
       <Modal open={libraryOpen} onClose={() => setLibraryOpen(false)} title="Voice library" wide>
         <VoicePicker
