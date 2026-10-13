@@ -25,7 +25,7 @@ export function ModelName({ name, className }: { name: string; className?: strin
   if (!name.startsWith(SUPER)) return <span className={cn("font-medium text-zinc-900", className)}>{name}</span>;
   return (
     <span className={cn("font-medium text-zinc-900", className)}>
-      <span className="font-semibold text-violet-600">{SUPER}</span>
+      <span className="bs-super font-semibold">{SUPER}</span>
       {name.slice(SUPER.length)}
     </span>
   );
@@ -40,6 +40,26 @@ function PremiumCrown({ rate }: { rate?: number }) {
     </span>
   );
 }
+
+/** "1.2 cr/min" — what the model costs per minute of talk time. */
+function CostPill({ rate, compact }: { rate?: number; compact?: boolean }) {
+  if (rate === undefined) return null;
+  const premium = rate > 1;
+  return (
+    <span
+      title={`${rate} credits per minute of talk time`}
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ring-1",
+        premium ? "bg-amber-400/10 text-amber-600 ring-amber-400/40" : "bg-emerald-400/10 text-emerald-600 ring-emerald-400/30",
+        compact && "px-1.5 text-[10px]",
+      )}
+    >
+      {rate} cr/min
+    </span>
+  );
+}
+
+const isBlackSync = (m: ModelOption) => m.provider === "BlackSync";
 
 function customModel(id: string): ModelOption {
   return { id, name: id, provider: "Custom", description: "Saved on this agent; not in the model catalog.", speed: null, tags: [], recommended_for: [], status: "unknown", group: "other" };
@@ -137,11 +157,12 @@ export function ModelPicker({
         )}
       >
         <span className="min-w-0 flex-1 truncate">
-          <span className="inline-flex items-center gap-1 align-middle">
+          <span className="inline-flex items-center gap-1.5 align-middle">
             <ModelName name={selected?.name ?? value} />
             <PremiumCrown rate={rateOf(value)} />
+            <CostPill rate={rateOf(value)} compact />
           </span>
-          {selected && (
+          {selected && rateOf(value) === undefined && (
             <span className="text-zinc-500">
               {" · "}
               {[selected.provider, selected.speed === "fast" ? "Fast" : null].filter(Boolean).join(" · ")}
@@ -156,7 +177,7 @@ export function ModelPicker({
           role="dialog"
           aria-label="Choose a model"
           data-solid
-          className="absolute inset-x-0 top-full z-50 mt-2 flex max-h-[min(26rem,70vh)] min-w-[min(20rem,calc(100vw-2rem))] flex-col rounded-xl border border-zinc-200 bg-white shadow-xl"
+          className="absolute right-0 top-full z-50 mt-2 flex max-h-[min(30rem,72vh)] w-[max(100%,min(26rem,calc(100vw-2rem)))] flex-col rounded-xl border border-zinc-200 bg-white shadow-xl"
         >
           <div className="border-b border-zinc-100 p-2">
             <div className="relative">
@@ -200,14 +221,24 @@ export function ModelPicker({
                           aria-selected={isSel}
                           onClick={() => choose(m.id)}
                           onMouseMove={() => active !== i && setActive(i)}
-                          className={cn("flex cursor-pointer items-start gap-2 px-3 py-2", i === active && "bg-zinc-50", isSel && "bg-brand-50")}
+                          className={cn(
+                            "mx-1.5 flex cursor-pointer items-start gap-2 rounded-lg px-3 py-2.5 transition-colors",
+                            isBlackSync(m) && "bs-model-row",
+                            i === active && "bg-zinc-50",
+                            isSel && "bg-brand-50 ring-1 ring-brand-500/40",
+                          )}
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-1.5 text-sm">
-                              <ModelName name={m.name} />
-                              <PremiumCrown rate={rateOf(m.id)} />
-                              <span className="text-xs text-zinc-400">{m.provider}</span>
-                              {m.speed && <span className="text-xs text-zinc-500">· {m.speed === "fast" ? "Fast" : "Standard speed"}</span>}
+                            <div className="flex items-start gap-2">
+                              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-sm">
+                                <ModelName name={m.name} />
+                                <PremiumCrown rate={rateOf(m.id)} />
+                              </div>
+                              <CostPill rate={rateOf(m.id)} />
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                              <span className={cn("font-medium", isBlackSync(m) ? "text-violet-500" : "text-zinc-400")}>{m.provider}</span>
+                              {m.speed && <span className="text-zinc-500">· {m.speed === "fast" ? "Fast" : "Standard speed"}</span>}
                               {m.tags.includes("recommended") && (
                                 <span className="rounded bg-brand-50 px-1.5 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-100">Recommended</span>
                               )}
@@ -220,7 +251,11 @@ export function ModelPicker({
                                 </span>
                               )}
                             </div>
-                            {m.description && <div className="text-xs text-zinc-500">{m.description}</div>}
+                            {m.description && (
+                              <div className={cn("mt-1 text-xs leading-relaxed", isBlackSync(m) ? "bs-desc font-semibold text-zinc-700" : "text-zinc-500")}>
+                                {m.description}
+                              </div>
+                            )}
                           </div>
                           <Check className={cn("mt-0.5 h-4 w-4 shrink-0 text-brand-600", !isSel && "invisible")} aria-hidden />
                         </div>
