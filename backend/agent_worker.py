@@ -911,7 +911,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     import time as _time
     from app.agent.models import llm_endpoint
     from app.agent.runtime import build_instructions, render_vars
-    from app.agent.voice_tuning import pronounce, voice_tuning
+    from app.agent.voice_tuning import BUILT_IN_PRONUNCIATIONS, pronounce, voice_tuning
 
     cfg = metadata.get("agent") or {}
     # Fetch over the private API when the config was too big to inline, or when booking needs
@@ -988,8 +988,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session_kwargs["turn_detection"] = turn_detector
     if _lk_replace is not None:
         session_kwargs["tts_text_transforms"] = ["filter_markdown", "filter_emoji"]
-        if tuning["pronunciations"]:
-            session_kwargs["tts_text_transforms"].append(pronounce(tuning["pronunciations"]))
+        session_kwargs["tts_text_transforms"].append(pronounce(tuning["pronunciations"] + BUILT_IN_PRONUNCIATIONS))
 
     session = AgentSession(**session_kwargs)
     session_ref: dict = {"session": session}

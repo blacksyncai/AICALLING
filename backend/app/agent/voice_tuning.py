@@ -41,6 +41,15 @@ def voice_tuning(raw: dict | None) -> dict:
     }
 
 
+# Always applied after the account's own: how every agent says our name (never read "blacksync.ai" out as a link,
+# or say the name twice when the model writes "BlackSync AI (blacksync.ai)").
+BUILT_IN_PRONUNCIATIONS: list[tuple[str, str]] = [
+    ("BlackSync AI (blacksync.ai)", "BlackSync dot A I"),
+    ("BlackSync AI (blacksync dot ai)", "BlackSync dot A I"),
+    ("blacksync.ai", "BlackSync dot A I"),
+]
+
+
 def apply_pronunciations(text: str, pairs: list[tuple[str, str]]) -> str:
     for word, say in pairs:
         text = re.sub(rf"(?<!\w){re.escape(word)}(?!\w)", lambda _m, s=say: s, text, flags=re.IGNORECASE)

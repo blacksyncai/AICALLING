@@ -51,3 +51,19 @@ def test_blacksync_super_intelligence_models(monkeypatch):
     assert names["gpt-oss-120b"].startswith("BlackSync Super Intelligence")
     monkeypatch.setattr(settings, "cerebras_api_key", "")
     assert "gpt-oss-120b" not in {m["id"] for m in models.model_catalog()}
+
+
+def test_our_name_is_spoken_once_not_read_as_a_link():
+    from app.agent.voice_tuning import BUILT_IN_PRONUNCIATIONS, apply_pronunciations
+
+    say = lambda t: apply_pronunciations(t, BUILT_IN_PRONUNCIATIONS)  # noqa: E731
+    assert say("I'm an AI assistant built with BlackSync AI (blacksync.ai).") == \
+        "I'm an AI assistant built with BlackSync dot A I."
+    assert say("Check out blacksync.ai today") == "Check out BlackSync dot A I today"
+
+
+def test_guardrail_answer_is_short_and_spoken():
+    from app.agent.runtime import guardrails
+
+    g = guardrails({"business_name": "Compass"})
+    assert "BlackSync dot A I" in g and "(blacksync" not in g and "spell that" in g
