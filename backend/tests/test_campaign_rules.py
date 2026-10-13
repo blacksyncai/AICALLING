@@ -228,6 +228,7 @@ def test_stuck_calling_contacts_get_their_retry(client, agent_id):
 
     from app.database import AsyncSessionLocal
     from app.models.campaign import Campaign
+    from app.models.call_log import CallLog
     from app.models.lead import Lead
     from app.routers.campaigns import _next_lead
 
@@ -243,10 +244,18 @@ def test_stuck_calling_contacts_get_their_retry(client, agent_id):
             stuck = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="stuck", phone="+14155550112",
                          status="calling", attempts=1, last_called_at=now - timedelta(hours=1),
                          next_attempt_at=now - timedelta(minutes=30), created_at=now - timedelta(hours=1))
-            db.add_all([live, stuck])
+            talked = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="talked", phone="+14155550113",
+                          status="calling", attempts=1, last_called_at=now - timedelta(hours=1),
+                          created_at=now - timedelta(hours=3))
+            db.add_all([live, stuck, talked])
+            db.add(CallLog(id=uuid.uuid4(), org_id=org_id, lead_id=talked.id, campaign_id=cid, call_type="outbound",
+                           to_phone=talked.phone, livekit_room_name="call-talked", status="completed", started_at=now - timedelta(hours=1), ended_at=now - timedelta(minutes=55),
+                           answered_at=now - timedelta(hours=1)))
             await db.commit()
             campaign = await db.get(Campaign, cid)
             lead, waiting, _ = await _next_lead(db, campaign, now)
+            # The one who picked up is never redialed; the one who didn't gets their retry.
+            assert talked.status == "completed"
             assert lead.id == stuck.id and lead.status == "no_answer" and waiting == 1  # live call still in progress
 
     asyncio.run(run())

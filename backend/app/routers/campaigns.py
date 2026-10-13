@@ -773,7 +773,15 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
                     earliest = due if earliest is None else min(earliest, due)
                 continue
             # Stuck "calling" for 20+ minutes: its call never reported back (e.g. a restart cut it off).
-            # Treat it as unanswered so it gets its remaining tries instead of being skipped forever.
+            # Only someone who never picked up gets another try — if they answered, they had a
+            # conversation and are never called back.
+            from app.models.call_log import CallLog
+
+            answered = (await db.execute(select(func.count()).select_from(CallLog).where(
+                CallLog.lead_id == lead.id, CallLog.answered_at.is_not(None)))).scalar_one()
+            if answered:
+                lead.status = "completed"
+                continue
             lead.status = "no_answer"
         state = dial_eligibility(lead, campaign, now)
         if state == "now":
