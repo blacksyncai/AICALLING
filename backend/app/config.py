@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     # Cerebras (OpenAI-compatible): the "BlackSync Super Intelligence" models; hidden when unset.
     cerebras_api_key: str = ""
+    # Mistral (OpenAI-compatible API) — the "BlackSync Flash" models.
+    mistral_api_key: str = ""
     # Nango (OAuth for CRMs like Salesforce, HubSpot, Close); integrations configured in Nango show up in the app.
     nango_secret_key: str = ""
     # One-off repair jobs at startup (off in tests).

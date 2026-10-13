@@ -45,6 +45,33 @@ LLM_MODELS: list[dict] = [
         "recommended_for": ["general"],
     },
     {
+        "id": "ministral-8b-latest",
+        "name": "BlackSync Flash",
+        "provider": "BlackSync",
+        "description": "Quick, natural replies and reliable call tools (booking, transfers, hang-up) at low cost.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": ["general"],
+    },
+    {
+        "id": "ministral-3b-latest",
+        "name": "BlackSync Flash Lite",
+        "provider": "BlackSync",
+        "description": "The fastest Flash — shortest pauses, best for simple, high-volume scripts.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": [],
+    },
+    {
+        "id": "ministral-14b-latest",
+        "name": "BlackSync Flash 2.1",
+        "provider": "BlackSync",
+        "description": "The smartest Flash — follows longer scripts and objections better, still fast.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": ["general", "booking"],
+    },
+    {
         "id": "gpt-4.1-mini",
         "name": "GPT-4.1 mini",
         "description": "Fast and low-cost, good at following call scripts.",
@@ -109,6 +136,10 @@ ANTHROPIC_OPENAI_BASE_URL = "https://api.anthropic.com/v1"
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 # Served on Cerebras wafer-scale hardware, branded as BlackSync's own models.
 CEREBRAS_MODELS = {"gpt-oss-120b", "qwen-3.8-27b"}
+MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
+# Mistral's Ministral models, branded "BlackSync Flash". (Mistral Small/Medium aren't enabled on
+# the current key's plan — add them here once they are.)
+MISTRAL_MODELS = {"ministral-8b-latest", "ministral-3b-latest", "ministral-14b-latest"}
 
 
 def is_anthropic_model(model_id: str | None) -> bool:
@@ -126,6 +157,8 @@ def llm_endpoint(model_id: str | None) -> tuple[str, str, bool]:
         return settings.anthropic_api_key, ANTHROPIC_OPENAI_BASE_URL, False
     if model_id in CEREBRAS_MODELS:
         return settings.cerebras_api_key, CEREBRAS_BASE_URL, True
+    if model_id in MISTRAL_MODELS:
+        return settings.mistral_api_key, MISTRAL_BASE_URL, True
     return settings.openai_api_key, settings.openai_base_url, True
 
 GROUPS: list[tuple[str, str]] = [
@@ -181,6 +214,7 @@ def model_catalog() -> list[dict]:
         for m in LLM_MODELS
         if (not is_anthropic_model(m["id"]) or settings.anthropic_api_key)
         and (m["id"] not in CEREBRAS_MODELS or settings.cerebras_api_key)
+        and (m["id"] not in MISTRAL_MODELS or settings.mistral_api_key)
     ]
     known = {m["id"] for m in models}
     for extra in dict.fromkeys([settings.llm_model]):

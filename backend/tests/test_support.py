@@ -285,3 +285,15 @@ def test_staff_can_send_as_a_team_name(client, make_client, fake_ai):
     assert client.put("/api/admin/support/personas", json={"personas": ["Giovanna P", "Macco", "Dannish", "Joshi", "Sam"]}).json()["personas"][-1] == "Sam"
     client.put("/api/admin/support/personas", json={"personas": ["Giovanna P", "Macco", "Dannish", "Joshi"]})
     assert c.put("/api/admin/support/personas", json={"personas": ["Me"]}).status_code in (401, 403)
+
+
+def test_blacksync_flash_models_route_to_mistral(monkeypatch):
+    from app.agent import models
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "mistral_api_key", "")
+    assert not any(m["id"] == "ministral-8b-latest" for m in models.model_catalog())  # hidden without a key
+    monkeypatch.setattr(settings, "mistral_api_key", "test-key")
+    names = {m["id"]: m["name"] for m in models.model_catalog()}
+    assert names["ministral-8b-latest"] == "BlackSync Flash" and names["ministral-14b-latest"] == "BlackSync Flash 2.1"
+    assert models.llm_endpoint("ministral-3b-latest") == ("test-key", "https://api.mistral.ai/v1", True)
