@@ -36,16 +36,12 @@ FEATURED_VOICES: list[dict] = [
      "description": "The original Paul — thoughtful, steady and confident. Built for sales calls."},
     {"id": "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc", "name": "Ava"},
     {"id": "710feaa3-b550-42f3-b3eb-6f37f2a7cc0a", "name": "Jake"},
-    # House clones. Hamza, Lina and Marissa M come in two versions (Cartesia = Version 1, Mistral = Version 2),
+    # House clones. Hamza and Marissa M come in two versions (Cartesia = Version 1, Mistral = Version 2),
     # shown as one row each with version chips; Version 1 is listed first.
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza · Version 1", "family": "Hamza", "tone": "Version 1",
      "gender": "masculine", "description": "Live voice clone.", "clone": True},
     {"id": "mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
      "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
-    {"id": "b77472c7-ed40-40ae-b022-2a264719d520", "name": "Lina · Version 1", "family": "Lina", "tone": "Version 1",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True},
-    {"id": "mistral:01a1345c-459a-7583-84dc-8fcc2f74d142", "name": "Lina · Version 2", "family": "Lina", "tone": "Version 2",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
      "gender": "feminine", "description": "Live voice clone.", "clone": True},
     {"id": "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
@@ -62,6 +58,12 @@ FEATURED_VOICES: list[dict] = [
     {"id": "mistral:390c8a2b-60a6-4882-8437-c49a8bd33b63", "name": "Oliver · Curious", "family": "Oliver", "tone": "Curious", "gender": "masculine", "accent": "British",
      "description": "Slight British accent. Thoughtful and engaged.", "provider": "mistral", "language": "en"},
 ]
+
+# Voices in the Cartesia account that the picker should NOT list (owned voices are listed automatically).
+HIDDEN_VOICE_IDS = {
+    "b77472c7-ed40-40ae-b022-2a264719d520",  # "Giovanna" (was briefly listed as Lina)
+    "e26d5a55-fe5a-4f79-a8e9-ef5580e134cc",  # "lina"
+}
 
 # New agents start with Lauren (independent of the picker order above).
 DEFAULT_VOICE_ID = "6c756032-11c3-4be8-a120-74f9673fb700"

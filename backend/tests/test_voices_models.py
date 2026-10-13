@@ -251,3 +251,13 @@ def test_mistral_reply_grouping():
         ("How are you? I wanted to ask. ", "Quick")
     assert take_chunk("no end yet", final=False, first=False) == ("", "no end yet")
     assert take_chunk("tail", final=True, first=False) == ("tail", "")
+
+
+def test_hidden_owned_voice_not_listed():
+    from app.agent.voices import HIDDEN_VOICE_IDS
+    from app.routers.settings import build_catalog
+
+    hidden = next(iter(HIDDEN_VOICE_IDS))
+    voices = build_catalog([], [{"id": hidden, "name": "Giovanna"}, {"id": "own-1", "name": "Mine"}], can_preview=True)
+    ids = {v["id"] for v in voices}
+    assert hidden not in ids and "own-1" in ids

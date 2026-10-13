@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.models import LANGUAGES, RUNTIME_DEFAULT_MODEL, model_catalog, model_groups
 from app.agent.mistral_tts import MISTRAL_TTS_MODEL, is_mistral_voice, synthesize_wav
-from app.agent.voices import FEATURED_VOICES, VOICE_MODELS
+from app.agent.voices import FEATURED_VOICES, HIDDEN_VOICE_IDS, VOICE_MODELS
 from app.config import settings
 from app.services.auth import get_current_user
 
@@ -153,6 +153,8 @@ def build_catalog(public: list[dict], owned: list[dict], *, can_preview: bool) -
     Only listed voices are included — not Cartesia's whole public library. Catalog metadata
     wins over the featured list's; featured descriptions fill gaps.
     """
+    owned = [v for v in owned if v.get("id") not in HIDDEN_VOICE_IDS]
+    public = [v for v in public if v.get("id") not in HIDDEN_VOICE_IDS]
     owned_ids = {v.get("id") for v in owned if v.get("id")}
     premium = _premium_ids(owned_ids)
     premium_set = set(premium)
