@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { openCommandPalette } from "./CommandPalette";
 import { Logo, LogoMark } from "./Logo";
 
-type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; badge?: string;
+type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; badge?: string; badgeTone?: "red";
   /** A plan feature: shown to everyone, with a lock when the account's plan doesn't include it. */
   feature?: "radar" };
 
@@ -51,15 +51,15 @@ const NAV: { title: string | null; items: NavItem[] }[] = [
     title: "Account",
     items: [
       { href: "/billing", label: "Billing & Usage", icon: CreditCard },
-      { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true },
+      { href: "/integrations", label: "Integrations", icon: Plug, managersOnly: true, badge: "New", badgeTone: "red" },
     ],
   },
 ];
 
 function NavLink({
-  href, label, icon: Icon, badge, locked, collapsed, onClick, onHover,
+  href, label, icon: Icon, badge, badgeTone, locked, collapsed, onClick, onHover,
 }: {
-  href: string; label: string; icon: typeof Bot; badge?: string; locked?: boolean; collapsed: boolean; onClick: () => void;
+  href: string; label: string; icon: typeof Bot; badge?: string; badgeTone?: "red"; locked?: boolean; collapsed: boolean; onClick: () => void;
   onHover: (el: HTMLElement | null, label: string) => void;
 }) {
   const pathname = usePathname();
@@ -81,7 +81,7 @@ function NavLink({
     >
       <span className="relative flex shrink-0">
         <Icon className={cn("h-[18px] w-[18px] transition-colors", active ? "text-brand-400 drop-shadow-[0_0_6px_rgba(249,115,22,0.6)]" : "text-zinc-500 group-hover:text-zinc-300")} />
-        {badge && collapsed && <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-brand-500 shadow-[0_0_6px_rgba(249,115,22,0.9)]" />}
+        {badge && collapsed && <span className={cn("absolute -right-1 -top-1 h-2 w-2 rounded-full", badgeTone === "red" ? "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]" : "bg-brand-500 shadow-[0_0_6px_rgba(249,115,22,0.9)]")} />}
       </span>
       <span className={cn("flex-1 truncate whitespace-nowrap transition-opacity duration-200", collapsed ? "sr-only" : "opacity-100", active && "font-semibold")}>{label}</span>
       {locked && !collapsed ? (
@@ -89,7 +89,7 @@ function NavLink({
           <Lock className="h-2.5 w-2.5" /> Pro
         </span>
       ) : badge && !collapsed && (
-        <span className="rounded-full bg-brand-500 px-1.5 py-px text-[10px] font-semibold text-white shadow-[0_0_10px_rgba(249,115,22,0.55)]">{badge}</span>
+        <span className={cn("rounded-full px-1.5 py-px text-[10px] font-semibold text-white", badgeTone === "red" ? "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.55)]" : "bg-brand-500 shadow-[0_0_10px_rgba(249,115,22,0.55)]")}>{badge}</span>
       )}
     </Link>
   );
@@ -362,7 +362,7 @@ export function Sidebar() {
                 ))}
               <div className="space-y-0.5">
                 {items.map((n) => (
-                  <NavLink key={n.href} href={n.href} label={n.label} icon={n.icon} badge={n.badge}
+                  <NavLink key={n.href} href={n.href} label={n.label} icon={n.icon} badge={n.badge} badgeTone={n.badgeTone}
                     locked={!!n.feature && !!ent && !ent.limits[n.feature]} collapsed={collapsed} onClick={close} onHover={onHover} />
                 ))}
               </div>

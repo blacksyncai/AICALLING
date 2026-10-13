@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronRight, ExternalLink, Zap } from "lucide-react";
+import { CheckCircle2, ChevronRight, ExternalLink, Plus, Puzzle, Zap } from "lucide-react";
 import type React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -120,6 +120,27 @@ export function Logo({ p }: { p: Provider }) {
   );
 }
 
+// Native connectors on the roadmap (shown as "coming soon" next to the ones the API lists as not ready yet).
+const UPCOMING = [
+  { key: "monday", name: "Monday.com", domain: "monday.com" },
+  { key: "boldtrail", name: "BoldTrail / kvCORE", domain: "boldtrail.com" },
+  { key: "lofty", name: "Lofty", domain: "lofty.com" },
+  { key: "calendly", name: "Calendly", domain: "calendly.com" },
+];
+
+function SmallLogo({ name, domain }: { name: string; domain?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (domain && !failed) {
+    return (
+      <span className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-zinc-200">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`} alt="" className="h-3.5 w-3.5" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
+  return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-200 text-[9px] font-bold text-zinc-600">{name[0]}</span>;
+}
+
 /** Rounded grouped list with dividers inset past the logo (iOS settings style). */
 function Group({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
@@ -152,12 +173,38 @@ export function CrmIntegrations() {
   const available = data.providers.filter((p) => !byKey[p.key]);
   const pushing = connected.filter((p) => byKey[p.key]?.settings?.log_calls);
 
+  const live = available.filter((p) => p.native || p.oauth);
+  const soon = available.filter((p) => !(p.native || p.oauth));
+
   return (
-    <Card>
-      <CardHeader
-        title="CRM & apps"
-        description="Every AI call is logged in your CRM with the summary, outcome and recording link. Import contacts to call, and have an agent call new leads within a minute."
-      />
+    <Card className="overflow-hidden">
+      {/* Header: a "plugin store" feel — live count, what a connector does. */}
+      <div className="relative overflow-hidden border-b border-zinc-100 bg-gradient-to-br from-zinc-950 via-zinc-900 to-[#2a1408] px-5 py-6 text-white sm:px-7">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-brand-500/25 blur-3xl" />
+        <div className="relative flex flex-wrap items-end justify-between gap-4">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-brand-300">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+              </span>
+              Live connectors
+            </div>
+            <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight">Plug BlackSync into the tools you already use</h2>
+            <p className="mt-1.5 text-sm text-zinc-300">
+              Every AI call lands in your CRM with the summary, outcome and recording. Import contacts to call, and have an agent
+              ring new leads within a minute.
+            </p>
+          </div>
+          <div className="flex gap-2 text-xs">
+            <span className="rounded-full bg-white/10 px-3 py-1 font-medium ring-1 ring-white/15">{live.length + connected.length} live</span>
+            {connected.length > 0 && (
+              <span className="rounded-full bg-emerald-400/15 px-3 py-1 font-medium text-emerald-300 ring-1 ring-emerald-400/30">{connected.length} connected</span>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="space-y-6 p-3 sm:p-5">
         {pushing.length > 0 && (
           <MatteAlertFeedback
@@ -177,34 +224,72 @@ export function CrmIntegrations() {
             ))}
           </Group>
         )}
-        <Group title={connected.length ? "Available" : undefined}>
-          {available.map((p) => {
-            const ready = p.native || p.oauth;
-            return (
-              <li key={p.key} className="relative">
+
+        {live.length > 0 && (
+          <div>
+            <div className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">{connected.length ? "Add another" : "Connect in a click"}</div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {live.map((p) => (
                 <button
+                  key={p.key}
                   type="button"
-                  disabled={!ready}
                   onClick={() => setConnecting(p)}
-                  className="group flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-zinc-50 disabled:cursor-default disabled:hover:bg-transparent"
+                  className="group relative flex flex-col rounded-2xl bg-white p-4 text-left ring-1 ring-zinc-200/80 transition-all hover:-translate-y-0.5 hover:shadow-[0_10px_30px_-12px_rgba(33,27,24,0.25)] hover:ring-brand-300"
                 >
-                  <Logo p={p} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[15px] font-medium text-zinc-900">{p.name}</span>
-                    <span className="block truncate text-xs text-zinc-500">{p.description}</span>
-                  </span>
-                  {ready ? (
-                    <span className="flex shrink-0 items-center gap-1.5 text-sm text-zinc-500 transition-colors group-hover:text-brand-600">
-                      Connect <ExternalLink className="h-4 w-4" />
+                  <div className="flex items-start justify-between gap-3">
+                    <Logo p={p} />
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live
                     </span>
-                  ) : (
-                    <span className="shrink-0 text-sm text-zinc-400">Coming soon</span>
-                  )}
+                  </div>
+                  <span className="mt-3 block text-[15px] font-semibold text-zinc-900">{p.name}</span>
+                  <span className="mt-1 line-clamp-2 block flex-1 text-xs leading-relaxed text-zinc-500">{p.description}</span>
+                  <span className="mt-4 inline-flex items-center gap-1.5 self-start rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors group-hover:bg-brand-600">
+                    <Plus className="h-3.5 w-3.5" /> Connect
+                  </span>
                 </button>
-              </li>
-            );
-          })}
-        </Group>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Don't see yours: API + webhooks, and our team can wire it up. */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-brand-50 via-orange-50 to-amber-50 p-5 ring-1 ring-brand-200/70">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3.5">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-brand-600 shadow-sm ring-1 ring-brand-200">
+                <Puzzle className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold text-zinc-900">Don&apos;t see your CRM? Don&apos;t worry.</div>
+                <p className="mt-0.5 max-w-xl text-sm text-zinc-600">
+                  BlackSync has a native API and webhooks that connect to almost anything — and our team can set it up for you.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/agents/expert"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-600"
+            >
+              Have our team set it up <ChevronRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </div>
+
+        {(soon.length > 0 || UPCOMING.length > 0) && (
+          <div>
+            <div className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Coming soon</div>
+            <div className="flex flex-wrap gap-2">
+              {[...soon.map((p) => ({ key: p.key, name: p.name, p })), ...UPCOMING.map((u) => ({ ...u, p: null }))].map((x) => (
+                <span key={x.key} className="inline-flex items-center gap-2 rounded-full bg-white py-1 pl-1 pr-3 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200/80">
+                  {x.p ? <SmallLogo name={x.name} domain={DOMAIN[x.key]} /> : <SmallLogo name={x.name} domain={(x as { domain?: string }).domain} />}
+                  {x.name}
+                  <span className="rounded-full bg-zinc-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Soon</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       {connecting && (
         <ConnectModal
