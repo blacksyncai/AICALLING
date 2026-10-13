@@ -12,6 +12,8 @@ Paths are relative to the provider's API root so the same code runs natively
 
 from __future__ import annotations
 
+import re
+
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import Any
@@ -201,6 +203,17 @@ class Provider:
     install_style = "pipeline"  # "pipeline" (stages on a board) or "tags" (tag a person to queue them)
 
     can_activity = False
+
+    # Script variables: the CRM fields we can fill {{variables}} from, and one contact's values.
+    can_map_fields = False
+
+    async def field_catalog(self, http: BaseHttp, config: dict) -> list[dict]:
+        """[{key, label}] of fields a contact can have (standard + the account's custom fields)."""
+        return []
+
+    async def person_fields(self, http: BaseHttp, config: dict, external_id: str) -> dict[str, str]:
+        """{field key: value as text} for one contact (keys from field_catalog)."""
+        return {}
 
     async def recent_activity(self, http: BaseHttp, config: dict, since: dt.datetime) -> list[dict]:
         """Buying signals since `since`: [{external_id, contact: Contact, kind, at}] (newest first)."""
@@ -694,6 +707,62 @@ class FollowUpBoss(Provider):
             return None
         await http.request("PUT", f"/v1/people/{int(external_id)}", json={"stage": stage_id})
         return f"Stage set to {stage_id}"
+
+    can_map_fields = True
+    _STANDARD = [
+        ("first_name", "First name"), ("last_name", "Last name"), ("full_name", "Full name"), ("email", "Email"),
+        ("phone", "Phone"), ("address", "Address (street)"), ("city", "City"), ("state", "State"), ("zip", "ZIP"),
+        ("full_address", "Full address"), ("price", "Price"), ("source", "Lead source"), ("stage", "Stage"),
+        ("tags", "Tags"), ("assigned_agent", "Assigned agent"), ("lender", "Assigned lender"),
+        ("background", "Background"), ("created", "Date added"), ("last_activity", "Last activity"),
+    ]
+
+    @staticmethod
+    def _slug(label: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", (label or "").lower()).strip("_")[:48]
+
+    async def _custom_fields(self, http) -> list[dict]:
+        try:
+            rows = (await http.request("GET", "/v1/customFields", params={"limit": 100})).get("customfields") or []
+        except CrmError:
+            return []
+        return [{"name": r["name"], "label": r.get("label") or r["name"]} for r in rows if r.get("name")]
+
+    async def field_catalog(self, http, config):
+        out = [{"key": k, "label": label} for k, label in self._STANDARD]
+        seen = {k for k, _ in self._STANDARD}
+        for cf in await self._custom_fields(http):
+            key = self._slug(cf["label"])
+            if key and key not in seen:
+                seen.add(key)
+                out.append({"key": key, "label": f"{cf['label']} (custom)"})
+        return out
+
+    async def person_fields(self, http, config, external_id):
+        p = await http.request("GET", f"/v1/people/{int(external_id)}", params={"fields": "allFields"})
+        addr = next(iter(p.get("addresses") or []), {}) or {}
+        money = p.get("price")
+        price = (f"${int(money):,}" if isinstance(money, (int, float)) and money else str(money or ""))
+        out = {
+            "first_name": p.get("firstName") or "", "last_name": p.get("lastName") or "",
+            "full_name": p.get("name") or " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x),
+            "email": next((e.get("value") for e in p.get("emails") or [] if e.get("value")), ""),
+            "phone": next((x.get("value") for x in p.get("phones") or [] if x.get("value")), ""),
+            "address": addr.get("street") or "", "city": addr.get("city") or "", "state": addr.get("state") or "",
+            "zip": addr.get("code") or "",
+            "full_address": ", ".join(x for x in (addr.get("street"), addr.get("city"),
+                                                  " ".join(y for y in (addr.get("state"), addr.get("code")) if y)) if x),
+            "price": price, "source": p.get("source") or "", "stage": p.get("stage") or "",
+            "tags": ", ".join(t for t in p.get("tags") or [] if isinstance(t, str))[:300],
+            "assigned_agent": p.get("assignedTo") or "", "lender": p.get("assignedLenderName") or "",
+            "background": (p.get("background") or "")[:500],
+            "created": (p.get("created") or "")[:10], "last_activity": (p.get("lastActivity") or "")[:10],
+        }
+        labels = {cf["name"]: cf["label"] for cf in await self._custom_fields(http)}
+        for k, v in p.items():
+            if k.startswith("custom") and k in labels and v not in (None, "", []):
+                out[self._slug(labels[k])] = ", ".join(map(str, v)) if isinstance(v, list) else str(v)
+        return {k: str(v)[:500] for k, v in out.items() if v not in (None, "")}
 
     can_scan = True
 

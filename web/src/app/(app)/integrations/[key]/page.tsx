@@ -2,7 +2,7 @@
 
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpFromLine, Ban, CheckCircle2, ChevronRight, Clock, Download, FileText, Filter,
-  GitBranch, History, Megaphone, Pause, PhoneCall, Play, RefreshCw, Repeat, Trash2, Zap,
+  Braces, GitBranch, History, Megaphone, Pause, PhoneCall, Play, RefreshCw, Repeat, Trash2, Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -18,7 +18,7 @@ import { del, fetcher, patch, post, put } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
 import { cn, timeAgo } from "@/lib/utils";
 
-type Section = "push" | "pipeline" | "import" | "auto" | "triggers" | "activity";
+type Section = "push" | "pipeline" | "import" | "auto" | "triggers" | "variables" | "activity";
 interface Overview {
   providers: Provider[];
   connections: Connection[];
@@ -129,7 +129,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
 
   useEffect(() => {
     const h = window.location.hash.replace("#", "") as Section;
-    if (["push", "pipeline", "import", "auto", "triggers", "activity"].includes(h)) setSection(h);
+    if (["push", "pipeline", "import", "auto", "triggers", "variables", "activity"].includes(h)) setSection(h);
   }, []);
 
   if (!canManage(session)) return <Notice tone="amber">Only account owners and admins can manage integrations.</Notice>;
@@ -159,6 +159,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
     ...(p.can_import ? [{ id: "import" as Section, label: "Import", icon: <ArrowDownToLine className="h-4 w-4" /> }] : []),
     ...(p.can_import ? [{ id: "auto" as Section, label: `Auto-sync${c.auto_imports.length ? ` · ${c.auto_imports.length}` : ""}`, icon: <Repeat className="h-4 w-4" /> }] : []),
     ...(p.can_new_leads || p.can_activity ? [{ id: "triggers" as Section, label: "Triggers", icon: <Zap className="h-4 w-4" /> }] : []),
+    ...(p.can_map_fields ? [{ id: "variables" as Section, label: "Script variables", icon: <Braces className="h-4 w-4" /> }] : []),
     { id: "activity", label: "Activity", icon: <History className="h-4 w-4" /> },
   ];
   const go = (s: Section) => {
@@ -296,6 +297,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
       {section === "import" && <ImportBuilder p={p} onSavedRule={() => { refresh(); go("auto"); }} />}
       {section === "auto" && <AutoSync p={p} c={c} onChange={refresh} onNew={() => go("import")} />}
       {section === "triggers" && <Triggers p={p} c={c} agents={agents ?? []} onChange={refresh} />}
+      {section === "variables" && <ScriptVariables p={p} agents={agents ?? []} />}
       {section === "activity" && <ActivityLog p={p} />}
 
       {reconnect && <ConnectModal p={p} existing={c} onClose={() => setReconnect(false)} onDone={() => { setReconnect(false); refresh(); }} />}
@@ -925,6 +927,135 @@ function ActivityLog({ p }: { p: Provider }) {
             </li>
           ))}
         </ul>
+      )}
+    </Card>
+  );
+}
+
+// ── Script variables: fill the agent's {{variables}} from CRM fields ───────────
+
+interface VarRow {
+  name: string;
+  built_in: boolean;
+  mapped_to: string;
+  auto: string | null;
+  sample: string;
+}
+
+function ScriptVariables({ p, agents }: { p: Provider; agents: { id: string; name: string }[] }) {
+  const [agentId, setAgentId] = useState("");
+  const aid = agentId || agents[0]?.id || "";
+  const { data, error, isLoading, mutate } = useSWR<{ variables: VarRow[]; fields: { key: string; label: string }[]; sample_contact: string | null }>(
+    aid ? `/api/integrations/crm/${p.key}/variables?agent_id=${aid}` : null,
+    fetcher,
+  );
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState("");
+  useEffect(() => {
+    setEdits({});
+    setSaved("");
+  }, [aid]);
+
+  const label = (key: string | null) => data?.fields.find((f) => f.key === key)?.label ?? key ?? "";
+  const value = (r: VarRow) => (r.name in edits ? edits[r.name] : r.mapped_to);
+
+  const save = async () => {
+    if (!data) return;
+    setSaving(true);
+    setSaved("");
+    try {
+      const map = Object.fromEntries(data.variables.map((r) => [r.name, value(r)]));
+      await put(`/api/integrations/crm/${p.key}/variables`, { agent_id: aid, map });
+      setSaved("Saved — every call from this agent fills these in.");
+      setEdits({});
+      void mutate();
+    } catch (e) {
+      setSaved((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 px-5 py-4">
+        <div className="max-w-xl">
+          <div className="text-sm font-semibold text-zinc-900">Script variables</div>
+          <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+            BlackSync reads the agent&apos;s script for <code className="rounded bg-zinc-100 px-1">{"{{variables}}"}</code> and fills them from the {p.name} contact
+            right before each call. Obvious ones match automatically — pick a field for anything else.
+          </p>
+        </div>
+        <div className="w-full sm:w-60">
+          <Select value={aid} onChange={(e) => setAgentId(e.target.value)} aria-label="Agent">
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </Select>
+        </div>
+      </div>
+      {error ? (
+        <div className="p-5"><Notice tone="red">{(error as Error).message}</Notice></div>
+      ) : isLoading || !data ? (
+        <div className="flex justify-center py-12"><Spinner /></div>
+      ) : data.variables.length === 0 ? (
+        <p className="px-5 py-10 text-center text-sm text-zinc-500">
+          This agent&apos;s script doesn&apos;t use any variables yet. Add things like <code>{"{{first_name}}"}</code> or <code>{"{{address}}"}</code> in the agent editor.
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="text-left text-[11px] uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="px-5 py-2.5">In the script</th>
+                  <th className="py-2.5 pr-3">Filled from {p.name}</th>
+                  <th className="py-2.5 pr-5">{data.sample_contact ? `e.g. ${data.sample_contact}` : "Example"}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {data.variables.map((r) => {
+                  const v = value(r);
+                  const effective = v === "-" ? null : v || r.auto;
+                  return (
+                    <tr key={r.name}>
+                      <td className="px-5 py-2.5 align-middle">
+                        <code className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[13px] text-brand-800">{`{{${r.name}}}`}</code>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Select value={v} onChange={(e) => setEdits((x) => ({ ...x, [r.name]: e.target.value }))} className="h-9 text-sm" aria-label={`Field for ${r.name}`}>
+                          <option value="">{r.auto ? `Automatic · ${label(r.auto)}` : r.built_in ? "Automatic · BlackSync contact" : "Not mapped — pick a field"}</option>
+                          {data.fields.map((f) => (
+                            <option key={f.key} value={f.key}>{f.label}</option>
+                          ))}
+                          <option value="-">Don&apos;t fill from {p.name}</option>
+                        </Select>
+                      </td>
+                      <td className="py-2.5 pr-5 text-xs">
+                        {r.name in edits && edits[r.name] !== r.mapped_to ? (
+                          <span className="text-zinc-400">Save to preview</span>
+                        ) : r.sample ? (
+                          <span className="text-zinc-800">{r.sample}</span>
+                        ) : effective ? (
+                          <span className="text-zinc-400">— empty for this contact</span>
+                        ) : (
+                          <span className="text-amber-700">{r.built_in ? "From the contact" : "Won't be filled"}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 px-5 py-3">
+            <span className="text-xs text-zinc-500">{saved || "A variable with no value is left blank, so write lines that still read well without it."}</span>
+            <Button variant="primary" size="sm" loading={saving} onClick={() => void save()}>
+              Save mapping
+            </Button>
+          </div>
+        </>
       )}
     </Card>
   );

@@ -170,6 +170,8 @@ def lead_variables(lead) -> dict:
         "role": lead.role or "",
     }
     for k, val in (getattr(lead, "custom_fields", None) or {}).items():
+        if isinstance(val, (dict, list)):
+            continue  # internal (e.g. the raw CRM fields) — not a template value
         v.setdefault(str(k), val)
     return v
 

@@ -310,6 +310,13 @@ class CallService:
         await db.flush()
 
         variables = {**(lead_variables(lead) if lead else {}), "phone": phone}
+        if lead and agent and (lead.custom_fields or {}).get("crm_fields"):
+            # Fill the script's {{variables}} from the CRM contact (Integrations → Script variables).
+            from app.models.crm import CrmConnection
+            from app.services.crm import variables as crm_vars
+
+            conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == org.id))).scalars().all()
+            variables = crm_vars.apply(variables, lead, agent, list(conns))
         metadata = _build_metadata(call_log, agent, variables, "outbound", lead, max_seconds=max_seconds)
 
         if lead:

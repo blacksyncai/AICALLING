@@ -432,6 +432,23 @@ async def refresh_context(db, conn: CrmConnection, lead: Lead) -> None:
     if text:
         lead.custom_fields = {**(lead.custom_fields or {}), "crm_context": text,
                               "crm_context_at": dt.datetime.now(UTC).isoformat()}
+    if p.can_map_fields:
+        # The contact's fields, for the agent's {{variables}} (see services/crm/variables.py).
+        try:
+            fields = await p.person_fields(http, conn.config or {}, ref)
+        except CrmError as exc:
+            log.info("crm_fields_skipped", provider=conn.provider, error=str(exc)[:120])
+            fields = None
+        if fields:
+            cf = lead.custom_fields or {}
+            lead.custom_fields = {**cf, "crm_fields": {**(cf.get("crm_fields") or {}), conn.provider: fields},
+                                  "crm_context_at": dt.datetime.now(UTC).isoformat()}
+
+
+def provider_of_key(key: str):
+    from app.services.crm.providers import PROVIDERS, Provider
+
+    return PROVIDERS.get(key) or Provider()
 
 
 async def ensure_context(db, lead: Lead, max_age: dt.timedelta = dt.timedelta(hours=12)) -> None:
@@ -440,7 +457,8 @@ async def ensure_context(db, lead: Lead, max_age: dt.timedelta = dt.timedelta(ho
     if not refs or not lead.org_id:
         return
     at = (lead.custom_fields or {}).get("crm_context_at")
-    if at:
+    fields = (lead.custom_fields or {}).get("crm_fields") or {}
+    if at and all(r in fields or not provider_of_key(r).can_map_fields for r in refs):
         try:
             if dt.datetime.now(UTC) - dt.datetime.fromisoformat(at) < max_age:
                 return

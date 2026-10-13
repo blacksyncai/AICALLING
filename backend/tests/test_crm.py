@@ -801,3 +801,70 @@ def test_radar_digs_old_leads_in_batches_and_waits_out_rate_limits(client, monke
     # The end of the CRM: nothing more to scan.
     assert client.post("/api/radar/followupboss/scan", params={"continue_from": second["id"]}).status_code == 400
     client.delete("/api/integrations/crm/followupboss")
+
+
+def test_script_variables_filled_from_follow_up_boss(client, monkeypatch):
+    """The agent's {{variables}} map to FUB fields (auto by name, or chosen) and fill in before the call."""
+    import asyncio as aio
+
+    from app.database import AsyncSessionLocal
+    from app.models.agent import Agent
+    from app.models.crm import CrmConnection
+    from app.models.lead import Lead
+    from app.services.crm import sync as crm_sync, variables as crm_vars
+    from sqlalchemy import select as sa_select
+
+    monkeypatch.setattr(settings, "secrets_encryption_key", Fernet.generate_key().decode())
+    person = {"id": 77, "firstName": "Tony", "lastName": "Fuentes", "name": "Tony Fuentes", "stage": "Lead",
+              "phones": [{"value": "+14155559077"}], "emails": [{"value": "tony@fuentesteam.com"}],
+              "addresses": [{"street": "12 Oak St", "city": "Orlando", "state": "FL", "code": "32801"}],
+              "price": 450000, "source": "Zillow", "assignedTo": "Gabriel Ruiz", "customPropertyType": "Condo"}
+
+    def handler(request: httpx.Request):
+        path = request.url.path
+        if path == "/v1/me":
+            return httpx.Response(200, json={"name": "Jo"})
+        if path == "/v1/customFields":
+            return httpx.Response(200, json={"customfields": [{"name": "customPropertyType", "label": "Property Type"}]})
+        if path == "/v1/people/77":
+            return httpx.Response(200, json=person)
+        return httpx.Response(200, json={"notes": [], "calls": [], "events": [], "textMessages": [], "emails": []})
+
+    monkeypatch.setattr(BaseHttp, "client_factory",
+                        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    assert client.post("/api/integrations/crm/followupboss/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    agent = client.post("/api/agents/", json={"template": "blank", "name": "Olivia"}).json()
+    client.patch(f"/api/agents/{agent['id']}", json={
+        "first_message": "Hi {{first_name}}, it's Olivia with {{realtor}}'s team.",
+        "system_prompt": "Ask about {{address}} in {{city}} (a {{property_type}}, around {{price}}). Mention {{home_type}}."})
+
+    # Pull the contact's fields before a call (what dispatch does), then fill the agent's variables.
+    async def go():
+        async with AsyncSessionLocal() as db:
+            lead = Lead(org_id=uuid.UUID(client.get("/api/auth/me").json()["org"]["id"]), name="Tony Fuentes",
+                        phone="+14155559077", crm_refs={"followupboss": "77"})
+            db.add(lead)
+            await db.flush()
+            await crm_sync.ensure_context(db, lead)
+            await db.commit()
+            conns = (await db.execute(sa_select(CrmConnection).where(CrmConnection.org_id == lead.org_id))).scalars().all()
+            a = await db.get(Agent, uuid.UUID(agent["id"]))
+            return crm_vars.apply({"name": "Tony"}, lead, a, list(conns))
+
+    v = aio.run(go())
+    assert v["first_name"] == "Tony" and v["address"] == "12 Oak St" and v["city"] == "Orlando"
+    assert v["price"] == "$450,000" and v["property_type"] == "Condo"  # custom field, matched by its label
+    assert "realtor" in v and v["realtor"] == "Gabriel Ruiz"  # synonym → assigned agent
+    assert "home_type" not in v  # no automatic match yet
+
+    # The mapping screen lists the script's variables with sample values; pick a field for {{home_type}}.
+    data = client.get("/api/integrations/crm/followupboss/variables", params={"agent_id": agent["id"]}).json()
+    rows = {r["name"]: r for r in data["variables"]}
+    assert set(rows) >= {"first_name", "realtor", "address", "city", "property_type", "price", "home_type"}
+    assert rows["address"]["auto"] == "address" and rows["address"]["sample"] == "12 Oak St"
+    assert rows["home_type"]["auto"] is None and any(f["key"] == "property_type" for f in data["fields"])
+    assert client.put("/api/integrations/crm/followupboss/variables",
+                      json={"agent_id": agent["id"], "map": {"home_type": "property_type", "city": "-"}}).status_code == 200
+    v = aio.run(go())
+    assert v["home_type"] == "Condo" and "city" not in v
+    client.delete("/api/integrations/crm/followupboss")

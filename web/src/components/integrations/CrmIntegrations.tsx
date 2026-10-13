@@ -33,6 +33,7 @@ export interface Provider {
   can_install: boolean;
   install_style: "pipeline" | "tags";
   can_activity: boolean;
+  can_map_fields?: boolean;
   fields: ProviderField[];
 }
 export interface AutoRule {

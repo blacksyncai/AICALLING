@@ -111,7 +111,7 @@ async def overview(ctx: ManagerDep, db: DbDep):
         "native": p.native, "oauth": any(n in nango_providers for n in p.nango_providers),
         "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
         "pipeline_noun": p.pipeline_noun, "can_install": p.can_install, "install_style": p.install_style,
-        "can_activity": p.can_activity,
+        "can_activity": p.can_activity, "can_map_fields": p.can_map_fields,
         "fields": [{"name": f.name, "label": f.label, "secret": f.secret, "placeholder": f.placeholder, "help": f.help}
                    for f in p.auth_fields],
     } for p in PROVIDERS.values()]
@@ -606,3 +606,72 @@ async def disconnect(key: str, ctx: ManagerDep, db: DbDep):
     await db.delete(conn)
     await db.commit()
     return {"ok": True}
+
+
+# ── Script variables: fill an agent's {{variables}} from CRM fields ─────────────
+
+
+@router.get("/{key}/variables")
+async def script_variables(key: str, agent_id: uuid.UUID, ctx: ManagerDep, db: DbDep):
+    """The agent's {{variables}}, the CRM fields to fill them from, the saved choices and a sample contact."""
+    from app.models.agent import Agent
+    from app.models.lead import Lead
+    from app.services.crm import variables as crm_vars
+
+    conn = await _get_conn(db, ctx.org.id, key)
+    agent = await db.get(Agent, agent_id)
+    if not conn or not agent or agent.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Not found")
+    p, http = sync.http_for(conn)
+    try:
+        catalog = await p.field_catalog(http, conn.config or {})
+    except CrmError as exc:
+        raise HTTPException(status_code=400, detail=f"Couldn't read {p.name}'s fields: {exc}") from exc
+    keys = {f["key"] for f in catalog}
+    mapping = ((conn.settings or {}).get("var_maps") or {}).get(str(agent.id)) or {}
+    # A recent contact from this CRM, so each row can show a real value.
+    sample: dict = {}
+    for lead in (await db.execute(select(Lead).where(Lead.org_id == ctx.org.id).order_by(Lead.updated_at.desc())
+                                  .limit(200))).scalars():
+        got = ((lead.custom_fields or {}).get("crm_fields") or {}).get(key)
+        if got:
+            sample = {"name": lead.name, "fields": got}
+            break
+    if not sample:
+        lead = (await db.execute(select(Lead).where(Lead.org_id == ctx.org.id, Lead.crm_refs.is_not(None))
+                                 .order_by(Lead.updated_at.desc()).limit(50))).scalars().all()
+        ref = next(((l, (l.crm_refs or {}).get(key)) for l in lead if (l.crm_refs or {}).get(key)), None)
+        if ref:
+            try:
+                sample = {"name": ref[0].name, "fields": await p.person_fields(http, conn.config or {}, ref[1])}
+            except CrmError:
+                sample = {}
+    rows = []
+    for var in crm_vars.script_variables(agent):
+        auto = crm_vars.auto_field(var, keys)
+        chosen = mapping.get(var, "")
+        field_key = None if chosen == "-" else (chosen or auto)
+        rows.append({"name": var, "built_in": var in crm_vars.BUILT_IN, "mapped_to": chosen, "auto": auto,
+                     "sample": (sample.get("fields") or {}).get(field_key or "", "")})
+    return {"variables": rows, "fields": catalog, "sample_contact": sample.get("name")}
+
+
+class VariablesIn(BaseModel):
+    agent_id: uuid.UUID
+    map: dict[str, str] = Field(default_factory=dict)  # var → field key, "" = automatic, "-" = don't fill
+
+
+@router.put("/{key}/variables")
+async def save_script_variables(key: str, body: VariablesIn, ctx: ManagerDep, db: DbDep):
+    from app.models.agent import Agent
+
+    conn = await _get_conn(db, ctx.org.id, key)
+    agent = await db.get(Agent, body.agent_id)
+    if not conn or not agent or agent.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Not found")
+    clean = {k[:64]: v[:64] for k, v in body.map.items() if v}
+    maps = {**((conn.settings or {}).get("var_maps") or {}), str(agent.id): clean}
+    conn.settings = {**(conn.settings or {}), "var_maps": maps}
+    await sync.add_log(db, conn, "test", "ok", f"Script variables saved for {agent.name}.")
+    await db.commit()
+    return {"saved": len(clean)}
