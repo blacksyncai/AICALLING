@@ -93,6 +93,22 @@ export function InboundCampaign({ campaign, calls, agents, onChange }: { campaig
         </div>
       </div>
 
+      {!live && number && campaign.status !== "cancelled" && (
+        <div className="mb-6">
+          <Notice tone="amber">
+            <strong>Not answering calls yet.</strong> Calls to {pretty(number.number)} (and anything forwarded to it) are turned away until you press{" "}
+            <strong>Go live</strong>.
+          </Notice>
+        </div>
+      )}
+      {live && number && (
+        <div className="mb-6">
+          <Notice tone="green">
+            Live — call or forward to <span className="font-mono">{pretty(number.number)}</span> and {agents.find((a) => a.id === campaign.agent_id)?.name ?? "your agent"} picks
+            up.
+          </Notice>
+        </div>
+      )}
       {phones && phones.numbers.length === 0 && (
         <div className="mb-6">
           <Notice tone="amber">

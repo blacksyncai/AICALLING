@@ -345,6 +345,18 @@ async def create_campaign(
     db.add(campaign)
     await db.commit()
     log.info("campaign_created", campaign_id=str(campaign.id), name=campaign.name)
+    if body.direction == "inbound" and campaign.agent_id:
+        # Inbound goes live right away — there's no list to prepare, and forgetting "Go live" means missed calls.
+        from app.services.inbound import InboundError, activate
+
+        try:
+            await activate(db, campaign)
+            campaign.status = "running"
+            await db.commit()
+        except (InboundError, Exception) as exc:
+            await db.rollback()
+            log.warning("inbound_autolive_failed", campaign_id=str(campaign.id), error=str(exc)[:200])
+            campaign = await db.get(Campaign, campaign.id)
     return _campaign_to_dict(campaign)
 
 

@@ -28,13 +28,9 @@ def test_inbound_campaign_needs_a_number_and_routes_calls(client, make_client, t
 
     camp = owner.post("/api/campaigns/", json={"name": "Front desk", "direction": "inbound", "agent_id": agent_id,
                                                "phone_number_id": number_id}).json()
-    assert camp["direction"] == "inbound" and camp["phone_number_id"] == number_id
-
-    # Before it's live, calls to the number aren't answered.
-    assert client.post("/internal/inbound-call", json={"to": n, "from_number": "+14155550999", "room": "call-x"}).status_code == 404
-
-    live = owner.post(f"/api/campaigns/{camp['id']}/start").json()
-    assert live["campaign"]["status"] == "running" and routed_numbers == [n]
+    # Inbound campaigns go live as soon as they're created.
+    assert camp["direction"] == "inbound" and camp["phone_number_id"] == number_id and camp["status"] == "running"
+    assert routed_numbers[-1] == n
 
     r = client.post("/internal/inbound-call", json={"to": n, "from_number": "+14155550999", "room": "call-in-1"})
     assert r.status_code == 200, r.text
@@ -45,6 +41,8 @@ def test_inbound_campaign_needs_a_number_and_routes_calls(client, make_client, t
     mine = [c for c in items if c["id"] == body["call_log_id"]]
     assert mine and mine[0]["call_type"] == "inbound" and mine[0]["to_phone"] == "+14155550999"
 
-    # Pausing stops answering.
+    # Pausing stops answering; Go live turns it back on.
     owner.post(f"/api/campaigns/{camp['id']}/pause")
     assert client.post("/internal/inbound-call", json={"to": n, "from_number": "+14155550999", "room": "call-x2"}).status_code == 404
+    assert owner.post(f"/api/campaigns/{camp['id']}/start").json()["campaign"]["status"] == "running"
+    assert client.post("/internal/inbound-call", json={"to": n, "from_number": "+14155550999", "room": "call-x3"}).status_code == 200

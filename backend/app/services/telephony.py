@@ -173,6 +173,27 @@ async def _livekit_numbers(add: list[str] | None = None, remove: list[str] | Non
 # ── Account numbers ───────────────────────────────────────────────────────────
 
 
+async def _inbound_ready(number: str) -> None:
+    """Accept inbound calls to this number in LiveKit right away (best effort; Go live re-checks)."""
+    try:
+        from app.services.inbound import ensure_routing
+
+        await ensure_routing(number)
+    except Exception as exc:
+        log.warning("inbound_routing_setup_failed", number=number, error=str(exc)[:200])
+
+
+async def sync_inbound_numbers() -> int:
+    """Startup: make sure every active account number is on the LiveKit inbound trunk."""
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        nums = (await db.execute(select(PhoneNumber.number).where(PhoneNumber.status == "active"))).scalars().all()
+    for n in nums:
+        await _inbound_ready(n)
+    return len(nums)
+
+
 async def active_numbers(db: AsyncSession, org_id: uuid.UUID) -> list[PhoneNumber]:
     return list((await db.execute(
         select(PhoneNumber).where(PhoneNumber.org_id == org_id, PhoneNumber.status == "active")
@@ -223,6 +244,7 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
             log.error("phone_number_release_after_failure_failed", number=number, sid=bought.get("sid"))
         raise
     await _livekit_numbers(add=[number])
+    await _inbound_ready(number)
     log.info("phone_number_purchased", org_id=str(org_id), number=number)
     return row
 
@@ -239,6 +261,7 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
     await _make_default_if_first(db, row)
     await db.commit()
     await _livekit_numbers(add=[number])
+    await _inbound_ready(number)
     log.info("phone_number_imported", org_id=str(org_id), number=number)
     return row
 

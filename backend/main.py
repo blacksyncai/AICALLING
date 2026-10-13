@@ -63,6 +63,12 @@ async def lifespan(app: FastAPI):
             log.info("welcome_agents_refreshed", count=await refresh_welcome_agents())
         except Exception as exc:
             log.warning("welcome_agents_refresh_failed", error=str(exc))
+    if settings.run_startup_jobs and settings.livekit_ready:
+        from app.services.telephony import sync_inbound_numbers
+        try:
+            log.info("inbound_numbers_synced", count=await sync_inbound_numbers())
+        except Exception as exc:
+            log.warning("inbound_numbers_sync_failed", error=str(exc))
     from app.services.outbound_call import start_orphan_sweeper
     sweeper_task = start_orphan_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     yield
