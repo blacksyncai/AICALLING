@@ -39,6 +39,8 @@ FEATURED_VOICES: list[dict] = [
      "description": "Relaxed and balanced.", "provider": "mistral", "language": "en"},
     {"id": "mistral:98559b22-62b5-4a64-a7cd-fc78ca41faa8", "name": "Paul · Confident", "gender": "masculine", "accent": "American",
      "description": "Bold, punchy and confident.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:1024d823-a11e-43ee-bf3d-d440dccc0577", "name": "Paul · Happy", "gender": "masculine", "accent": "American",
+     "description": "Sunny and easygoing.", "provider": "mistral", "language": "en"},
     {"id": "mistral:01d985cd-5e0c-4457-bfd8-80ba31a5bc03", "name": "Paul · Cheerful", "gender": "masculine", "accent": "American",
      "description": "Upbeat and breezy.", "provider": "mistral", "language": "en"},
     {"id": "mistral:5940190b-f58a-4c3e-8264-a40d63fd6883", "name": "Paul · Excited", "gender": "masculine", "accent": "American",
