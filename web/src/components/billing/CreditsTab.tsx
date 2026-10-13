@@ -1,6 +1,7 @@
 "use client";
 
 import { Coins, RefreshCw } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
@@ -27,6 +28,8 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
   const { data } = useSWR<CreditsData>("/api/billing/credits", fetcher);
   const { data: cat } = useSWR<Catalog>("/api/billing/catalog", fetcher);
   const [buying, setBuying] = useState<string | null>(null);
+  const access = cat?.pack_access;
+  const packsLocked = !!access && !access.allowed;
 
   if (!data || !cat)
     return (
@@ -67,6 +70,26 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
 
       <div>
         <PricingHeading title="Top up your calling credits" description="One-time packs. Purchased credits never expire." />
+        {packsLocked ? (
+          <div className="mb-4">
+            <Notice tone="amber">
+              {access?.reason}{" "}
+              <Link href="/billing?tab=plans" className="font-semibold underline">
+                See plans
+              </Link>
+            </Notice>
+          </div>
+        ) : (
+          access && !access.on_plan && (
+            <p className="mb-4 text-sm text-zinc-500">
+              On the free trial you can buy one credit pack. After that, choose a{" "}
+              <Link href="/billing?tab=plans" className="font-medium text-brand-600 hover:text-brand-700">
+                BlackSync AI plan
+              </Link>{" "}
+              to keep topping up.
+            </p>
+          )
+        )}
         <div className="grid gap-4 md:grid-cols-3">
           {cat.packs.map((p, i) => (
             <PricingCard
@@ -82,10 +105,10 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
                 <PricingButton
                   tone={p.suggested ? "brand" : "dark"}
                   loading={buying === p.key}
-                  disabled={!canManage || !p.available || !!buying}
+                  disabled={!canManage || !p.available || !!buying || packsLocked}
                   onClick={() => void buy(p.key)}
                 >
-                  {p.available ? `Buy ${p.credits.toLocaleString()} credits` : "Not available yet"}
+                  {!p.available ? "Not available yet" : packsLocked ? "Plan required" : `Buy ${p.credits.toLocaleString()} credits`}
                 </PricingButton>
               }
             />
@@ -97,7 +120,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
         </p>
       </div>
 
-      <AutoRecharge canManage={canManage} packs={cat.packs.filter((p) => p.available)} />
+      <AutoRecharge canManage={canManage} onPlan={access?.on_plan ?? true} packs={cat.packs.filter((p) => p.available)} />
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <Card className="min-w-0">
@@ -170,7 +193,7 @@ function Part({ label, value, sub }: { label: string; value: string; sub: string
 
 const THRESHOLDS = [25, 50, 100];
 
-function AutoRecharge({ canManage, packs }: { canManage: boolean; packs: Catalog["packs"] }) {
+function AutoRecharge({ canManage, onPlan, packs }: { canManage: boolean; onPlan: boolean; packs: Catalog["packs"] }) {
   const toast = useToast();
   const { data, mutate } = useSWR<AutoRechargeCfg>("/api/billing/auto-recharge", fetcher);
   const [form, setForm] = useState<{ pack_key: string; threshold: string; custom: boolean; limit: string; consent: boolean } | null>(null);
@@ -186,6 +209,23 @@ function AutoRecharge({ canManage, packs }: { canManage: boolean; packs: Catalog
 
   if (!data || !form) return null;
   const pack = packs.find((p) => p.key === form.pack_key);
+
+  if (!onPlan && !data.enabled)
+    return (
+      <Card>
+        <CardHeader
+          title={<span className="flex items-center gap-2"><RefreshCw className="h-4 w-4 text-zinc-400" /> Auto-recharge</span>}
+          description="Automatically buy a credit pack when your balance runs low, so calls never stop."
+          action={<Badge tone="gray">Plans only</Badge>}
+        />
+        <p className="px-5 pb-5 text-sm text-zinc-500">
+          Auto-recharge is available on BlackSync AI plans.{" "}
+          <Link href="/billing?tab=plans" className="font-medium text-brand-600 hover:text-brand-700">
+            See plans
+          </Link>
+        </p>
+      </Card>
+    );
 
   async function save(enabled: boolean) {
     if (!form) return;

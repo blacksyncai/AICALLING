@@ -164,7 +164,7 @@ async def overview(ctx: CtxDep, db: DbDep):
 @router.get("/catalog")
 async def get_catalog(ctx: CtxDep, db: DbDep):
     return {**await _catalog_payload(), "current_plan": await _plan_payload(db, ctx.org.id),
-            "links": await _booking_links(db)}
+            "pack_access": await purchases.pack_access(db, ctx.org), "links": await _booking_links(db)}
 
 
 @router.get("/public/plans")

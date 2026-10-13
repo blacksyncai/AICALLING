@@ -138,6 +138,8 @@ export interface Catalog {
   phone_addon: { amount_cents: number; available: boolean };
   agent_addon: { amount_cents: number; available: boolean };
   current_plan: PlanInfo;
+  /** Accounts without a plan (trial) can buy one credit pack; after that a plan is needed. */
+  pack_access?: { allowed: boolean; on_plan: boolean; trial_packs_left: number | null; reason: string | null };
   links: BookingLinks;
 }
 

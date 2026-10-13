@@ -107,6 +107,20 @@ def stripe(monkeypatch):
     catalog.invalidate()
 
 
+def _on_plan(org_id: str, plan: str = "solo") -> None:
+    """Give an account an active paid plan (as if Stripe had confirmed the subscription)."""
+    from app.database import AsyncSessionLocal
+    from app.models.billing import BillingSubscription
+
+    async def go():
+        async with AsyncSessionLocal() as db:
+            db.add(BillingSubscription(org_id=uuid.UUID(org_id), plan_key=plan, status="active",
+                                       stripe_subscription_id=f"sub_test_{org_id[:12]}"))
+            await db.commit()
+
+    asyncio.run(go())
+
+
 def _account(client, make_client, name, credits=0):
     """A fresh account whose starter agent runs at 1 credit/min (gpt-4.1-nano)."""
     org, email = _new_account(client, name=name, credits=credits)
@@ -215,7 +229,8 @@ def test_webhook_cannot_grant_to_another_org(client, make_client, stripe):
 
 
 def test_delayed_payment_waits_for_async_success(client, make_client, stripe):
-    _, c = _account(client, make_client, "Bank Co")
+    org, c = _account(client, make_client, "Bank Co")
+    _on_plan(org["id"])  # buys two packs
     c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     _hook(client, "checkout.session.completed", _paid_session(stripe, payment_status="unpaid"))
     assert _balance(c) == 0
@@ -389,6 +404,7 @@ def test_auto_recharge_consent_threshold_limit_and_failures(client, make_client,
     from app.services.billing import settings_store
     monkeypatch.setitem(settings_store.DEFAULTS, "phone_minute_fee", 0)  # checks other logic
     org, c = _account(client, make_client, "Recharge Co")
+    _on_plan(org["id"])  # auto-recharge is for plan accounts
     cfg = c.get("/api/billing/auto-recharge").json()
     assert cfg["enabled"] is False
     body = {"enabled": True, "pack_key": "credits_75", "threshold": 50, "monthly_limit_cents": 5800}
@@ -425,6 +441,7 @@ def test_auto_recharge_consent_threshold_limit_and_failures(client, make_client,
 
 def test_auto_recharge_turns_off_after_three_failures(client, make_client, stripe):
     org, c = _account(client, make_client, "Declined Co")
+    _on_plan(org["id"])
     c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
     _hook(client, "checkout.session.completed", _paid_session(stripe))
     c.put("/api/billing/auto-recharge", json={"enabled": True, "pack_key": "credits_75", "threshold": 500,
@@ -709,3 +726,29 @@ def test_saved_old_phone_fee_follows_new_default():
     assert DEFAULTS["phone_minute_fee"] == 0.053
     assert _current("phone_minute_fee", 0.08) == 0.053   # the old default, saved before the change
     assert _current("phone_minute_fee", 0.1) == 0.1     # a deliberate admin price is kept
+
+
+def test_trial_accounts_can_buy_one_credit_pack(client, make_client, stripe):
+    org, c = _account(client, make_client, "Trial Co")
+    access = c.get("/api/billing/catalog").json()["pack_access"]
+    assert access == {"allowed": True, "on_plan": False, "trial_packs_left": 1, "reason": None}
+
+    # Abandoned checkouts don't use up the trial pack; a paid one does.
+    assert c.post("/api/billing/credits/checkout", json={"pack": "credits_75"}).status_code == 200
+    assert c.post("/api/billing/credits/checkout", json={"pack": "credits_75"}).status_code == 200
+    _hook(client, "checkout.session.completed", _paid_session(stripe))
+    assert _balance(c) == 75
+
+    r = c.post("/api/billing/credits/checkout", json={"pack": "credits_75"})
+    assert r.status_code == 402 and "plan" in r.json()["detail"]
+    access = c.get("/api/billing/catalog").json()["pack_access"]
+    assert access["allowed"] is False and access["trial_packs_left"] == 0
+    # Auto-recharge needs a plan too.
+    r = c.put("/api/billing/auto-recharge", json={"enabled": True, "pack_key": "credits_75", "threshold": 50,
+                                                   "monthly_limit_cents": 50000, "consent": True})
+    assert r.status_code == 402
+
+    # On a plan, packs can be bought any time.
+    _on_plan(org["id"])
+    assert c.get("/api/billing/catalog").json()["pack_access"]["allowed"] is True
+    assert c.post("/api/billing/credits/checkout", json={"pack": "credits_75"}).status_code == 200

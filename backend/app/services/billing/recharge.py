@@ -78,6 +78,11 @@ async def update_config(db: AsyncSession, org: Organization, user_id: uuid.UUID,
         row = AutoRecharge(org_id=org.id, consecutive_failures=0)
         db.add(row)
     if enabled:
+        from app.services.billing.purchases import pack_access
+
+        access = await pack_access(db, org)
+        if not access["on_plan"]:
+            raise BillingError("Auto-recharge is available on BlackSync AI plans. Choose a plan to turn it on.", 402)
         if not consent:
             raise BillingError("Please confirm you authorize automatic charges.")
         cid = await customer_id(db, org.id)
@@ -129,6 +134,14 @@ async def maybe_recharge(db: AsyncSession, org_id: uuid.UUID) -> Purchase | None
             cfg.pending_purchase_id = None
         pack = catalog.CREDIT_PACKS.get(cfg.pack_key)
         if not pack:
+            return None
+        from app.services.billing.purchases import pack_access
+
+        access = await pack_access(db, org)
+        if not access["allowed"]:  # trial account that already bought its one pack
+            if cfg.last_error != access["reason"]:
+                cfg.last_error = access["reason"]
+                await db.commit()
             return None
         if await month_to_date_cents(db, org_id) + pack["amount_cents"] > cfg.monthly_limit_cents:
             cfg.last_error = "Monthly auto-recharge limit reached."

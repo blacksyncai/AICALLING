@@ -91,10 +91,35 @@ async def _checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, 
     return session["url"]
 
 
+TRIAL_PACK_LIMIT = 1  # credit packs an account may buy before it's on a plan
+TRIAL_PACK_USED = "You've used your one trial credit pack. Choose a BlackSync AI plan to buy more credits."
+
+
+async def pack_access(db: AsyncSession, org: Organization) -> dict:
+    """Can this account buy a credit pack? On a plan (paid or admin-assigned): always. Without one (trial):
+    once — counting packs bought by hand or by auto-recharge. {allowed, on_plan, trial_packs_left, reason}."""
+    from sqlalchemy import func
+
+    from app.services import entitlements
+
+    eff = await entitlements.effective(db, org)
+    if org.unlimited_credits or eff["source"] != "no_plan":
+        return {"allowed": True, "on_plan": True, "trial_packs_left": None, "reason": None}
+    bought = (await db.execute(select(func.count()).select_from(Purchase).where(
+        Purchase.org_id == org.id, Purchase.kind.in_(("credit_pack", "auto_recharge")),
+        Purchase.fulfilled_at.is_not(None)))).scalar_one()
+    left = max(0, TRIAL_PACK_LIMIT - int(bought))
+    return {"allowed": left > 0, "on_plan": False, "trial_packs_left": left,
+            "reason": None if left else TRIAL_PACK_USED}
+
+
 async def checkout_credit_pack(db: AsyncSession, org: Organization, user_id: uuid.UUID, pack_key: str) -> str:
     pack = catalog.CREDIT_PACKS.get(pack_key)
     if not pack:
         raise BillingError("Unknown credit pack.")
+    access = await pack_access(db, org)
+    if not access["allowed"]:
+        raise BillingError(access["reason"], 402)
     try:
         price = await catalog.sellable_price(pack_key)
     except catalog.NotSellable as exc:
