@@ -295,5 +295,5 @@ def test_blacksync_flash_models_route_to_mistral(monkeypatch):
     assert not any(m["id"] == "ministral-8b-latest" for m in models.model_catalog())  # hidden without a key
     monkeypatch.setattr(settings, "mistral_api_key", "test-key")
     names = {m["id"]: m["name"] for m in models.model_catalog()}
-    assert names["ministral-8b-latest"] == "BlackSync Flash" and names["ministral-14b-latest"] == "BlackSync Flash 2.1"
+    assert names["ministral-8b-latest"] == "BlackSync Flash" and names["mistral-medium-latest"] == "BlackSync Flash Pro"
     assert models.llm_endpoint("ministral-3b-latest") == ("test-key", "https://api.mistral.ai/v1", True)

@@ -72,6 +72,24 @@ LLM_MODELS: list[dict] = [
         "recommended_for": ["general", "booking"],
     },
     {
+        "id": "mistral-small-latest",
+        "name": "BlackSync Flash Plus",
+        "provider": "BlackSync",
+        "description": "A bigger Flash: sharper answers and better instruction-following, with the same quick replies.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": ["general", "booking"],
+    },
+    {
+        "id": "mistral-medium-latest",
+        "name": "BlackSync Flash Pro",
+        "provider": "BlackSync",
+        "description": "The smartest Flash — handles long scripts, objections and tools well, and replies consistently fast.",
+        "speed": "fast",
+        "tags": ["recommended", "fast"],
+        "recommended_for": ["general", "booking", "transfer", "complex_scripts"],
+    },
+    {
         "id": "gpt-4.1-mini",
         "name": "GPT-4.1 mini",
         "description": "Fast and low-cost, good at following call scripts.",
@@ -137,9 +155,9 @@ CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 # Served on Cerebras wafer-scale hardware, branded as BlackSync's own models.
 CEREBRAS_MODELS = {"gpt-oss-120b", "qwen-3.8-27b"}
 MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
-# Mistral's Ministral models, branded "BlackSync Flash". (Mistral Small/Medium aren't enabled on
-# the current key's plan — add them here once they are.)
-MISTRAL_MODELS = {"ministral-8b-latest", "ministral-3b-latest", "ministral-14b-latest"}
+# Mistral models, branded "BlackSync Flash" (Ministral 3B/8B/14B, Mistral Small, Mistral Medium).
+MISTRAL_MODELS = {"ministral-8b-latest", "ministral-3b-latest", "ministral-14b-latest", "mistral-small-latest",
+                  "mistral-medium-latest"}
 
 
 def is_anthropic_model(model_id: str | None) -> bool:
