@@ -9,6 +9,7 @@ OAuth token and the provider's base URL. The same adapter code serves both.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -49,6 +50,18 @@ def _friendly(status: int, text: str) -> str:
     return f"CRM error {status}: {text}"
 
 
+# CRMs cap requests per few seconds (Follow Up Boss: per 10 s). A big scan can hit that; wait and retry.
+RATE_LIMIT_RETRIES = 4
+
+
+def _retry_after(resp: httpx.Response, attempt: int) -> float:
+    try:
+        wait = float(resp.headers.get("Retry-After") or 0)
+    except ValueError:
+        wait = 0.0
+    return min(max(wait, 2.0 * (2 ** attempt)), 20.0)
+
+
 class BaseHttp:
     client_factory = staticmethod(lambda: httpx.AsyncClient(timeout=15.0))
 
@@ -59,10 +72,15 @@ class BaseHttp:
         url, headers, extra_params, auth = self._prepare(path)
         query = {**extra_params, **(params or {})}
         async with self.client_factory() as client:
-            try:
-                resp = await client.request(method, url, params=query or None, json=json, headers=headers, auth=auth)
-            except httpx.HTTPError as exc:
-                raise CrmError(f"Couldn't reach the CRM: {exc.__class__.__name__}") from exc
+            for attempt in range(RATE_LIMIT_RETRIES + 1):
+                try:
+                    resp = await client.request(method, url, params=query or None, json=json, headers=headers, auth=auth)
+                except httpx.HTTPError as exc:
+                    raise CrmError(f"Couldn't reach the CRM: {exc.__class__.__name__}") from exc
+                if resp.status_code != 429 or attempt == RATE_LIMIT_RETRIES:
+                    break
+                # Rate-limited: wait as long as the CRM asks (or back off), then try again instead of failing.
+                await asyncio.sleep(_retry_after(resp, attempt))
         if resp.status_code >= 400:
             raise CrmError(_friendly(resp.status_code, _error_text(resp)), resp.status_code)
         if not resp.content:

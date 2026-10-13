@@ -60,15 +60,30 @@ async def _conn(db, org_id, key: str) -> CrmConnection:
 
 
 @router.post("/{key}/scan")
-async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False):
+async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth: str = "",
+               continue_from: uuid.UUID | None = None):
+    """Scan the CRM. depth: quick (newest) · recent (recent activity) · old (oldest first, to dig up old leads).
+    continue_from: an earlier scan to extend with the next batch (same depth), so big CRMs are read in small,
+    rate-limit-friendly steps instead of one huge pull."""
     await _require_radar(ctx, db)
     conn = await _conn(db, ctx.org.id, key)
     p = PROVIDERS[key]
     if not p.can_scan:
         raise HTTPException(status_code=400, detail=f"Radar doesn't support {p.name} yet.")
+    previous = None
+    if continue_from:
+        previous = await db.get(CrmScan, continue_from)
+        if not previous or previous.org_id != ctx.org.id or previous.connection_id != conn.id:
+            raise HTTPException(status_code=404, detail="Scan not found")
+        if not previous.result.get("next"):
+            raise HTTPException(status_code=400, detail="That scan already reached the end of your CRM.")
+        depth = previous.result.get("depth") or depth
+    depth = depth if depth in ("quick", "recent", "old") else ("quick" if quick else "recent")
+    state: dict = {}
     try:
         _, http = sync.http_for(conn)
-        signals = await p.scan_signals(http, conn.config or {}, quick=quick)
+        signals = await p.scan_signals(http, conn.config or {}, quick=depth == "quick", depth=depth,
+                                       cursor=previous.result.get("next") if previous else None, state=state)
     except CrmError as exc:
         raise HTTPException(status_code=400, detail=f"Couldn't scan {p.name}: {exc}") from exc
     # Skip anyone already on BlackSync's do-not-call list.
@@ -77,11 +92,14 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False):
     for s in signals:
         if normalize_phone(s.phone) in dnc:
             s.dnc = True
-    result = {**radar.build_plays(signals), "quick": quick}
+    batch = radar.build_plays(signals)
+    result = radar.merge(previous.result, batch) if previous else batch
+    result.update(quick=depth == "quick", depth=depth, next=state.get("next"),
+                  batches=(previous.result.get("batches", 1) + 1) if previous else 1)
     row = CrmScan(org_id=ctx.org.id, connection_id=conn.id, result=result)
     db.add(row)
-    total = sum(pl["count"] for pl in result["plays"])
-    await sync.add_log(db, conn, "import", "ok", f"Radar scanned {result['scanned']} contacts: {total} worth calling now.")
+    found = sum(pl["count"] for pl in batch["plays"])
+    await sync.add_log(db, conn, "import", "ok", f"Radar scanned {batch['scanned']} contacts: {found} worth calling now.")
     await db.commit()
     await db.refresh(row)
     return _scan_out(row, key)

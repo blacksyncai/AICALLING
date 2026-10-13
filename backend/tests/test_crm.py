@@ -744,3 +744,60 @@ def test_hubspot_creates_ai_pipeline(http_mock):
     body = [json.loads(c[2].content) for c in calls if c[0] == "POST"][0]
     probs = {st["label"]: st["metadata"]["probability"] for st in body["stages"]}
     assert probs["Not interested"] == "0.0" and probs["Queued for AI call"] == "0.5"
+
+
+def test_radar_digs_old_leads_in_batches_and_waits_out_rate_limits(client, monkeypatch):
+    """FUB: dig oldest-first, continue to the next batch, merge without repeats, and retry a 429."""
+    from app.services.crm import http as crm_http
+
+    monkeypatch.setattr(settings, "secrets_encryption_key", Fernet.generate_key().decode())
+
+    async def no_sleep(_s):
+        return None
+
+    monkeypatch.setattr(crm_http.asyncio, "sleep", no_sleep)
+    fub = PROVIDERS["followupboss"]
+    monkeypatch.setattr(type(fub), "_DEPTHS", {**type(fub)._DEPTHS, "old": ("created", 100, False, 0)})  # 1 page a batch
+    hits = {"429": 0}
+    old = "2024-01-15T00:00:00Z"
+
+    def handler(request: httpx.Request):
+        path, q = request.url.path, dict(request.url.params)
+        if path == "/v1/me":
+            return httpx.Response(200, json={"name": "Jo"})
+        if path == "/v1/people":
+            if q.get("next") == "b2":
+                rows = [{"id": 500 + i, "name": f"Old B{i}", "phones": [{"value": f"+1415556{6000 + i}"}], "stage": "Lead",
+                         "created": old, "contacted": False} for i in range(3)]
+                return httpx.Response(200, json={"people": rows, "_metadata": {}})
+            assert q.get("sort") == "created"  # oldest first
+            if hits["429"] == 0:
+                hits["429"] += 1
+                return httpx.Response(429, headers={"Retry-After": "1"}, json={"errorMessage": "Too many requests"})
+            rows = [{"id": i, "name": f"Old A{i}", "phones": [{"value": f"+1415555{6000 + i}"}], "stage": "Lead",
+                     "created": old, "contacted": i % 2 == 0} for i in range(100)]
+            return httpx.Response(200, json={"people": rows,
+                                             "_metadata": {"nextLink": "https://api.followupboss.com/v1/people?next=b2&limit=100"}})
+        return httpx.Response(200, json={"events": [], "calls": [], "_metadata": {}})
+
+    monkeypatch.setattr(BaseHttp, "client_factory",
+                        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    assert client.post("/api/integrations/crm/followupboss/connect", json={"fields": {"api_key": "k"}}).status_code == 200
+    r = client.post("/api/radar/followupboss/scan", params={"depth": "old"})
+    assert r.status_code == 200, r.text
+    first = r.json()
+    assert hits["429"] == 1 and first["depth"] == "old" and first["next"] and first["scanned"] == 100
+    plays = {pl["key"]: pl for pl in first["plays"]}
+    # Calls weren't read on an old-lead batch: only people FUB marks as not contacted count as never contacted.
+    assert plays["never_called"]["count"] == 50 and plays["never_called"]["title"] == "Haven't been contacted"
+    item = plays["never_called"]["items"][0]
+    assert item["created"].startswith("2024-01-15") and item["contacted"] is False
+
+    r = client.post("/api/radar/followupboss/scan", params={"continue_from": first["id"]})
+    second = r.json()
+    assert second["scanned"] == 103 and second["batches"] == 2 and not second["next"]
+    never = {pl["key"]: pl for pl in second["plays"]}["never_called"]
+    assert never["count"] == 53 and len({i["external_id"] for i in never["items"]}) == 53
+    # The end of the CRM: nothing more to scan.
+    assert client.post("/api/radar/followupboss/scan", params={"continue_from": second["id"]}).status_code == 400
+    client.delete("/api/integrations/crm/followupboss")

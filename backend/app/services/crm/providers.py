@@ -231,8 +231,13 @@ class Provider:
 
     can_scan = False
 
-    async def scan_signals(self, http: BaseHttp, config: dict, limit: int = 1000, quick: bool = False) -> list:
-        """Radar input: a radar.Signals per contact (created, inbound, calls, deals)."""
+    async def scan_signals(self, http: BaseHttp, config: dict, limit: int = 1000, quick: bool = False,
+                           depth: str = "", cursor: Any = None, state: dict | None = None) -> list:
+        """Radar input: a radar.Signals per contact (created, inbound, calls, deals).
+
+        depth: "quick" (newest), "recent" (recent activity) or "old" (oldest first, to dig up old leads).
+        cursor/state: providers that page with a cursor read where the last batch stopped from `cursor` and
+        leave the next one in state["next"], so Radar can scan the next batch."""
         return []
 
 
@@ -401,9 +406,10 @@ class Close(Provider):
             skip += 100
         return out
 
-    async def scan_signals(self, http, config, limit=1000, quick=False):
+    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
         from app.services.crm.radar import Signals
 
+        quick = quick or depth == "quick"
         now = dt.datetime.now(UTC)
         if quick:
             limit = min(limit, 300)
@@ -691,26 +697,37 @@ class FollowUpBoss(Provider):
 
     can_scan = True
 
-    async def _pages(self, http, path: str, key: str, cap: int, params: dict) -> list[dict]:
+    async def _pages(self, http, path: str, key: str, cap: int, params: dict,
+                     start: tuple[str, dict] | None = None, state: dict | None = None) -> list[dict]:
         out: list[dict] = []
-        req: tuple[str, dict] | None = (path, {**params, "limit": 100})
+        req: tuple[str, dict] | None = start or (path, {**params, "limit": 100})
         while req and len(out) < cap:
             page = await http.request("GET", req[0], params=req[1])
             rows = page.get(key) or []
             out += rows
             req = _fub_next(page) if len(rows) >= 100 else None
+        if state is not None:
+            state["next"] = list(req) if req else None  # where the next batch starts
         return out
 
-    async def scan_signals(self, http, config, limit=1000, quick=False):
+    _FIELDS = "id,name,firstName,lastName,phones,emails,created,updated,stage,tags,lastActivity,contacted,price"
+    # (people sort, how many people per batch, read calls?, events to read)
+    _DEPTHS = {"quick": ("-created", 300, False, 300), "recent": ("-updated", 1000, True, 1500),
+               "old": ("created", 300, False, 0)}
+
+    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
         from app.services.crm.radar import Signals
 
-        # Quick: the newest people only (who came in lately and hasn't been touched); full: everyone recent.
-        people = await self._pages(http, "/v1/people", "people", 300 if quick else limit, {
-            "sort": "-created" if quick else "-updated",
-            "fields": "id,name,firstName,lastName,phones,emails,created,updated,stage,tags,lastActivity,contacted,price"})
-        calls = [] if quick else await self._pages(http, "/v1/calls", "calls", 3000, {"sort": "-created"})
+        # quick: the newest people (who came in lately and hasn't been touched); recent: everyone active lately;
+        # old: oldest first, to dig up leads from months or years ago. Each batch can be continued (cursor).
+        depth = depth or ("quick" if quick else "recent")
+        sort, batch, with_calls, n_events = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        start = (cursor[0], dict(cursor[1])) if cursor else None
+        people = await self._pages(http, "/v1/people", "people", min(batch, limit), {"sort": sort, "fields": self._FIELDS},
+                                   start=start, state=state)
+        calls = await self._pages(http, "/v1/calls", "calls", 3000, {"sort": "-created"}) if with_calls else []
         # FUB's lead events are the gold: website visits, property views/saves, inquiries.
-        events = await self._pages(http, "/v1/events", "events", 300 if quick else 1500, {"sort": "-created"})
+        events = await self._pages(http, "/v1/events", "events", n_events, {"sort": "-created"}) if n_events else []
         by_person: dict[str, list[dict]] = {}
         for c in calls:
             if c.get("personId"):
@@ -745,7 +762,7 @@ class FollowUpBoss(Provider):
                 external_id=pid, name=name, phone=phones[0]["value"], email=(emails or [""])[0],
                 created_at=_parse_time(p.get("created")), last_activity_at=_parse_time(p.get("lastActivity") or p.get("updated")),
                 last_inbound_at=inb[0] if inb else None, inbound_kind=inb[1] if inb else "",
-                calls=len(lc), connected_calls=len(connected),
+                calls=len(lc), connected_calls=len(connected), calls_known=with_calls,
                 last_call_at=_parse_time(last.get("created")) if last else None,
                 last_call_result=(last.get("outcome") or "") if last else "",
                 deal_stage=stage, deal_open=stage.lower() not in ("closed", "past client", "trash", "sphere"),

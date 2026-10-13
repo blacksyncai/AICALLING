@@ -24,7 +24,7 @@ UTC = dt.timezone.utc
 PLAYS = [
     {"key": "hot", "title": "Hot right now", "why": "Reached out in the last 7 days and nobody has called them since.",
      "suggest": "Call within the hour — they're expecting it."},
-    {"key": "never_called", "title": "Never called", "why": "In your CRM for a day or more and never got a call.",
+    {"key": "never_called", "title": "Haven't been contacted", "why": "In your CRM for a day or more and nobody has called or reached out.",
      "suggest": "Fast first touch: introduce yourself and qualify."},
     {"key": "unreached", "title": "Tried, never reached", "why": "Called 1–5 times, never got them on the phone.",
      "suggest": "Try again at a different time of day; leave a voicemail on the last try."},
@@ -62,6 +62,7 @@ class Signals:
     status: str = ""
     dnc: bool = False
     contacted: bool | None = None  # the CRM's own "has anyone contacted them" flag, when it keeps one
+    calls_known: bool = True  # False when the scan didn't read call history (quick / old-lead batches)
     extra: dict = field(default_factory=dict)
 
 
@@ -86,7 +87,8 @@ def classify(s: Signals, now: dt.datetime) -> tuple[str, str] | None:
         return None
     if s.won_at and not s.deal_open:
         return ("past_client", f"Won {_when(s.won_at)}") if _days(s.won_at, now) >= 180 else None
-    if s.calls == 0 and s.contacted is not True and s.created_at and _days(s.created_at, now) >= 1:
+    never = s.contacted is False or (s.calls_known and s.calls == 0 and s.contacted is not True)
+    if never and s.created_at and _days(s.created_at, now) >= 1:
         return "never_called", f"Added {_when(s.created_at)}, " + ("nobody has contacted them" if s.contacted is False else "never called")
     if 1 <= s.calls <= 5 and s.connected_calls == 0 and s.last_call_at and _days(s.last_call_at, now) >= 3:
         res = f" ({s.last_call_result})" if s.last_call_result else ""
@@ -110,6 +112,8 @@ def build_plays(signals: list[Signals], now: dt.datetime | None = None) -> dict:
         play, reason = hit
         groups[play].append({"external_id": s.external_id, "name": s.name, "phone": s.phone, "company": s.company,
                              "email": s.email, "reason": reason, "stage": s.deal_stage or s.status,
+                             "created": s.created_at.isoformat() if s.created_at else None,
+                             "calls": s.calls if s.calls_known else None, "contacted": s.contacted,
                              "last_touch": (s.last_call_at or s.last_inbound_at or s.last_activity_at or s.created_at
                                             or now).isoformat()})
     # Most recent first inside each play (hot: freshest inbound; others: oldest touch is least urgent).
@@ -117,3 +121,16 @@ def build_plays(signals: list[Signals], now: dt.datetime | None = None) -> dict:
         groups[k].sort(key=lambda x: x["last_touch"], reverse=(k == "hot"))
     return {"scanned": len(signals), "plays": [{**p, "count": len(groups[p["key"]]), "items": groups[p["key"]]}
                                                for p in PLAYS]}
+
+
+def merge(previous: dict, batch: dict) -> dict:
+    """Add a new scan batch to an earlier scan's plays (people already listed aren't repeated)."""
+    out = {"scanned": (previous.get("scanned") or 0) + (batch.get("scanned") or 0), "plays": []}
+    old = {pl["key"]: pl for pl in previous.get("plays") or []}
+    for pl in batch["plays"]:
+        before = (old.get(pl["key"]) or {}).get("items") or []
+        seen = {i["external_id"] for i in before}
+        items = before + [i for i in pl["items"] if i["external_id"] not in seen]
+        items.sort(key=lambda x: x["last_touch"], reverse=(pl["key"] == "hot"))
+        out["plays"].append({**pl, "items": items, "count": len(items)})
+    return out
