@@ -152,7 +152,10 @@ class Settings(BaseSettings):
     # ── Email (team invites) ──────────────────────────────────────────────────
     # Without a Resend key, invites still work — the UI shows a link to share.
     resend_api_key: str = ""
-    email_from: str = "BlackSync <onboarding@resend.dev>"
+    # Senders (the blacksync.ai domain is verified in Resend): account and product emails come from
+    # notifications@, team invites from invites@.
+    email_from: str = "BlackSync <notifications@blacksync.ai>"
+    email_from_invites: str = "BlackSync <invites@blacksync.ai>"
 
     # ── Support (in-app help widget) ──────────────────────────────────────────
     # Model for the support assistant (any model the backend has a key for: OpenAI, Cerebras or Claude).
