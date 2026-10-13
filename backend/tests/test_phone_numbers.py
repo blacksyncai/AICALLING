@@ -260,3 +260,22 @@ def test_recording_off_for_agent_skips_egress(client, make_client, twilio, monke
     assert sip.sip_number == ""  # no numbers on the account → trunk default
     assert not started
     assert owner.get(f"/api/calls/{call_id}/recording").json()["status"] == "none"
+
+
+def test_test_call_can_pick_which_number_it_calls_from(client, make_client, twilio, monkeypatch):
+    n1, n2 = _num(), _num()
+    org, owner = _account(client, make_client, "Pick Co", credits=50)
+    for n in (n1, n2):
+        client.post(f"/api/admin/orgs/{org['id']}/phone-numbers", json={"number": n, "mode": "purchase"})
+    log: list = []
+    monkeypatch.setattr(outbound_call, "_lk", lambda: _FakeLK(log))
+    monkeypatch.setattr(settings, "livekit_sip_outbound_trunk_id", "ST_test")
+    agent = owner.post("/api/agents/", json={"template": "sales_sdr"}).json()
+
+    r = owner.post(f"/api/agents/{agent['id']}/phone-call", json={"to_phone": "+15551234567", "from_number": n2})
+    assert r.status_code == 200, r.text
+    assert owner.get(f"/api/calls/{r.json()['call_id']}").json()["from_phone"] == n2
+
+    # Only the account's own numbers can be used.
+    r = owner.post(f"/api/agents/{agent['id']}/phone-call", json={"to_phone": "+15551234567", "from_number": "+19998887777"})
+    assert r.status_code == 400 and "number" in r.json()["detail"]

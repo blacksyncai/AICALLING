@@ -236,7 +236,8 @@ class CallService:
         return {"url": settings.livekit_url, "token": token, "room": room_name, "call_id": str(call_log.id)}
 
     async def dispatch_call(self, lead: Lead | None, db: AsyncSession, *, agent: Agent | None = None,
-                            to_phone: str | None = None, campaign_id: uuid.UUID | None = None) -> CallLog:
+                            to_phone: str | None = None, campaign_id: uuid.UUID | None = None,
+                            from_number: str | None = None) -> CallLog:
         """Dial a phone number via LiveKit SIP outbound with the given agent."""
         if not settings.livekit_sip_outbound_trunk_id:
             raise CallSetupError(
@@ -278,7 +279,12 @@ class CallService:
         max_seconds, rate, reserved = await reserve_for_call(db, org, agent, requested)
 
         room_name = f"call-{uuid.uuid4()}"
-        from_number = await telephony.caller_id_for(db, org.id, agent)
+        if from_number:
+            # A specific number was picked (test calls): it must be one of this account's own numbers.
+            if not any(n.number == from_number for n in await telephony.active_numbers(db, org.id)):
+                raise CallSetupError("That number isn't on this account — pick one of your phone numbers.")
+        else:
+            from_number = await telephony.caller_id_for(db, org.id, agent)
         call_log = CallLog(
             id=uuid.uuid4(),
             org_id=org.id,

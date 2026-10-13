@@ -114,6 +114,8 @@ class WebCallRequest(BaseModel):
 class PhoneCallRequest(BaseModel):
     to_phone: str
     name: str = ""
+    # One of the account's numbers to call from; empty = the agent's caller ID (or the account default).
+    from_number: str = ""
 
 
 def catalog_specialty(a: Agent) -> str | None:
@@ -394,7 +396,8 @@ async def start_phone_call(agent_id: uuid.UUID, body: PhoneCallRequest, ctx: Ctx
 
     agent = await _get_agent(db, ctx, agent_id)
     try:
-        call = await call_service.dispatch_call(None, db, agent=agent, to_phone=body.to_phone)
+        call = await call_service.dispatch_call(None, db, agent=agent, to_phone=body.to_phone,
+                                                from_number=body.from_number.strip() or None)
     except PlanLimit as exc:
         raise exc.http()
     except InsufficientCredits as exc:

@@ -579,7 +579,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                   beforeStart={beforeTest}
                 />
               )}
-              {testTab === "phone" && <PhonePanel agentId={id} enabled={!!caps?.phone_call} beforeStart={beforeTest} />}
+              {testTab === "phone" && <PhonePanel agentId={id} enabled={!!caps?.phone_call} beforeStart={beforeTest} callerNumber={draft.caller_number} />}
             </div>
           </Card>
         </div>
