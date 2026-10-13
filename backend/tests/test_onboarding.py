@@ -53,3 +53,40 @@ def test_trial_onboarding_logistics_has_no_lead_finder(client, make_client):
     assert c.post("/api/onboarding/start", json={"company": "Acme Freight", "industry": "nope"}).status_code == 422
     org = c.post("/api/onboarding/start", json={"company": "Acme Freight", "industry": "logistics"}).json()["org"]
     assert org["lead_finder_enabled"] is False and org["industry"] == "logistics"
+
+
+def test_signup_sends_welcome_then_walkthrough_offer_a_day_later(client, make_client, monkeypatch):
+    import time
+    from datetime import datetime, timedelta, timezone
+
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.services import onboarding_emails
+
+    sent: list[tuple[str, str, str]] = []
+
+    async def fake_send(to, subject, body):
+        sent.append((to, subject, body))
+        return True
+
+    monkeypatch.setattr(settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(onboarding_emails, "send_email", fake_send)
+
+    c = _orphan_login(client, make_client)
+    assert c.post("/api/onboarding/start", json={"company": "Welcome Co", "industry": "other"}).status_code == 201
+    for _ in range(50):
+        if sent:
+            break
+        time.sleep(0.05)
+    assert len(sent) == 1 and "Welcome" in sent[0][1] and "Welcome Co" in sent[0][2]
+    email = sent[0][0]
+
+    async def sweep(at):
+        async with AsyncSessionLocal() as db:
+            return await onboarding_emails.send_due_followups(db, now=at)
+
+    now = datetime.now(timezone.utc)
+    assert asyncio.run(sweep(now + timedelta(hours=2))) == 0          # too early
+    assert asyncio.run(sweep(now + timedelta(hours=25))) == 1         # the next day
+    assert sent[-1][0] == email and "walkthrough" in sent[-1][2] and "cal.com" in sent[-1][2]
+    assert asyncio.run(sweep(now + timedelta(hours=26))) == 0         # only once

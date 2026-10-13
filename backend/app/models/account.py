@@ -72,6 +72,9 @@ class User(Base):
     # Bumped on password change so older session cookies stop working.
     session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sign-up emails: the welcome email, then a walkthrough offer a day later (app/services/onboarding_emails.py).
+    welcome_email_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    followup_email_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 

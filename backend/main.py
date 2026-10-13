@@ -80,7 +80,10 @@ async def lifespan(app: FastAPI):
     sweeper_task = start_orphan_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.entitlements import start_expiry_sweeper
     expiry_task = start_expiry_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services.onboarding_emails import start_sweeper as start_followup_sweeper
+    followup_task = start_followup_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     yield
+    followup_task.cancel()
     expiry_task.cancel()
     sweeper_task.cancel()
     refresh_task.cancel()
