@@ -42,6 +42,8 @@ FEATURED_VOICES: list[dict] = [
      "gender": "masculine", "description": "Live voice clone.", "clone": True},
     {"id": "mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
      "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
+    {"id": "e26d5a55-fe5a-4f79-a8e9-ef5580e134cc", "name": "Lina", "gender": "feminine",
+     "description": "Live voice clone.", "clone": True},
     {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
      "gender": "feminine", "description": "Live voice clone.", "clone": True},
     {"id": "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
@@ -61,8 +63,7 @@ FEATURED_VOICES: list[dict] = [
 
 # Voices in the Cartesia account that the picker should NOT list (owned voices are listed automatically).
 HIDDEN_VOICE_IDS = {
-    "b77472c7-ed40-40ae-b022-2a264719d520",  # "Giovanna" (was briefly listed as Lina)
-    "e26d5a55-fe5a-4f79-a8e9-ef5580e134cc",  # "lina"
+    "b77472c7-ed40-40ae-b022-2a264719d520",  # "Giovanna" (was briefly listed as Lina by mistake)
 }
 
 # New agents start with Lauren (independent of the picker order above).
