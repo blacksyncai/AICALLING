@@ -95,6 +95,12 @@ async def lifespan(app: FastAPI):
     expiry_task = start_expiry_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.onboarding_emails import start_sweeper as start_followup_sweeper
     followup_task = start_followup_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    if settings.run_startup_jobs:
+        from app.routers.campaigns import resume_running_campaigns
+        try:
+            await resume_running_campaigns()
+        except Exception as exc:
+            log.warning("campaign_resume_failed", error=str(exc)[:200])
     from app.services import twilio_recordings
     rec_task = (twilio_recordings.start_sweeper() if settings.run_startup_jobs and settings.recording_via_twilio
                 else asyncio.create_task(asyncio.sleep(0)))

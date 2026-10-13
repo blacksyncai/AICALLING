@@ -298,13 +298,11 @@ _wake: dict[str, bool] = {}
 
 
 def wake_campaigns() -> None:
-    from app.routers.campaigns import _process_call_queue
+    from app.routers.campaigns import ensure_queue
 
     for cid in list(_wake):
         _wake.pop(cid, None)
-        task = asyncio.create_task(_process_call_queue(cid))
-        _BACKGROUND.add(task)
-        task.add_done_callback(_BACKGROUND.discard)
+        ensure_queue(cid)
 
 
 # ── Auto-sync: re-run a saved import on a schedule (e.g. "new leads in stage X → campaign Y") ──

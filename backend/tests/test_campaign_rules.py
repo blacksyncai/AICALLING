@@ -220,3 +220,63 @@ def test_queue_picks_due_retries_and_skips_dnc(client, agent_id):
 
     asyncio.run(run())
     assert client.get(f"/api/campaigns/{camp['id']}").json()["pending_retries"] == 2
+
+
+def test_stuck_calling_contacts_get_their_retry(client, agent_id):
+    """A contact left "calling" by a restart (its call never reported back) is redialed, not skipped forever."""
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.models.campaign import Campaign
+    from app.models.lead import Lead
+    from app.routers.campaigns import _next_lead
+
+    camp = client.post("/api/campaigns/", json={"name": "Stuck", "agent_id": agent_id, "max_attempts": 3}).json()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    cid = uuid.UUID(camp["id"])
+    now = datetime.now(UTC)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            live = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="live", phone="+14155550111",
+                        status="calling", attempts=1, last_called_at=now - timedelta(minutes=2), created_at=now - timedelta(hours=2))
+            stuck = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="stuck", phone="+14155550112",
+                         status="calling", attempts=1, last_called_at=now - timedelta(hours=1),
+                         next_attempt_at=now - timedelta(minutes=30), created_at=now - timedelta(hours=1))
+            db.add_all([live, stuck])
+            await db.commit()
+            campaign = await db.get(Campaign, cid)
+            lead, waiting, _ = await _next_lead(db, campaign, now)
+            assert lead.id == stuck.id and lead.status == "no_answer" and waiting == 1  # live call still in progress
+
+    asyncio.run(run())
+
+
+def test_running_campaigns_resume_after_restart(client, agent_id, monkeypatch):
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.models.campaign import Campaign
+    from app.routers import campaigns as c
+
+    started: list[str] = []
+
+    async def fake_queue(cid):
+        started.append(cid)
+        await asyncio.sleep(0.2)
+
+    monkeypatch.setattr(c, "_process_call_queue", fake_queue)
+    run_id = client.post("/api/campaigns/", json={"name": "Was running", "agent_id": agent_id}).json()["id"]
+    idle_id = client.post("/api/campaigns/", json={"name": "Paused", "agent_id": agent_id}).json()["id"]
+
+    async def go():
+        async with AsyncSessionLocal() as db:
+            (await db.get(Campaign, uuid.UUID(run_id))).status = "running"
+            (await db.get(Campaign, uuid.UUID(idle_id))).status = "paused"
+            await db.commit()
+        await c.resume_running_campaigns()
+        assert c.ensure_queue(run_id) is False  # already has a dialer — never two at once
+        await asyncio.sleep(0.05)
+
+    asyncio.run(go())
+    assert run_id in started and idle_id not in started and started.count(run_id) == 1

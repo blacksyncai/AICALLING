@@ -505,7 +505,7 @@ async def start_campaign(
     await db.commit()
 
     # Kick off background call queue (asyncio, no Celery)
-    background_tasks.add_task(_process_call_queue, str(campaign_id))
+    ensure_queue(str(campaign_id))
 
     log.info("campaign_started", campaign_id=str(campaign_id))
     return {"message": "Campaign started", "campaign": await _campaign_out(db, campaign)}
@@ -765,14 +765,16 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
     recent = now - timedelta(minutes=20)
     for lead in candidates:
         if lead.status == "calling":
-            # A call in progress may still end unanswered and need another try
-            # (calls older than 20 minutes are treated as stale).
-            if (max_attempts > 1 and (lead.attempts or 0) < max_attempts
-                    and lead.last_called_at and _aware(lead.last_called_at) >= recent):
-                waiting += 1
-                due = now + timedelta(seconds=60)
-                earliest = due if earliest is None else min(earliest, due)
-            continue
+            if lead.last_called_at and _aware(lead.last_called_at) >= recent:
+                # A call in progress may still end unanswered and need another try.
+                if max_attempts > 1 and (lead.attempts or 0) < max_attempts:
+                    waiting += 1
+                    due = now + timedelta(seconds=60)
+                    earliest = due if earliest is None else min(earliest, due)
+                continue
+            # Stuck "calling" for 20+ minutes: its call never reported back (e.g. a restart cut it off).
+            # Treat it as unanswered so it gets its remaining tries instead of being skipped forever.
+            lead.status = "no_answer"
         state = dial_eligibility(lead, campaign, now)
         if state == "now":
             return lead, waiting, earliest
@@ -781,6 +783,35 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
             due = _aware(lead.next_attempt_at)
             earliest = due if earliest is None else min(earliest, due)
     return None, waiting, earliest
+
+
+# One dialer per campaign in this process. Starting a campaign twice (or waking it from an import)
+# never runs two dialers side by side.
+_QUEUES: dict[str, asyncio.Task] = {}
+
+
+def ensure_queue(campaign_id: str) -> bool:
+    """Start the campaign's dialer unless one is already running. Returns True if it started one."""
+    task = _QUEUES.get(campaign_id)
+    if task is not None and not task.done():
+        return False
+    task = asyncio.create_task(_process_call_queue(campaign_id))
+    _QUEUES[campaign_id] = task
+    task.add_done_callback(lambda t, cid=campaign_id: _QUEUES.pop(cid, None) if _QUEUES.get(cid) is t else None)
+    return True
+
+
+async def resume_running_campaigns() -> int:
+    """After a restart: pick every running outbound campaign back up (dialers live in memory and die
+    with the process, which used to leave campaigns "Running" with nothing dialing and no redials)."""
+    async with AsyncSessionLocal() as db:
+        ids = (await db.execute(select(Campaign.id).where(
+            Campaign.status == "running",
+            or_(Campaign.direction.is_(None), Campaign.direction != "inbound"),
+        ))).scalars().all()
+    started = sum(ensure_queue(str(cid)) for cid in ids)
+    log.info("campaigns_resumed", count=started)
+    return started
 
 
 async def _process_call_queue(campaign_id: str) -> None:
