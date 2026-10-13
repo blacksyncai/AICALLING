@@ -1,7 +1,5 @@
 // Clerk's prebuilt components, dressed in BlackSync's brand.
 export const clerkAppearance = {
-  // Hides Clerk's "Development mode" badge while the site runs on a Clerk development instance.
-  layout: { unsafe_disableDevelopmentModeWarnings: true },
   variables: {
     colorPrimary: "#dc4a1e",
     colorText: "#1c1917",

@@ -10,8 +10,6 @@ const POINTS = [
 
 /** Clerk's form, flattened to sit inside the auth card (the card supplies the title). */
 export const authFormAppearance = {
-  // Hides Clerk's "Development mode" badge (shown while the site runs on a Clerk development instance).
-  layout: { unsafe_disableDevelopmentModeWarnings: true },
   elements: {
     // `!` (important): Clerk's own styles otherwise win over utility classes.
     rootBox: "w-full!",
