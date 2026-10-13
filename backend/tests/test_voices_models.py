@@ -8,7 +8,7 @@ from app.agent.voices import FEATURED_VOICES
 from app.config import settings
 from app.routers import settings as settings_router
 
-LAUREN = FEATURED_VOICES[0]["id"]
+LAUREN = "6c756032-11c3-4be8-a120-74f9673fb700"
 PUBLIC = [
     {"id": LAUREN, "name": "Lauren (catalog)", "gender": "feminine", "language": "en",
      "description": "Warm American voice"},
@@ -116,7 +116,7 @@ def test_voice_metadata_fields(client, cartesia, monkeypatch):
     assert lauren["name"] == "Lauren"  # house name kept
     assert lauren["language"] == "en"
     assert lauren["accent"] == "American"  # from the Cartesia description, not the house one
-    assert lauren["description"] == FEATURED_VOICES[0]["description"]
+    assert lauren["description"] == next(f for f in FEATURED_VOICES if f["id"] == LAUREN)["description"]
     assert lauren["gender"] == "female"
 
 
