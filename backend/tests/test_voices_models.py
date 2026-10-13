@@ -233,9 +233,9 @@ def test_mistral_voice_listed_as_premium_and_audio_converts(client, cartesia):
 
     voices = _by_id(client.get("/api/settings/voices").json())
     h = voices["mistral:01a133e4-93c6-7540-98b5-a917a4da562e"]
-    assert h["name"] == "Hamza 2.0" and h["category"] == "premium" and h["provider"] == "mistral"
+    assert h["name"] == "Hamza · Version 2" and h["family"] == "Hamza" and h["category"] == "premium" and h["provider"] == "mistral"
     m = voices["mistral:01a1340c-90cb-7714-8ee0-02732154b0dd"]
-    assert m["name"] == "Marissa M 2.0" and m["category"] == "premium" and m["provider"] == "mistral"
+    assert m["name"] == "Marissa M · Version 2" and m["family"] == "Marissa M" and m["category"] == "premium" and m["provider"] == "mistral"
     assert f32le_to_s16le(struct.pack("<3f", 0.0, 1.0, -2.0)) == struct.pack("<3h", 0, 32767, -32767)
     assert wav_header(10)[:4] == b"RIFF" and len(wav_header(10)) == 44
 
