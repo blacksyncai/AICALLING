@@ -35,6 +35,9 @@ from livekit.plugins import cartesia, deepgram, openai, silero
 
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
+from app.agent.models import NEEDS_USER_TURN
+
+CALL_CONNECTED_CUE = "[The call just connected.]"
 from app.agent.voices import DEFAULT_VOICE_ID
 from app.agent.state import CallState
 from app.config import settings
@@ -1078,7 +1081,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             item = getattr(ev, "item", None)
             role = getattr(item, "role", None)
             text = (getattr(item, "text_content", None) or "").strip()
-            if role not in ("user", "assistant") or not text:
+            if role not in ("user", "assistant") or not text or text == CALL_CONNECTED_CUE:
                 return
             run.transcript.append({"role": role, "text": text, "ts": round(_time.monotonic() - run.t0, 2)})
             asyncio.create_task(_push_live_event(run.call_log_id, {
@@ -1267,12 +1270,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                  prepared=bool(first), heard_hello=heard)
         if vm["detected"]:
             return
+    # Some models need a user turn before they'll answer at all (see NEEDS_USER_TURN).
+    cue = {"user_input": CALL_CONNECTED_CUE} if model in NEEDS_USER_TURN else {}
     if first:
         session.say(first, allow_interruptions=True)
     elif call_type == "inbound":
-        session.generate_reply(instructions="You're answering an incoming phone call. Greet the caller warmly and ask how you can help.")
+        session.generate_reply(instructions="You're answering an incoming phone call. Greet the caller warmly and ask how you can help.", **cue)
     else:
-        session.generate_reply(instructions="Greet the contact and begin the conversation.")
+        session.generate_reply(instructions="Greet the contact and begin the conversation.", **cue)
 
 
 async def _wait_for_sip_answer(ctx: JobContext, timeout: float = 50.0) -> None:

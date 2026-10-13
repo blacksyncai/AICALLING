@@ -154,6 +154,9 @@ ANTHROPIC_OPENAI_BASE_URL = "https://api.anthropic.com/v1"
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 # Served on Cerebras wafer-scale hardware, branded as BlackSync's own models.
 CEREBRAS_MODELS = {"gpt-oss-120b", "qwen-3.8-27b"}
+# Models whose chat template rejects a request with no user message (Cerebras answers 400 "No user
+# query found"), e.g. the agent's opening line. The voice worker adds a short cue turn for them.
+NEEDS_USER_TURN = {"qwen-3.8-27b"}
 MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 # Mistral models, branded "BlackSync Flash" (Ministral 3B/8B/14B, Mistral Small, Mistral Medium).
 MISTRAL_MODELS = {"ministral-8b-latest", "ministral-3b-latest", "ministral-14b-latest", "mistral-small-latest",
