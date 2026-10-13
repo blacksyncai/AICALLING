@@ -28,7 +28,8 @@ from app.models.support import (
 
 log = structlog.get_logger(__name__)
 
-UNAVAILABLE = "Our support team isn't available right now. I can create a support ticket so someone can follow up."
+UNAVAILABLE = ("Our team isn't online right now, but I've let them know and they'll follow up here. "
+               "I can keep helping in the meantime, or create a support ticket.")
 STAFF_ONLINE_WINDOW = timedelta(minutes=3)
 
 
@@ -99,6 +100,10 @@ def preview(text: str) -> str:
     return " ".join((text or "").split())[:160]
 
 
+# Modes where the AI answers: its own chats, and chats waiting for a person (until someone joins).
+AI_MODES = ("ai_active", "waiting_for_human")
+
+
 async def add_message(db: AsyncSession, conv: SupportConversation, *, sender: str, body: str,
                       author_id: uuid.UUID | None = None, internal: bool = False, attachments: list | None = None,
                       meta: dict | None = None, client_id: str | None = None,
@@ -112,7 +117,7 @@ async def add_message(db: AsyncSession, conv: SupportConversation, *, sender: st
             return dup
     stmt = update(SupportConversation).where(SupportConversation.id == conv.id)
     if ai_epoch is not None:
-        stmt = stmt.where(SupportConversation.mode == "ai_active", SupportConversation.epoch == ai_epoch)
+        stmt = stmt.where(SupportConversation.mode.in_(AI_MODES), SupportConversation.epoch == ai_epoch)
     values: dict = {"last_seq": SupportConversation.last_seq + 1}
     if not internal:
         values.update(last_message_at=now(), last_preview=preview(body or ("[screenshot]" if attachments else "")))
@@ -221,7 +226,8 @@ async def escalate(db: AsyncSession, conv: SupportConversation, org: Organizatio
         return None
     await set_mode(db, conv, "waiting_for_human")
     online = await staff_online(db)
-    text = ("Thanks — I've let the BlackSync team know. Someone will join this chat shortly, and you'll see their name here."
+    text = ("Thanks — I've let the BlackSync team know. Someone will join this chat shortly, and you'll see their name "
+            "here. I can keep helping until then."
             if online else UNAVAILABLE)
     msg = await add_message(db, conv, sender="system", body=text, meta=None if online else {"offer_ticket": True})
     who = (user.full_name or user.email) if user else "A customer"

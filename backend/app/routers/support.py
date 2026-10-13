@@ -199,7 +199,7 @@ async def _ai_events(conv_id: uuid.UUID, user_id: uuid.UUID):
     """Generate the AI reply for the newest customer message. Yields event dicts."""
     async with AsyncSessionLocal() as db:
         conv = await db.get(SupportConversation, conv_id)
-        if conv is None or conv.mode != "ai_active":
+        if conv is None or conv.mode not in core.AI_MODES:
             return
         if not ai.available():
             msg = await core.add_message(db, conv, sender="system", body=(
@@ -218,6 +218,9 @@ async def _ai_events(conv_id: uuid.UUID, user_id: uuid.UUID):
         epoch = conv.epoch
         core.set_typing(conv.id, "ai")
         messages, arts = await ai.build_messages(db, conv)
+        if conv.mode == "waiting_for_human":
+            messages[0]["content"] += ("\n\nNOTE: The customer has already asked for a person and the team has been "
+                                       "notified. Keep helping in the meantime; don't offer a person again.")
         text, ok, err = "", True, None
         try:
             n = 0
@@ -227,7 +230,7 @@ async def _ai_events(conv_id: uuid.UUID, user_id: uuid.UUID):
                 yield {"type": "delta", "text": delta}
                 if n % 15 == 0:  # a person took over mid-reply: stop now
                     await db.refresh(conv)
-                    if conv.mode != "ai_active" or conv.epoch != epoch:
+                    if conv.mode not in core.AI_MODES or conv.epoch != epoch:
                         break
         except Exception as exc:
             ok, err = False, str(exc)[:200]
@@ -349,7 +352,7 @@ async def send_message(conv_id: uuid.UUID, body: MessageIn, ctx: CtxDep, db: DbD
     if c.mode in ("waiting_for_human", "human_active"):
         await core.notify(db, "customer_reply", f"{ctx.user.full_name or ctx.user.email} ({ctx.org.name}): {core.preview(text)}",
                           org_id=ctx.org.id, conversation_id=c.id, dedupe_key=f"reply:{c.id}", window=timedelta(minutes=5))
-    if c.mode != "ai_active":
+    if c.mode not in core.AI_MODES:  # a person is handling it
         return {"messages": [first]}
     if not stream:
         out = [first]

@@ -105,7 +105,12 @@ def test_escalation_takeover_and_live_chat(client, make_client, fake_ai):
     r = c.post(f"/api/support/conversations/{cid}/escalate").json()
     assert r["mode"] == "waiting_for_human"
     last = c.get(f"/api/support/conversations/{cid}").json()["messages"][-1]
-    assert "isn't available right now" in last["body"] and last["meta"]["offer_ticket"]
+    assert "isn't online right now" in last["body"] and last["meta"]["offer_ticket"]
+    # While it waits for a person, the AI keeps answering (told not to offer a person again).
+    fake_ai.reply = "Check that your phone number is active under Phone Numbers."
+    m = c.post(f"/api/support/conversations/{cid}/messages", json={"body": "Anything I can check meanwhile?"}).json()["messages"]
+    assert [x["sender"] for x in m] == ["customer", "ai"] and "Phone Numbers" in m[1]["body"]
+    assert "already asked for a person" in fake_ai.calls[-1][0]["content"]
     c.post(f"/api/support/conversations/{cid}/escalate")
     notes = client.get("/api/admin/support/notifications").json()["notifications"]
     assert sum(1 for n in notes if n["conversation_id"] == cid and n["kind"] == "escalation") == 1
