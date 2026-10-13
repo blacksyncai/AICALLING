@@ -100,7 +100,10 @@ def _purchase(p: Purchase) -> dict:
 
 def _public_plan(key: str, available: bool) -> dict:
     plan = catalog.PLANS[key]
-    return {**{k: v for k, v in plan.items() if k not in ("price_env", "lookup_key")},
+    out = {k: v for k, v in plan.items() if k not in ("price_env", "lookup_key")}
+    if plan.get("quote_label"):
+        out["amount_cents"] = None  # quoted per business — don't publish the floor
+    return {**out,
             "limits": catalog.plan_limits(key), "self_serve": catalog.self_serve(key), "available": available}
 
 

@@ -63,10 +63,11 @@ export function PlanCards({ plans, currentKey, action, focus }: {
               index={i}
               name={p.name}
               description={p.tagline}
-              cents={p.amount_cents}
+              cents={p.amount_cents ?? 0}
               period={p.interval}
-              pricePrefix={p.starting_at ? "Starting at" : undefined}
-              sub={`${p.included_credits.toLocaleString()} calling credits / month`}
+              pricePrefix={p.quote_label ? undefined : p.starting_at ? "Starting at" : undefined}
+              priceLabel={p.quote_label}
+              sub={p.quote_note ?? `${p.included_credits.toLocaleString()} calling credits / month`}
               variant={dark ? "dark" : "light"}
               highlighted={current && !dark}
               badge={

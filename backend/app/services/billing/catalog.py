@@ -55,17 +55,20 @@ PLANS: dict[str, dict] = {
     "managed": {
         "key": "managed", "name": "Managed", "amount_cents": 79700, "interval": "month", "included_credits": 1500,
         "lookup_key": "plan_managed_monthly", "price_env": "stripe_price_managed", "self_serve": False,
-        "starting_at": True,
-        "tagline": "Our team builds, configures, and optimizes your AI calling operation. "
-                   "Every managed solution is tailored to your business.",
+        # Priced per business on a call — the card shows "Custom", never the $797 floor.
+        "quote_label": "Custom", "quote_note": "Tailored pricing and credit volume",
+        "tagline": "We build and run your AI calling for you — for brokerages, agencies and multi-location teams.",
         "limits": {"agents": 12, "seats": 15, "numbers": 4, "crm": None, "concurrency": 8, "workflows": True,
                    "advanced_workflows": True, "roles": True, "team_reporting": True, "radar": True},
-        "support": "Dedicated onboarding contact, priority support and a monthly review",
+        "support": "Dedicated success manager and priority support",
         "features_title": "Everything in Teams, plus",
-        "features": ["White-glove onboarding", "Up to 2 custom agents built for you", "2 campaigns set up",
-                     "1 CRM connection set up", "Script and call-flow configuration",
-                     "Up to 2 hours a month of hands-on optimization", "Monthly performance review"],
-        "scope_note": "Work beyond this scope is quoted separately. Calling credits stay usage-based.",
+        "features": ["Done-for-you managed setup: agents, scripts and campaigns built for you",
+                     "Broker & brokerage rollouts across agents, teams and offices",
+                     "White-label options under your own brand",
+                     "CRM and calendar integrations configured for you",
+                     "Ongoing call reviews and script optimization",
+                     "Monthly performance strategy session"],
+        "scope_note": "Every Managed plan is scoped to your business on a short call. Calling credits stay usage-based.",
     },
     # The earlier $296 Teams price. Not sold any more; a subscription on it keeps Teams entitlements.
     "teams_legacy": {

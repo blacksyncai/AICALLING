@@ -108,11 +108,11 @@ Auto-recharge (plans only) buys a pack you choose whenever your balance drops be
     },
     {
         "slug": "plans-overview", "category": "credits_billing", "title": "Plans",
-        "summary": "Solo $98, Growth $197, Teams $349 per month; Managed starts at $797 and is set up with our team.",
+        "summary": "Solo $98, Growth $197, Teams $349 per month; Managed is custom-priced and set up with our team.",
         "body": """Solo — $98/month: 150 credits, 2 agents, 1 user, 1 phone number.
 Growth — $197/month: 400 credits, 4 agents, 4 users, 2 numbers, 1 CRM integration, workflow automations, Radar.
 Teams — $349/month: 900 credits, 8 agents, 10 users, 4 numbers, multiple CRMs, webhooks and the API, member roles, team analytics.
-Managed — starting at $797/month: 1,500 credits, 12 agents, 15 users and hands-on setup by our team. Book a call with sales from the Plans page.
+Managed — custom pricing: done-for-you setup, broker and multi-office rollouts, white-label options and ongoing optimization by our team (12 agents, 15 users). Pricing is tailored to your business — book a call with sales from the Plans page.
 
 Extra agent slots are $19/month each. See Billing & Usage → Plans for the full comparison and to change plans.""",
     },
@@ -365,7 +365,7 @@ You get 5 free lookups every day. After that, lookups use your lookup balance �
 - Solo ($98/mo): 150 credits, 2 active agents, 1 user, 1 phone number, 2 calls at once.
 - Growth ($197/mo): 400 credits, 4 agents, 4 users, 2 numbers, 1 CRM, 3 calls at once, workflows, Radar.
 - Teams ($349/mo): 900 credits, 8 agents, 10 users, 4 numbers, unlimited CRMs, 5 calls at once, advanced workflows, roles, team reporting, Radar.
-- Managed (from $797/mo): 1,500 credits, 12 agents, 15 users, 4 numbers, unlimited CRMs, 8 calls at once, everything in Teams, set up with our team.
+- Managed (custom pricing): tailored credit volume, 12 agents, 15 users, 4 numbers, unlimited CRMs, 8 calls at once, everything in Teams, set up with our team.
 
 Extra agent slots are $19/month and extra phone numbers $3.50/month. Paused agents don't count toward the agent limit. See Billing & Usage → Plans to compare and switch.""",
     },
@@ -426,6 +426,8 @@ Want us to set up your agent with you? Book a free walkthrough from Billing & Us
 # Earlier wording of articles we've since updated. A help center still showing one of these exact texts
 # (never edited by an admin) gets the new version; edited articles are left alone.
 _PREVIOUS_BODIES: dict[str, list[str]] = {
+    'plans-overview': ['Solo — $98/month: 150 credits, 2 agents, 1 user, 1 phone number.\nGrowth — $197/month: 400 credits, 4 agents, 4 users, 2 numbers, 1 CRM integration, workflow automations, Radar.\nTeams — $349/month: 900 credits, 8 agents, 10 users, 4 numbers, multiple CRMs, webhooks and the API, member roles, team analytics.\nManaged — starting at $797/month: 1,500 credits, 12 agents, 15 users and hands-on setup by our team. Book a call with sales from the Plans page.\n\nExtra agent slots are $19/month each. See Billing & Usage → Plans for the full comparison and to change plans.'],
+    'plan-limits-explained': ["What each plan includes:\n\n- Solo ($98/mo): 150 credits, 2 active agents, 1 user, 1 phone number, 2 calls at once.\n- Growth ($197/mo): 400 credits, 4 agents, 4 users, 2 numbers, 1 CRM, 3 calls at once, workflows, Radar.\n- Teams ($349/mo): 900 credits, 8 agents, 10 users, 4 numbers, unlimited CRMs, 5 calls at once, advanced workflows, roles, team reporting, Radar.\n- Managed (from $797/mo): 1,500 credits, 12 agents, 15 users, 4 numbers, unlimited CRMs, 8 calls at once, everything in Teams, set up with our team.\n\nExtra agent slots are $19/month and extra phone numbers $3.50/month. Paused agents don't count toward the agent limit. See Billing & Usage → Plans to compare and switch."],
     'how-calling-credits-work': ["Calls use calling credits for connected time. On Standard models a credit is about one minute of calling; Premium models use a little more per minute. You can see the rate for each agent in the agent editor. Phone calls also include a small phone-line fee per started minute. Calls that don't connect don't use credits.\n\nPlans include credits every month (Solo 150, Growth 400, Teams 900, Managed 1,500). Plan credits are added each paid billing period and expire at the end of it. Credits you buy separately never expire and are used after your plan credits.\n\nIf credits run out, campaigns pause until you add more."],
     'buy-more-credits': ["Go to Billing & Usage → Calling Credits and choose a pack: 75 credits for $29, 500 for $139, or 1,000 for $260. Payment is through secure Stripe checkout and the credits are added once the payment is confirmed. Bought credits never expire.\n\nYou can also turn on auto-recharge, which buys a pack you choose when your balance drops below a threshold, with a monthly spending cap. It's off until an account owner or admin turns it on and confirms."],
 }

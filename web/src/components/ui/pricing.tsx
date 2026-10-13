@@ -115,6 +115,7 @@ export function PricingCard({
   sub,
   variant = "light",
   pricePrefix,
+  priceLabel,
   facts,
 }: {
   /** "dark": the premium card (near-black with an orange glow). */
@@ -134,6 +135,8 @@ export function PricingCard({
   sub?: ReactNode;
   /** Small text before the price, e.g. "Starting at". */
   pricePrefix?: string;
+  /** Shown instead of the price (e.g. "Custom" for a tailored plan). */
+  priceLabel?: ReactNode;
   /** Plain facts (limits) between the CTA and the features. */
   facts?: ReactNode;
 }) {
@@ -162,10 +165,14 @@ export function PricingCard({
         </div>
         {description && <p className={cn("relative mt-1 text-sm", dark ? "text-zinc-400" : "text-zinc-600")}>{description}</p>}
         {pricePrefix && <div className={cn("relative mt-5 -mb-4 text-xs font-medium uppercase tracking-wider", dark ? "text-zinc-400" : "text-zinc-500")}>{pricePrefix}</div>}
-        <div className="relative mt-5 flex items-baseline gap-1">
-          <Price cents={cents} className="text-5xl" dark={dark} />
-          {period && <span className={cn("text-sm", dark ? "text-zinc-400" : "text-zinc-500")}>/{period}</span>}
-        </div>
+        {priceLabel ? (
+          <div className={cn("relative mt-5 font-display text-5xl font-semibold tracking-tight", dark ? "text-white" : "text-zinc-900")}>{priceLabel}</div>
+        ) : (
+          <div className="relative mt-5 flex items-baseline gap-1">
+            <Price cents={cents} className="text-5xl" dark={dark} />
+            {period && <span className={cn("text-sm", dark ? "text-zinc-400" : "text-zinc-500")}>/{period}</span>}
+          </div>
+        )}
         {sub && <div className={cn("relative mt-1 text-sm font-medium", dark ? "text-brand-300" : "text-brand-700")}>{sub}</div>}
         <div className="relative mt-6">{footer}</div>
         {facts && <div className="relative mt-6">{facts}</div>}

@@ -46,7 +46,8 @@ def test_catalog_has_four_tiers_and_managed_is_sales_led(client, make_client, st
     cat = c.get("/api/billing/catalog").json()
     plans = {p["key"]: p for p in cat["plans"]}
     assert list(plans) == ["solo", "growth", "teams", "managed"]
-    assert [plans[k]["amount_cents"] for k in plans] == [9800, 19700, 34900, 79700]
+    assert [plans[k]["amount_cents"] for k in plans] == [9800, 19700, 34900, None]
+    assert plans["managed"]["quote_label"] == "Custom"
     assert [plans[k]["included_credits"] for k in plans] == [150, 400, 900, 1500]
     assert [plans[k]["limits"]["agents"] for k in plans] == [2, 4, 8, 12]
     assert [plans[k]["limits"]["seats"] for k in plans] == [1, 4, 10, 15]

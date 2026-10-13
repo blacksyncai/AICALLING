@@ -92,7 +92,8 @@ export interface PlanLimits {
 export interface Plan {
   key: string;
   name: string;
-  amount_cents: number;
+  /** null when the plan is custom-priced. */
+  amount_cents: number | null;
   interval: string;
   included_credits: number;
   features: string[];
@@ -104,6 +105,9 @@ export interface Plan {
   self_serve: boolean;
   recommended?: boolean;
   starting_at?: boolean;
+  /** Shown instead of the price (Managed is quoted per business). */
+  quote_label?: string;
+  quote_note?: string;
   scope_note?: string;
 }
 
