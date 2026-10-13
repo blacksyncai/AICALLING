@@ -36,7 +36,7 @@ DEFAULTS: dict = {
     # Let account managers buy numbers themselves (off = they request one and an admin assigns it).
     "self_serve_numbers": False,
     # Phone line (Twilio) fee: credits per started minute of a connected phone call, on top of the AI rate.
-    "phone_minute_fee": 0.08,
+    "phone_minute_fee": 0.053,
     # Phone calls shorter than this (and voicemails) aren't charged AI time — only the phone line fee.
     "min_ai_billable_seconds": 10,
     # Browser test minutes each account gets free; after that tests use credits at the AI rate (no phone fee).
@@ -66,7 +66,13 @@ async def get_all(db) -> dict:
     return out
 
 
+# Old defaults of simple settings: a saved value equal to one of these follows the new default.
+_SUPERSEDED_VALUES = {"phone_minute_fee": [0.08]}
+
+
 def _current(key: str, value):
+    if key in _SUPERSEDED_VALUES and value in _SUPERSEDED_VALUES[key]:
+        return DEFAULTS[key]
     if key != "model_credit_rates":
         return value
     if value in _LEGACY_MODEL_RATES:

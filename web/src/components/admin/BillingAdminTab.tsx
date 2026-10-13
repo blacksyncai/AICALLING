@@ -207,7 +207,7 @@ function PricingCard() {
         sales: data.sales_booking_url ?? "",
         onboarding: data.onboarding_booking_url ?? "",
         expert: data.expert_booking_url ?? "",
-        phoneFee: String(data.phone_minute_fee ?? 0.08),
+        phoneFee: String(data.phone_minute_fee ?? 0.053),
         freeTest: String(data.free_test_minutes ?? 10),
         minAi: String(data.min_ai_billable_seconds ?? 10),
         cap: String(Math.round(data.auto_recharge_max_monthly_cents / 100)),

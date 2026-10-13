@@ -277,17 +277,17 @@ def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     rate = c.get(f"/api/billing/agents/{agent['id']}/rate").json()
     assert rate["credits_per_minute"] == 1.2
 
-    # AI time per second at the model rate + the phone line fee (0.08 per started minute).
-    _finish_call(client, org["id"], agent["id"], 90)        # 1.8 + 2 × 0.08 = 1.96
-    assert _balance(c) == 8.04
-    _finish_call(client, org["id"], agent["id"], 61)        # 1.22 + 0.16 = 1.38
-    assert _balance(c) == 6.66
-    _finish_call(client, org["id"], agent["id"], 5)         # under 10 s: phone line only = 0.08
-    assert _balance(c) == 6.58
-    _finish_call(client, org["id"], agent["id"], 600)       # owes 12.8, only 6.58 left → 0 (never negative)
+    # AI time per second at the model rate + the phone line fee (0.053 per started minute).
+    _finish_call(client, org["id"], agent["id"], 90)        # 1.8 + 2 × 0.053 = 1.906
+    assert _balance(c) == 8.094
+    _finish_call(client, org["id"], agent["id"], 61)        # 1.22 + 0.106 = 1.326
+    assert _balance(c) == 6.768
+    _finish_call(client, org["id"], agent["id"], 5)         # under 10 s: phone line only = 0.053
+    assert _balance(c) == 6.715
+    _finish_call(client, org["id"], agent["id"], 600)       # owes 12.5, only 6.715 left → 0 (never negative)
     assert _balance(c) == 0
     ledger = c.get("/api/billing/credits").json()["ledger"]
-    assert [t["amount"] for t in ledger[1:4]] == [-0.08, -1.38, -1.96] and all(t["balance_after"] >= 0 for t in ledger)
+    assert [t["amount"] for t in ledger[1:4]] == [-0.053, -1.326, -1.906] and all(t["balance_after"] >= 0 for t in ledger)
 
     # Calls that never connect cost nothing, even with a stray duration.
     org2, c2 = _account(client, make_client, "No Answer Co", credits=5)
@@ -672,10 +672,10 @@ def test_voicemail_and_short_calls_pay_only_the_phone_line(client, make_client):
     org, c = _account(client, make_client, "Voicemail Co", credits=10)
     agent = c.get("/api/agents/").json()[0]
     cid = _finish_call(client, org["id"], agent["id"], 40, outcome="voicemail")
-    assert c.get(f"/api/calls/{cid}").json()["credits_used"] == 0.08
+    assert c.get(f"/api/calls/{cid}").json()["credits_used"] == 0.053
     cid = _finish_call(client, org["id"], agent["id"], 9)
-    assert c.get(f"/api/calls/{cid}").json()["credits_used"] == 0.08
-    assert _balance(c) == 9.84
+    assert c.get(f"/api/calls/{cid}").json()["credits_used"] == 0.053
+    assert _balance(c) == 9.894
 
 
 def test_duration_stops_when_caller_hangs_up(client, make_client):
@@ -701,3 +701,11 @@ def test_duration_stops_when_caller_hangs_up(client, make_client):
                 json={"outcome": "completed", "transcript": [{"role": "user", "text": "hi"}], "ended_at": left})
     call = c.get(f"/api/calls/{call_id}").json()
     assert 11 <= call["duration_seconds"] <= 13
+
+
+def test_saved_old_phone_fee_follows_new_default():
+    from app.services.billing.settings_store import DEFAULTS, _current
+
+    assert DEFAULTS["phone_minute_fee"] == 0.053
+    assert _current("phone_minute_fee", 0.08) == 0.053   # the old default, saved before the change
+    assert _current("phone_minute_fee", 0.1) == 0.1     # a deliberate admin price is kept
