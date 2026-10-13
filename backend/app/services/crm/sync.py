@@ -435,8 +435,8 @@ async def refresh_context(db, conn: CrmConnection, lead: Lead) -> None:
     if p.can_map_fields:
         # The contact's fields, for the agent's {{variables}} (see services/crm/variables.py).
         try:
-            fields = await p.person_fields(http, conn.config or {}, ref)
-        except CrmError as exc:
+            fields = await asyncio.wait_for(p.person_fields(http, conn.config or {}, ref), timeout=5)
+        except (CrmError, asyncio.TimeoutError) as exc:
             log.info("crm_fields_skipped", provider=conn.provider, error=str(exc)[:120])
             fields = None
         if fields:
@@ -468,7 +468,7 @@ async def ensure_context(db, lead: Lead, max_age: dt.timedelta = dt.timedelta(ho
                                                          CrmConnection.provider.in_(list(refs))))).scalars().all()
     for conn in conns:
         try:
-            await asyncio.wait_for(refresh_context(db, conn, lead), timeout=4)
+            await asyncio.wait_for(refresh_context(db, conn, lead), timeout=9)
         except (CrmError, asyncio.TimeoutError) as exc:
             log.info("crm_context_skipped", provider=conn.provider, error=str(exc))
 

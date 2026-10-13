@@ -721,12 +721,23 @@ class FollowUpBoss(Provider):
     def _slug(label: str) -> str:
         return re.sub(r"[^a-z0-9]+", "_", (label or "").lower()).strip("_")[:48]
 
+    _cf_cache: dict = {}  # account → (fetched at, custom fields); they rarely change
+
     async def _custom_fields(self, http) -> list[dict]:
+        import time
+
+        key = str(getattr(http, "basic", None) or getattr(http, "connection_id", "") or id(http))
+        hit = self._cf_cache.get(key)
+        if hit and time.monotonic() - hit[0] < 600:
+            return hit[1]
         try:
             rows = (await http.request("GET", "/v1/customFields", params={"limit": 100})).get("customfields") or []
         except CrmError:
             return []
-        return [{"name": r["name"], "label": r.get("label") or r["name"]} for r in rows if r.get("name")]
+        out = [{"name": r["name"], "label": r.get("label") or r["name"]} for r in rows if r.get("name")]
+        if out:
+            self._cf_cache[key] = (time.monotonic(), out)
+        return out
 
     async def field_catalog(self, http, config):
         out = [{"key": k, "label": label} for k, label in self._STANDARD]

@@ -363,6 +363,11 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
           </Button>
         </div>
         {!chosen.length && <p className="text-xs text-zinc-500">Tick the people to call — or “Select all shown” after filtering.</p>}
+        {agentId && (
+          <Link href={`/integrations/${crm.provider}#variables`} className="inline-flex text-xs text-zinc-500 hover:text-brand-700">
+            Their {crm.name} fields fill this agent&apos;s script variables automatically · Check the mapping →
+          </Link>
+        )}
         {result && <Notice tone={result.tone}>{result.text}</Notice>}
       </div>
     </Card>

@@ -815,6 +815,7 @@ def test_script_variables_filled_from_follow_up_boss(client, monkeypatch):
     from sqlalchemy import select as sa_select
 
     monkeypatch.setattr(settings, "secrets_encryption_key", Fernet.generate_key().decode())
+    type(PROVIDERS["followupboss"])._cf_cache.clear()
     person = {"id": 77, "firstName": "Tony", "lastName": "Fuentes", "name": "Tony Fuentes", "stage": "Lead",
               "phones": [{"value": "+14155559077"}], "emails": [{"value": "tony@fuentesteam.com"}],
               "addresses": [{"street": "12 Oak St", "city": "Orlando", "state": "FL", "code": "32801"}],
