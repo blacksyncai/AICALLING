@@ -74,8 +74,12 @@ async def _messages_out(db, msgs: list[SupportMessage], staff: bool) -> list[dic
     for m in msgs:
         u = users.get(m.author_id)
         name = None
-        if m.sender == "agent" and u:
-            name = (u.first_name or "BlackSync team") if not staff else (u.full_name or u.email)
+        if m.sender == "agent":
+            own = (u.full_name or u.email) if u else "BlackSync team"
+            if staff:
+                name = f"{m.display_name} ({own})" if m.display_name else own
+            else:
+                name = m.display_name or ((u.first_name if u else None) or "BlackSync team")
         elif m.sender == "customer" and u:
             name = u.full_name or u.email
         out.append({"id": str(m.id), "seq": m.seq, "sender": m.sender, "author_name": name, "body": m.body,
@@ -91,8 +95,9 @@ async def _conv_out(db, c: SupportConversation, staff: bool = False) -> dict:
            "last_message_at": iso(c.last_message_at), "last_preview": c.last_preview,
            "ticket_id": str(c.ticket_id) if c.ticket_id else None, "created_at": iso(c.created_at),
            "typing": core.typing(c.id),
-           "agent_name": ((agent.first_name or "BlackSync team") if agent and not staff else
-                          (agent.full_name or agent.email) if agent else None)}
+           "agent_name": (c.agent_alias or ((agent.first_name or "BlackSync team") if agent else None)) if not staff else
+                         ((agent.full_name or agent.email) if agent else None),
+           "agent_alias": c.agent_alias if staff else None}
     if staff:
         cust = users.get(c.user_id)
         org = await db.get(Organization, c.org_id)
@@ -130,9 +135,15 @@ async def _replies_out(db, t: SupportTicket, staff: bool) -> list[dict]:
     out = []
     for r in rows:
         u = users.get(r.author_id)
-        name = ("BlackSync" if r.author_kind == "system" else
-                (u.first_name or "BlackSync team") if r.author_kind == "staff" and u and not staff else
-                (u.full_name or u.email) if u else None)
+        own = (u.full_name or u.email) if u else None
+        if r.author_kind == "system":
+            name = "BlackSync"
+        elif r.author_kind == "staff" and not staff:
+            name = r.display_name or ((u.first_name if u else None) or "BlackSync team")
+        elif r.author_kind == "staff":
+            name = f"{r.display_name} ({own})" if r.display_name else own
+        else:
+            name = own
         out.append({"id": str(r.id), "author_kind": r.author_kind, "author_name": name, "body": r.body,
                     "internal": r.internal, "attachments": await _att_list(db, r.attachments or []), "created_at": iso(r.created_at)})
     return out
@@ -654,13 +665,38 @@ def _first(u: User) -> str:
     return u.first_name or "A BlackSync team member"
 
 
+class AsIn(BaseModel):
+    # Team name to appear as ("Send as"); empty = the staff member's own first name.
+    as_name: str | None = Field(default=None, max_length=80)
+
+
+async def _persona(db, as_name: str | None) -> str | None:
+    name = (as_name or "").strip()
+    if not name:
+        return None
+    from app.services.billing import settings_store
+
+    allowed = [p.strip() for p in (await settings_store.get(db, "support_personas") or []) if isinstance(p, str)]
+    if name not in allowed:
+        raise HTTPException(status_code=400, detail="Pick one of the team names.")
+    return name
+
+
+async def _set_alias(db, c: SupportConversation, alias: str | None) -> None:
+    if c.agent_alias != alias:
+        c.agent_alias = alias
+        await db.commit()
+
+
 @admin_router.post("/conversations/{conv_id}/takeover")
-async def takeover(conv_id: uuid.UUID, admin: AdminDep, db: DbDep):
+async def takeover(conv_id: uuid.UUID, admin: AdminDep, db: DbDep, body: AsIn | None = None):
     c = await _staff_conv(db, conv_id)
-    if c.mode == "human_active" and c.assigned_to == admin.id:
+    alias = await _persona(db, body.as_name if body else None)
+    if c.mode == "human_active" and c.assigned_to == admin.id and c.agent_alias == alias:
         return await _conv_out(db, c, staff=True)
     await core.set_mode(db, c, "human_active", assigned_to=admin.id)  # AI stops: any reply in flight is dropped
-    await core.add_message(db, c, sender="system", body=f"{_first(admin)} from BlackSync joined the chat.")
+    await _set_alias(db, c, alias)
+    await core.add_message(db, c, sender="system", body=f"{alias or _first(admin)} from BlackSync joined the chat.")
     return await _conv_out(db, c, staff=True)
 
 
@@ -681,10 +717,12 @@ async def resolve(conv_id: uuid.UUID, admin: AdminDep, db: DbDep):
 
 
 @admin_router.post("/conversations/{conv_id}/reopen")
-async def reopen(conv_id: uuid.UUID, admin: AdminDep, db: DbDep):
+async def reopen(conv_id: uuid.UUID, admin: AdminDep, db: DbDep, body: AsIn | None = None):
     c = await _staff_conv(db, conv_id)
+    alias = await _persona(db, body.as_name if body else None)
     await core.set_mode(db, c, "human_active", assigned_to=admin.id)
-    await core.add_message(db, c, sender="system", body=f"{_first(admin)} from BlackSync reopened this conversation.")
+    await _set_alias(db, c, alias)
+    await core.add_message(db, c, sender="system", body=f"{alias or _first(admin)} from BlackSync reopened this conversation.")
     return await _conv_out(db, c, staff=True)
 
 
@@ -717,6 +755,7 @@ class StaffMessageIn(BaseModel):
     internal: bool = False
     client_id: str | None = Field(default=None, max_length=64)
     attachments: list[str] = Field(default_factory=list)
+    as_name: str | None = Field(default=None, max_length=80)
 
 
 @admin_router.post("/conversations/{conv_id}/messages", status_code=201)
@@ -725,13 +764,17 @@ async def staff_message(conv_id: uuid.UUID, body: StaffMessageIn, admin: AdminDe
     text = _clean_body(body.body)
     if not text and not body.attachments:
         raise HTTPException(status_code=400, detail="Type a message.")
+    alias = await _persona(db, body.as_name)
     if not body.internal and c.mode != "human_active":
         # Replying is taking over: the AI must not answer alongside a person.
         await core.set_mode(db, c, "human_active", assigned_to=c.assigned_to or admin.id)
-        await core.add_message(db, c, sender="system", body=f"{_first(admin)} from BlackSync joined the chat.")
+        await _set_alias(db, c, alias)
+        await core.add_message(db, c, sender="system", body=f"{alias or _first(admin)} from BlackSync joined the chat.")
+    elif not body.internal:
+        await _set_alias(db, c, alias)
     atts = await _claim_attachments(db, body.attachments, admin, conversation_id=c.id)
     msg = await core.add_message(db, c, sender="agent", body=text, author_id=admin.id, internal=body.internal,
-                                 attachments=atts, client_id=body.client_id)
+                                 attachments=atts, client_id=body.client_id, display_name=alias)
     core.set_typing(c.id, None)
     c.staff_read_seq = c.last_seq
     await db.commit()
@@ -869,13 +912,16 @@ class StaffReplyIn(BaseModel):
     internal: bool = False
     attachments: list[str] = Field(default_factory=list)
     status: str | None = None
+    as_name: str | None = Field(default=None, max_length=80)
 
 
 @admin_router.post("/tickets/{ticket_id}/replies", status_code=201)
 async def staff_reply(ticket_id: uuid.UUID, body: StaffReplyIn, admin: AdminDep, db: DbDep):
     t = await _staff_ticket(db, ticket_id)
+    alias = await _persona(db, body.as_name)
     atts = await _claim_attachments(db, body.attachments, admin, ticket_id=t.id)
-    await core.add_ticket_reply(db, t, author=admin, kind="staff", body=body.body.strip(), internal=body.internal, attachments=atts)
+    await core.add_ticket_reply(db, t, author=admin, kind="staff", body=body.body.strip(), internal=body.internal,
+                                attachments=atts, display_name=alias)
     if body.status and body.status in TICKET_STATUSES and not body.internal:
         t.status = body.status
         await db.commit()
@@ -908,9 +954,27 @@ async def notifications_read(admin: AdminDep, db: DbDep):
 
 @admin_router.get("/staff")
 async def staff_list(admin: AdminDep, db: DbDep):
+    from app.services.billing import settings_store
+
     rows = (await db.execute(select(User).where(User.is_superadmin.is_(True)).order_by(User.first_name))).scalars().all()
     return {"staff": [{"id": str(u.id), "name": u.full_name or u.email, "email": u.email} for u in rows],
-            "me": str(admin.id)}
+            "me": str(admin.id), "me_name": admin.first_name or admin.full_name or admin.email,
+            "personas": await settings_store.get(db, "support_personas") or []}
+
+
+class PersonasIn(BaseModel):
+    personas: list[str] = Field(max_length=30)
+
+
+@admin_router.put("/personas")
+async def set_personas(body: PersonasIn, admin: AdminDep, db: DbDep):
+    """The team names staff can send as. Names already used on old messages stay as they are."""
+    from app.services.billing import settings_store
+
+    names = list(dict.fromkeys(n.strip()[:80] for n in body.personas if n and n.strip()))
+    await settings_store.set_value(db, "support_personas", names, admin.id, reason="Support team names")
+    await db.commit()
+    return {"personas": names}
 
 
 @admin_router.get("/usage")

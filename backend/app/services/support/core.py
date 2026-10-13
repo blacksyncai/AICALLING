@@ -102,7 +102,7 @@ def preview(text: str) -> str:
 async def add_message(db: AsyncSession, conv: SupportConversation, *, sender: str, body: str,
                       author_id: uuid.UUID | None = None, internal: bool = False, attachments: list | None = None,
                       meta: dict | None = None, client_id: str | None = None,
-                      ai_epoch: int | None = None) -> SupportMessage | None:
+                      ai_epoch: int | None = None, display_name: str | None = None) -> SupportMessage | None:
     """Append a message with the next sequence number and commit. With `ai_epoch`, only while the chat
     is still AI-handled under that epoch (else None: the reply is dropped)."""
     if client_id:
@@ -121,6 +121,7 @@ async def add_message(db: AsyncSession, conv: SupportConversation, *, sender: st
         await db.rollback()
         return None
     msg = SupportMessage(conversation_id=conv.id, seq=seq, sender=sender, author_id=author_id, body=body,
+                         display_name=display_name,
                          internal=internal, attachments=attachments or None, meta=meta, client_id=client_id)
     db.add(msg)
     if sender == "customer":
@@ -277,8 +278,8 @@ async def transcript(db: AsyncSession, conv: SupportConversation, limit: int = 6
 
 
 async def add_ticket_reply(db: AsyncSession, t: SupportTicket, *, author: User | None, kind: str, body: str,
-                           internal: bool = False, attachments: list | None = None) -> TicketReply:
-    r = TicketReply(ticket_id=t.id, author_id=author.id if author else None, author_kind=kind, body=body,
+                           internal: bool = False, attachments: list | None = None, display_name: str | None = None) -> TicketReply:
+    r = TicketReply(ticket_id=t.id, author_id=author.id if author else None, author_kind=kind, body=body, display_name=display_name,
                     internal=internal, attachments=attachments or None)
     db.add(r)
     if not internal:

@@ -261,3 +261,27 @@ def test_staff_presence_changes_the_escalation_message(client, make_client, fake
     assert "Someone will join this chat shortly" in last["body"]
     st = c.get("/api/support/state").json()
     assert st["staff_online"] is True and st["org"] == "Online Co"
+
+
+def test_staff_can_send_as_a_team_name(client, make_client, fake_ai):
+    assert "Giovanna P" in client.get("/api/admin/support/staff").json()["personas"]
+    _, c = _customer(client, make_client, "Persona Co")
+    conv, _ = _start(c, "hello")
+    cid = conv["id"]
+    assert client.post(f"/api/admin/support/conversations/{cid}/takeover", json={"as_name": "Nobody"}).status_code == 400
+    client.post(f"/api/admin/support/conversations/{cid}/takeover", json={"as_name": "Giovanna P"})
+    client.post(f"/api/admin/support/conversations/{cid}/messages", json={"body": "Hi, Giovanna here!", "as_name": "Giovanna P"})
+    mine = c.get(f"/api/support/conversations/{cid}").json()
+    assert mine["conversation"]["agent_name"] == "Giovanna P"
+    assert any(m["body"] == "Giovanna P from BlackSync joined the chat." for m in mine["messages"])
+    agent = [m for m in mine["messages"] if m["sender"] == "agent"][0]
+    assert agent["author_name"] == "Giovanna P"
+    staff = client.get(f"/api/admin/support/conversations/{cid}").json()
+    assert [m["author_name"] for m in staff["messages"] if m["sender"] == "agent"][0].startswith("Giovanna P (")
+    # Tickets too; the list is editable.
+    t = c.post(f"/api/support/conversations/{cid}/ticket", json={"category": "other"}).json()
+    client.post(f"/api/admin/support/tickets/{t['id']}/replies", json={"body": "On it", "as_name": "Macco"})
+    assert c.get(f"/api/support/tickets/{t['id']}").json()["replies"][-1]["author_name"] == "Macco"
+    assert client.put("/api/admin/support/personas", json={"personas": ["Giovanna P", "Macco", "Dannish", "Joshi", "Sam"]}).json()["personas"][-1] == "Sam"
+    client.put("/api/admin/support/personas", json={"personas": ["Giovanna P", "Macco", "Dannish", "Joshi"]})
+    assert c.put("/api/admin/support/personas", json={"personas": ["Me"]}).status_code in (401, 403)

@@ -29,6 +29,68 @@ interface Summary {
   ai_model: string;
 }
 interface Staff { id: string; name: string; email: string }
+interface StaffInfo { staff: Staff[]; me: string; me_name: string; personas: string[] }
+
+const SEND_AS_KEY = "bs-support-send-as";
+
+/** The team name this staff member replies as ("" = their own name), remembered on this browser. */
+function useSendAs(): [string, (v: string) => void] {
+  const [v, setV] = useState("");
+  useEffect(() => {
+    try { setV(localStorage.getItem(SEND_AS_KEY) ?? ""); } catch {}
+    const on = (e: Event) => setV((e as CustomEvent<string>).detail);
+    window.addEventListener("support-send-as", on);
+    return () => window.removeEventListener("support-send-as", on);
+  }, []);
+  const set = (next: string) => {
+    try { localStorage.setItem(SEND_AS_KEY, next); } catch {}
+    window.dispatchEvent(new CustomEvent("support-send-as", { detail: next }));
+  };
+  return [v, set];
+}
+
+function SendAsPicker() {
+  const toast = useToast();
+  const { data, mutate } = useSWR<StaffInfo>("/api/admin/support/staff", fetcher);
+  const [sendAs, setSendAs] = useSendAs();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const personas = data?.personas ?? [];
+  useEffect(() => { if (data && sendAs && !personas.includes(sendAs)) setSendAs(""); }, [data, sendAs, personas, setSendAs]);
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-zinc-600">
+      Send as
+      <select value={sendAs} onChange={(e) => {
+        if (e.target.value === "__edit") { setDraft(personas.join("\n")); setEditing(true); return; }
+        setSendAs(e.target.value);
+      }} aria-label="Send as" className="h-7 rounded-lg border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-900">
+        <option value="">{data?.me_name ?? "Myself"} (me)</option>
+        {personas.map((p) => <option key={p} value={p}>{p}</option>)}
+        <option value="__edit">Edit names…</option>
+      </select>
+      {editing && (
+        <span data-solid className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 p-4" onMouseDown={() => setEditing(false)}>
+          <span className="block w-full max-w-sm rounded-2xl bg-white p-5 text-zinc-900 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+            <span className="block text-sm font-semibold">Team names</span>
+            <span className="mt-1 block text-xs text-zinc-500">One per line. Customers see the name you pick on your messages.</span>
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={6} className="mt-3 w-full rounded-xl border border-zinc-200 p-2 text-sm" />
+            <span className="mt-3 flex justify-end gap-2">
+              <Button size="sm" onClick={() => setEditing(false)}>Cancel</Button>
+              <Button size="sm" variant="primary" onClick={async () => {
+                try {
+                  await api("/api/admin/support/personas", { method: "PUT", body: JSON.stringify({ personas: draft.split("\n") }) });
+                  await mutate();
+                  setEditing(false);
+                  toast("Team names saved");
+                } catch (e) { toast((e as Error).message, "error"); }
+              }}>Save</Button>
+            </span>
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
 
 export default function SupportAdminPage() {
   return (
@@ -71,7 +133,7 @@ function SupportAdmin() {
   const [openTicket, setOpenTicket] = useState<string | null>(null);
   const tick = useStaffPulse();
   const { data: summary, mutate: mutateSummary } = useSWR<Summary>("/api/admin/support/summary", fetcher, { refreshInterval: 60000 });
-  const { data: staff } = useSWR<{ staff: Staff[]; me: string }>("/api/admin/support/staff", fetcher);
+  const { data: staff } = useSWR<StaffInfo>("/api/admin/support/staff", fetcher);
   useEffect(() => { void mutateSummary(); }, [tick, mutateSummary]);
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
@@ -250,6 +312,8 @@ function ConversationPanel({ id, staff, me, onBack, onChanged, openTicket }: {
   const [busy, setBusy] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const lastTyping = useRef(0);
+  const [sendAs] = useSendAs();
+  const asName = sendAs || null;
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight }); }, [messages.length, conv?.typing]);
 
   const act = useCallback(async (name: string, path: string, body?: unknown) => {
@@ -271,7 +335,7 @@ function ConversationPanel({ id, staff, me, onBack, onChanged, openTicket }: {
     if (!body) return;
     setBusy("send");
     try {
-      const m = await post<import("@/lib/support").SupportMessage>(`${base}/messages`, { body, internal, client_id: newClientId() });
+      const m = await post<import("@/lib/support").SupportMessage>(`${base}/messages`, { body, internal, client_id: newClientId(), as_name: internal ? null : asName });
       add([m]);
       setText("");
       onChanged();
@@ -321,13 +385,13 @@ function ConversationPanel({ id, staff, me, onBack, onChanged, openTicket }: {
       </div>
       <div className="flex flex-wrap gap-2 border-b border-zinc-100 px-4 py-2">
         {mode !== "human_active" && mode !== "resolved" && (
-          <Button size="sm" variant="primary" loading={busy === "takeover"} onClick={() => void act("takeover", "takeover")}><UserRound className="h-3.5 w-3.5" /> Take Over</Button>
+          <Button size="sm" variant="primary" loading={busy === "takeover"} onClick={() => void act("takeover", "takeover", { as_name: asName })}><UserRound className="h-3.5 w-3.5" /> Take Over</Button>
         )}
         {mode === "human_active" && <Button size="sm" loading={busy === "ai"} onClick={() => void act("ai", "return-to-ai")}><Bot className="h-3.5 w-3.5" /> Return to AI</Button>}
         {mode !== "resolved" ? (
           <Button size="sm" loading={busy === "resolve"} onClick={() => void act("resolve", "resolve")}><CheckCircle2 className="h-3.5 w-3.5" /> Mark Resolved</Button>
         ) : (
-          <Button size="sm" loading={busy === "reopen"} onClick={() => void act("reopen", "reopen")}><RotateCcw className="h-3.5 w-3.5" /> Reopen</Button>
+          <Button size="sm" loading={busy === "reopen"} onClick={() => void act("reopen", "reopen", { as_name: asName })}><RotateCcw className="h-3.5 w-3.5" /> Reopen</Button>
         )}
         {detail?.ticket ? (
           <Button size="sm" onClick={() => openTicket(detail.ticket!.id)}><TicketIcon className="h-3.5 w-3.5" /> Ticket #{detail.ticket.number}</Button>
@@ -345,6 +409,7 @@ function ConversationPanel({ id, staff, me, onBack, onChanged, openTicket }: {
         <div className="mb-2 flex gap-1 text-xs">
           <button type="button" onClick={() => setInternal(false)} className={cn("rounded-full px-3 py-1 font-medium", !internal ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100")}>Reply</button>
           <button type="button" onClick={() => setInternal(true)} className={cn("flex items-center gap-1 rounded-full px-3 py-1 font-medium", internal ? "bg-amber-500 text-white" : "text-zinc-600 hover:bg-zinc-100")}><Lock className="h-3 w-3" /> Internal note</button>
+          {!internal && <span className="ml-2"><SendAsPicker /></span>}
           {!internal && mode !== "human_active" && <span className="ml-auto self-center text-[11px] text-zinc-500">Replying takes the chat over from the AI.</span>}
         </div>
         <div className={cn("flex items-end gap-2 rounded-2xl px-3 py-2", internal ? "bg-amber-50 ring-1 ring-amber-200" : "bg-zinc-100")}>
@@ -422,6 +487,7 @@ function TicketPanel({ id, staff, onBack, onChanged, openConv }: { id: string; s
   const [text, setText] = useState("");
   const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sendAs] = useSendAs();
   if (!data) return <Card className="flex justify-center p-10"><Spinner /></Card>;
   const t = data.ticket;
 
@@ -437,7 +503,7 @@ function TicketPanel({ id, staff, onBack, onChanged, openConv }: { id: string; s
     if (!text.trim()) return;
     setBusy(true);
     try {
-      await mutate(await post(`${url}/replies`, { body: text, internal, status }), { revalidate: false });
+      await mutate(await post(`${url}/replies`, { body: text, internal, status, as_name: internal ? null : sendAs || null }), { revalidate: false });
       setText("");
       onChanged();
     } catch (e) {
@@ -494,6 +560,7 @@ function TicketPanel({ id, staff, onBack, onChanged, openConv }: { id: string; s
         <div className="mb-2 flex gap-1 text-xs">
           <button type="button" onClick={() => setInternal(false)} className={cn("rounded-full px-3 py-1 font-medium", !internal ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100")}>Reply to customer</button>
           <button type="button" onClick={() => setInternal(true)} className={cn("flex items-center gap-1 rounded-full px-3 py-1 font-medium", internal ? "bg-amber-500 text-white" : "text-zinc-600 hover:bg-zinc-100")}><Lock className="h-3 w-3" /> Internal note</button>
+          {!internal && <span className="ml-2"><SendAsPicker /></span>}
         </div>
         <Textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder={internal ? "Only BlackSync staff see this" : "Write a reply…"} />
         <div className="mt-2 flex flex-wrap justify-end gap-2">

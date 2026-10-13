@@ -46,6 +46,8 @@ DEFAULTS: dict = {
     "no_plan_entitlements": "teams",
     # Plans whose accounts can use Radar (paid or admin-assigned). Accounts without a plan get the demo preview.
     "radar_plans": ["growth", "teams", "managed"],
+    # Names BlackSync staff can reply as in support chats and tickets ("Send as").
+    "support_personas": ["Giovanna P", "Macco", "Dannish", "Joshi"],
     # Booking links: Managed "Contact Sales", Managed onboarding, and "Have a Developer Build It".
     "sales_booking_url": "https://cal.com/hamza-basal-v1hqkl/onboarding-call",
     "onboarding_booking_url": "https://cal.com/hamza-basal-v1hqkl/onboarding-call",

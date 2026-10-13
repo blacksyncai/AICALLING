@@ -38,6 +38,8 @@ class SupportConversation(Base):
     mode: Mapped[str] = mapped_column(String(24), nullable=False, default="ai_active")
     subject: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     assigned_to: Mapped[uuid.UUID | None] = _user_fk()
+    # The team name the customer sees for the person helping them ("Send as"), if not their own.
+    agent_alias: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # Bumped whenever a person takes over (or the chat leaves AI mode): an AI reply started under an
     # older epoch is dropped instead of appearing after the human joined.
     epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -66,6 +68,8 @@ class SupportMessage(Base):
     # customer | ai | agent | system
     sender: Mapped[str] = mapped_column(String(12), nullable=False)
     author_id: Mapped[uuid.UUID | None] = _user_fk()
+    # Name shown to the customer for a staff message ("Send as"); None = the author's own first name.
+    display_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
     attachments: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Staff-only note (never sent to the customer).
@@ -113,6 +117,7 @@ class TicketReply(Base):
     author_id: Mapped[uuid.UUID | None] = _user_fk()
     # customer | staff | system
     author_kind: Mapped[str] = mapped_column(String(12), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
     internal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     attachments: Mapped[list | None] = mapped_column(JSON, nullable=True)
