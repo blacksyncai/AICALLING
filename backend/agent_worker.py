@@ -1211,20 +1211,39 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     # Phone calls: hang up after a long silence (a voicemail that's recording, or a dead line) instead of
     # sitting on the line — and billing — until the carrier cuts it off.
-    silence = {"agent": "", "user": "", "since": _time.monotonic()}
+    silence = {"agent": "", "user": "", "since": _time.monotonic(), "checked_in": False}
 
     def _activity(kind: str):
         def _on(ev) -> None:
-            silence[kind] = getattr(ev, "new_state", "")
-            silence["since"] = _time.monotonic()
+            state = getattr(ev, "new_state", "")
+            prev, silence[kind] = silence[kind], state
+            # Only speech (or the agent working on a reply) counts as activity. The contact going "away"
+            # after a quiet spell is not activity — counting it restarted the clock and left ~40 s of dead air.
+            if state in ("speaking", "thinking") or prev in ("speaking", "thinking"):
+                silence["since"] = _time.monotonic()
+                if kind == "user" and state == "speaking":
+                    silence["checked_in"] = False
         return _on
 
-    async def _hang_up_on_silence(limit: float = 20.0) -> None:
+    CHECK_IN_AFTER, HANG_UP_AFTER = 7.0, 8.0  # quiet seconds: check in once, then hang up
+
+    async def _hang_up_on_silence() -> None:
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
             quiet = silence["agent"] in ("listening", "") and silence["user"] != "speaking"
-            if quiet and _time.monotonic() - silence["since"] > limit:
-                log.info("silence_hangup", room=ctx.room.name, seconds=limit)
+            if not quiet:
+                continue
+            idle = _time.monotonic() - silence["since"]
+            if not silence["checked_in"] and idle > CHECK_IN_AFTER:
+                silence["checked_in"] = True
+                log.info("silence_check_in", room=ctx.room.name, seconds=round(idle, 1))
+                try:
+                    session.say("Hello? Can you hear me okay?", allow_interruptions=True)
+                except Exception as exc:
+                    log.warning("silence_check_in_failed", error=str(exc)[:120])
+                continue
+            if silence["checked_in"] and idle > HANG_UP_AFTER:
+                log.info("silence_hangup", room=ctx.room.name, seconds=round(idle, 1))
                 run.transcript.append({"role": "tool", "tool": "end_call", "args": {"reason": "silence"},
                                        "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
                 _mark_ended()
