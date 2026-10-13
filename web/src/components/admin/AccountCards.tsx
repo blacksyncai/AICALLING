@@ -248,6 +248,22 @@ export function TeamCard({ org, refresh }: Props) {
   const [role, setRole] = useState<Role>("member");
   const [inviting, setInviting] = useState(false);
   const [invite, setInvite] = useState<CreatedInvite | null>(null);
+  const [resending, setResending] = useState<string | null>(null);
+
+  // Same email + role again: replaces the old link and emails a fresh one (e.g. invited before email was set up).
+  const resend = async (i: { id: string; email: string; role: Role }) => {
+    setResending(i.id);
+    try {
+      const created = await post<CreatedInvite>(`/api/admin/orgs/${org.id}/invites`, { email: i.email, role: i.role });
+      setInvite(created);
+      toast(created.emailed ? `Invite emailed to ${created.email}` : `New invite link created for ${created.email}`);
+      refresh();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setResending(null);
+    }
+  };
 
   const reset = async (userId: string) => {
     setResetting(userId);
@@ -308,6 +324,14 @@ export function TeamCard({ org, refresh }: Props) {
         })}
       </ul>
 
+      {org.members.length > 0 && (
+        <div className="border-t border-zinc-100 px-5 py-2.5 text-xs">
+          <a href="/admin?tab=emails" className="inline-flex items-center gap-1.5 font-medium text-brand-700 hover:underline">
+            <Mail className="h-3.5 w-3.5" /> Send a welcome or catch-up email
+          </a>
+        </div>
+      )}
+
       {org.invites.length > 0 && (
         <div className="border-t border-zinc-100 px-5 py-4">
           <div className="mb-2 text-xs font-medium text-zinc-500">Pending invites</div>
@@ -320,6 +344,9 @@ export function TeamCard({ org, refresh }: Props) {
                   {i.role}
                 </Badge>
                 <span className="hidden shrink-0 text-xs text-zinc-500 sm:inline">sent {timeAgo(i.created_at)}</span>
+                <Button size="sm" variant="secondary" className="shrink-0" loading={resending === i.id} onClick={() => void resend(i as { id: string; email: string; role: Role })}>
+                  <Mail className="h-3.5 w-3.5" /> Resend
+                </Button>
               </li>
             ))}
           </ul>
