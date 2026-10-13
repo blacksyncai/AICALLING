@@ -34,6 +34,25 @@ FEATURED_VOICES: list[dict] = [
      "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M", "gender": "feminine",
      "description": "Live voice clone.", "clone": True},
+    # Mistral preset voices — one entry per mood (Mistral exposes each mood as its own voice).
+    {"id": "mistral:c69964a6-ab8b-4f8a-9465-ec0925096ec8", "name": "Paul · Neutral", "gender": "masculine", "accent": "American",
+     "description": "Relaxed and balanced.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:98559b22-62b5-4a64-a7cd-fc78ca41faa8", "name": "Paul · Confident", "gender": "masculine", "accent": "American",
+     "description": "Bold, punchy and confident.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:01d985cd-5e0c-4457-bfd8-80ba31a5bc03", "name": "Paul · Cheerful", "gender": "masculine", "accent": "American",
+     "description": "Upbeat and breezy.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:5940190b-f58a-4c3e-8264-a40d63fd6883", "name": "Paul · Excited", "gender": "masculine", "accent": "American",
+     "description": "Bouncy and spirited.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:e3596645-b1af-469e-b857-f18ddedc7652", "name": "Oliver · Neutral", "gender": "masculine", "accent": "British",
+     "description": "Slight British accent. Calm and even.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:8169ab87-bc99-4669-a5ec-6855860ace24", "name": "Oliver · Confident", "gender": "masculine", "accent": "British",
+     "description": "Slight British accent. Firm and decisive.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:5ad5d44e-6b4e-4a57-a8a8-4cae088034ed", "name": "Oliver · Cheerful", "gender": "masculine", "accent": "British",
+     "description": "Slight British accent. Bright and lively.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:e8e5b1de-493c-4061-8414-e2170f9f4b6f", "name": "Oliver · Excited", "gender": "masculine", "accent": "British",
+     "description": "Slight British accent. Energetic and crisp.", "provider": "mistral", "language": "en"},
+    {"id": "mistral:390c8a2b-60a6-4882-8437-c49a8bd33b63", "name": "Oliver · Curious", "gender": "masculine", "accent": "British",
+     "description": "Slight British accent. Thoughtful and engaged.", "provider": "mistral", "language": "en"},
 ]
 
 # New agents start with Lauren (independent of the picker order above).

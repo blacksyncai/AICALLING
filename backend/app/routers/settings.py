@@ -164,7 +164,7 @@ def build_catalog(public: list[dict], owned: list[dict], *, can_preview: bool) -
         # Catalog metadata (language, gender…) + the house name/description.
         cat = {k: v for k, v in (by_id.get(f["id"]) or {}).items() if v not in (None, "")}
         merged = {**f, **cat, "name": f["name"], "description": f.get("description") or cat.get("description", "")}
-        merged["accent"] = _accent(cat) if cat else None  # from Cartesia's own metadata only
+        merged["accent"] = _accent(cat) if cat else f.get("accent")  # Cartesia's metadata, else the entry's own
         by_id[f["id"]] = merged
     voices = [
         _normalize(raw, owned=vid in owned_ids, premium=vid in premium_set, can_preview=can_preview)
