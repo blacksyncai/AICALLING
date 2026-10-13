@@ -126,6 +126,10 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
         tools.append("- book_appointment(slot, email): only AFTER the contact has explicitly picked one offered slot "
                      "AND told you their email. Pass the slot's exact label from check_availability. "
                      "Never say a meeting is booked until this tool confirms it.")
+        tools.append("- Emails come out spoken (\"tony junior at yahoo\"). Turn it into the likely address "
+                     "(tonyjunior@yahoo.com), read it back slowly — \"tony junior at yahoo dot com, is that right?\" "
+                     "— and only book once they confirm. If part is unclear, ask them to spell just that part. "
+                     "Never invent or guess an email they didn't say.")
     if cfg.get("transfer_number") and channel == "phone":
         tools.append("- transfer_call(): hand the caller to a human when they ask for one or you can't help.")
     tools.append("Never say a tool's name or its arguments out loud — just use the tool.")

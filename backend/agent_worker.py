@@ -954,6 +954,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     voice_id = cfg.get("voice_id") or DEFAULT_VOICE_ID
     api_key, base_url, sends_temperature = llm_endpoint(model)
     llm_kwargs = dict(model=model, api_key=api_key, base_url=base_url)
+    if model.startswith("gpt-oss"):
+        llm_kwargs["reasoning_effort"] = "low"  # faster replies, and less private reasoning to leak into speech
     if sends_temperature:
         llm_kwargs["temperature"] = float(cfg.get("temperature", 0.5))
     session_kwargs = dict(
@@ -1021,6 +1023,16 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
             if vm["detected"]:
                 raise StopResponse()  # don't talk back to a voicemail greeting
+
+        async def llm_node(self, chat_ctx, tools, model_settings):
+            """The model's reply minus any leaked notes or imagined turns (see app/agent/speech_guard.py)."""
+            from app.agent.speech_guard import guarded
+
+            def _cut(dropped: str) -> None:
+                log.warning("llm_leak_cut", room=ctx.room.name, model=model, dropped=dropped[:80])
+
+            async for chunk in guarded(Agent.default.llm_node(self, chat_ctx, tools, model_settings), _cut):
+                yield chunk
 
     async def _handle_voicemail() -> None:
         log.info("voicemail_detected", room=ctx.room.name, action=vm_action)
