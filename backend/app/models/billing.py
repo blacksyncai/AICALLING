@@ -51,6 +51,11 @@ class BillingSubscription(Base):
     # Subscription item carrying additional phone numbers (quantity = billable numbers).
     phone_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     phone_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Subscription item carrying extra agent slots ($19/mo each; quantity = slots).
+    agent_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_slots: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    # Included credits per cycle when an admin set a custom amount (custom Managed); None = the plan's.
+    custom_credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
 
@@ -220,6 +225,25 @@ class PhoneNumberRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class EntitlementOverride(Base):
+    """An admin's change to one account's plan limits (e.g. +2 agents for 30 days). Revoking keeps the row."""
+
+    __tablename__ = "entitlement_overrides"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = _org_fk()
+    # A limit key (agents, seats, numbers, crm, concurrency, workflows, …) or "plan" (entitlements of another plan).
+    key: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Number (None = unlimited), bool, or plan key — replaces the plan's value while active.
+    value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
 class PlatformSetting(Base):
     """Admin-controlled platform settings (pricing, policies), JSON values."""
 
@@ -240,7 +264,7 @@ class BillingAudit(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     admin_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     org_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
-    # calling_credits | lookup_balance | pricing | phone_numbers
+    # calling_credits | lookup_balance | pricing | phone_numbers | entitlements | managed | quote
     target: Mapped[str] = mapped_column(String(24), nullable=False)
     previous: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     adjustment: Mapped[str] = mapped_column(String(64), nullable=False, default="")

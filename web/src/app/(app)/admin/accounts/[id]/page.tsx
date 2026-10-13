@@ -7,6 +7,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { CreditsCard, LedgerCard, SettingsCard, TeamCard } from "@/components/admin/AccountCards";
 import { BillingCard } from "@/components/admin/BillingCard";
+import { PlanAdminCard } from "@/components/admin/PlanAdminCard";
 import { DeleteAccountCard } from "@/components/admin/DeleteAccountCard";
 import { LeadFinderCard } from "@/components/admin/LeadFinderCard";
 import { PhoneNumbersCard } from "@/components/admin/PhoneNumbersCard";
@@ -104,6 +105,7 @@ function AccountDetail() {
         <div className="flex min-w-0 flex-col gap-6">
           <CreditsCard org={org} refresh={refresh} />
           <BillingCard orgId={org.id} />
+          <PlanAdminCard orgId={org.id} />
           <LedgerCard org={org} />
         </div>
         <div className="flex min-w-0 flex-col gap-6">

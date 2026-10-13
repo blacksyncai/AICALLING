@@ -122,6 +122,10 @@ async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID,
 
     if plan_key not in catalog.PLANS:
         raise BillingError("Unknown plan.")
+    if plan_key == "managed":
+        raise BillingError("Managed is set up with our team — book a call with sales and we'll send your link.", 409)
+    if not catalog.self_serve(plan_key):
+        raise BillingError("That plan isn't offered any more.", 409)
     sub = await db.get(BillingSubscription, org.id)
     if sub and sub.status in ("active", "trialing", "past_due", "incomplete"):
         raise BillingError("This account already has a subscription — change plans instead.", 409)
@@ -136,6 +140,41 @@ async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID,
         metadata=meta, client_reference_id=str(org.id), subscription_data={"metadata": meta},
         success_url=app_url("/billing?tab=plans&checkout=success"), cancel_url=app_url("/billing?tab=plans&checkout=canceled"),
         idempotency_key=f"bs-sub-{org.id}-{plan_key}-{int(_now().timestamp() // 600)}",
+    )
+    return session["url"]
+
+
+async def managed_checkout(db: AsyncSession, org: Organization, admin_id: uuid.UUID, *, amount_cents: int,
+                           credits: int) -> str:
+    """Admin, after the discovery call: a Checkout link for this account's Managed subscription.
+
+    The standard price is used for the list amount; a custom amount uses an inline price on the same
+    Managed product (no new products). Paying it starts the subscription; the webhook then sets the
+    Managed entitlements and flags the account for onboarding."""
+    from app.models.billing import BillingSubscription
+
+    sub = await db.get(BillingSubscription, org.id)
+    if sub and sub.status in ("active", "trialing", "past_due") and sub.plan_key == "managed":
+        raise BillingError("This account is already on Managed.", 409)
+    if sub and sub.status in ("active", "trialing", "past_due", "incomplete"):
+        raise BillingError("This account already has a subscription. Cancel it (or let it end) first, "
+                           "or change it in the Stripe dashboard — nothing was created.", 409)
+    info = (await catalog.resolve_prices()).get("managed") or {}
+    if info.get("status") != "ok":
+        raise BillingError("Create the Managed price in the Stripe catalog first (Admin → Billing → Stripe catalog).", 409)
+    plan = catalog.PLANS["managed"]
+    custom = amount_cents != plan["amount_cents"] or credits != plan["included_credits"]
+    line = ({"price": info["price_id"], "quantity": 1} if amount_cents == plan["amount_cents"] else
+            {"price_data": {"currency": "usd", "product": info["product"], "unit_amount": amount_cents,
+                            "recurring": {"interval": "month"}}, "quantity": 1})
+    cid = await ensure_customer(db, org)
+    meta = {"org_id": str(org.id), "purchase_type": "plan", "plan": "managed", "credits": str(credits),
+            "custom": "1" if custom else "0", "created_by_admin": str(admin_id)}
+    session = await stripe_api.create_checkout_session(
+        mode="subscription", customer=cid, line_items=[line], metadata=meta, client_reference_id=str(org.id),
+        subscription_data={"metadata": meta},
+        success_url=app_url("/billing?tab=plans&checkout=success"), cancel_url=app_url("/billing?tab=plans"),
+        idempotency_key=f"bs-managed-{org.id}-{amount_cents}-{credits}-{int(_now().timestamp() // 600)}",
     )
     return session["url"]
 

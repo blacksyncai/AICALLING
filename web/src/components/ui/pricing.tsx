@@ -114,6 +114,8 @@ export function PricingCard({
   footer,
   sub,
   variant = "light",
+  pricePrefix,
+  facts,
 }: {
   /** "dark": the premium card (near-black with an orange glow). */
   variant?: "light" | "dark";
@@ -130,6 +132,10 @@ export function PricingCard({
   footer: ReactNode;
   /** A line under the price, e.g. "500 AI calling credits every month". */
   sub?: ReactNode;
+  /** Small text before the price, e.g. "Starting at". */
+  pricePrefix?: string;
+  /** Plain facts (limits) between the CTA and the features. */
+  facts?: ReactNode;
 }) {
   const dark = variant === "dark";
   return (
@@ -155,12 +161,14 @@ export function PricingCard({
           {badge}
         </div>
         {description && <p className={cn("relative mt-1 text-sm", dark ? "text-zinc-400" : "text-zinc-600")}>{description}</p>}
+        {pricePrefix && <div className={cn("relative mt-5 -mb-4 text-xs font-medium uppercase tracking-wider", dark ? "text-zinc-400" : "text-zinc-500")}>{pricePrefix}</div>}
         <div className="relative mt-5 flex items-baseline gap-1">
           <Price cents={cents} className="text-5xl" dark={dark} />
           {period && <span className={cn("text-sm", dark ? "text-zinc-400" : "text-zinc-500")}>/{period}</span>}
         </div>
         {sub && <div className={cn("relative mt-1 text-sm font-medium", dark ? "text-brand-300" : "text-brand-700")}>{sub}</div>}
         <div className="relative mt-6">{footer}</div>
+        {facts && <div className="relative mt-6">{facts}</div>}
         {features && features.length > 0 && (
           <div className={cn("relative mt-7 flex-1 border-t pt-6", dark ? "border-white/10" : "border-zinc-200/80")}>
             {featuresTitle && (

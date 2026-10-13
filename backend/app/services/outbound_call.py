@@ -265,6 +265,10 @@ class CallService:
             raise CallSetupError("This call isn't attached to an account.")
         await db.refresh(org, ["credits_balance", "status", "unlimited_credits"])
         ensure_can_call(org)  # raises InsufficientCredits
+        if agent is not None:
+            from app.services.entitlements import check_agent_can_call
+
+            await check_agent_can_call(db, org, agent)  # PlanLimit (an InsufficientCredits) when over the agent limit
 
         from app.services import recordings, telephony
         from app.services.billing.credits import reserve_for_call

@@ -21,6 +21,7 @@ from app.models.account import Organization
 from app.models.agent import Agent
 from app.models.campaign import Campaign
 from app.models.lead import Lead
+from app.services import entitlements
 from app.services.accounts import InsufficientCredits, ensure_can_call
 from app.services.auth import Context, CtxDep, DbDep
 from app.services.contacts import CsvError, parse_contacts_csv
@@ -329,6 +330,7 @@ async def create_campaign(
         await _check_number(db, ctx, body.phone_number_id)
     rules = body.model_dump(include=set(CallingRules.model_fields), exclude_none=True)
     _validate_rules(rules)
+    await entitlements.check_concurrency(db, ctx.org, body.max_concurrent_calls)
     campaign = Campaign(
         direction=body.direction,
         phone_number_id=body.phone_number_id if body.direction == "inbound" else None,
@@ -350,6 +352,8 @@ async def create_campaign(
         from app.services.inbound import InboundError, activate
 
         try:
+            agent = await db.get(Agent, campaign.agent_id)
+            await entitlements.check_agent_can_call(db, ctx.org, agent)
             await activate(db, campaign)
             campaign.status = "running"
             await db.commit()
@@ -376,6 +380,8 @@ async def update_campaign(
         else:
             await _check_number(db, ctx, data["phone_number_id"])
     _validate_rules(data, campaign)
+    if data.get("max_concurrent_calls") and data["max_concurrent_calls"] > (campaign.max_concurrent_calls or 1):
+        await entitlements.check_concurrency(db, ctx.org, data["max_concurrent_calls"])
     relink = (campaign.direction == "inbound" and campaign.status == "running"
               and ("agent_id" in data or "phone_number_id" in data))
     if relink:
@@ -470,6 +476,10 @@ async def start_campaign(
             status_code=400,
             detail=f"Campaign is {campaign.status}, cannot start",
         )
+    if campaign.agent_id:
+        agent = await db.get(Agent, campaign.agent_id)
+        if agent is not None:
+            await entitlements.check_agent_can_call(db, ctx.org, agent)
     if (campaign.direction or "outbound") == "inbound":
         # Inbound: go live — the number's calls are answered by the campaign's agent.
         from app.services.inbound import InboundError, activate
@@ -651,7 +661,7 @@ async def _dispatch_selected(campaign_id: str, lead_ids: list[str]) -> None:
                     campaign.updated_at = datetime.now(timezone.utc)
                     await db.commit()
             except InsufficientCredits as exc:
-                await _pause_for_credits(campaign_uuid, str(exc))
+                await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
                 break
             except Exception as exc:
                 log.error("call_selected_dispatch_error", lead_id=lid, error=str(exc))
@@ -666,12 +676,12 @@ async def _dispatch_selected(campaign_id: str, lead_ids: list[str]) -> None:
 _IN_FLIGHT = ("initiated", "ringing", "connected")
 
 
-async def _pause_for_credits(campaign_uuid: uuid.UUID, reason: str) -> None:
+async def _pause_for_credits(campaign_uuid: uuid.UUID, reason: str, kind: str = "credits") -> None:
     async with AsyncSessionLocal() as db:
         campaign = await db.get(Campaign, campaign_uuid)
         if campaign and campaign.status == "running":
             campaign.status = "paused"
-            campaign.pause_reason = "credits"
+            campaign.pause_reason = kind  # credits | plan (agent over the plan's limit)
             campaign.updated_at = datetime.now(timezone.utc)
             await db.commit()
     log.warning("campaign_paused_no_credits", campaign_id=str(campaign_uuid), reason=reason)
@@ -701,7 +711,14 @@ async def _wait_for_capacity(campaign_uuid: uuid.UUID) -> bool:
                     CallLog.started_at >= cutoff,
                 )
             )).scalar_one()
-            if active < (campaign.max_concurrent_calls or 1):
+            from app.models.account import Organization
+
+            org = await db.get(Organization, campaign.org_id)
+            cap = await entitlements.concurrency_cap(db, org) if org else None
+            limit = campaign.max_concurrent_calls or 1
+            if cap is not None:
+                limit = min(limit, cap)  # a plan downgrade lowers running campaigns too
+            if active < limit:
                 return True
         await asyncio.sleep(3)
 
@@ -830,7 +847,7 @@ async def _process_call_queue(campaign_id: str) -> None:
                     campaign.updated_at = datetime.now(timezone.utc)
                     await db.commit()
                 except InsufficientCredits as exc:
-                    await _pause_for_credits(campaign_uuid, str(exc))
+                    await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
                     return
                 except Exception as exc:
                     log.error("call_queue_dispatch_error", lead_id=str(lead.id), error=str(exc))

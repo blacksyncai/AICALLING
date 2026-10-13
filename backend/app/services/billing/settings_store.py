@@ -42,6 +42,12 @@ DEFAULTS: dict = {
     # Free calling credits for a self-serve signup (no card).
     "trial_credits": 30,
     "max_numbers_per_org": 5,
+    # Entitlements for accounts without a paid plan (free trial). "teams" keeps today's access; "solo" is stricter.
+    "no_plan_entitlements": "teams",
+    # Booking links: Managed "Contact Sales", Managed onboarding, and "Have a Developer Build It".
+    "sales_booking_url": "https://cal.com/hamza-basal-v1hqkl/onboarding-call",
+    "onboarding_booking_url": "https://cal.com/hamza-basal-v1hqkl/onboarding-call",
+    "expert_booking_url": "https://cal.com/hamza-basal-v1hqkl/onboarding-call",
 }
 
 

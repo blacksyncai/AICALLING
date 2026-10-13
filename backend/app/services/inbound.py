@@ -125,9 +125,12 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
         return None
     try:
         ensure_can_call(org)
+        from app.services.entitlements import check_agent_can_call
+
+        await check_agent_can_call(db, org, agent)
         max_seconds, rate, reserved = await reserve_for_call(db, org, agent, agent.max_duration_seconds or 600)
-    except InsufficientCredits:
-        log.warning("inbound_call_no_credits", to=row.number)
+    except InsufficientCredits as exc:
+        log.warning("inbound_call_refused", to=row.number, reason=str(exc)[:120])
         return None
     caller = normalize_phone(from_number or "")
     lead = None

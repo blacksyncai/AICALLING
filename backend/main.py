@@ -81,6 +81,10 @@ async def lifespan(app: FastAPI):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
+from fastapi.responses import JSONResponse  # noqa: E402
+
+from app.services.entitlements import PlanLimit  # noqa: E402
+
 app = FastAPI(
     title="BlackSync API",
     description="Build, test and deploy AI voice agents that call your leads.",
@@ -89,6 +93,12 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+
+@app.exception_handler(PlanLimit)
+async def _plan_limit(_request, exc: PlanLimit):
+    """Something the account's plan doesn't include — a 402 with an upgrade suggestion the UI can show."""
+    return JSONResponse(status_code=402, content={"detail": exc.detail()})
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 

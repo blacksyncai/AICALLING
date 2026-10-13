@@ -121,11 +121,16 @@ async def analytics(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, 
             sentiment[s] += 1
 
     talk = sum(c.duration_seconds or 0 for c in connected)
+    from app.services import entitlements
+
+    team = bool((await entitlements.effective(db, ctx.org))["limits"].get("team_reporting"))
     return {
         "days": days,
         "funnel": funnel,
         "outcomes": dict(Counter(c.outcome or "in_progress" for c in calls)),
-        "by_agent": agents_out,
+        # Agent-by-agent comparison is team analytics (Teams and up).
+        "by_agent": agents_out if team else [],
+        "locked": [] if team else ["by_agent"],
         "by_campaign": campaigns_out,
         "by_hour": by_hour,
         "sentiment": sentiment,

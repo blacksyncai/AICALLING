@@ -32,6 +32,12 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       const detail = body.detail ?? body.message;
       if (typeof detail === "string") message = detail;
       else if (Array.isArray(detail)) message = detail.map((d) => d.msg ?? String(d)).join("; ");
+      else if (detail && typeof detail === "object" && typeof detail.message === "string") {
+        message = detail.message;
+        // Something the plan doesn't include: the app shows an upgrade prompt (components/billing/UpgradePrompt).
+        if (detail.code === "plan_limit" && typeof window !== "undefined")
+          window.dispatchEvent(new CustomEvent("plan-limit", { detail }));
+      }
     } catch {
       if (res.status >= 500) message = "Backend unreachable — is the API running on BACKEND_ORIGIN?";
     }

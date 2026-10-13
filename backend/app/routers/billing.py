@@ -22,8 +22,9 @@ from app.config import settings
 from app.models.account import CreditTransaction, Organization
 from app.models.agent import Agent
 from app.models.billing import (
-    AutoRecharge, BillingAudit, BillingSubscription, CallUsage, LookupBalanceTransaction, Purchase,
+    AutoRecharge, BillingAudit, BillingSubscription, CallUsage, EntitlementOverride, LookupBalanceTransaction, Purchase,
 )
+from app.services import entitlements
 from app.services.auth import AdminDep, CtxDep, DbDep, ManagerDep
 from app.services.billing import (
     catalog, credits, lookups, purchases, recharge, settings_store, stripe_api, subscriptions, webhooks,
@@ -68,11 +69,12 @@ async def _plan_payload(db, org_id: uuid.UUID) -> dict:
         return {"status": "none", "plan_key": None, "name": None}
     plan = catalog.PLANS.get(row.plan_key or "")
     return {
-        "status": row.status, "plan_key": row.plan_key,
+        "status": row.status, "plan_key": row.plan_key, "agent_slots": row.agent_slots or 0,
+        "custom": row.custom_credits is not None, "legacy": bool(plan and plan.get("legacy")),
         # A price we don't manage (e.g. an older plan) is shown as-is and left alone.
         "name": plan["name"] if plan else "Custom plan", "managed": bool(plan),
         "amount_cents": plan["amount_cents"] if plan else None,
-        "included_credits": plan["included_credits"] if plan else None,
+        "included_credits": (row.custom_credits if row.custom_credits is not None else plan["included_credits"]) if plan else None,
         "current_period_end": _iso(row.current_period_end), "cancel_at_period_end": row.cancel_at_period_end,
     }
 
@@ -96,6 +98,17 @@ def _purchase(p: Purchase) -> dict:
             "created_at": _iso(p.created_at), "fulfilled_at": _iso(p.fulfilled_at)}
 
 
+def _public_plan(key: str, available: bool) -> dict:
+    plan = catalog.PLANS[key]
+    return {**{k: v for k, v in plan.items() if k not in ("price_env", "lookup_key")},
+            "limits": catalog.plan_limits(key), "self_serve": catalog.self_serve(key), "available": available}
+
+
+async def _booking_links(db) -> dict:
+    cfg = await settings_store.get_all(db)
+    return {k: cfg.get(k) for k in ("sales_booking_url", "onboarding_booking_url", "expert_booking_url")}
+
+
 async def _catalog_payload() -> dict:
     prices = await catalog.resolve_prices()
 
@@ -104,8 +117,8 @@ async def _catalog_payload() -> dict:
 
     return {
         "stripe_ready": stripe_api.ready(),
-        "plans": [{**{k: v for k, v in catalog.PLANS[k].items() if k not in ("price_env",)}, "available": ok(k)}
-                  for k in catalog.PLAN_ORDER],
+        "plans": [_public_plan(k, ok(k)) for k in catalog.PLAN_ORDER],
+        "agent_addon": {**catalog.AGENT_ADDON, "available": ok(catalog.AGENT_ADDON["key"])},
         "packs": [{**catalog.CREDIT_PACKS[k], "available": ok(k),
                    "cents_per_credit": catalog.CREDIT_PACKS[k]["amount_cents"] / catalog.CREDIT_PACKS[k]["credits"]}
                   for k in catalog.PACK_ORDER],
@@ -150,7 +163,27 @@ async def overview(ctx: CtxDep, db: DbDep):
 
 @router.get("/catalog")
 async def get_catalog(ctx: CtxDep, db: DbDep):
-    return {**await _catalog_payload(), "current_plan": await _plan_payload(db, ctx.org.id)}
+    return {**await _catalog_payload(), "current_plan": await _plan_payload(db, ctx.org.id),
+            "links": await _booking_links(db)}
+
+
+@router.get("/public/plans")
+async def public_plans(db: DbDep):
+    """The plan lineup for the public pricing page (no sign-in, no prices ids or Stripe details)."""
+    return {"plans": [_public_plan(k, True) for k in catalog.PLAN_ORDER],
+            "packs": [{k: v for k, v in catalog.CREDIT_PACKS[k].items() if k not in ("price_id", "lookup_key")}
+                      for k in catalog.PACK_ORDER],
+            "agent_addon": {k: v for k, v in catalog.AGENT_ADDON.items() if k != "lookup_key"},
+            "phone_addon": {k: v for k, v in catalog.PHONE_ADDON.items() if k != "lookup_key"},
+            "links": await _booking_links(db)}
+
+
+@router.get("/entitlements")
+async def my_entitlements(ctx: CtxDep, db: DbDep):
+    from app.services import entitlements
+
+    return {**await entitlements.summary(db, ctx.org), "managed_onboarding": ctx.org.managed_onboarding,
+            "links": await _booking_links(db)}
 
 
 @router.get("/rates")
@@ -196,6 +229,24 @@ async def plan_change(plan_key: str, body: PlanChange, ctx: ManagerDep, db: DbDe
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Please confirm the plan change.")
     await _guard(subscriptions.change_plan(db, ctx.org.id, plan_key, ctx.user.id))
+    return await _plan_payload(db, ctx.org.id)
+
+
+class SlotsIn(BaseModel):
+    quantity: int = Field(ge=0, le=50)
+    confirm: bool = False
+
+
+@router.post("/addons/agents/preview")
+async def agent_slots_preview(body: SlotsIn, ctx: ManagerDep, db: DbDep):
+    return await _guard(subscriptions.preview_agent_slots(db, ctx.org.id, body.quantity))
+
+
+@router.post("/addons/agents")
+async def agent_slots_set(body: SlotsIn, ctx: ManagerDep, db: DbDep):
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Please confirm the change to your agent slots.")
+    await _guard(subscriptions.set_agent_slots(db, ctx.org.id, body.quantity, ctx.user.id))
     return await _plan_payload(db, ctx.org.id)
 
 
@@ -378,6 +429,10 @@ class BillingSettingsIn(BaseModel):
     free_test_minutes: int | None = Field(default=None, ge=0, le=600)
     min_ai_billable_seconds: int | None = Field(default=None, ge=0, le=120)
     auto_recharge_max_monthly_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    no_plan_entitlements: str | None = Field(default=None, pattern="^(solo|growth|teams|managed)$")
+    sales_booking_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
+    onboarding_booking_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
+    expert_booking_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
     reason: str = Field(default="Updated billing settings", max_length=500)
 
 
@@ -415,7 +470,145 @@ async def admin_org_billing(org_id: uuid.UUID, _: AdminDep, db: DbDep):
         "audit": [{"admin_id": str(a.admin_id) if a.admin_id else None, "target": a.target, "previous": a.previous,
                    "adjustment": a.adjustment, "new": a.new, "reason": a.reason, "at": _iso(a.created_at)} for a in audits],
         "stripe_customer": await purchases.customer_id(db, org.id),
+        "entitlements": await entitlements.summary(db, org),
+        "managed_onboarding": org.managed_onboarding,
+        "subscription": await _sub_detail(db, org.id),
     }
+
+
+async def _sub_detail(db, org_id: uuid.UUID) -> dict | None:
+    row = await db.get(BillingSubscription, org_id)
+    if row is None:
+        return None
+    return {"id": row.stripe_subscription_id, "status": row.status, "plan_key": row.plan_key,
+            "price_id": row.price_id, "agent_slots": row.agent_slots or 0, "phone_quantity": row.phone_quantity,
+            "custom_credits": row.custom_credits, "cancel_at_period_end": row.cancel_at_period_end,
+            "current_period_end": _iso(row.current_period_end), "updated_at": _iso(row.updated_at)}
+
+
+# ── Admin: entitlement overrides, Managed, quotes ─────────────────────────────
+
+
+class OverrideIn(BaseModel):
+    key: str
+    value: int | bool | str | None = None
+    reason: str = Field(min_length=3, max_length=500)
+    expires_at: datetime | None = None
+
+
+async def _org_or_404(db, org_id: uuid.UUID) -> Organization:
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return org
+
+
+@admin_router.post("/billing/orgs/{org_id}/overrides", status_code=201)
+async def admin_add_override(org_id: uuid.UUID, body: OverrideIn, admin: AdminDep, db: DbDep):
+    """Grant a temporary or permanent entitlement change (audited, revocable)."""
+    org = await _org_or_404(db, org_id)
+    if body.key not in entitlements.OVERRIDE_KEYS:
+        raise HTTPException(status_code=400, detail=f"Key must be one of {', '.join(entitlements.OVERRIDE_KEYS)}.")
+    value = body.value
+    if body.key == "plan" and value not in catalog.PLANS:
+        raise HTTPException(status_code=400, detail="Pick a plan.")
+    if body.key in entitlements.NUMERIC and value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+        raise HTTPException(status_code=400, detail="Enter a whole number (or leave empty for unlimited).")
+    if body.key in entitlements.FLAGS:
+        value = bool(value)
+    expires = body.expires_at
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires is not None and expires <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="The end date is in the past.")
+    before = (await entitlements.effective(db, org))["limits"].get(body.key) if body.key != "plan" else None
+    row = EntitlementOverride(org_id=org.id, key=body.key, value=value, reason=body.reason, expires_at=expires,
+                              created_by=admin.id)
+    db.add(row)
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="entitlements", previous=f"{body.key}={before}"[:64],
+                        adjustment="override", new=f"{body.key}={value}"[:64],
+                        reason=body.reason + (f" (until {expires.date().isoformat()})" if expires else "")))
+    await db.commit()
+    return entitlements.override_to_dict(row)
+
+
+@admin_router.delete("/billing/orgs/{org_id}/overrides/{override_id}")
+async def admin_revoke_override(org_id: uuid.UUID, override_id: uuid.UUID, admin: AdminDep, db: DbDep):
+    row = await db.get(EntitlementOverride, override_id)
+    if not row or row.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Override not found")
+    if row.revoked_at is None:
+        row.revoked_at, row.revoked_by = datetime.now(timezone.utc), admin.id
+        db.add(BillingAudit(admin_id=admin.id, org_id=org_id, target="entitlements", previous=f"{row.key}={row.value}"[:64],
+                            adjustment="revoked", new="", reason=f"Override revoked ({row.reason})"[:500]))
+        await db.commit()
+    return entitlements.override_to_dict(row)
+
+
+class ManagedIn(BaseModel):
+    amount_cents: int = Field(default=79700, ge=79700, le=10_000_000)
+    credits: int = Field(default=1500, ge=0, le=1_000_000)
+    note: str = Field(default="", max_length=500)
+
+
+@admin_router.post("/billing/orgs/{org_id}/managed-checkout")
+async def admin_managed_checkout(org_id: uuid.UUID, body: ManagedIn, admin: AdminDep, db: DbDep):
+    """After the discovery call: a Stripe Checkout link for this account's Managed plan (send it to the customer)."""
+    org = await _org_or_404(db, org_id)
+    url = await _guard(purchases.managed_checkout(db, org, admin.id, amount_cents=body.amount_cents, credits=body.credits))
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="managed", previous="",
+                        adjustment="checkout_link", new=f"${body.amount_cents / 100:.2f}/mo {body.credits}cr"[:64],
+                        reason=body.note or "Managed plan payment link created"))
+    await db.commit()
+    return {"url": url}
+
+
+class QuoteIn(BaseModel):
+    description: str = Field(min_length=3, max_length=500)
+    amount_cents: int = Field(ge=100, le=10_000_000)
+    days_until_due: int = Field(default=7, ge=1, le=60)
+
+
+@admin_router.post("/billing/orgs/{org_id}/quote")
+async def admin_quote(org_id: uuid.UUID, body: QuoteIn, admin: AdminDep, db: DbDep):
+    """A one-off invoice for a custom build or extra work — the customer pays it from Stripe's page."""
+    org = await _org_or_404(db, org_id)
+    cid = await _guard(purchases.ensure_customer(db, org))
+    inv = await _guard(stripe_api.create_quote_invoice(
+        customer=cid, amount_cents=body.amount_cents, description=body.description, days_until_due=body.days_until_due,
+        metadata={"org_id": str(org.id), "purchase_type": "service_quote", "created_by_admin": str(admin.id)},
+        idempotency_key=f"bs-quote-{org.id}-{uuid.uuid4().hex[:10]}"))
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="quote", previous="", adjustment="invoice",
+                        new=f"{inv.get('id')} ${body.amount_cents / 100:.2f}"[:64], reason=body.description))
+    await db.commit()
+    return {"invoice_id": inv.get("id"), "url": inv.get("hosted_invoice_url"), "status": inv.get("status")}
+
+
+class OnboardingIn(BaseModel):
+    status: str | None = Field(default=None, pattern="^(needed|scheduled|done)$")
+
+
+@admin_router.patch("/billing/orgs/{org_id}/onboarding")
+async def admin_onboarding(org_id: uuid.UUID, body: OnboardingIn, admin: AdminDep, db: DbDep):
+    org = await _org_or_404(db, org_id)
+    before = org.managed_onboarding
+    org.managed_onboarding = body.status
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="managed", previous=str(before or ""),
+                        adjustment="onboarding", new=str(body.status or ""), reason="Managed onboarding status"))
+    await db.commit()
+    return {"managed_onboarding": org.managed_onboarding}
+
+
+@admin_router.get("/billing/managed")
+async def admin_managed_accounts(_: AdminDep, db: DbDep):
+    """Accounts on (or onboarding to) Managed, and anyone over a plan limit."""
+    rows = (await db.execute(select(Organization).where(Organization.managed_onboarding.isnot(None))
+                             .order_by(Organization.updated_at.desc()).limit(200))).scalars().all()
+    subs = (await db.execute(select(BillingSubscription).where(BillingSubscription.plan_key == "managed"))).scalars().all()
+    ids = {r.id for r in rows}
+    extra = [await db.get(Organization, s_.org_id) for s_ in subs if s_.org_id not in ids]
+    return {"accounts": [{"org_id": str(o.id), "name": o.name, "managed_onboarding": o.managed_onboarding,
+                          "plan": (await _plan_payload(db, o.id))} for o in [*rows, *[e for e in extra if e]]]}
 
 
 @admin_router.post("/orgs/{org_id}/lookup-balance")
@@ -475,12 +668,16 @@ async def admin_create_price(key: str, body: CreatePriceIn, admin: AdminDep):
     if not found:
         raise HTTPException(status_code=404, detail="Unknown catalog item")
     kind, item, expected = found
-    status = (await _guard(catalog.resolve_prices(force=True))).get(key, {}).get("status")
+    prices = await _guard(catalog.resolve_prices(force=True))
+    status = prices.get(key, {}).get("status")
     if status != "missing":
         raise HTTPException(status_code=409, detail="This item already has a Stripe price — nothing was created.")
+    if item.get("legacy"):
+        raise HTTPException(status_code=409, detail="Legacy plans aren't sold — nothing was created.")
+    reuse = prices.get(item.get("reuse_product_of") or "", {}).get("product")
     price = await _guard(stripe_api.create_price(
         name=f"BlackSync {item['name']}" if kind != "lookup_funds" else f"BlackSync lead lookup funds {item['name']}",
-        amount_cents=item["amount_cents"], lookup_key=item["lookup_key"],
+        amount_cents=item["amount_cents"], lookup_key=item["lookup_key"], product_id=reuse,
         recurring_interval=item.get("interval") if expected == "recurring" else None))
     catalog.invalidate()
     log.info("stripe_price_created", key=key, price=price.get("id"), by=str(admin.id))

@@ -19,6 +19,7 @@ from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.services.accounts import InsufficientCredits
 from app.services.auth import Context, CtxDep, DbDep
+from app.services.entitlements import PlanLimit
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -195,7 +196,11 @@ async def list_agents(ctx: CtxDep, db: DbDep):
 
 @router.post("/", status_code=201)
 async def create_agent(body: AgentCreate, ctx: CtxDep, db: DbDep):
+    from app.services import entitlements
+
     agent = new_agent_from_template(body.template, body.name)
+    if (agent.status or "active") == "active" and agent.template not in entitlements.EXEMPT_TEMPLATES:
+        await entitlements.check_agent_activation(db, ctx.org)
     agent.org_id = ctx.org.id
     db.add(agent)
     await db.commit()
@@ -219,6 +224,11 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
     agent = await _get_agent(db, ctx, agent_id)
     before = _prompt_state(agent)
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if changes.get("status") == "active" and agent.status != "active":
+        from app.services import entitlements
+
+        if agent.template not in entitlements.EXEMPT_TEMPLATES:
+            await entitlements.check_agent_activation(db, ctx.org, agent.id)
     if {"system_prompt", "first_message", "builder"} & changes.keys():
         await ensure_baseline(db, agent)
     if "builder" in changes and isinstance(agent.builder, dict):
@@ -317,7 +327,11 @@ async def restore_version(agent_id: uuid.UUID, version_id: uuid.UUID, ctx: CtxDe
 
 @router.post("/{agent_id}/duplicate", status_code=201)
 async def duplicate_agent(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    from app.services import entitlements
+
     src = await _get_agent(db, ctx, agent_id)
+    if (src.status or "active") == "active":
+        await entitlements.check_agent_activation(db, ctx.org)
     copy = Agent(id=uuid.uuid4(), org_id=ctx.org.id, template=src.template,
                  **{k: getattr(src, k) for k in _EDITABLE}, calcom_api_key_enc=src.calcom_api_key_enc)
     copy.name = f"{src.name} (copy)"
@@ -381,6 +395,8 @@ async def start_phone_call(agent_id: uuid.UUID, body: PhoneCallRequest, ctx: Ctx
     agent = await _get_agent(db, ctx, agent_id)
     try:
         call = await call_service.dispatch_call(None, db, agent=agent, to_phone=body.to_phone)
+    except PlanLimit as exc:
+        raise exc.http()
     except InsufficientCredits as exc:
         raise HTTPException(status_code=402, detail=str(exc))
     except (CallSetupError, ValueError) as exc:

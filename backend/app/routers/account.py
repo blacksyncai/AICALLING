@@ -195,6 +195,17 @@ async def rename_org(body: OrgUpdate, ctx: ManagerDep, db: DbDep):
 async def invite_member(body: InviteCreate, request: Request, ctx: ManagerDep, db: DbDep):
     if body.role == "owner" and ctx.role not in ("owner", "superadmin"):
         raise HTTPException(status_code=403, detail="Only owners can invite another owner.")
+    from app.services import entitlements
+
+    reinvite = (await db.execute(select(Invite.id).where(
+        Invite.org_id == ctx.org.id, Invite.email == normalize_email(body.email), Invite.accepted_at.is_(None),
+        Invite.expires_at > datetime.now(timezone.utc)))).first()
+    if reinvite and body.role == "member":
+        pass  # replacing an open invite doesn't take another seat
+    elif reinvite:
+        await entitlements.check_seat_role(db, ctx.org, body.role)
+    else:
+        await entitlements.check_seat(db, ctx.org, body.role)
     return await create_invite(db, request, ctx.org, ctx.user, body.email, body.role)
 
 
@@ -223,6 +234,10 @@ async def change_member_role(membership_id: uuid.UUID, body: MemberUpdate, ctx: 
         raise HTTPException(status_code=403, detail="Only owners can change who owns the account.")
     if m.role == "owner" and body.role != "owner" and await _owner_count(db, ctx.org.id) <= 1:
         raise HTTPException(status_code=400, detail="An account needs at least one owner.")
+    if body.role == "admin" and m.role != "admin":
+        from app.services import entitlements
+
+        await entitlements.check_seat_role(db, ctx.org, body.role)
     m.role = body.role
     await db.commit()
     return {"ok": True}

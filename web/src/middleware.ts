@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Pages need a session. The API (proxied to the backend) verifies the session itself,
 // and sign-in, sign-up and invite links must open while signed out.
-const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/login", "/invite(.*)", "/api/(.*)"]);
+const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/login", "/invite(.*)", "/pricing", "/api/(.*)"]);
 
 const withClerk = clerkMiddleware(async (auth, req) => {
   if (!isPublic(req)) await auth.protect();

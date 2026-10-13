@@ -275,6 +275,17 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         </div>
       )}
 
+      {campaign.status === "paused" && campaign.pause_reason === "plan" && (
+        <div className="mb-6 max-w-2xl">
+          <Notice tone="amber">
+            This campaign paused because its agent is over your plan&apos;s active-agent limit. Pause an agent you don&apos;t need, add an agent slot or upgrade, then press Resume.{" "}
+            <Link href="/billing?tab=plans#agent-slots" className="font-medium underline">
+              Plans &amp; agent slots
+            </Link>
+          </Notice>
+        </div>
+      )}
+
       {campaign.status === "paused" && campaign.pause_reason === "credits" && (
         <div className="mb-6 max-w-2xl">
           <MatteAlertFeedback

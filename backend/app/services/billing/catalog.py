@@ -11,29 +11,88 @@ import time
 
 from app.config import settings
 
-# Subscription plans. `included_credits` are granted each paid billing cycle.
-# Features listed are ones the app actually has today.
+# Subscription plans. `included_credits` are granted each paid billing cycle; `limits` are the
+# entitlements enforced server-side (services/entitlements.py). None = no limit.
+# `crm`: how many CRM connections (0 = none). Features listed are ones the app actually has.
 PLANS: dict[str, dict] = {
     "solo": {
         "key": "solo", "name": "Solo", "amount_cents": 9800, "interval": "month", "included_credits": 150,
         "lookup_key": "plan_solo_monthly", "price_env": "stripe_price_solo",
         "tagline": "For one person getting started with AI calling.",
+        "limits": {"agents": 2, "seats": 1, "numbers": 1, "crm": 0, "concurrency": 2, "workflows": False,
+                   "advanced_workflows": False, "roles": False, "team_reporting": False},
+        "support": "Email & ticket support",
         "features_title": "What's included",
-        "features": ["150 AI calling credits every month", "Up to 2 AI calling agents", "1 phone number included",
-                     "Build agents with AI from your website", "Calling campaigns and call recordings",
-                     "Usage reporting", "Buy more credits any time"],
+        "features": ["Build with AI or from scratch", "Inbound and outbound campaigns", "CSV contact uploads",
+                     "Live call transfers", "Calendar booking", "Recordings, transcripts and summaries",
+                     "Basic analytics"],
+    },
+    "growth": {
+        "key": "growth", "name": "Growth", "amount_cents": 19700, "interval": "month", "included_credits": 400,
+        "lookup_key": "plan_growth_monthly", "price_env": "stripe_price_growth",
+        "tagline": "For small teams connecting calls to their CRM.",
+        "limits": {"agents": 4, "seats": 4, "numbers": 2, "crm": 1, "concurrency": 3, "workflows": True,
+                   "advanced_workflows": False, "roles": False, "team_reporting": False},
+        "support": "Priority email & ticket support",
+        "features_title": "Everything in Solo, plus",
+        "features": ["1 CRM integration with syncing and field mapping", "Automated follow-ups and retries",
+                     "Workflow triggers (speed-to-lead, Slack, Sheets)", "Scheduled CRM imports",
+                     "Shared contact lists"],
     },
     "teams": {
-        "key": "teams", "name": "Teams", "amount_cents": 29600, "interval": "month", "included_credits": 500,
-        "lookup_key": "plan_teams_monthly", "price_env": "stripe_price_teams",
+        "key": "teams", "name": "Teams", "amount_cents": 34900, "interval": "month", "included_credits": 900,
+        "lookup_key": "plan_teams_349_monthly", "price_env": "stripe_price_teams", "recommended": True,
+        # The new $349 price goes on the existing "BlackSync Teams" product (no duplicate product).
+        "reuse_product_of": "teams_legacy",
         "tagline": "For teams running calling campaigns together.",
-        "features_title": "Everything in Solo, plus",
-        "features": ["500 AI calling credits every month", "Invite up to 10 team members",
-                     "More AI calling agents for every role", "Shared agents, contacts and campaigns",
-                     "Usage and results by agent", "Lower cost per included credit"],
+        "limits": {"agents": 8, "seats": 10, "numbers": 4, "crm": None, "concurrency": 5, "workflows": True,
+                   "advanced_workflows": True, "roles": True, "team_reporting": True},
+        "support": "Priority human chat during business hours",
+        "features_title": "Everything in Growth, plus",
+        "features": ["Multiple CRMs", "Advanced automations: webhooks and the API", "Shared team campaigns",
+                     "Member roles and permissions", "Team analytics by agent", "More calls at once"],
+    },
+    "managed": {
+        "key": "managed", "name": "Managed", "amount_cents": 79700, "interval": "month", "included_credits": 1500,
+        "lookup_key": "plan_managed_monthly", "price_env": "stripe_price_managed", "self_serve": False,
+        "starting_at": True,
+        "tagline": "Our team builds, configures, and optimizes your AI calling operation. "
+                   "Every managed solution is tailored to your business.",
+        "limits": {"agents": 12, "seats": 15, "numbers": 4, "crm": None, "concurrency": 8, "workflows": True,
+                   "advanced_workflows": True, "roles": True, "team_reporting": True},
+        "support": "Dedicated onboarding contact, priority support and a monthly review",
+        "features_title": "Everything in Teams, plus",
+        "features": ["White-glove onboarding", "Up to 2 custom agents built for you", "2 campaigns set up",
+                     "1 CRM connection set up", "Script and call-flow configuration",
+                     "Up to 2 hours a month of hands-on optimization", "Monthly performance review"],
+        "scope_note": "Work beyond this scope is quoted separately. Calling credits stay usage-based.",
+    },
+    # The earlier $296 Teams price. Not sold any more; a subscription on it keeps Teams entitlements.
+    "teams_legacy": {
+        "key": "teams_legacy", "name": "Teams", "amount_cents": 29600, "interval": "month", "included_credits": 500,
+        "lookup_key": "plan_teams_monthly", "legacy": True, "self_serve": False,
+        "limits": None, "limits_from": "teams", "support": "Priority human chat during business hours",
+        "features": [],
     },
 }
-PLAN_ORDER = ["solo", "teams"]
+PLAN_ORDER = ["solo", "growth", "teams", "managed"]
+# Plans recognised on existing subscriptions but not offered.
+LEGACY_PLANS = ["teams_legacy"]
+# Rank for "is this an upgrade?" and suggestions.
+PLAN_RANK = {"solo": 1, "growth": 2, "teams": 3, "teams_legacy": 3, "managed": 4}
+
+
+def plan_limits(plan_key: str | None) -> dict | None:
+    plan = PLANS.get(plan_key or "")
+    if not plan:
+        return None
+    return dict(plan["limits"] or PLANS[plan["limits_from"]]["limits"])
+
+
+def self_serve(plan_key: str) -> bool:
+    plan = PLANS.get(plan_key)
+    return bool(plan) and plan.get("self_serve", True) and not plan.get("legacy")
+
 
 # One-time calling-credit packs (these exist in the live Stripe account).
 CREDIT_PACKS: dict[str, dict] = {
@@ -76,16 +135,22 @@ FUNDS_ORDER = ["lookup_5", "lookup_10", "lookup_25"]
 PHONE_ADDON = {"key": "phone_number", "name": "Additional phone number", "amount_cents": 350, "interval": "month",
                "lookup_key": "additional_phone_number_monthly"}
 
+# Each slot adds one to the plan's agent limit. Recurring, on the plan subscription.
+AGENT_ADDON = {"key": "agent_slot", "name": "Extra agent slot", "amount_cents": 1900, "interval": "month",
+               "lookup_key": "additional_agent_slot_monthly"}
+ADDON_LOOKUP_KEYS = {PHONE_ADDON["lookup_key"], AGENT_ADDON["lookup_key"]}
+
 # Lowest list price per credit — the fallback for $ estimates before any purchase.
 LIST_CENTS_PER_CREDIT = min(p["amount_cents"] / p["credits"] for p in CREDIT_PACKS.values())
 
 
 def all_items() -> list[tuple[str, dict, str]]:
     """(kind, item, expected type) for every sellable thing."""
-    out = [("plan", PLANS[k], "recurring") for k in PLAN_ORDER]
+    out = [("plan", PLANS[k], "recurring") for k in PLAN_ORDER + LEGACY_PLANS]
     out += [("credit_pack", CREDIT_PACKS[k], "one_time") for k in PACK_ORDER]
     out += [("lookup_funds", LOOKUP_FUNDS[k], "one_time") for k in FUNDS_ORDER]
     out.append(("phone_addon", PHONE_ADDON, "recurring"))
+    out.append(("agent_addon", AGENT_ADDON, "recurring"))
     return out
 
 
@@ -155,8 +220,13 @@ class NotSellable(Exception):
     pass
 
 
-def plan_for_price(price_id: str | None, prices: dict[str, dict]) -> str | None:
-    for key in PLAN_ORDER:
+def plan_for_price(price_id: str | None, prices: dict[str, dict], metadata: dict | None = None) -> str | None:
+    """Our plan for a subscription's price. A custom-priced Managed subscription (made by an admin)
+    is recognised by the plan named in its metadata."""
+    for key in PLAN_ORDER + LEGACY_PLANS:
         if prices.get(key, {}).get("price_id") and prices[key]["price_id"] == price_id:
             return key
+    named = (metadata or {}).get("plan")
+    if named == "managed" and (metadata or {}).get("custom") == "1":
+        return "managed"
     return None

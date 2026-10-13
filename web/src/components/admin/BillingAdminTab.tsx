@@ -20,6 +20,10 @@ interface BillingSettings {
   free_test_minutes: number;
   min_ai_billable_seconds?: number;
   auto_recharge_max_monthly_cents: number;
+  no_plan_entitlements?: string;
+  sales_booking_url?: string;
+  onboarding_booking_url?: string;
+  expert_booking_url?: string;
   stripe_ready: boolean;
   webhook_ready: boolean;
   included_credits_rollover: boolean;
@@ -197,7 +201,10 @@ function PricingCard() {
         policy: data.lookup_charge_policy,
         free: String(data.lookup_free_daily),
         surcharge: String(data.premium_voice_surcharge),
-        phones: String(data.included_phone_numbers),
+        noPlan: data.no_plan_entitlements ?? "teams",
+        sales: data.sales_booking_url ?? "",
+        onboarding: data.onboarding_booking_url ?? "",
+        expert: data.expert_booking_url ?? "",
         phoneFee: String(data.phone_minute_fee ?? 0.08),
         freeTest: String(data.free_test_minutes ?? 10),
         minAi: String(data.min_ai_billable_seconds ?? 10),
@@ -229,7 +236,10 @@ function PricingCard() {
         lookup_charge_policy: form.policy,
         lookup_free_daily: Number(form.free),
         premium_voice_surcharge: Number(form.surcharge),
-        included_phone_numbers: Number(form.phones),
+        no_plan_entitlements: form.noPlan,
+        ...(form.sales.trim() ? { sales_booking_url: form.sales.trim() } : {}),
+        ...(form.onboarding.trim() ? { onboarding_booking_url: form.onboarding.trim() } : {}),
+        ...(form.expert.trim() ? { expert_booking_url: form.expert.trim() } : {}),
         phone_minute_fee: Number(form.phoneFee),
         free_test_minutes: Number(form.freeTest),
         min_ai_billable_seconds: Number(form.minAi),
@@ -264,8 +274,21 @@ function PricingCard() {
           <Field label="Free single lookups / day">
             <Input inputMode="numeric" value={form.free} onChange={(e) => set("free", e.target.value.replace(/\D/g, ""))} />
           </Field>
-          <Field label="Phone numbers included with a plan">
-            <Input inputMode="numeric" value={form.phones} onChange={(e) => set("phones", e.target.value.replace(/\D/g, ""))} />
+          <Field label="Accounts without a plan get" hint="Free trials and lapsed plans. Teams keeps today's access; Solo is stricter.">
+            <Select value={form.noPlan} onChange={(e) => set("noPlan", e.target.value)}>
+              {["solo", "growth", "teams", "managed"].map((p) => (
+                <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)} limits</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Sales booking link (Managed → Contact Sales)">
+            <Input value={form.sales} onChange={(e) => set("sales", e.target.value)} placeholder="https://cal.com/…" />
+          </Field>
+          <Field label="Managed onboarding booking link">
+            <Input value={form.onboarding} onChange={(e) => set("onboarding", e.target.value)} placeholder="https://cal.com/…" />
+          </Field>
+          <Field label="Developer build booking link" hint="Cal.com links open embedded on the expert page.">
+            <Input value={form.expert} onChange={(e) => set("expert", e.target.value)} placeholder="https://cal.com/…" />
           </Field>
           <Field label="Premium voice surcharge (credits/min)">
             <Input inputMode="decimal" value={form.surcharge} onChange={(e) => set("surcharge", e.target.value.replace(/[^\d.]/g, ""))} />

@@ -3,6 +3,9 @@ export interface PlanInfo {
   plan_key: string | null;
   name: string | null;
   managed?: boolean;
+  agent_slots?: number;
+  custom?: boolean;
+  legacy?: boolean;
   amount_cents?: number | null;
   included_credits?: number | null;
   current_period_end?: string | null;
@@ -73,6 +76,18 @@ export interface Pack {
   cents_per_credit: number;
 }
 
+export interface PlanLimits {
+  agents: number | null;
+  seats: number | null;
+  numbers: number | null;
+  crm: number | null;
+  concurrency: number | null;
+  workflows: boolean;
+  advanced_workflows: boolean;
+  roles: boolean;
+  team_reporting: boolean;
+}
+
 export interface Plan {
   key: string;
   name: string;
@@ -83,6 +98,32 @@ export interface Plan {
   tagline?: string;
   features_title?: string;
   available: boolean;
+  limits: PlanLimits;
+  support: string;
+  self_serve: boolean;
+  recommended?: boolean;
+  starting_at?: boolean;
+  scope_note?: string;
+}
+
+export interface BookingLinks {
+  sales_booking_url: string;
+  onboarding_booking_url: string;
+  expert_booking_url: string;
+}
+
+export interface Entitlements {
+  plan: string | null;
+  plan_name: string | null;
+  limits_plan: string;
+  source: "subscription" | "no_plan" | "override";
+  unlimited: boolean;
+  limits: PlanLimits;
+  agent_slots: number;
+  usage: { agents: number; seats: number; numbers: number; crm: number };
+  over_limit: string[];
+  managed_onboarding: string | null;
+  links: BookingLinks;
 }
 
 export interface Catalog {
@@ -91,7 +132,9 @@ export interface Catalog {
   packs: Pack[];
   lookup_funds: { key: string; name: string; amount_cents: number; available: boolean; per_record_cents?: number; records?: number; grant_cents?: number }[];
   phone_addon: { amount_cents: number; available: boolean };
+  agent_addon: { amount_cents: number; available: boolean };
   current_plan: PlanInfo;
+  links: BookingLinks;
 }
 
 export interface LedgerRow {

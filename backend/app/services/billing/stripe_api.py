@@ -90,12 +90,15 @@ async def list_recurring_prices() -> list[dict]:
     return [_plain(p) for p in res.auto_paging_iter()]
 
 
-async def create_price(*, name: str, amount_cents: int, lookup_key: str, recurring_interval: str | None) -> dict:
-    """Admin-approved creation of a missing catalog item (product + price)."""
+async def create_price(*, name: str, amount_cents: int, lookup_key: str, recurring_interval: str | None,
+                       product_id: str | None = None) -> dict:
+    """Admin-approved creation of a missing catalog item (product + price, or a price on an existing product)."""
     s = _client()
-    product = await _run(s.Product.create, name=name, metadata={"blacksync": "catalog"}, tax_code=SAAS_TAX_CODE,
-                         idempotency_key=f"bs-product-{lookup_key}")
-    kwargs = {"product": product["id"], "unit_amount": amount_cents, "currency": "usd", "lookup_key": lookup_key}
+    if not product_id:
+        product = await _run(s.Product.create, name=name, metadata={"blacksync": "catalog"}, tax_code=SAAS_TAX_CODE,
+                             idempotency_key=f"bs-product-{lookup_key}")
+        product_id = product["id"]
+    kwargs = {"product": product_id, "unit_amount": amount_cents, "currency": "usd", "lookup_key": lookup_key}
     if recurring_interval:
         kwargs["recurring"] = {"interval": recurring_interval}
     return _plain(await _run(s.Price.create, idempotency_key=f"bs-price-{lookup_key}", **kwargs))
@@ -179,9 +182,12 @@ async def set_cancel_at_period_end(subscription_id: str, cancel: bool) -> dict:
     return _plain(await _run(s.Subscription.modify, subscription_id, cancel_at_period_end=cancel))
 
 
-async def set_phone_quantity(*, subscription_id: str, item_id: str | None, price_id: str, quantity: int,
-                             idempotency_key: str) -> dict:
-    """Add/update/remove the phone-number add-on item. Returns the subscription."""
+async def set_item_quantity(*, subscription_id: str, item_id: str | None, price_id: str, quantity: int,
+                            idempotency_key: str, payment_behavior: str | None = None) -> dict:
+    """Add/update/remove a quantity add-on item (phone numbers, agent slots). Returns the subscription.
+
+    With payment_behavior="error_if_incomplete" the prorated amount is invoiced and charged now, and the
+    change is refused if that payment fails — used when the customer is adding something."""
     s = _client()
     if item_id and quantity <= 0:
         items = [{"id": item_id, "deleted": True}]
@@ -191,8 +197,28 @@ async def set_phone_quantity(*, subscription_id: str, item_id: str | None, price
         items = [{"price": price_id, "quantity": quantity}]
     else:
         return await retrieve_subscription(subscription_id)
-    return _plain(await _run(s.Subscription.modify, subscription_id, items=items,
-                             proration_behavior="create_prorations", idempotency_key=idempotency_key))
+    extra = {"proration_behavior": "create_prorations"}
+    if payment_behavior:
+        extra = {"proration_behavior": "always_invoice", "payment_behavior": payment_behavior}
+    return _plain(await _run(s.Subscription.modify, subscription_id, items=items, idempotency_key=idempotency_key, **extra))
+
+
+async def set_phone_quantity(*, subscription_id: str, item_id: str | None, price_id: str, quantity: int,
+                             idempotency_key: str, payment_behavior: str | None = None) -> dict:
+    return await set_item_quantity(subscription_id=subscription_id, item_id=item_id, price_id=price_id,
+                                   quantity=quantity, idempotency_key=idempotency_key, payment_behavior=payment_behavior)
+
+
+async def create_quote_invoice(*, customer: str, amount_cents: int, description: str, metadata: dict,
+                               idempotency_key: str, days_until_due: int = 7) -> dict:
+    """A one-off invoice (custom build, extra Managed work) the customer pays from Stripe's hosted page."""
+    s = _client()
+    inv = await _run(s.Invoice.create, customer=customer, collection_method="send_invoice",
+                     days_until_due=days_until_due, metadata=metadata, description=description,
+                     pending_invoice_items_behavior="exclude", idempotency_key=f"{idempotency_key}-inv")
+    await _run(s.InvoiceItem.create, customer=customer, invoice=inv["id"], amount=amount_cents, currency="usd",
+               description=description, metadata=metadata, idempotency_key=f"{idempotency_key}-item")
+    return _plain(await _run(s.Invoice.finalize_invoice, inv["id"]))
 
 
 async def upcoming_invoice(customer: str, subscription_id: str) -> dict | None:

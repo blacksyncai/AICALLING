@@ -46,6 +46,8 @@ class Organization(Base):
     credit_carry_milli: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     # Lead-lookup prepaid balance in cents (restricted to lead data; separate from calling credits).
     lookup_balance_cents: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    # Managed plan onboarding: needed (paid, not started) | scheduled | done. NULL = not a Managed account.
+    managed_onboarding: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 

@@ -141,7 +141,16 @@ export default function AnalyticsPage() {
             <Card className="min-w-0">
               <CardHeader title="Agent leaderboard" description="Ranked by meetings booked" />
               <div className="pt-1">
-                <AgentTable rows={data.by_agent} />
+                {data.locked?.includes("by_agent") ? (
+                  <div className="px-6 pb-6 pt-2 text-sm text-zinc-600">
+                    Compare agents side by side with team analytics on the Teams plan.{" "}
+                    <Link href="/billing?tab=plans&plan=teams" className="font-medium text-brand-700 hover:text-brand-800">
+                      See Teams
+                    </Link>
+                  </div>
+                ) : (
+                  <AgentTable rows={data.by_agent} />
+                )}
               </div>
             </Card>
             <Card className="min-w-0">

@@ -41,6 +41,8 @@ class NumberRequestIn(BaseModel):
 class PurchaseIn(BaseModel):
     number: str
     label: str = Field(default="", max_length=100)
+    # The customer saw and accepted the $3.50/mo charge for a number beyond the plan's included ones.
+    confirm_charge: bool = False
 
 
 class AdminAssign(BaseModel):
@@ -103,7 +105,9 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
 
     cfg = await settings_store.get_all(db)
     pricing = await phone_summary(db, ctx.org.id)
-    pricing["included_on_plan"] = int(cfg.get("included_phone_numbers") or 0)
+    from app.services import entitlements
+
+    pricing["included_on_plan"] = await entitlements.included_numbers(db, ctx.org)
     return {
         "pricing": pricing,
         "numbers": [telephony.number_to_dict(n) for n in numbers],
@@ -170,9 +174,25 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
         except purchases.BillingError as exc:
             raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
         return JSONResponse(status_code=200, content={"checkout_url": url})
+    from app.services.billing import purchases
+    from app.services.billing.subscriptions import charge_for_new_number
+
+    summary = await phone_summary(db, ctx.org.id)
+    extra = summary["active"] >= summary["included"]
+    if extra and not body.confirm_charge:
+        raise HTTPException(status_code=409, detail={
+            "code": "confirm_charge", "unit_cents": summary["unit_cents"], "included": summary["included"],
+            "message": f"Your plan includes {summary['included']} number{'s' if summary['included'] != 1 else ''}. "
+                       f"This one is ${summary['unit_cents'] / 100:.2f}/month, charged now (prorated) and on each renewal."})
+    try:
+        charged = await charge_for_new_number(db, ctx.org.id) if extra else False
+    except purchases.BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     try:
         row = await telephony.purchase(db, ctx.org.id, body.number, body.label)
     except (telephony.TelephonyError, ValueError) as exc:
+        if charged:
+            await _sync_billing(db, ctx.org.id)  # the number wasn't bought — take the add-on back down
         raise _err(exc)
     await _sync_billing(db, ctx.org.id)
     return telephony.number_to_dict(row)

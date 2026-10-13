@@ -23,9 +23,9 @@ type Pricing = MyPhoneNumbers["pricing"];
 function nextNumberCost(p: Pricing): { free: boolean; text: string } {
   if (!p) return { free: false, text: "" };
   const unit = `$${(p.unit_cents / 100).toFixed(2)}/mo`;
-  if (!p.subscribed) return { free: false, text: `${unit} per number — no plan needed. Or get your first ${p.included_on_plan === 1 ? "number" : `${p.included_on_plan} numbers`} included with any plan.` };
+  if (!p.subscribed) return { free: false, text: `${unit} per number — no plan needed. Or get 1–4 numbers included with a plan.` };
   if (p.active < p.included) return { free: true, text: `Included with your plan — no extra charge. Extra numbers after that are ${unit} each.` };
-  return { free: false, text: `You've used your included number. Each extra number is ${unit}, billed with your plan.` };
+  return { free: false, text: `You've used your plan's ${p.included === 1 ? "included number" : `${p.included} included numbers`}. Each extra number is ${unit}, charged now (prorated) and with your plan each month.` };
 }
 
 function PriceLine({ pricing }: { pricing: Pricing }) {
@@ -251,11 +251,12 @@ function BuyNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => void
       ? "It's included with your plan."
       : pricing && !pricing.subscribed
         ? `It's ${unit} — you'll pay securely with Stripe, then the number is added right away. Cancel any time in Billing.`
-        : `It's billed at ${unit} with your plan.`;
+        : `It's ${unit}: the prorated amount for this month is charged to your card now, then it's billed with your plan.`;
     if (!window.confirm(`Add ${n.friendly} to this account? ${note}`)) return;
     setBuying(n.number);
     try {
-      const r = await post<{ checkout_url?: string }>("/api/phone-numbers/purchase", { number: n.number });
+      // confirm_charge: the customer just saw and accepted the price above.
+      const r = await post<{ checkout_url?: string }>("/api/phone-numbers/purchase", { number: n.number, confirm_charge: !cost.free });
       if (r?.checkout_url) {
         window.location.href = r.checkout_url;
         return;

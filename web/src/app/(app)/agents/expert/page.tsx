@@ -3,12 +3,26 @@
 import { ArrowLeft, CalendarCheck, CheckCircle2, PhoneCall, Rocket, Wrench } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import useSWR from "swr";
+import type { Entitlements } from "@/components/billing/types";
 import { Card, Spinner } from "@/components/ui";
+import { fetcher } from "@/lib/api";
 import { displayName, useSession } from "@/lib/session";
 
-// Cal.com inline embed (event "onboarding-call").
+// Cal.com inline embed. The booking link is an admin setting (expert_booking_url); this is the fallback.
 const CAL_ORIGIN = "https://app.cal.com";
-const CAL_LINK = "hamza-basal-v1hqkl/onboarding-call";
+const DEFAULT_CAL_LINK = "hamza-basal-v1hqkl/onboarding-call";
+
+/** "https://cal.com/team/event" → "team/event" (embeddable); anything else isn't a Cal.com link. */
+function calLinkFrom(url: string | undefined): string | null {
+  if (!url) return DEFAULT_CAL_LINK;
+  try {
+    const u = new URL(url);
+    return /(^|\.)cal\.com$/.test(u.hostname) ? u.pathname.replace(/^\/+|\/+$/g, "") || null : null;
+  } catch {
+    return null;
+  }
+}
 const NAMESPACE = "onboarding-call";
 const EMBED_ID = "my-cal-inline-onboarding-call";
 
@@ -57,11 +71,16 @@ const STEPS = [
 
 export default function ExpertBuildPage() {
   const { session, loading } = useSession();
+  const { data: ent, error: entError } = useSWR<Entitlements>("/api/billing/entitlements", fetcher);
   const started = useRef(false);
   const [ready, setReady] = useState(false);
+  const bookingUrl = ent?.links.expert_booking_url;
+  const calLink = calLinkFrom(bookingUrl);
+  const linksLoaded = !!ent || !!entError;
+  const managed = ent?.plan === "managed";
 
   useEffect(() => {
-    if (started.current || loading) return;
+    if (started.current || loading || !linksLoaded || !calLink) return;
     started.current = true;
     const Cal = loadCal();
     Cal("init", NAMESPACE, { origin: CAL_ORIGIN });
@@ -77,7 +96,7 @@ export default function ExpertBuildPage() {
         ...(u ? { name: displayName(u), email: u.email } : {}),
         ...(session?.org?.name ? { notes: `Account: ${session.org.name}` } : {}),
       },
-      calLink: CAL_LINK,
+      calLink,
     });
     Cal.ns[NAMESPACE]("ui", { hideEventTypeDetails: false, layout: "month_view", cssVarsPerTheme: { light: { "cal-brand": "#E5531F" } } });
     Cal.ns[NAMESPACE]("on", { action: "linkReady", callback: () => setReady(true) });
@@ -85,7 +104,7 @@ export default function ExpertBuildPage() {
     return () => clearTimeout(t);
     // Created once, after the session loads (so name and email can be prefilled).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+  }, [loading, linksLoaded]);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -100,6 +119,16 @@ export default function ExpertBuildPage() {
         <p className="mt-2 text-sm text-zinc-600">
           Book a call with the BlackSync team. We&apos;ll design, build and test your AI calling agent around your business — you just show up.
         </p>
+        {managed ? (
+          <p className="mt-3 rounded-xl bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-900 ring-1 ring-emerald-100">
+            <strong>Included in your Managed plan:</strong> up to 2 custom agents built for you, 2 campaigns and 1 CRM connection set up. Anything beyond that is quoted before we start.
+          </p>
+        ) : (
+          <p className="mt-3 text-xs text-zinc-500">
+            The call is free. Custom builds are quoted after we talk — additional setup charges may apply, and nothing is charged without your OK.
+            On the Managed plan, custom agents are included.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
@@ -125,7 +154,7 @@ export default function ExpertBuildPage() {
         </ol>
 
         <Card className="relative min-h-[560px] p-0">
-          {!ready && (
+          {!ready && (calLink || !linksLoaded) && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-zinc-500">
               <Spinner />
               <span className="flex items-center gap-1.5">
@@ -134,7 +163,15 @@ export default function ExpertBuildPage() {
             </div>
           )}
           {/* Cal sizes its iframe to the calendar's height. */}
-          <div id={EMBED_ID} style={{ width: "100%", overflow: "auto" }} className="rounded-2xl" />
+          {calLink || !linksLoaded ? (
+            <div id={EMBED_ID} style={{ width: "100%", overflow: "auto" }} className="rounded-2xl" />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <a href={bookingUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-2 rounded-full bg-zinc-900 px-5 text-sm font-semibold text-white">
+                <CalendarCheck className="h-4 w-4" /> Book a call
+              </a>
+            </div>
+          )}
         </Card>
       </div>
     </div>

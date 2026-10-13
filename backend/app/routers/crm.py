@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.models.agent import Agent
 from app.models.crm import CrmConnection, CrmSyncLog
-from app.services import secret_store
+from app.services import entitlements, secret_store
 from app.services.auth import DbDep, ManagerDep
 from app.services.crm import sync
 from app.services.crm.http import CrmError, nango
@@ -142,6 +142,7 @@ async def _save(db, ctx, p: Provider, method: str, secret: str, config: dict, la
 async def connect(key: str, body: ConnectIn, ctx: ManagerDep, db: DbDep):
     """Connect with an API key (verified against the CRM before it's saved)."""
     p = _provider(key)
+    await entitlements.check_crm(db, ctx.org, key)
     if not p.native:
         raise HTTPException(status_code=400, detail=f"{p.name} connects with OAuth. Use Connect with {p.name}.")
     secret = (body.fields.get("api_key") or "").strip()
@@ -161,9 +162,10 @@ async def connect(key: str, body: ConnectIn, ctx: ManagerDep, db: DbDep):
 
 
 @router.post("/{key}/oauth/session")
-async def oauth_session(key: str, ctx: ManagerDep):
+async def oauth_session(key: str, ctx: ManagerDep, db: DbDep):
     """A short-lived Nango Connect session for the OAuth popup."""
     p = _provider(key)
+    await entitlements.check_crm(db, ctx.org, key)
     integration = await _nango_key_for(p)
     if not integration:
         raise HTTPException(status_code=400, detail=f"{p.name} OAuth isn't enabled yet.")
@@ -187,6 +189,7 @@ class OAuthDoneIn(BaseModel):
 async def oauth_complete(key: str, body: OAuthDoneIn, ctx: ManagerDep, db: DbDep):
     """Save a Nango connection once the popup finishes (checked against Nango first)."""
     p = _provider(key)
+    await entitlements.check_crm(db, ctx.org, key)
     integration = await _nango_key_for(p)
     if not integration:
         raise HTTPException(status_code=400, detail=f"{p.name} OAuth isn't enabled.")
@@ -243,6 +246,8 @@ async def save_pipeline_sync(key: str, body: PipelineSyncIn, ctx: ManagerDep, db
 
     p = _provider(key)
     conn = await _require_conn(db, ctx.org.id, key)
+    if body.pipeline_id:
+        await entitlements.require(db, ctx.org, "workflows", "Pipeline stage sync is included from the Growth plan.")
     s = dict(conn.settings or {})
     if not body.pipeline_id:
         s.pop("pipeline", None)
@@ -298,6 +303,7 @@ async def install_preview(key: str, ctx: ManagerDep, db: DbDep):
 async def install(key: str, body: InstallIn, ctx: ManagerDep, db: DbDep):
     """Create a "BlackSync AI · <agent>" pipeline in the CRM. Cards dragged into its queue stage get called."""
     conn = await _require_conn(db, ctx.org.id, key)
+    await entitlements.require(db, ctx.org, "workflows", "The AI calling pipeline is included from the Growth plan.")
     agent = await db.get(Agent, body.agent_id)
     if not agent or agent.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -358,6 +364,9 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
         s["only_outcomes"] = [o for o in dict.fromkeys(data["only_outcomes"]) if o in CALL_OUTCOMES]
     if data.get("only_sentiments") is not None:
         s["only_sentiments"] = [x for x in dict.fromkeys(data["only_sentiments"]) if x in ("positive", "neutral", "negative")]
+    if (data.get("speed_to_lead_agent_id") or "").strip() or (data.get("activity_agent_id") or "").strip():
+        await entitlements.require(db, ctx.org, "workflows", "Workflow triggers (call new leads automatically) are "
+                                   "included from the Growth plan.")
     if "speed_to_lead_agent_id" in data:
         agent_id = (data["speed_to_lead_agent_id"] or "").strip()
         if agent_id:
@@ -521,6 +530,7 @@ async def create_auto_rule(key: str, body: AutoRuleIn, ctx: ManagerDep, db: DbDe
     conn = await _require_conn(db, ctx.org.id, key)
     if not p.can_import:
         raise HTTPException(status_code=400, detail=f"{p.name} doesn't have contacts to sync.")
+    await entitlements.require(db, ctx.org, "workflows", "Scheduled CRM imports are included from the Growth plan.")
     rules = sync.auto_rules(conn)
     if len(rules) >= 10:
         raise HTTPException(status_code=400, detail="You can have up to 10 auto-sync rules per integration.")

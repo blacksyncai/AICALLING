@@ -86,6 +86,9 @@ async def overview(ctx: ManagerDep, db: DbDep):
 @router.post("/api-keys", status_code=201)
 async def create_api_key(body: ApiKeyCreate, ctx: ManagerDep, db: DbDep):
     """The full key is returned only here — store it somewhere safe."""
+    from app.services import entitlements
+
+    await entitlements.require(db, ctx.org, "advanced_workflows", "API keys are included from the Teams plan.")
     raw = generate_api_key()
     key = ApiKey(id=uuid.uuid4(), org_id=ctx.org.id, name=body.name.strip()[:100] or "API key",
                  prefix=raw[:10], key_hash=sha256(raw), created_by=ctx.user.id)
@@ -106,6 +109,9 @@ async def revoke_api_key(key_id: uuid.UUID, ctx: ManagerDep, db: DbDep):
 @router.post("/webhooks", status_code=201)
 async def create_webhook(body: WebhookIn, ctx: ManagerDep, db: DbDep):
     _validate_hook(body.url, body.events)
+    from app.services import entitlements
+
+    await entitlements.require(db, ctx.org, "advanced_workflows", "Outgoing webhooks are included from the Teams plan.")
     hook = WebhookEndpoint(id=uuid.uuid4(), org_id=ctx.org.id, name=body.name.strip()[:100], url=body.url.strip(),
                            events=body.events, secret=new_webhook_secret(), active=body.active)
     db.add(hook)

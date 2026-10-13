@@ -451,6 +451,10 @@ async def launch(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
     blockers = [c for c in check["checks"] if c["status"] == "blocker"]
     if blockers:
         raise HTTPException(status_code=409, detail="Fix these before going live: " + "; ".join(c["label"] for c in blockers))
+    if agent.status != "active":
+        from app.services import entitlements
+
+        await entitlements.check_agent_activation(db, ctx.org, agent.id)
     agent.status = "active"
     await db.commit()
     log.info("agent_launched", agent_id=str(agent.id), org_id=str(ctx.org.id))

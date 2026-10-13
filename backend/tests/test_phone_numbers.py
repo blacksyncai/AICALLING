@@ -119,7 +119,7 @@ def test_self_serve_purchase_respects_limit(client, make_client, twilio, monkeyp
         real = subscriptions.phone_summary
 
         async def on_plan(db, org_id):
-            return {**await real(db, org_id), "subscribed": True}
+            return {**await real(db, org_id), "subscribed": True, "included": 1}
 
         monkeypatch.setattr(subscriptions, "phone_summary", on_plan)
         assert owner.post("/api/phone-numbers/purchase", json={"number": n}).status_code == 201

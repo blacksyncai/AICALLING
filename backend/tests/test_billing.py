@@ -26,7 +26,8 @@ def _price(pid, item, typ):
 @pytest.fixture
 def stripe(monkeypatch):
     st = SimpleNamespace(customers={}, sessions=[], subs={}, charges=[], card={"id": "pm_1", "brand": "visa", "last4": "4242",
-                         "exp_month": 1, "exp_year": 2030}, charge_status="succeeded", missing=set(), quantity_calls=[])
+                         "exp_month": 1, "exp_year": 2030}, charge_status="succeeded", missing=set(), quantity_calls=[],
+                         slot_calls=[])
     prices = {}
     for kind, item, typ in catalog.all_items():
         if item["key"] in st.missing:
@@ -74,14 +75,21 @@ def stripe(monkeypatch):
         st.subs[sid]["cancel_at_period_end"] = cancel
         return st.subs[sid]
 
-    async def set_phone_quantity(*, subscription_id, item_id, price_id, quantity, idempotency_key):
-        st.quantity_calls.append(quantity)
+    async def set_item_quantity(*, subscription_id, item_id, price_id, quantity, idempotency_key, payment_behavior=None):
+        lookup = next(k for k, p in prices.items() if p["id"] == price_id)
+        if st.charge_status != "succeeded" and payment_behavior:
+            raise RuntimeError("Your card was declined.")
+        (st.quantity_calls if lookup == catalog.PHONE_ADDON["lookup_key"] else st.slot_calls).append((quantity, payment_behavior)
+                                                                                                    if lookup != catalog.PHONE_ADDON["lookup_key"] else quantity)
         sub = st.subs[subscription_id]
-        sub["items"]["data"] = [i for i in sub["items"]["data"] if (i.get("price") or {}).get("lookup_key") != catalog.PHONE_ADDON["lookup_key"]]
+        sub["items"]["data"] = [i for i in sub["items"]["data"] if (i.get("price") or {}).get("lookup_key") != lookup]
         if quantity > 0:
-            sub["items"]["data"].append({"id": "si_phone", "quantity": quantity,
-                                         "price": {"id": price_id, "lookup_key": catalog.PHONE_ADDON["lookup_key"]}})
+            sub["items"]["data"].append({"id": "si_" + lookup[:8], "quantity": quantity,
+                                         "price": {"id": price_id, "lookup_key": lookup}})
         return sub
+
+    async def set_phone_quantity(**kw):
+        return await set_item_quantity(**kw)
 
     def construct_event(payload, signature):
         if signature != "good":
@@ -325,11 +333,11 @@ def test_included_credits_spent_first_and_expire_purchased_never(client, make_cl
 
     # Plan change: preview first, explicit confirm, upgrade tops up included credits.
     pv = c.post("/api/billing/plans/teams/preview").json()
-    assert pv["upgrade"] is True and pv["amount_due_now_cents"] == 15000 and pv["included_credits_now"] == 350
+    assert pv["upgrade"] is True and pv["amount_due_now_cents"] == 15000 and pv["included_credits_now"] == 750
     assert c.post("/api/billing/plans/teams/change", json={}).status_code == 400
-    stripe.prices["plan_teams_monthly"]["id"] = "price_teams"
+    stripe.prices["plan_teams_349_monthly"]["id"] = "price_teams"
     assert c.post("/api/billing/plans/teams/change", json={"confirm": True}).status_code == 200
-    assert c.get("/api/billing/overview").json()["credits"]["included"] == 500
+    assert c.get("/api/billing/overview").json()["credits"]["included"] == 900
 
 
 def test_unknown_plan_is_preserved_read_only(client, make_client, stripe):

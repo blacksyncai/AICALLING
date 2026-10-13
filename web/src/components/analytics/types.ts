@@ -9,6 +9,7 @@ export type Analytics = {
   funnel: Funnel;
   outcomes: Record<string, number>;
   by_agent: AgentRow[];
+  locked?: string[];
   by_campaign: CampaignRow[];
   by_hour: HourRow[];
   sentiment: { positive: number; neutral: number; negative: number };
