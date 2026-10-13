@@ -75,6 +75,8 @@ class User(Base):
     # Sign-up emails: the welcome email, then a walkthrough offer a day later (app/services/onboarding_emails.py).
     welcome_email_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     followup_email_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # "Your workspace is waiting" — sent by an admin to people who signed up before emails were set up.
+    catchup_email_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 

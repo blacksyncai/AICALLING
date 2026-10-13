@@ -154,6 +154,8 @@ for r in (auth, account, activity, admin, agents, agent_builder, billing, busine
 app.include_router(phone_numbers.admin_router)
 app.include_router(billing.admin_router)
 app.include_router(support.admin_router)
+from app.routers import admin_emails  # noqa: E402
+app.include_router(admin_emails.router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

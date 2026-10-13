@@ -54,54 +54,57 @@ def _step(n: str, title: str, text: str, pad: str) -> str:
 _RULE = """<tr><td colspan="2" style="padding:0 20px;"><div style="border-top:1px solid #e9dfd8;"></div></td></tr>"""
 
 
-def welcome_email(user: User, org_name: str, industry_label: str | None = None,
-                  booking_url: str | None = None) -> tuple[str, str]:
-    """The sign-up welcome: workspace ready, three steps, open the app — and a setup call for anyone who wants help.
+def _steps(items: list[tuple[str, str]]) -> str:
+    out = []
+    for i, (title, text) in enumerate(items):
+        pad = "22px 20px 16px" if i == 0 else "18px 20px 22px" if i == len(items) - 1 else "18px 20px 16px"
+        out.append(_step(f"{i + 1:02d}", title, text, pad))
+    return _RULE.join(out)
 
-    The call link is the same one as "Have an expert build it" (the expert_booking_url setting)."""
-    first = _first(user)
-    industry = html.escape(industry_label or "")
-    company = html.escape(org_name.strip())
-    workspace = (f"Your <strong>{industry}</strong> workspace for {company} is ready" if industry
-                 else f"Your workspace for <strong>{company}</strong> is ready")
-    href = html.escape(f"{_app_url()}/dashboard", quote=True)
-    steps = (_step("01", "Meet Marissa", "Your AI onboarding assistant will learn about your business and help you get started.",
-                   "22px 20px 16px") + _RULE
-             + _step("02", "Build your agent", "Choose a voice, describe your business, and let AI help create your first agent.",
-                     "18px 20px 16px") + _RULE
-             + _step("03", "Test it live", "Speak to your agent right in your browser and hear how it handles real conversations.",
-                     "18px 20px 22px"))
-    help_block = ""
-    if booking_url:
-        book = html.escape(booking_url, quote=True)
-        help_block = f"""<tr><td style="padding:0 28px;"><div style="border-top:1px solid #ece8e4;"></div></td></tr>
+
+def _help_block(booking_url: str | None, heading: str = "Prefer a little help?",
+                text: str = "Want a quick walkthrough or prefer to have our team build your agent for you? We're happy to help.",
+                label: str = "Book a Free Setup Call") -> str:
+    if not booking_url:
+        return ""
+    book = html.escape(booking_url, quote=True)
+    return f"""<tr><td style="padding:0 28px;"><div style="border-top:1px solid #ece8e4;"></div></td></tr>
           <tr>
             <td style="padding:28px;">
-              <h2 style="margin:0 0 10px;font-size:19px;color:#222;">Prefer a little help?</h2>
-              <p style="margin:0 0 20px;font-size:14px;line-height:1.8;color:#666;">
-                Want a quick walkthrough or prefer to have our team build your agent for you? We're happy to help.
-              </p>
+              <h2 style="margin:0 0 10px;font-size:19px;color:#222;">{heading}</h2>
+              <p style="margin:0 0 20px;font-size:14px;line-height:1.8;color:#666;">{text}</p>
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
                   <td align="center" style="border:1px solid #e2d6ce;border-radius:10px;">
-                    <a href="{book}" target="_blank" style="display:block;padding:15px 20px;color:#bc481d;text-decoration:none;font-size:15px;font-weight:700;">Book a Free Setup Call &rarr;</a>
+                    <a href="{book}" target="_blank" style="display:block;padding:15px 20px;color:#bc481d;text-decoration:none;font-size:15px;font-weight:700;">{label} &rarr;</a>
                   </td>
                 </tr>
               </table>
               <p style="margin:23px 0 0;text-align:center;font-size:12px;color:#888;">Questions? Use the support chat inside BlackSync.</p>
             </td>
           </tr>"""
-    body = f"""<!DOCTYPE html>
+
+
+def _designed(*, title: str, preheader: str, eyebrow: str, heading: str, intro: str, steps: str,
+              cta_label: str, cta_note: str, help_block: str) -> str:
+    """The BlackSync email layout: dark header, eyebrow + heading, numbered steps, one big button, optional help."""
+    href = html.escape(f"{_app_url()}/dashboard", quote=True)
+    steps_html = (f"""<tr>
+            <td style="padding:10px 28px 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#faf6f2;border-radius:12px;">
+                {steps}
+              </table>
+            </td>
+          </tr>""" if steps else "")
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Welcome to BlackSync</title>
+  <title>{title}</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f4f1ed;font-family:Arial,Helvetica,sans-serif;color:#242424;">
-  <div style="display:none;font-size:1px;color:#f4f1ed;max-height:0;overflow:hidden;opacity:0;">
-    Your BlackSync workspace is ready. Build and test your first AI agent.
-  </div>
+  <div style="display:none;font-size:1px;color:#f4f1ed;max-height:0;overflow:hidden;opacity:0;">{preheader}</div>
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f4f1ed;">
     <tr>
       <td align="center" style="padding:30px 14px;">
@@ -118,31 +121,22 @@ def welcome_email(user: User, org_name: str, industry_label: str | None = None,
           </tr>
           <tr>
             <td style="padding:34px 28px 18px;">
-              <p style="margin:0 0 16px;font-size:11px;font-weight:700;letter-spacing:1.5px;color:#e95420;">YOUR WORKSPACE IS READY</p>
-              <h1 style="margin:0 0 16px;font-size:28px;line-height:1.25;letter-spacing:-0.7px;color:#171717;">Welcome to BlackSync{', ' + first if first else ''}.</h1>
-              <p style="margin:0;font-size:15px;line-height:1.8;color:#555555;">
-                {workspace}, and you've got <strong>complimentary calling credits</strong> to build, customize, and test
-                your first AI agent. No credit card required.
-              </p>
+              <p style="margin:0 0 16px;font-size:11px;font-weight:700;letter-spacing:1.5px;color:#e95420;">{eyebrow}</p>
+              <h1 style="margin:0 0 16px;font-size:28px;line-height:1.25;letter-spacing:-0.7px;color:#171717;">{heading}</h1>
+              <p style="margin:0;font-size:15px;line-height:1.8;color:#555555;">{intro}</p>
             </td>
           </tr>
-          <tr>
-            <td style="padding:10px 28px 24px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#faf6f2;border-radius:12px;">
-                {steps}
-              </table>
-            </td>
-          </tr>
+          {steps_html}
           <tr>
             <td align="center" style="padding:0 28px 30px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
                   <td align="center" bgcolor="#e95420" style="border-radius:10px;">
-                    <a href="{href}" target="_blank" style="display:block;padding:17px 20px;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;">Open My Workspace &rarr;</a>
+                    <a href="{href}" target="_blank" style="display:block;padding:17px 20px;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;">{cta_label} &rarr;</a>
                   </td>
                 </tr>
               </table>
-              <p style="margin:14px 0 0;color:#888;font-size:12px;">No credit card required &bull; Complimentary calling credits included</p>
+              <p style="margin:14px 0 0;color:#888;font-size:12px;">{cta_note}</p>
             </td>
           </tr>
           {help_block}
@@ -160,23 +154,80 @@ def welcome_email(user: User, org_name: str, industry_label: str | None = None,
   </table>
 </body>
 </html>"""
+
+
+def _workspace_line(org_name: str, industry_label: str | None, ready: str = "is ready") -> str:
+    company, industry = html.escape(org_name.strip()), html.escape(industry_label or "")
+    return (f"Your <strong>{industry}</strong> workspace for {company} {ready}" if industry
+            else f"Your workspace for <strong>{company}</strong> {ready}")
+
+
+def welcome_email(user: User, org_name: str, industry_label: str | None = None,
+                  booking_url: str | None = None) -> tuple[str, str]:
+    """The sign-up welcome: workspace ready, three steps, open the app — and a setup call for anyone who wants help.
+
+    The call link is the same one as "Have an expert build it" (the expert_booking_url setting)."""
+    first = _first(user)
+    body = _designed(
+        title="Welcome to BlackSync",
+        preheader="Your BlackSync workspace is ready. Build and test your first AI agent.",
+        eyebrow="YOUR WORKSPACE IS READY",
+        heading=f"Welcome to BlackSync{', ' + first if first else ''}.",
+        intro=f"{_workspace_line(org_name, industry_label)}, and you've got <strong>complimentary calling credits</strong> "
+              "to build, customize, and test your first AI agent. No credit card required.",
+        steps=_steps([
+            ("Meet Marissa", "Your AI onboarding assistant will learn about your business and help you get started."),
+            ("Build your agent", "Choose a voice, describe your business, and let AI help create your first agent."),
+            ("Test it live", "Speak to your agent right in your browser and hear how it handles real conversations."),
+        ]),
+        cta_label="Open My Workspace",
+        cta_note="No credit card required &bull; Complimentary calling credits included",
+        help_block=_help_block(booking_url),
+    )
     return "Welcome to BlackSync — your workspace is ready", body
 
 
-def followup_email(user: User, booking_url: str) -> tuple[str, str]:
+def catchup_email(user: User, org_name: str, industry_label: str | None = None,
+                  booking_url: str | None = None) -> tuple[str, str]:
+    """For people who signed up a while ago (before emails went out): pick up where they left off."""
     first = _first(user)
-    dash = f"{_app_url()}/dashboard"
-    book = html.escape(booking_url, quote=True)
-    body = t.layout(
+    body = _designed(
+        title="Your BlackSync workspace is waiting",
+        preheader="Your AI calling workspace is set up — here's the fastest way to see it work.",
+        eyebrow="PICK UP WHERE YOU LEFT OFF",
+        heading=f"{'Hi ' + first + ', your' if first else 'Your'} workspace is waiting.",
+        intro=f"{_workspace_line(org_name, industry_label, 'is set up')}, and your <strong>calling credits</strong> are "
+              "still there. Here's the fastest way to hear BlackSync work for your business:",
+        steps=_steps([
+            ("Talk to Marissa", "Hear an AI agent live in your browser — she'll answer anything about the platform."),
+            ("Build your first agent", "Tell BlackSync about your business and it writes the script, voice and call flow."),
+            ("Test it, then launch", "Call it from your browser, tweak anything, then point it at your leads or your phone line."),
+        ]),
+        cta_label="Open My Workspace",
+        cta_note="Your calling credits are waiting in your account",
+        help_block=_help_block(booking_url, heading="Want us to set it up with you?",
+                               text="Book a free 15-minute call — we'll walk you through it or build your first agent "
+                                    "with you, live."),
+    )
+    return "Your BlackSync workspace is waiting", body
+
+
+def followup_email(user: User, booking_url: str) -> tuple[str, str]:
+    """The day-after walkthrough offer."""
+    first = _first(user)
+    body = _designed(
         title="Want a hand setting up?",
         preheader="Book a free walkthrough and we'll set up your first AI agent with you.",
+        eyebrow="FREE WALKTHROUGH",
         heading="Want us to set it up with you?",
-        body_html=t.p(f"Hi{' ' + first if first else ''}, we'd love to help you get your first AI agent calling. "
-                      "Book a free walkthrough and we'll build it with you live — your script, your voice "
-                      "and your calendar.")
-        + t.button(book, "Book a free walkthrough")
-        + t.p(f'Rather do it yourself? <a href="{dash}" style="color:{t.ORANGE};">Pick up where you left off</a>.',
-              size=13, margin="0"),
+        intro=f"Hi{' ' + first if first else ''}, we'd love to help you get your first AI agent calling. Book a free "
+              "walkthrough and we'll build it with you live — your script, your voice and your calendar.",
+        steps="",
+        cta_label="Pick Up Where You Left Off",
+        cta_note="Prefer to do it yourself? Everything's in your workspace.",
+        help_block=_help_block(booking_url, heading="Book your free walkthrough",
+                               text="15 minutes with our team — a quick tour, or we build your first agent with you.",
+                               label="Book a Free Walkthrough"),
     )
     return "Want a hand setting up your AI agent?", body
 
