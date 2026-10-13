@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui";
 import { Card, CardHeader, PillAction, emptyCls, listCls, rowCls } from "./surface";
 import { cn } from "@/lib/utils";
 import { type Overview, fmtDate, fmtDateTime, usd } from "./types";
-import { UnitsToggle, amount, useUnits } from "./units";
+import { amount } from "./units";
 
 type Go = (tab: "overview" | "plans" | "credits" | "lookups" | "invoices") => void;
 
@@ -38,10 +38,8 @@ const STATUS_TONE: Record<string, "green" | "amber" | "red" | "gray"> = {
 };
 
 export function OverviewTab({ overview: o, go }: { overview: Overview; go: Go }) {
-  const [units, setUnits] = useUnits();
   const c = o.credits;
   const plan = o.plan;
-  const cpc = c.cents_per_credit;
   const planCents = plan.status !== "none" && plan.status !== "canceled" ? plan.amount_cents ?? 0 : 0;
   const phonesCents = o.phones.billed_quantity * o.phones.unit_cents;
 
@@ -67,7 +65,7 @@ export function OverviewTab({ overview: o, go }: { overview: Overview; go: Go })
         <SummaryCard
           icon={<Coins className="h-4 w-4" />}
           title="Calling credits"
-          value={c.unlimited ? "Unlimited" : amount(c.balance, units, cpc)}
+          value={c.unlimited ? "Unlimited" : amount(c.balance)}
           sub={
             c.unlimited
               ? "This account isn't charged for calls"
@@ -75,11 +73,6 @@ export function OverviewTab({ overview: o, go }: { overview: Overview; go: Go })
           }
           action={{ label: "Buy credits", onClick: () => go("credits") }}
         >
-          {!c.unlimited && (
-            <div className="mt-3">
-              <UnitsToggle units={units} onChange={setUnits} />
-            </div>
-          )}
         </SummaryCard>
         <SummaryCard
           icon={<UserSearch className="h-4 w-4" />}

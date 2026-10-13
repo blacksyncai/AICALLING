@@ -10,7 +10,7 @@ import { fetcher, post, put } from "@/lib/api";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { cn } from "@/lib/utils";
 import { type AutoRechargeCfg, type Catalog, type CreditBreakdown, type LedgerRow, fmtDate, fmtDateTime, usd } from "./types";
-import { UnitsToggle, amount, useUnits } from "./units";
+import { amount } from "./units";
 
 interface CreditsData extends CreditBreakdown {
   ledger: LedgerRow[];
@@ -24,7 +24,6 @@ const KIND_LABEL: Record<string, string> = {
 
 export function CreditsTab({ canManage }: { canManage: boolean }) {
   const toast = useToast();
-  const [units, setUnits] = useUnits();
   const { data } = useSWR<CreditsData>("/api/billing/credits", fetcher);
   const { data: cat } = useSWR<Catalog>("/api/billing/catalog", fetcher);
   const [buying, setBuying] = useState<string | null>(null);
@@ -35,7 +34,6 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
         <Spinner />
       </div>
     );
-  const cpc = data.cents_per_credit;
 
   async function buy(pack: string) {
     setBuying(pack);
@@ -54,21 +52,15 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
           <div>
             <div className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Available calling credits</div>
             <div className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">
-              {data.unlimited ? "Unlimited" : amount(data.balance, units, cpc)}
+              {data.unlimited ? "Unlimited" : amount(data.balance)}
             </div>
-            {!data.unlimited && units === "usd" && (
-              <p className="mt-1 max-w-md text-xs text-zinc-500">
-                Estimated from what you paid for your credits (about {usd(cpc, 3)} per credit). Credits aren&apos;t cash and can&apos;t be withdrawn.
-              </p>
-            )}
           </div>
-          {!data.unlimited && <UnitsToggle units={units} onChange={setUnits} />}
         </div>
         {!data.unlimited && (
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <Part label="Included with plan" value={amount(data.included, units, cpc)} sub={data.included && data.included_expires_at ? `Expire ${fmtDate(data.included_expires_at)}` : "Used first"} />
-            <Part label="Purchased" value={amount(data.purchased, units, cpc)} sub="Never expire" />
-            <Part label="Other" value={amount(data.other, units, cpc)} sub="Added by BlackSync" />
+            <Part label="Included with plan" value={amount(data.included)} sub={data.included && data.included_expires_at ? `Expire ${fmtDate(data.included_expires_at)}` : "Used first"} />
+            <Part label="Purchased" value={amount(data.purchased)} sub="Never expire" />
+            <Part label="Other" value={amount(data.other)} sub="Added by BlackSync" />
           </div>
         )}
       </Card>
@@ -120,7 +112,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
                     <span className="block truncate font-medium text-zinc-800">{u.agent_name}</span>
                     <span className="text-xs text-zinc-500">{u.calls} calls · {u.minutes} min</span>
                   </span>
-                  <span className="shrink-0 tabular-nums text-zinc-700">{amount(u.credits, units, cpc)}</span>
+                  <span className="shrink-0 tabular-nums text-zinc-700">{amount(u.credits)}</span>
                 </li>
               ))}
             </ul>
