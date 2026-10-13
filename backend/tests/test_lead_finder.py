@@ -226,7 +226,7 @@ def test_save_as_lead_dedupes_and_does_not_invent_dnc(client, make_client, provi
 
     lead = next(x for x in c.get("/api/contacts").json()["items"] if x["id"] == lead_id)
     # Primary number: the first mobile DataSkip didn't flag. The contact isn't auto-marked do-not-call.
-    assert lead["phone"] == "+18145550103" and lead["do_not_call"] is False and lead["source"] == "dataskip"
+    assert lead["phone"] == "+18145550103" and lead["do_not_call"] is False and lead["source"] == "lead_finder"  # the vendor is never shown
     assert lead["campaign_id"] is None and lead["email"] == "dana.reyes@example.com"
 
     from app.database import AsyncSessionLocal

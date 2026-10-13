@@ -170,7 +170,7 @@ export function ResultPanel({
           )}
         </Section>
         {r.phones.length > 0 && (
-          <Section title="Do Not Call (reported by DataSkip)">
+          <Section title="Do Not Call (as reported)">
             <DncReport phones={r.phones} />
           </Section>
         )}
@@ -186,7 +186,7 @@ function DncReport({ phones }: { phones: LookupPhone[] }) {
   return (
     <div className="rounded-lg border border-zinc-200 px-3 py-2.5 text-sm">
       {flagged.length === 0 ? (
-        <p className="text-zinc-600">DataSkip didn&apos;t flag any of these numbers.</p>
+        <p className="text-zinc-600">None of these numbers were flagged.</p>
       ) : (
         <ul className="space-y-1">
           {flagged.map((p) => (
@@ -200,7 +200,7 @@ function DncReport({ phones }: { phones: LookupPhone[] }) {
       )}
       {unknown.length > 0 && <p className="mt-1 text-xs text-zinc-500">{unknown.length} number{unknown.length === 1 ? "" : "s"} had no DNC status reported.</p>}
       <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
-        Shown as reported by the provider — not verified. Run your own DNC scrub and check consent before calling.
+        Shown as reported by our data source — not verified. Run your own DNC scrub and check consent before calling.
       </p>
     </div>
   );

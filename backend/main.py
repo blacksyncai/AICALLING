@@ -76,6 +76,19 @@ async def lifespan(app: FastAPI):
             log.info("inbound_numbers_synced", count=await sync_inbound_numbers())
         except Exception as exc:
             log.warning("inbound_numbers_sync_failed", error=str(exc))
+    if settings.run_startup_jobs:
+        # Older Lead Finder contacts named the data vendor in their note; customers shouldn't see it.
+        try:
+            from sqlalchemy import update as _update
+
+            from app.database import AsyncSessionLocal
+            from app.models.lead import Lead
+            async with AsyncSessionLocal() as db:
+                await db.execute(_update(Lead).where(Lead.notes == "Saved from Lead Finder (DataSkip).")
+                                 .values(notes="Saved from Lead Finder."))
+                await db.commit()
+        except Exception as exc:
+            log.warning("lead_note_cleanup_failed", error=str(exc)[:200])
     from app.services.outbound_call import start_orphan_sweeper
     sweeper_task = start_orphan_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.entitlements import start_expiry_sweeper

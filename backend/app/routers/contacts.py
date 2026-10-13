@@ -88,7 +88,7 @@ def contact_to_dict(l: Lead, campaign_name: str | None = None) -> dict:
         "notes": l.notes or "",
         "tags": l.tags or [],
         "custom_fields": l.custom_fields or {},
-        "source": l.intent_source,
+        "source": "lead_finder" if l.intent_source == "dataskip" else l.intent_source,  # never name the data vendor
         "campaign_id": str(l.campaign_id) if l.campaign_id else None,
         "campaign_name": campaign_name,
         "last_called_at": _iso(l.last_called_at),

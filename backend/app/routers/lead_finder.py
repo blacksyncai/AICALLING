@@ -326,7 +326,7 @@ async def save_lookup_as_lead(db, org_id, r: PropertyLookup) -> tuple[Lead, bool
             id=uuid.uuid4(), org_id=org_id, name=name[:255], company="",
             phone=primary["number"] if primary else "", email=emails[0] if emails else "",
             status="new", intent_source="dataskip", tags=["lead-finder"], custom_fields=custom,
-            enrichment=enrichment, notes="Saved from Lead Finder (DataSkip).",
+            enrichment=enrichment, notes="Saved from Lead Finder.",
         )
         db.add(lead)
         created = True
