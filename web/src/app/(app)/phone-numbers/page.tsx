@@ -31,7 +31,31 @@ function nextNumberCost(p: Pricing): { free: boolean; text: string } {
 function PriceLine({ pricing }: { pricing: Pricing }) {
   const c = nextNumberCost(pricing);
   if (!c.text) return null;
-  return <p className={`px-5 pb-4 text-xs ${c.free ? "text-emerald-700" : "text-zinc-500"}`}>{c.text}</p>;
+  return <p className={`text-xs ${c.free ? "text-emerald-300" : "text-zinc-400"}`}>{c.text}</p>;
+}
+
+/** The "Get a number" call to action: a dark card with an orange glow so it stands out on the page. */
+function GetNumberCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return (
+    <section className="relative overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-lg ring-1 ring-zinc-900">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(420px_220px_at_100%_0%,rgba(236,101,60,0.45),transparent_70%),radial-gradient(360px_200px_at_0%_100%,rgba(245,158,11,0.18),transparent_70%)]"
+      />
+      <div className="relative flex flex-col gap-4 p-5 sm:p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-600 shadow-[0_6px_20px_-6px_rgba(236,101,60,0.8)]">
+            <Phone className="h-5 w-5 text-white" />
+          </span>
+          <div>
+            <h2 className="font-display text-lg font-semibold tracking-tight">{title}</h2>
+            <p className="mt-0.5 text-sm text-zinc-300">{description}</p>
+          </div>
+        </div>
+        {children}
+      </div>
+    </section>
+  );
 }
 
 function fmtDate(iso: string | null) {
@@ -58,6 +82,11 @@ export default function PhoneNumbersPage() {
     );
 
   const full = data.numbers.length >= data.max_numbers;
+  const getNumber = data.self_serve ? (
+    <BuyNumber pricing={data.pricing} refresh={() => void mutate()} />
+  ) : (
+    <RequestNumber pricing={data.pricing} refresh={() => void mutate()} />
+  );
 
   return (
     <>
@@ -72,6 +101,7 @@ export default function PhoneNumbersPage() {
         </div>
       )}
       <PageHeader title="Phone numbers" description="The numbers your agents call from. Pick a default, or set one per agent under Agent → Actions." />
+      {manager && !full && data.numbers.length === 0 && <div className="mb-6">{getNumber}</div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <NumbersList numbers={data.numbers} manager={manager} refresh={() => void mutate()} />
         {manager && (
@@ -89,10 +119,8 @@ export default function PhoneNumbersPage() {
             )}
             {full ? (
               <Card className="p-5 text-sm text-zinc-600">This account has reached its limit of {data.max_numbers} numbers. Contact support for more.</Card>
-            ) : data.self_serve ? (
-              <BuyNumber pricing={data.pricing} refresh={() => void mutate()} />
             ) : (
-              <RequestNumber pricing={data.pricing} refresh={() => void mutate()} />
+              data.numbers.length > 0 && getNumber
             )}
             {data.requests.length > 0 && (
               <Card>
@@ -209,18 +237,22 @@ function RequestNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => 
   }
 
   return (
-    <Card>
-      <CardHeader title="Get a number" description="Tell us the area code you want and we'll set it up for you." />
-      <form onSubmit={submit} className="flex items-end gap-2 p-5">
-        <Field label="Area code (optional)" className="flex-1">
-          <Input value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))} placeholder="e.g. 689" inputMode="numeric" />
-        </Field>
-        <Button variant="primary" loading={busy}>
+    <GetNumberCard title="Get a local number" description="Tell us the area code you want and we'll set it up for you.">
+      <form onSubmit={submit} className="flex items-center gap-2">
+        <Input
+          value={area}
+          onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))}
+          placeholder="Area code, e.g. 689"
+          inputMode="numeric"
+          aria-label="Area code"
+          className="h-11 flex-1 bg-white text-zinc-900"
+        />
+        <Button variant="primary" loading={busy} className="h-11 shrink-0 rounded-xl! px-5">
           Request number
         </Button>
       </form>
       <PriceLine pricing={pricing} />
-    </Card>
+    </GetNumberCard>
   );
 }
 
@@ -273,19 +305,23 @@ function BuyNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => void
   }
 
   return (
-    <Card>
-      <CardHeader title="Get a number" description="Search by area code and add one instantly." />
-      <form onSubmit={search} className="flex items-end gap-2 p-5 pb-3">
-        <Field label="Area code" className="flex-1">
-          <Input value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))} placeholder="e.g. 689" inputMode="numeric" />
-        </Field>
-        <Button loading={searching} disabled={area.length !== 3}>
-          <Search className="h-4 w-4" /> Search
+    <GetNumberCard title="Get a local number" description="Pick a local area code and add a number in seconds — more pickups than the shared line.">
+      <form onSubmit={search} className="flex items-center gap-2">
+        <Input
+          value={area}
+          onChange={(e) => setArea(e.target.value.replace(/\D/g, "").slice(0, 3))}
+          placeholder="Area code, e.g. 689"
+          inputMode="numeric"
+          aria-label="Area code"
+          className="h-11 flex-1 bg-white text-zinc-900"
+        />
+        <Button variant="primary" loading={searching} disabled={area.length !== 3} className="h-11 shrink-0 rounded-xl! px-5">
+          <Search className="h-4 w-4" /> Search numbers
         </Button>
       </form>
       <PriceLine pricing={pricing} />
       {results && (
-        <ul className="max-h-80 divide-y divide-zinc-100 overflow-y-auto border-t border-zinc-100">
+        <ul className="max-h-80 divide-y divide-zinc-100 overflow-y-auto rounded-xl bg-white text-zinc-900">
           {results.length === 0 && <li className="px-5 py-4 text-sm text-zinc-500">No numbers available in that area code. Try a nearby one.</li>}
           {results.map((n) => (
             <li key={n.number} className="flex items-center justify-between gap-3 px-5 py-2.5">
@@ -300,6 +336,6 @@ function BuyNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => void
           ))}
         </ul>
       )}
-    </Card>
+    </GetNumberCard>
   );
 }
