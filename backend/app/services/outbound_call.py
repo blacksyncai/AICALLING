@@ -351,8 +351,9 @@ class CallService:
             status="initiated",
             started_at=datetime.now(timezone.utc),
         )
+        carrier = await telephony.carrier_of(db, org.id, from_number)
         record = recordings.enabled_for(agent)
-        if record and settings.recording_via_twilio:
+        if record and settings.recording_via_twilio and carrier != "bandwidth":
             # The Twilio trunk records the call; it's copied into the bucket after the call ends.
             from app.services import twilio_recordings
 
@@ -377,6 +378,20 @@ class CallService:
         await db.commit()
         log.info("dispatching_call", lead_id=str(lead.id) if lead else None, phone=phone,
                  room=room_name, agent=str(agent.id) if agent else "legacy")
+
+        if carrier == "bandwidth":
+            # Bandwidth rings the contact; on answer it hands the call to LiveKit and the agent joins there.
+            from app.services import bandwidth
+
+            recording_key = recordings.key_for(org.id, call_log.id) if record and settings.recordings_ready else None
+            try:
+                await bandwidth.place_call(str(call_log.id), phone, from_number, metadata, recording_key)
+            except bandwidth.BandwidthError as exc:
+                log.error("bandwidth_dial_failed", call_log_id=str(call_log.id), error=str(exc))
+                await _mark_call_failed(call_log.id, lead.id if lead else None, "failed",
+                                        "Call failed — the call couldn't be placed.")
+                raise CallSetupError("The call couldn't be placed. If this keeps happening, message us in the chat.") from exc
+            return call_log
 
         lk = _lk()
         try:

@@ -76,6 +76,22 @@ async def lifespan(app: FastAPI):
             log.info("inbound_numbers_synced", count=await sync_inbound_numbers())
         except Exception as exc:
             log.warning("inbound_numbers_sync_failed", error=str(exc))
+    if settings.run_startup_jobs and settings.livekit_ready and settings.bandwidth_ready:
+        # Bandwidth hands answered calls to LiveKit: keep its inbound trunk + routing in place.
+        try:
+            from sqlalchemy import select as _select
+
+            from app.database import AsyncSessionLocal
+            from app.models.billing import PhoneNumber
+            from app.services import bandwidth
+
+            async with AsyncSessionLocal() as db:
+                bw = (await db.execute(_select(PhoneNumber.number).where(
+                    PhoneNumber.status == "active", PhoneNumber.carrier == "bandwidth"))).scalars().all()
+            await bandwidth.ensure_bridge_trunk(list(bw) or await bandwidth.list_numbers())
+            log.info("bandwidth_bridge_ready", numbers=len(bw))
+        except Exception as exc:
+            log.warning("bandwidth_bridge_failed", error=str(exc)[:200])
     if settings.run_startup_jobs:
         # Older Lead Finder contacts named the data vendor in their note; customers shouldn't see it.
         try:
@@ -172,6 +188,8 @@ app.include_router(billing.admin_router)
 app.include_router(support.admin_router)
 from app.routers import admin_emails  # noqa: E402
 app.include_router(admin_emails.router)
+from app.routers import bandwidth_hooks  # noqa: E402
+app.include_router(bandwidth_hooks.router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

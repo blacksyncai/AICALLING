@@ -228,7 +228,7 @@ async def telephony_status(_: AdminDep, db: DbDep):
             select(PhoneNumber, Organization.name).join(Organization, Organization.id == PhoneNumber.org_id)
             .where(PhoneNumber.status == "active"))).all()}
         out["owned"] = [{
-            **o, "on_trunk": bool(out["trunk_sid"]) and o["trunk_sid"] == out["trunk_sid"],
+            **o, "on_trunk": o.get("carrier") == "bandwidth" or (bool(out["trunk_sid"]) and o["trunk_sid"] == out["trunk_sid"]),
             "org_id": str(assigned[o["number"]][0].org_id) if o["number"] in assigned else None,
             "org_name": assigned[o["number"]][1] if o["number"] in assigned else None,
         } for o in owned]

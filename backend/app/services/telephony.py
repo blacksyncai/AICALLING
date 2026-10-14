@@ -129,13 +129,24 @@ async def search_available(area_code: str = "", contains: str = "", country: str
 
 
 async def list_owned() -> list[dict]:
-    """Every number in the Twilio account (first 1000)."""
-    data = await _request("GET", _account_url("IncomingPhoneNumbers.json"), params={"PageSize": 1000})
-    return [
-        {"sid": n["sid"], "number": n["phone_number"], "friendly": n.get("friendly_name") or "",
-         "trunk_sid": n.get("trunk_sid") or ""}
-        for n in data.get("incoming_phone_numbers") or []
-    ]
+    """Every number in the Twilio account (first 1000), plus the Bandwidth account's numbers."""
+    out = []
+    if settings.twilio_ready:
+        data = await _request("GET", _account_url("IncomingPhoneNumbers.json"), params={"PageSize": 1000})
+        out = [
+            {"sid": n["sid"], "number": n["phone_number"], "friendly": n.get("friendly_name") or "",
+             "trunk_sid": n.get("trunk_sid") or "", "carrier": "twilio"}
+            for n in data.get("incoming_phone_numbers") or []
+        ]
+    if settings.bandwidth_ready:
+        from app.services import bandwidth
+
+        try:
+            out += [{"sid": f"bw:{n}", "number": n, "friendly": "Bandwidth", "trunk_sid": "", "carrier": "bandwidth"}
+                    for n in await bandwidth.list_numbers()]
+        except bandwidth.BandwidthError as exc:
+            log.warning("bandwidth_numbers_failed", error=str(exc))
+    return out
 
 
 async def _buy(number: str) -> dict:
@@ -250,18 +261,24 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
 
 
 async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: str = "") -> PhoneNumber:
-    """Assign a number that's already in the Twilio account."""
+    """Assign a number that's already in the Twilio (or Bandwidth) account."""
     number = normalize(number)
     owned = {n["number"]: n for n in await list_owned()}
     if number not in owned:
-        raise TelephonyError("That number isn't in the Twilio account.")
+        raise TelephonyError("That number isn't in the Twilio or Bandwidth account.")
     row = await _claim_row(db, org_id, number)
     row.provider_sid, row.source, row.label = owned[number]["sid"], "imported", label.strip()[:100]
+    row.carrier = "bandwidth" if owned[number].get("carrier") == "bandwidth" else None
     await db.flush()
     await _make_default_if_first(db, row)
     await db.commit()
-    await _livekit_numbers(add=[number])
-    await _inbound_ready(number)
+    if row.carrier == "bandwidth":
+        from app.services import bandwidth
+
+        await bandwidth.ensure_bridge_trunk([number])
+    else:
+        await _livekit_numbers(add=[number])
+        await _inbound_ready(number)
     log.info("phone_number_imported", org_id=str(org_id), number=number)
     return row
 
@@ -304,9 +321,19 @@ async def caller_id_for(db: AsyncSession, org_id: uuid.UUID, agent: Agent | None
     return default.number
 
 
+async def carrier_of(db: AsyncSession, org_id: uuid.UUID, number: str) -> str:
+    """"bandwidth" when the account's number is a Bandwidth one, else "twilio"."""
+    if not number:
+        return "twilio"
+    row = (await db.execute(select(PhoneNumber).where(PhoneNumber.org_id == org_id, PhoneNumber.number == number,
+                                                      PhoneNumber.status == "active"))).scalar_one_or_none()
+    return "bandwidth" if row is not None and row.carrier == "bandwidth" else "twilio"
+
+
 def number_to_dict(n: PhoneNumber) -> dict:
     return {
         "id": str(n.id), "number": n.number, "label": n.label, "source": n.source or "assigned",
+        "carrier": n.carrier or "twilio",
         "is_default": bool(n.is_default), "status": n.status,
         "created_at": n.created_at.isoformat() if n.created_at else None,
     }

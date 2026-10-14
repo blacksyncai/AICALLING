@@ -105,10 +105,42 @@ async def deactivate(db: AsyncSession, campaign: Campaign) -> None:
         row.inbound_agent_id = row.inbound_campaign_id = None
 
 
+async def _bandwidth_bridge(db: AsyncSession, to_number: str, from_number: str, room: str) -> dict | None:
+    """An outbound call placed through Bandwidth arriving at LiveKit after the contact answered: hand back that
+    call's prepared config (it's an outbound call, not a new inbound one)."""
+    from app.services import bandwidth
+
+    if not settings.bandwidth_ready:
+        return None
+    pending = bandwidth.take_bridge(to_number, from_number)
+    if pending is None:
+        return None
+    call_id = uuid.UUID(pending["call_log_id"])
+    now = datetime.now(timezone.utc)
+    call = await db.get(CallLog, call_id)
+    if call is None or call.ended_at is not None:
+        return None
+    call.livekit_room_name, call.answered_at, call.status = room, now, "connected"
+    await db.commit()
+    log.info("bandwidth_call_bridged", call_log_id=str(call_id), room=room)
+    if pending.get("record_key"):
+        import asyncio
+
+        from app.services.outbound_call import _BACKGROUND, _start_recording
+
+        task = asyncio.create_task(_start_recording(call_id, room, pending["record_key"]))
+        _BACKGROUND.add(task)
+        task.add_done_callback(_BACKGROUND.discard)
+    return pending["metadata"]
+
+
 async def route_call(db: AsyncSession, to_number: str, from_number: str, room: str) -> dict | None:
     """The agent config + a new call log for an inbound call, or None when nobody answers this number."""
     from app.agent.runtime import agent_to_runtime, lead_variables
 
+    bridged = await _bandwidth_bridge(db, to_number, from_number, room)
+    if bridged is not None:
+        return bridged
     to_n = "+" + normalize_phone(to_number).lstrip("+") if to_number else ""
     row = (await db.execute(select(PhoneNumber).where(PhoneNumber.number == to_n, PhoneNumber.status == "active"))).scalar_one_or_none()
     if not row or not row.inbound_agent_id:

@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     # matching the LiveKit outbound trunk's address (e.g. xyz.pstn.twilio.com).
     twilio_trunk_sid: str = ""
 
+    # ── Bandwidth (second carrier). Bandwidth dials the contact; on answer the call is handed to LiveKit
+    # over SIP (sip:<number>@<livekit_sip_host>) and the agent takes it from there. ──
+    bandwidth_account_id: str = ""  # numeric account id, e.g. 9903791
+    bandwidth_client_id: str = ""
+    bandwidth_client_secret: str = ""
+    bandwidth_application_id: str = ""  # the Voice application calls are placed with
+    # Digest login Bandwidth uses to hand calls to LiveKit (set on a LiveKit inbound trunk we manage).
+    bandwidth_sip_username: str = ""
+    bandwidth_sip_password: str = ""
+    livekit_sip_host: str = ""  # e.g. abc123.sip.livekit.cloud
+
     # ── Call recordings (LiveKit egress → any S3-compatible bucket) ──
     recordings_s3_bucket: str = ""
     recordings_s3_endpoint: str = ""  # blank for AWS; e.g. https://storage.railway.app or an R2 endpoint
@@ -196,6 +207,12 @@ class Settings(BaseSettings):
     @property
     def twilio_ready(self) -> bool:
         return bool(self.twilio_account_sid and self.twilio_auth_token)
+
+    @property
+    def bandwidth_ready(self) -> bool:
+        return bool(self.bandwidth_account_id and self.bandwidth_client_id and self.bandwidth_client_secret
+                    and self.bandwidth_application_id and self.bandwidth_sip_username
+                    and self.bandwidth_sip_password and self.livekit_sip_host)
 
     @property
     def recording_via_twilio(self) -> bool:
