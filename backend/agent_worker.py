@@ -36,7 +36,7 @@ from livekit.plugins import cartesia, deepgram, openai, silero
 
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
-from app.agent.models import NEEDS_USER_TURN
+from app.agent.models import MISTRAL_MODELS, NEEDS_USER_TURN
 from app.agent.runtime import contact_turns, should_hold_hangup
 
 CALL_CONNECTED_CUE = "[The call just connected.]"
@@ -1063,7 +1063,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
             from app.agent.chat_order import contact_last
 
-            chat_ctx = contact_last(chat_ctx)
+            chat_ctx = contact_last(chat_ctx, needs_user_last=model in MISTRAL_MODELS)
             async for chunk in guarded(Agent.default.llm_node(self, chat_ctx, tools, model_settings), _cut):
                 yield chunk
 

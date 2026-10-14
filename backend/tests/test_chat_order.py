@@ -18,3 +18,11 @@ def test_normal_context_is_unchanged():
     c.add_message(role="user", content="hi")
     c.add_message(role="assistant", content="Hello!")
     assert contact_last(c) is c
+
+
+def test_models_that_need_the_contact_last_get_a_cue_after_a_finished_agent_line():
+    c = llm.ChatContext()
+    c.add_message(role="user", content="hi")
+    c.add_message(role="assistant", content="Hello!")
+    fixed = contact_last(c, needs_user_last=True)
+    assert [m.role for m in fixed.items] == ["user", "assistant", "user"] and len(c.items) == 2
