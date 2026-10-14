@@ -178,6 +178,8 @@ class Settings(BaseSettings):
     support_ai_hourly_limit: int = 30
     # Staff notifications by email (Resend); empty address or false turns them off.
     support_notify_email: str = "sales@blacksync.ai"
+    # Where new-signup alerts go (empty = the support inbox above).
+    signup_notify_email: str = ""
     support_email_notifications: bool = True
 
     @model_validator(mode="after")

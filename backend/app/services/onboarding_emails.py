@@ -313,3 +313,35 @@ def start_sweeper(interval: float = 600.0):
             await asyncio.sleep(interval)
 
     return asyncio.create_task(_loop())
+
+
+
+def alert_new_signup(user, org, industry_label: str, goal_labels: list[str], other_goal: str, team_size: str | None,
+                     website: str) -> None:
+    """Tell the BlackSync team someone just created an account (fire-and-forget)."""
+    import asyncio
+    import html
+
+    to = (settings.signup_notify_email or settings.support_notify_email or "").strip()
+    if not to or not email_enabled():
+        return
+    name = " ".join(x for x in (user.first_name, user.last_name) if x) or user.email
+    team = {"just_me": "Just them", "2_5": "2–5", "6_20": "6–20", "21_plus": "21+"}.get(team_size or "", "—")
+    rows = [("Name", name), ("Email", user.email), ("Phone", user.phone or "—"), ("Company", org.name),
+            ("Industry", industry_label), ("Wants", ", ".join(goal_labels) or other_goal or "—"),
+            ("Team size", team), ("Website", website or "—")]
+    link = f"{(settings.app_url or '').rstrip('/')}/admin/accounts/{org.id}"
+    body = ("<p>Someone just created a BlackSync account.</p><table cellpadding='4'>"
+            + "".join(f"<tr><td><b>{html.escape(k)}</b></td><td>{html.escape(str(v))}</td></tr>" for k, v in rows)
+            + f"</table><p><a href=\"{html.escape(link)}\">Open the account in the admin portal</a></p>")
+
+    async def go():
+        try:
+            await send_email(to, f"New signup: {org.name} ({industry_label})", body)
+        except Exception as exc:  # an alert must never break signup
+            log.warning("signup_alert_failed", error=str(exc)[:200])
+
+    try:
+        asyncio.get_running_loop().create_task(go())
+    except RuntimeError:
+        pass

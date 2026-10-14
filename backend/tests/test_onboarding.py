@@ -75,11 +75,16 @@ def test_signup_sends_welcome_then_walkthrough_offer_a_day_later(client, make_cl
     c = _orphan_login(client, make_client)
     assert c.post("/api/onboarding/start", json={"company": "Welcome Co", "industry": "other"}).status_code == 201
     for _ in range(50):
-        if sent:
+        if len(sent) >= 2:
             break
         time.sleep(0.05)
-    assert len(sent) == 1 and "Welcome" in sent[0][1] and "Welcome Co" in sent[0][2]
-    email = sent[0][0]
+    welcome = [m for m in sent if not m[1].startswith("New signup")]
+    assert len(welcome) == 1 and "Welcome Co" in welcome[0][2]
+    email = welcome[0][0]
+    # The team gets a heads-up too.
+    alert = [m for m in sent if m[1].startswith("New signup")]
+    assert len(alert) == 1 and alert[0][0] == settings.support_notify_email and email in alert[0][2]
+    assert "/admin/accounts/" in alert[0][2] and "Welcome Co" in alert[0][1]
 
     async def sweep(at):
         async with AsyncSessionLocal() as db:

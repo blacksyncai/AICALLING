@@ -113,7 +113,9 @@ async def start(body: StartBody, user: UserDep, db: DbDep):
         demo.system_prompt += _brief(label, [specs[g]["label"] for g in goals], body.other_goal.strip(), body.company.strip())
     await db.commit()
     log.info("trial_started", org_id=str(org.id), industry=body.industry, goals=goals, credits=credits)
-    from app.services.onboarding_emails import send_welcome_soon
+    from app.services.onboarding_emails import alert_new_signup, send_welcome_soon
 
     send_welcome_soon(user.id, org.id)
+    alert_new_signup(user, org, label, [specs[g]["label"] for g in goals], body.other_goal.strip(), body.team_size,
+                     body.website.strip())
     return await session_payload(db, user)
