@@ -185,3 +185,15 @@ def test_unlimited_account_credits_unavailable(client):
     if body["totals"]["credits"] == 0:
         assert body["metric_available"] is False and body["note"]
         assert body["credits_tracked"] is False
+
+
+def test_call_log_sort_by_duration(client, make_client):
+    owner, org_id, a1, _ = _owner(client, make_client, name="Sort Co")
+    A1, t = uuid.UUID(a1["id"]), _day(2)
+    _add(_call(org_id, A1, t, duration=30), _call(org_id, A1, t + timedelta(minutes=1), duration=120),
+         _call(org_id, A1, t + timedelta(minutes=2), outcome="no_answer", answered=False, duration=None))
+    dur = lambda q: [c["duration_seconds"] for c in owner.get(f"/api/calls/?{q}").json()["items"]]  # noqa: E731
+    assert dur("sort=longest") == [120, 30, None]
+    assert dur("sort=shortest") == [None, 30, 120]
+    assert dur("") == [None, 120, 30]  # newest first
+    assert owner.get("/api/calls/?sort=bogus").status_code == 422

@@ -44,6 +44,7 @@ function CallLogs() {
   const agentId = params.get("agent_id") ?? "";
   const outcome = params.get("outcome") ?? "";
   const type = params.get("call_type") ?? "";
+  const sort = params.get("sort") ?? "";
   const [page, setPage] = useState(1);
 
   function setFilter(key: string, value: string) {
@@ -60,6 +61,7 @@ function CallLogs() {
   if (outcome) qs.set("outcome", outcome);
   if (type) qs.set("call_type", type);
   if (date) qs.set("date", date);
+  if (sort) qs.set("sort", sort);
   const { data, error } = useSWR<{ items: Call[]; total: number }>(`/api/calls/?${qs}`, fetcher, { refreshInterval: 10000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1;
@@ -96,6 +98,11 @@ function CallLogs() {
           <option value="outbound">Outbound calls</option>
           <option value="inbound">Inbound calls</option>
           <option value="web">Browser tests</option>
+        </Select>
+        <Select className="sm:w-56" value={sort} onChange={(e) => setFilter("sort", e.target.value)} aria-label="Sort">
+          <option value="">Newest first</option>
+          <option value="longest">Longest calls first</option>
+          <option value="shortest">Shortest calls first</option>
         </Select>
       </div>
       {chips.length > 0 && (

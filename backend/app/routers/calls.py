@@ -113,6 +113,13 @@ def _joined(org_id):
     )
 
 
+_ORDER = {
+    "newest": (CallLog.started_at.desc(),),
+    "longest": (func.coalesce(CallLog.duration_seconds, 0).desc(), CallLog.started_at.desc()),
+    "shortest": (func.coalesce(CallLog.duration_seconds, 0).asc(), CallLog.started_at.desc()),
+}
+
+
 @router.get("/")
 async def list_calls(
     ctx: CtxDep, db: DbDep,
@@ -124,6 +131,7 @@ async def list_calls(
     day: Date | None = Query(default=None, alias="date"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
+    sort: str = Query(default="newest", pattern="^(newest|longest|shortest)$"),
 ):
     stmt = _joined(ctx.org.id)
     count_stmt = select(func.count()).select_from(CallLog).where(CallLog.org_id == ctx.org.id)
@@ -144,7 +152,7 @@ async def list_calls(
         count_stmt = count_stmt.where(f)
     total = (await db.execute(count_stmt)).scalar_one()
     rows = await db.execute(
-        stmt.order_by(CallLog.started_at.desc()).offset((page - 1) * page_size).limit(page_size)
+        stmt.order_by(*_ORDER[sort]).offset((page - 1) * page_size).limit(page_size)
     )
     items = [call_to_dict(c, l, a, cp) for c, l, a, cp in rows.all()]
     await _attach_breakdown(db, items)
