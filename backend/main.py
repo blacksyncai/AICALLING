@@ -101,9 +101,6 @@ async def lifespan(app: FastAPI):
             await resume_running_campaigns()
         except Exception as exc:
             log.warning("campaign_resume_failed", error=str(exc)[:200])
-    if settings.run_startup_jobs:
-        from app.services.crm.diagnose import start_once as verify_crm_once
-        verify_crm_once()
     from app.services import twilio_recordings
     rec_task =(twilio_recordings.start_sweeper() if settings.run_startup_jobs and settings.recording_via_twilio
                 else asyncio.create_task(asyncio.sleep(0)))
