@@ -23,7 +23,7 @@ from app.models.account import Organization
 from app.models.agent import Agent
 from app.models.crm import CrmConnection, CrmSyncLog
 from app.models.lead import Lead
-from app.services import secret_store
+from app.services import quiet_hours, secret_store
 from app.services.contacts import normalize_phone
 from app.services.crm.http import CrmError
 from app.services.crm.providers import PROVIDERS, CallInfo, Contact, Provider
@@ -584,6 +584,8 @@ async def process_queue(db, conn: CrmConnection, now: dt.datetime | None = None)
                 Lead.org_id == conn.org_id, Lead.phone == normalize_phone(c.phone)))).scalars().first()
             if lead is None:
                 continue
+            if not lead.do_not_call and not quiet_hours.ok_to_call(lead.phone, dt.datetime.now(UTC)):
+                continue  # too early/late where they live — the card stays queued
             tries = int((lead.custom_fields or {}).get("bs_tries") or 0) if (lead.custom_fields or {}).get("bs_deal") == it["deal_id"] else 0
             lead.custom_fields = {**(lead.custom_fields or {}), "bs_deal": it["deal_id"], "bs_install": inst["pipeline"]["id"],
                                   "bs_tries": tries + 1}
@@ -680,6 +682,8 @@ async def check_new_leads(db, conn: CrmConnection, now: dt.datetime | None = Non
     if pending and _in_hours(org, now):
         for lid in pending[:10]:
             lead = await db.get(Lead, uuid.UUID(lid))
+            if lead and not quiet_hours.ok_to_call(lead.phone, now):
+                continue  # too early/late where they live — stays pending for the next check
             pending.remove(lid)
             if not lead or lead.do_not_call:
                 continue
@@ -734,8 +738,10 @@ async def check_activity(db, conn: CrmConnection, now: dt.datetime | None = None
     org = await db.get(Organization, conn.org_id)
     if pending and _in_hours(org, now):
         for lid in pending[:5]:
-            pending.remove(lid)
             lead = await db.get(Lead, uuid.UUID(lid))
+            if lead and not quiet_hours.ok_to_call(lead.phone, now):
+                continue  # too early/late where they live — stays pending for the next check
+            pending.remove(lid)
             if not lead or lead.do_not_call:
                 continue
             try:

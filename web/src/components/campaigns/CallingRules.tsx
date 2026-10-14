@@ -214,7 +214,7 @@ export function CallingRulesCard({ campaign, onSaved }: { campaign: Campaign; on
             </div>
             {noDays && <p className="mt-1 text-xs text-red-600">Pick at least one day.</p>}
           </div>
-          <Field label="Time zone" hint="Calling hours follow this time zone.">
+          <Field label="Time zone" hint="Calling hours follow this time zone. We also never ring anyone before 8 AM or after 9 PM their own time.">
             <Select value={form.timezone} onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))}>
               {zones.map(([z, label]) => (
                 <option key={z} value={z}>

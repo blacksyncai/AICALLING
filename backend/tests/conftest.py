@@ -56,3 +56,11 @@ def make_client(app, client):
 @pytest.fixture
 def agent_id(client):
     return client.post("/api/agents/", json={"template": "sales_sdr"}).json()["id"]
+
+
+@pytest.fixture(autouse=True)
+def _any_local_time_ok(monkeypatch):
+    """Dialing tests run at any hour; the contact-local-time check has its own tests (test_quiet_hours.py)."""
+    from app.services import quiet_hours
+
+    monkeypatch.setattr(quiet_hours, "ok_to_call", lambda phone, now: True)

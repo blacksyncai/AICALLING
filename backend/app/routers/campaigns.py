@@ -23,7 +23,7 @@ from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
-from app.services import entitlements
+from app.services import entitlements, quiet_hours
 from app.services.accounts import InsufficientCredits, ensure_can_call
 from app.services.outbound_call import LeadBusy
 from app.services.auth import Context, CtxDep, DbDep
@@ -836,6 +836,12 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
                 continue
             lead.status = "no_answer"
         state = dial_eligibility(lead, campaign, now)
+        if state == "now" and not quiet_hours.ok_to_call(lead.phone, now):
+            # Inside the campaign's hours but too early or late where this contact lives — try again soon.
+            waiting += 1
+            due = now + timedelta(minutes=15)
+            earliest = due if earliest is None else min(earliest, due)
+            continue
         if state == "now":
             return lead, waiting, earliest
         if state == "later":
