@@ -132,3 +132,37 @@ async def nango(method: str, path: str, *, json: Any = None, params: dict | None
     if resp.status_code >= 400:
         raise CrmError(f"Nango error {resp.status_code}: {_error_text(resp)}", resp.status_code)
     return resp.json() if resp.content else {}
+
+
+class SalesforceHttp(BaseHttp):
+    """Salesforce REST with our own OAuth tokens: calls the org's instance, refreshing the access token
+    (with the stored refresh token) whenever it has expired."""
+
+    _tokens: dict[str, str] = {}  # refresh token → current access token (per process)
+
+    def __init__(self, tokens: dict, config: dict):
+        self.refresh_token = tokens.get("refresh_token", "")
+        self.base_url = (config.get("instance_url") or "").rstrip("/")
+        self.login_host = config.get("login_host") or "login.salesforce.com"
+        if tokens.get("access_token") and self.refresh_token not in self._tokens:
+            self._tokens[self.refresh_token] = tokens["access_token"]
+
+    def _prepare(self, path):
+        return (self.base_url + path, {"Accept": "application/json",
+                                       "Authorization": f"Bearer {self._tokens.get(self.refresh_token, '')}"}, {}, None)
+
+    async def refresh(self) -> None:
+        from app.services.crm.salesforce_oauth import refresh_access_token
+
+        self._tokens[self.refresh_token] = await refresh_access_token(self.refresh_token, self.login_host)
+
+    async def request(self, method, path, *, params=None, json=None):
+        if not self._tokens.get(self.refresh_token):
+            await self.refresh()
+        try:
+            return await super().request(method, path, params=params, json=json)
+        except CrmError as exc:
+            if exc.status != 401:
+                raise
+            await self.refresh()  # the access token expired — get a new one and try once more
+            return await super().request(method, path, params=params, json=json)

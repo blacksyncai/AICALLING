@@ -1666,6 +1666,15 @@ class Salesforce(Provider):
     docs_url = "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/"
     _v = "/services/data/v60.0"
 
+    def http(self, secret, config):
+        if config.get("sf_native"):  # our own OAuth: secret holds the token pair (JSON)
+            import json as _json
+
+            from app.services.crm.http import SalesforceHttp
+
+            return SalesforceHttp(_json.loads(secret or "{}"), config)
+        return super().http(secret, config)
+
     async def verify(self, http, config):
         res = await http.request("GET", f"{self._v}/query", params={"q": "SELECT Name FROM Organization LIMIT 1"})
         rows = res.get("records") or []

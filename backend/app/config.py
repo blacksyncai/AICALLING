@@ -134,6 +134,10 @@ class Settings(BaseSettings):
     # Shared by the API and the voice worker in one container (start.sh makes one per boot); the worker
     # sends it on every /internal call. Empty = no check (local dev, tests).
     internal_token: str = ""
+    # Salesforce "Connected App" (OAuth) for the native Salesforce integration. The app's callback URL must be
+    # {app_url}/api/integrations/crm/salesforce/oauth/callback.
+    salesforce_client_id: str = ""
+    salesforce_client_secret: str = ""
     # Public URL of the web app — used in invite links (falls back to the request's host).
     app_url: str = ""
 

@@ -130,6 +130,12 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
   useEffect(() => {
     const h = window.location.hash.replace("#", "") as Section;
     if (["push", "pipeline", "import", "auto", "triggers", "variables", "activity"].includes(h)) setSection(h);
+    // Back from a "Connect with …" sign-in page.
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("connected")) setMsg({ tone: "green", text: "Connected." });
+    else if (q.get("error"))
+      setMsg({ tone: "red", text: q.get("error") === "cancelled" ? "Sign-in was cancelled — nothing was connected." : "We couldn't finish connecting. Please try again." });
+    if (q.get("connected") || q.get("error")) window.history.replaceState(null, "", window.location.pathname + window.location.hash);
   }, []);
 
   if (!canManage(session)) return <Notice tone="amber">Only account owners and admins can manage integrations.</Notice>;
@@ -147,7 +153,11 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
         <Link href="/integrations" className="inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-800">
           <ArrowLeft className="h-4 w-4" /> Integrations
         </Link>
-        <Notice tone="amber">{p ? `${p.name} isn't connected yet.` : "Unknown integration."} Connect it from the Integrations page first.</Notice>
+        {msg ? (
+          <Notice tone={msg.tone}>{msg.text}</Notice>
+        ) : (
+          <Notice tone="amber">{p ? `${p.name} isn't connected yet.` : "Unknown integration."} Connect it from the Integrations page first.</Notice>
+        )}
       </div>
     );
   }

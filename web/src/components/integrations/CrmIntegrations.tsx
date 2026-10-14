@@ -25,6 +25,8 @@ export interface Provider {
   description: string;
   native: boolean;
   oauth: boolean;
+  /** Our own OAuth sign-in (no Nango): the browser goes to the CRM's login page and comes back connected. */
+  oauth_native?: boolean;
   can_import: boolean;
   can_new_leads: boolean;
   docs_url: string;
@@ -173,8 +175,8 @@ export function CrmIntegrations() {
   const available = data.providers.filter((p) => !byKey[p.key]);
   const pushing = connected.filter((p) => byKey[p.key]?.settings?.log_calls);
 
-  const live = available.filter((p) => p.native || p.oauth);
-  const soon = available.filter((p) => !(p.native || p.oauth));
+  const live = available.filter((p) => p.native || p.oauth || p.oauth_native);
+  const soon = available.filter((p) => !(p.native || p.oauth || p.oauth_native));
 
   return (
     <Card className="overflow-hidden">
@@ -325,6 +327,19 @@ export function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; ex
     }
   };
 
+  const [sandbox, setSandbox] = useState(false);
+  const connectNative = async () => {
+    setBusy("oauth");
+    setErr("");
+    try {
+      const { url } = await post<{ url: string }>(`/api/integrations/crm/${p.key}/oauth/start`, { sandbox });
+      window.location.href = url; // stays busy while the browser goes to the sign-in page
+    } catch (e) {
+      setErr(errText(e));
+      setBusy(null);
+    }
+  };
+
   const connectOAuth = async () => {
     setBusy("oauth");
     setErr("");
@@ -361,10 +376,22 @@ export function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; ex
             <Input value={values[f.name] ?? ""} placeholder={f.placeholder} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })} />
           </Field>
         ))}
-        {p.oauth && (
-          <Button variant="primary" className="w-full justify-center" loading={busy === "oauth"} onClick={() => void connectOAuth()}>
-            Connect with {p.name}
-          </Button>
+        {p.oauth_native ? (
+          <>
+            <Button variant="primary" className="w-full justify-center" loading={busy === "oauth"} onClick={() => void connectNative()}>
+              Connect with {p.name}
+            </Button>
+            <label className="flex items-center gap-2 text-xs text-zinc-500">
+              <input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} className="accent-brand-600" />
+              It&apos;s a sandbox org (test.salesforce.com)
+            </label>
+          </>
+        ) : (
+          p.oauth && (
+            <Button variant="primary" className="w-full justify-center" loading={busy === "oauth"} onClick={() => void connectOAuth()}>
+              Connect with {p.name}
+            </Button>
+          )
         )}
         {p.native && (
           <>

@@ -10,7 +10,8 @@ import time
 import uuid
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -21,6 +22,7 @@ from app.services import entitlements, secret_store
 from app.services.auth import DbDep, ManagerDep
 from app.services.crm import sync
 from app.services.crm.http import CrmError, nango
+from app.services.crm import salesforce_oauth as sf_oauth
 from app.services.crm.providers import PROVIDERS, Provider
 
 log = structlog.get_logger(__name__)
@@ -109,6 +111,8 @@ async def overview(ctx: ManagerDep, db: DbDep):
     providers = [{
         "key": p.key, "name": p.name, "category": p.category, "description": p.description,
         "native": p.native, "oauth": any(n in nango_providers for n in p.nango_providers),
+        # Our own OAuth sign-in (no Nango): "Connect with …" sends the browser to the CRM's login page.
+        "oauth_native": p.key == "salesforce" and sf_oauth.enabled(),
         "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
         "pipeline_noun": p.pipeline_noun, "can_install": p.can_install, "install_style": p.install_style,
         "can_activity": p.can_activity, "can_map_fields": p.can_map_fields,
@@ -159,6 +163,55 @@ async def connect(key: str, body: ConnectIn, ctx: ManagerDep, db: DbDep):
     except CrmError as exc:
         raise HTTPException(status_code=400, detail=f"Couldn't connect to {p.name}: {exc}") from exc
     return conn_to_dict(await _save(db, ctx, p, "api_key", secret, config, label or p.name))
+
+
+class NativeOAuthIn(BaseModel):
+    sandbox: bool = False
+
+
+@router.post("/salesforce/oauth/start")
+async def salesforce_oauth_start(body: NativeOAuthIn, request: Request, ctx: ManagerDep, db: DbDep):
+    """The Salesforce login URL for this account (our own Connected App, no third party in between)."""
+    await entitlements.check_crm(db, ctx.org, "salesforce")
+    if not sf_oauth.enabled():
+        raise HTTPException(status_code=400, detail="Salesforce sign-in isn't switched on yet.")
+    if not secret_store.available():
+        raise HTTPException(status_code=503, detail="We couldn't save this connection right now — please try again in a moment.")
+    return {"url": sf_oauth.start(ctx.org.id, ctx.user.id, str(request.base_url), sandbox=body.sandbox)}
+
+
+@router.get("/salesforce/oauth/callback")
+async def salesforce_oauth_callback(db: DbDep, state: str = "", code: str = "", error: str = "",
+                                    error_description: str = ""):
+    """Salesforce sends the browser back here after login. The one-time state ties it to who started it."""
+    import json as _json
+
+    done = "/integrations/salesforce"
+    pending = sf_oauth.take(state)
+    if error or not code or pending is None:
+        log.info("salesforce_oauth_declined", error=error, description=error_description[:200], known=bool(pending))
+        return RedirectResponse(f"{done}?error=" + ("cancelled" if error == "access_denied" else "failed"), status_code=303)
+    p = PROVIDERS["salesforce"]
+    try:
+        tokens = await sf_oauth.finish(pending, code)
+        config = {"sf_native": True, "instance_url": tokens["instance_url"], "login_host": tokens["login_host"]}
+        secret = _json.dumps({"refresh_token": tokens["refresh_token"], "access_token": tokens["access_token"]})
+        label = await p.verify(p.http(secret, config), config)
+    except CrmError as exc:
+        log.warning("salesforce_oauth_failed", error=str(exc)[:300])
+        return RedirectResponse(f"{done}?error=failed", status_code=303)
+    conn = await _get_conn(db, pending["org_id"], "salesforce")
+    if conn is None:
+        conn = CrmConnection(org_id=pending["org_id"], provider="salesforce", settings=sync.defaults())
+        db.add(conn)
+    conn.method, conn.config, conn.account_label = "oauth", config, (label or "Salesforce")[:255]
+    conn.secret_enc = secret_store.encrypt_value(secret)
+    conn.status, conn.last_error = "connected", None
+    await db.flush()
+    await sync.add_log(db, conn, "test", "ok", f"Connected to Salesforce as {label}.")
+    await db.commit()
+    log.info("salesforce_connected", org_id=str(pending["org_id"]))
+    return RedirectResponse(f"{done}?connected=1", status_code=303)
 
 
 @router.post("/{key}/oauth/session")
