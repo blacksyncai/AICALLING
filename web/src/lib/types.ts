@@ -107,6 +107,8 @@ export interface Campaign {
   timezone: string;
   max_attempts: number;
   retry_delay_minutes: number;
+  /** Minutes to wait before each retry, in order ([] = call once). */
+  retry_schedule: number[];
   within_calling_hours: boolean;
   next_window_at: string | null;
   pending_retries: number;

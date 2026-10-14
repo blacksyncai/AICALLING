@@ -59,6 +59,9 @@ class Campaign(Base):
     # Automatic retries for unanswered calls: total tries per contact (default 1 = no retry).
     max_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     retry_delay_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Custom retry schedule: minutes to wait before each retry, in order (e.g. [15, 20, 1440, 2880]).
+    # When set, it decides the number of tries (len + 1) and each wait; NULL = the single delay above.
+    retry_schedule: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # ── Counters ──────────────────────────────────────────────────────────────
     total_targets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

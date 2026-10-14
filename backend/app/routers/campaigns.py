@@ -45,6 +45,8 @@ class CallingRules(BaseModel):
     # Automatic retries for unanswered calls.
     max_attempts: int | None = None
     retry_delay_minutes: int | None = None
+    # Minutes to wait before each retry, in order; [] = call once. Overrides the two fields above.
+    retry_schedule: list[int] | None = None
 
 
 class CampaignCreate(CallingRules):
@@ -95,6 +97,8 @@ DEFAULT_TIMEZONE = "America/New_York"
 DEFAULT_MAX_ATTEMPTS = 1
 DEFAULT_RETRY_DELAY = 60
 MAX_ATTEMPTS_LIMIT = 5
+MAX_SCHEDULE_RETRIES = 10
+MAX_SCHEDULE_WAIT = 14 * 24 * 60
 
 # Lead outcomes that mean "nobody picked up" — worth another try.
 RETRY_STATUSES = ("no_answer", "voicemail", "failed")
@@ -126,7 +130,15 @@ def calling_rules(c) -> dict:
         "timezone": c.timezone or DEFAULT_TIMEZONE,
         "max_attempts": c.max_attempts or DEFAULT_MAX_ATTEMPTS,
         "retry_delay_minutes": c.retry_delay_minutes or DEFAULT_RETRY_DELAY,
+        "retry_schedule": retry_waits(c),
     }
+
+
+def retry_waits(c) -> list[int]:
+    """Minutes to wait before each retry, in order (one entry per retry)."""
+    if c.retry_schedule is not None:
+        return [int(m) for m in c.retry_schedule]
+    return [c.retry_delay_minutes or DEFAULT_RETRY_DELAY] * ((c.max_attempts or DEFAULT_MAX_ATTEMPTS) - 1)
 
 
 def _window(c) -> tuple[time, time, list[int], ZoneInfo]:
@@ -196,6 +208,18 @@ def _validate_rules(data: dict, current: Campaign | None = None) -> None:
             ZoneInfo(data["timezone"])
         except (ZoneInfoNotFoundError, ValueError):
             bad("Unknown time zone.")
+    if data.get("retry_schedule") is not None:
+        waits = data["retry_schedule"]
+        if len(waits) > MAX_SCHEDULE_RETRIES:
+            bad(f"You can schedule up to {MAX_SCHEDULE_RETRIES} retries.")
+        if any(not 5 <= m <= MAX_SCHEDULE_WAIT for m in waits):
+            bad("Each wait has to be between 5 minutes and 14 days.")
+        # The schedule decides the tries; keep the simple fields in step for older readers.
+        data["max_attempts"] = len(waits) + 1
+        data["retry_delay_minutes"] = waits[0] if waits else (current.retry_delay_minutes if current else None) or DEFAULT_RETRY_DELAY
+        return
+    if current is not None and ("max_attempts" in data or "retry_delay_minutes" in data):
+        data["retry_schedule"] = None  # back to the simple even-spaced retries
     if data.get("max_attempts") is not None and not 1 <= data["max_attempts"] <= MAX_ATTEMPTS_LIMIT:
         bad(f"Tries per contact must be between 1 and {MAX_ATTEMPTS_LIMIT}.")
     if data.get("retry_delay_minutes") is not None and not 5 <= data["retry_delay_minutes"] <= 7 * 24 * 60:
@@ -788,7 +812,9 @@ def _record_attempt(lead: Lead, campaign: Campaign, now: datetime | None = None)
     now = now or datetime.now(timezone.utc)
     lead.attempts = (lead.attempts or 0) + 1
     lead.last_called_at = now
-    lead.next_attempt_at = now + timedelta(minutes=calling_rules(campaign)["retry_delay_minutes"])
+    waits = retry_waits(campaign)
+    wait = waits[min(lead.attempts, len(waits)) - 1] if waits else calling_rules(campaign)["retry_delay_minutes"]
+    lead.next_attempt_at = now + timedelta(minutes=wait)
 
 
 async def _idle(campaign_uuid: uuid.UUID, seconds: float) -> bool:

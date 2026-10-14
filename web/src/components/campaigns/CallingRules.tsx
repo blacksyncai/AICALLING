@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, RotateCcw } from "lucide-react";
+import { Clock, Plus, RotateCcw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "@/components/toast";
 import { Button, Card, CardHeader, Field, Input, Select } from "@/components/ui";
@@ -24,14 +24,44 @@ export const TIMEZONES: [string, string][] = [
   ["UTC", "UTC"],
 ];
 
+const DAY = 1440;
+
 const DELAYS: [number, string][] = [
+  [5, "5 minutes"],
+  [10, "10 minutes"],
   [15, "15 minutes"],
+  [20, "20 minutes"],
   [30, "30 minutes"],
+  [45, "45 minutes"],
   [60, "1 hour"],
   [120, "2 hours"],
+  [180, "3 hours"],
   [240, "4 hours"],
-  [1440, "Next day"],
+  [360, "6 hours"],
+  [DAY, "1 day"],
+  [2 * DAY, "2 days"],
+  [3 * DAY, "3 days"],
+  [4 * DAY, "4 days"],
+  [7 * DAY, "1 week"],
+  [14 * DAY, "2 weeks"],
 ];
+
+const MAX_RETRIES = 10;
+
+const PRESETS: [string, number[]][] = [
+  ["Call once", []],
+  ["Double-dial", [5]],
+  ["Daily for 3 days", [DAY, DAY, DAY]],
+  ["5-day follow-up", [15, 20, DAY, 2 * DAY, 2 * DAY]],
+];
+
+export function formatWait(minutes: number): string {
+  const hit = DELAYS.find(([m]) => m === minutes);
+  if (hit) return hit[1];
+  if (minutes % DAY === 0) return `${minutes / DAY} days`;
+  if (minutes % 60 === 0) return `${minutes / 60} hours`;
+  return `${minutes} minutes`;
+}
 
 /** "09:00" → "9:00 AM" */
 export function formatClock(hhmm: string): string {
@@ -109,8 +139,7 @@ type Form = {
   call_window_end: string;
   call_days: number[];
   timezone: string;
-  max_attempts: number;
-  retry_delay_minutes: number;
+  retry_schedule: number[];
 };
 
 function formFrom(c: Campaign): Form {
@@ -119,8 +148,7 @@ function formFrom(c: Campaign): Form {
     call_window_end: c.call_window_end,
     call_days: c.call_days,
     timezone: c.timezone,
-    max_attempts: c.max_attempts,
-    retry_delay_minutes: c.retry_delay_minutes,
+    retry_schedule: c.retry_schedule ?? Array(Math.max(0, c.max_attempts - 1)).fill(c.retry_delay_minutes),
   };
 }
 
@@ -228,29 +256,77 @@ export function CallingRulesCard({ campaign, onSaved }: { campaign: Campaign; on
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
             <RotateCcw className="h-3.5 w-3.5" /> Automatic retries
           </div>
-          <Field label="If nobody picks up" hint="Unanswered calls and voicemails are tried again. Contacts who answer are never called twice.">
-            <Select value={form.max_attempts} onChange={(e) => setForm((f) => ({ ...f, max_attempts: Number(e.target.value) }))}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <option key={n} value={n}>
-                  {n === 1 ? "Call once (no retries)" : `Try up to ${n} times`}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Wait between tries">
-            <Select
-              value={form.retry_delay_minutes}
-              disabled={form.max_attempts <= 1}
-              onChange={(e) => setForm((f) => ({ ...f, retry_delay_minutes: Number(e.target.value) }))}
-            >
-              {!DELAYS.some(([m]) => m === form.retry_delay_minutes) && <option value={form.retry_delay_minutes}>{form.retry_delay_minutes} minutes</option>}
-              {DELAYS.map(([m, label]) => (
-                <option key={m} value={m}>
+          <p className="-mt-2 text-xs text-zinc-500">
+            People who don&apos;t pick up or go to voicemail are called again on this schedule. Anyone who answers is never called twice.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {PRESETS.map(([label, waits]) => {
+              const on = JSON.stringify(waits) === JSON.stringify(form.retry_schedule);
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setForm((f) => ({ ...f, retry_schedule: waits }))}
+                  className={`h-7 rounded-full border px-3 text-xs font-medium transition-colors ${
+                    on ? "border-brand-600 bg-brand-50 text-brand-700" : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                  }`}
+                >
                   {label}
-                </option>
-              ))}
-            </Select>
-          </Field>
+                </button>
+              );
+            })}
+          </div>
+          <ol className="space-y-2 text-sm">
+            <li className="flex h-9 items-center gap-3">
+              <span className="w-16 shrink-0 text-xs font-medium text-zinc-500">1st call</span>
+              <span className="text-zinc-700">When the campaign reaches them</span>
+            </li>
+            {form.retry_schedule.map((wait, i) => (
+              <li key={i} className="flex items-center gap-3">
+                <span className="w-16 shrink-0 text-xs font-medium text-zinc-500">Retry {i + 1}</span>
+                <Select
+                  aria-label={`Wait before retry ${i + 1}`}
+                  value={wait}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, retry_schedule: f.retry_schedule.map((w, j) => (j === i ? Number(e.target.value) : w)) }))
+                  }
+                  className="flex-1"
+                >
+                  {!DELAYS.some(([m]) => m === wait) && <option value={wait}>{formatWait(wait)} later</option>}
+                  {DELAYS.map(([m, label]) => (
+                    <option key={m} value={m}>
+                      {label} later
+                    </option>
+                  ))}
+                </Select>
+                <button
+                  type="button"
+                  aria-label={`Remove retry ${i + 1}`}
+                  onClick={() => setForm((f) => ({ ...f, retry_schedule: f.retry_schedule.filter((_, j) => j !== i) }))}
+                  className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </li>
+            ))}
+          </ol>
+          {form.retry_schedule.length < MAX_RETRIES && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                setForm((f) => ({ ...f, retry_schedule: [...f.retry_schedule, f.retry_schedule.length ? f.retry_schedule[f.retry_schedule.length - 1] : 60] }))
+              }
+            >
+              <Plus className="h-4 w-4" /> Add a retry
+            </Button>
+          )}
+          <p className="text-xs text-zinc-500">
+            {form.retry_schedule.length === 0
+              ? "Each contact is called once."
+              : `Up to ${form.retry_schedule.length + 1} calls per contact. Each wait counts from the previous call; a retry that lands outside calling hours waits for the next window.`}
+          </p>
           {campaign.pending_retries > 0 && (
             <p className="text-xs text-zinc-500">
               {campaign.pending_retries} contact{campaign.pending_retries === 1 ? " is" : "s are"} waiting for another try.

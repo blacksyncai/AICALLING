@@ -13,7 +13,7 @@ UTC = timezone.utc
 
 def _camp(**kw):
     base = dict(call_window_start=None, call_window_end=None, call_days=None, timezone=None,
-                max_attempts=None, retry_delay_minutes=None)
+                max_attempts=None, retry_delay_minutes=None, retry_schedule=None)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -122,6 +122,33 @@ def test_campaign_rules_create_update_and_validation(client):
     c = r.json()
     assert c["call_window_end"] == "20:00" and c["call_days"] == [6] and c["max_attempts"] == 5
     assert client.get(f"/api/campaigns/{cid}").json()["retry_delay_minutes"] == 1440
+    assert c["retry_schedule"] == [1440] * 4
+
+    # A custom schedule: 15 min, 20 min, next day, then every other day.
+    r = client.patch(f"/api/campaigns/{cid}", json={"retry_schedule": [15, 20, 1440, 2880, 2880]})
+    assert r.status_code == 200, r.text
+    c = r.json()
+    assert c["retry_schedule"] == [15, 20, 1440, 2880, 2880] and c["max_attempts"] == 6
+    for bad in ({"retry_schedule": [1]}, {"retry_schedule": [60] * 11}, {"retry_schedule": [15 * 24 * 60]}):
+        assert client.patch(f"/api/campaigns/{cid}", json=bad).status_code == 400, bad
+    c = client.patch(f"/api/campaigns/{cid}", json={"retry_schedule": []}).json()
+    assert c["max_attempts"] == 1 and c["retry_schedule"] == []
+    # Going back to the simple fields drops the schedule.
+    c = client.patch(f"/api/campaigns/{cid}", json={"max_attempts": 3, "retry_delay_minutes": 30}).json()
+    assert c["retry_schedule"] == [30, 30]
+
+
+def test_retry_schedule_spaces_each_try():
+    from app.routers.campaigns import _record_attempt
+
+    camp = _camp(max_attempts=4, retry_schedule=[15, 1440, 2880])
+    lead = SimpleNamespace(attempts=0, last_called_at=None, next_attempt_at=None)
+    now = datetime(2026, 1, 5, 15, tzinfo=UTC)
+    waits = []
+    for _ in range(3):
+        _record_attempt(lead, camp, now)
+        waits.append(lead.next_attempt_at - now)
+    assert waits == [timedelta(minutes=15), timedelta(days=1), timedelta(days=2)]
 
 
 @pytest.fixture
