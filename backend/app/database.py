@@ -89,15 +89,23 @@ def _add_missing_columns(sync_conn) -> None:
 
     # Pre-agent Postgres schemas used native enums + a required lead_id; relax
     # them so web/test calls (no lead) and the new outcome values fit.
+    # Only when still needed: each ALTER takes an exclusive table lock, and running them on every boot
+    # blocked (and once deadlocked) requests still being served by the previous instance during deploys.
     if sync_conn.dialect.name == "postgresql" and "call_logs" in existing_tables:
-        for stmt in (
-            "ALTER TABLE call_logs ALTER COLUMN lead_id DROP NOT NULL",
-            "ALTER TABLE call_logs ALTER COLUMN outcome TYPE varchar(32) USING outcome::text",
-            "ALTER TABLE call_logs ALTER COLUMN status TYPE varchar(32) USING status::text",
-            "ALTER TABLE leads ALTER COLUMN status TYPE varchar(32) USING status::text",
-            "ALTER TABLE campaigns ALTER COLUMN status TYPE varchar(32) USING status::text",
-        ):
-            sync_conn.execute(text(stmt))
+        cols = {t: {c["name"]: c for c in insp.get_columns(t)} for t in ("call_logs", "leads", "campaigns")
+                if t in existing_tables}
+
+        def is_varchar32(table: str, col: str) -> bool:
+            c = cols.get(table, {}).get(col)
+            return c is None or (getattr(c["type"], "length", None) == 32 and "CHAR" in str(c["type"]).upper())
+
+        lead_id = cols["call_logs"].get("lead_id")
+        if lead_id is not None and not lead_id["nullable"]:
+            sync_conn.execute(text("ALTER TABLE call_logs ALTER COLUMN lead_id DROP NOT NULL"))
+        for table, col in (("call_logs", "outcome"), ("call_logs", "status"), ("leads", "status"),
+                           ("campaigns", "status")):
+            if not is_varchar32(table, col):
+                sync_conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE varchar(32) USING {col}::text"))
 
 
 async def create_all_tables() -> None:
