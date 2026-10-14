@@ -531,12 +531,19 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             if call_log.duration_seconds or call_log.outcome != "failed":
                 from app.agent.runtime import reconcile_outcome
                 call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript)
-        # A corrected outcome must reach the contact too: someone who talked is never left in a redial state.
+        # A corrected outcome must reach the contact too: someone who talked is never left in a redial state,
+        # and a "conversation" that was really a voicemail greeting gets the contact their retry.
         if call_log.lead_id and call_log.outcome not in ("no_answer", "voicemail", "failed"):
             from app.routers.campaigns import RETRY_STATUSES
 
             await db.execute(update(Lead).where(Lead.id == call_log.lead_id, Lead.status.in_(RETRY_STATUSES))
                              .values(status=call_log.outcome))
+        elif call_log.lead_id and call_log.outcome == "voicemail":
+            latest = (await db.execute(select(CallLog.id).where(CallLog.lead_id == call_log.lead_id)
+                                       .order_by(CallLog.started_at.desc()).limit(1))).scalar_one_or_none()
+            if latest == call_log.id:
+                await db.execute(update(Lead).where(Lead.id == call_log.lead_id, Lead.status == "completed")
+                                 .values(status="voicemail"))
         # Someone who asked not to be called again goes on the Do-Not-Call list.
         if call_log.outcome == "do_not_call" and call_log.lead_id:
             lead = await db.get(Lead, call_log.lead_id)

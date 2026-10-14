@@ -460,7 +460,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 checked={draft.enable_booking}
                 onChange={(v) => set("enable_booking", v)}
                 label="Book appointments"
-                description="Gives the agent check_availability + book_appointment tools, booked straight into your Cal.com calendar."
+                description="The agent can check your calendar for open times and book the meeting straight into your Cal.com calendar."
               />
               {draft.enable_booking && <CalcomSettings draft={draft} set={set} />}
               <VoicemailSettings draft={draft} set={set} />
@@ -470,20 +470,20 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               </Field>
               <Card className="p-4">
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  <Wrench className="h-4 w-4 text-zinc-400" /> Tools this agent has
+                  <Wrench className="h-4 w-4 text-zinc-400" /> What this agent can do on a call
                 </div>
                 <ul className="mt-2 space-y-1 text-xs text-zinc-600">
                   <li>
-                    <code>end_call</code> — always on; hangs up and records the outcome
+                    Hang up — always on; ends the call and records the result
                   </li>
                   {draft.enable_booking && (
                     <li>
-                      <code>check_availability</code>, <code>book_appointment</code>
+                      Check your calendar and book appointments
                     </li>
                   )}
                   {draft.transfer_number && (
                     <li>
-                      <code>transfer_call</code> → {draft.transfer_number}
+                      Transfer the call to {draft.transfer_number}
                     </li>
                   )}
                 </ul>

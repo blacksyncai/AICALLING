@@ -13,7 +13,7 @@ _INTERNAL_PATHS = ("/api/admin", "/api/settings")
 
 _ENV_NAME = re.compile(r"\b[A-Z][A-Z0-9]{2,}_[A-Z0-9_]+\b")  # OPENAI_API_KEY, LIVEKIT_URL …
 _TECHNICAL = re.compile(
-    r"livekit|twilio|deepgram|cartesia|openai|cerebras|mistral|nango|dataskip|resend|svix"
+    r"livekit|twilio|deepgram|cartesia|openai|cerebras|mistral|nango|dataskip|resend|svix|clerk"
     r"|on the server|backend|\.env\b|sip trunk|traceback|stack trace|api key is set",
     re.IGNORECASE,
 )

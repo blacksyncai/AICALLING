@@ -301,3 +301,13 @@ def test_unedited_welcome_demo_is_upgraded_edited_one_kept(client, make_client):
     p1, p2 = asyncio.run(setup())
     assert p1 == templates.WELCOME_DEMO["system_prompt"]
     assert "Austin office" in p2
+
+
+def test_viewing_a_customer_account_needs_the_admin_unlock(client, make_client):
+    org, _ = _new_account(client, name="Viewed Co")
+    admin = make_client()
+    admin.post("/api/auth/login", json={"email": "admin@test.dev", "password": "admin-pass-123"})
+    assert admin.post("/api/auth/switch-org", json={"org_id": org["id"]}).status_code == 403
+    admin.post("/api/admin/unlock", json={"password": "portal-pass-456"})
+    assert admin.post("/api/auth/switch-org", json={"org_id": org["id"]}).status_code == 200
+    assert admin.post("/api/auth/switch-org", json={"org_id": None}).status_code == 200

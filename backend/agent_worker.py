@@ -37,7 +37,7 @@ from livekit.plugins import cartesia, deepgram, openai, silero
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
 from app.agent.models import NEEDS_USER_TURN
-from app.agent.runtime import should_hold_hangup
+from app.agent.runtime import contact_turns, should_hold_hangup
 
 CALL_CONNECTED_CUE = "[The call just connected.]"
 from app.agent.voices import DEFAULT_VOICE_ID
@@ -1067,6 +1067,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         run.transcript.append({"role": "tool", "tool": "voicemail",
                                "args": {"action": "left_message" if left else "hung_up"},
                                "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
+        if run.outcome_posted and run.outcome not in ("voicemail", "no_answer"):
+            # The agent already ended it as a conversation, but it was a greeting (detection can land a few
+            # seconds late). Report again so it's recorded as voicemail and the contact gets their retry.
+            if len(contact_turns(run.transcript)) <= 2:
+                run.outcome_posted = False
+                log.info("outcome_corrected_to_voicemail", room=ctx.room.name, was=run.outcome)
         run.outcome = "voicemail"
         await _post_run_outcome(run, "voicemail")
         await asyncio.sleep(0.5)
@@ -1348,12 +1354,15 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             return
     # Some models need a user turn before they'll answer at all (see NEEDS_USER_TURN).
     cue = {"user_input": CALL_CONNECTED_CUE} if model in NEEDS_USER_TURN else {}
-    if first:
-        session.say(first, allow_interruptions=True)
-    elif call_type == "inbound":
-        session.generate_reply(instructions="You're answering an incoming phone call. Greet the caller warmly and ask how you can help.", **cue)
-    else:
-        session.generate_reply(instructions="Greet the contact and begin the conversation.", **cue)
+    try:
+        if first:
+            session.say(first, allow_interruptions=True)
+        elif call_type == "inbound":
+            session.generate_reply(instructions="You're answering an incoming phone call. Greet the caller warmly and ask how you can help.", **cue)
+        else:
+            session.generate_reply(instructions="Greet the contact and begin the conversation.", **cue)
+    except RuntimeError as exc:  # they hung up before the opening line (the session already closed)
+        log.info("opening_skipped", room=ctx.room.name, reason=str(exc)[:80])
 
 
 async def _wait_for_sip_answer(ctx: JobContext, timeout: float = 50.0) -> None:

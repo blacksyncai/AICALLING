@@ -21,7 +21,7 @@ from app.database import get_db
 from app.models.account import Invite, Membership, Organization, User
 from app.services.reporting import DEFAULT_TIMEZONE
 from app.services.auth import (
-    check_password_strength, clear_session_cookie, get_current_user, hash_password, normalize_email,
+    admin_unlocked, check_password_strength, clear_session_cookie, get_current_user, hash_password, normalize_email,
     resolve_org, set_session_cookie, sha256, verify_password,
 )
 
@@ -106,7 +106,7 @@ async def _find_invite(db: AsyncSession, token: str) -> Invite:
 async def login(body: LoginBody, request: Request, response: Response,
                 db: Annotated[AsyncSession, Depends(get_db)]):
     if settings.clerk_enabled:
-        raise HTTPException(status_code=400, detail="Sign in with Clerk on the sign-in page.")
+        raise HTTPException(status_code=400, detail="Use the sign-in page to sign in.")
     user = (await db.execute(select(User).where(User.email == normalize_email(body.email)))).scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Wrong email or password")
@@ -129,7 +129,7 @@ async def me(user: Annotated[User, Depends(get_current_user)], db: Annotated[Asy
 
 
 @router.post("/switch-org")
-async def switch_org(body: SwitchOrgBody, user: Annotated[User, Depends(get_current_user)],
+async def switch_org(body: SwitchOrgBody, request: Request, user: Annotated[User, Depends(get_current_user)],
                      db: Annotated[AsyncSession, Depends(get_db)]):
     """Work in another organization: one you belong to, or any org for super-admins.
     org_id=null returns a super-admin to their own account."""
@@ -140,6 +140,9 @@ async def switch_org(body: SwitchOrgBody, user: Annotated[User, Depends(get_curr
             Membership.user_id == user.id, Membership.org_id == body.org_id))).scalar_one_or_none()
         if not member and not user.is_superadmin:
             raise HTTPException(status_code=403, detail="You're not a member of that account.")
+        if not member and not admin_unlocked(request, user):
+            # Viewing a customer's account is an admin-portal action: it needs the admin unlock too.
+            raise HTTPException(status_code=403, detail="Unlock the admin portal first.")
         if not await db.get(Organization, body.org_id):
             raise HTTPException(status_code=404, detail="Account not found")
         user.active_org_id = body.org_id

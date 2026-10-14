@@ -357,3 +357,38 @@ def test_queue_pauses_instead_of_burning_the_list_when_calls_cannot_be_placed(cl
     assert got["status"] == "paused" and got["pause_reason"] == "setup"
     statuses = [l["status"] for l in client.get(f"/api/campaigns/{camp['id']}/leads").json()["leads"]]
     assert statuses.count("new") >= 4
+
+
+def test_a_greeting_ended_as_a_conversation_still_gets_its_retry(client, agent_id, monkeypatch):
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.models.lead import Lead
+    from app.services import llm, outbound_call
+
+    camp = client.post("/api/campaigns/", json={"name": "VM", "agent_id": agent_id}).json()
+    lead = client.post("/api/contacts", json={"name": "Vm", "phone": "+14155550191", "campaign_id": camp["id"]}).json()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    call_id = uuid.uuid4()
+    greeting = [{"role": "assistant", "text": "Hey, is this Sam?"},
+                {"role": "user", "text": "Hi, you've reached Sam. I can't take your call, please leave a message."}]
+
+    async def fake_analyze(*a, **k):
+        return {"summary": "Reached voicemail.", "outcome": "voicemail", "sentiment": "neutral", "extracted": {}}
+
+    monkeypatch.setattr(llm, "analyze_call", fake_analyze)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            db.add(CallLog(id=call_id, org_id=org_id, agent_id=uuid.UUID(agent_id), lead_id=uuid.UUID(lead["id"]),
+                           campaign_id=uuid.UUID(camp["id"]), call_type="outbound", livekit_room_name="r",
+                           status="completed", outcome="completed", transcript=greeting, duration_seconds=20))
+            row = await db.get(Lead, uuid.UUID(lead["id"]))
+            row.status = "completed"
+            await db.commit()
+        await outbound_call._analyze(str(call_id))
+        async with AsyncSessionLocal() as db:
+            return (await db.get(Lead, uuid.UUID(lead["id"]))).status
+
+    assert asyncio.run(run()) == "voicemail"

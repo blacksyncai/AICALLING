@@ -134,7 +134,7 @@ async def update_profile(body: ProfileUpdate, ctx: CtxDep, db: DbDep):
     user = ctx.user
     data = body.model_dump(exclude_unset=True)
     if settings.clerk_enabled and data.get("email") and normalize_email(data["email"]) != user.email:
-        raise HTTPException(status_code=400, detail="Change your sign-in email under Security (managed by Clerk).")
+        raise HTTPException(status_code=400, detail="Change your sign-in email under Security.")
     if "email" in data and data["email"] is not None:
         email = normalize_email(data["email"])
         if "@" not in email:
@@ -153,7 +153,7 @@ async def update_profile(body: ProfileUpdate, ctx: CtxDep, db: DbDep):
 @router.post("/password")
 async def change_password(body: PasswordChange, request: Request, response: Response, ctx: CtxDep, db: DbDep):
     if settings.clerk_enabled:
-        raise HTTPException(status_code=400, detail="Passwords are managed by Clerk — use Security to change yours.")
+        raise HTTPException(status_code=400, detail="Change your password under Security.")
     if not verify_password(body.current_password, ctx.user.password_hash):
         raise HTTPException(status_code=400, detail="Your current password is incorrect.")
     check_password_strength(body.new_password)
