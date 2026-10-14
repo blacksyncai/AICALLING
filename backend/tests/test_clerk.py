@@ -5,11 +5,11 @@ from app.services import clerk
 
 PROFILES = {
     "user_admin": {"id": "user_admin", "first_name": "Hamza", "last_name": "B",
-                   "primary_email_address_id": "e1", "email_addresses": [{"id": "e1", "email_address": "Admin@Test.dev"}]},
+                   "primary_email_address_id": "e1", "email_addresses": [{"id": "e1", "email_address": "Admin@Test.dev", "verification": {"status": "verified"}}]},
     "user_rep": {"id": "user_rep", "first_name": "Rep", "last_name": "Two",
-                 "primary_email_address_id": "e2", "email_addresses": [{"id": "e2", "email_address": "rep2@clerk.dev"}]},
+                 "primary_email_address_id": "e2", "email_addresses": [{"id": "e2", "email_address": "rep2@clerk.dev", "verification": {"status": "verified"}}]},
     "user_stranger": {"id": "user_stranger", "first_name": "Sam", "primary_email_address_id": "e3",
-                      "email_addresses": [{"id": "e3", "email_address": "sam@nowhere.dev"}]},
+                      "email_addresses": [{"id": "e3", "email_address": "sam@nowhere.dev", "verification": {"status": "verified"}}]},
 }
 
 
@@ -81,3 +81,12 @@ def test_admin_creates_clerk_logins(client, clerk_mode, monkeypatch):
     r = client.post("/api/admin/orgs", headers=bearer("user_admin"),
                     json={"name": "Clerk Co", "owner_email": "owner@clerkco.dev"}).json()
     assert r["owner_status"] == "created" and created["owner@clerkco.dev"] == r["temporary_password"]
+
+
+def test_unverified_email_never_matches_an_account():
+    from app.services.clerk import primary_email
+
+    assert primary_email({"primary_email_address_id": "e1", "email_addresses": [
+        {"id": "e1", "email_address": "hamza@blacksync.ai", "verification": {"status": "unverified"}}]}) == ""
+    assert primary_email({"primary_email_address_id": "e1", "email_addresses": [
+        {"id": "e1", "email_address": "Ops@Acme.dev", "verification": {"status": "verified"}}]}) == "ops@acme.dev"

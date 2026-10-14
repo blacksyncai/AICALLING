@@ -81,7 +81,10 @@ async def _request(method: str, path: str, **kwargs) -> dict:
 
 
 def primary_email(user: dict) -> str:
-    emails = user.get("email_addresses") or []
+    """The user's verified primary email ("" if it isn't verified). Accounts — and platform-admin rights — are
+    matched by this address, so an unverified one must never count."""
+    emails = [e for e in user.get("email_addresses") or []
+              if ((e.get("verification") or {}).get("status") == "verified")]
     primary = next((e for e in emails if e.get("id") == user.get("primary_email_address_id")), None)
     chosen = primary or (emails[0] if emails else None)
     return (chosen or {}).get("email_address", "").strip().lower()
