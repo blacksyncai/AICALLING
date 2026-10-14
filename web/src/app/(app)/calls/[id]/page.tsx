@@ -129,7 +129,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
           <Card>
             <CardHeader title={<span className="flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-brand-600" /> AI summary</span>} />
             <div className="p-5 text-sm leading-relaxed text-zinc-700">
-              {call.summary ?? <span className="text-zinc-500">{live ? "Generated after the call." : "Not available — needs OPENAI_API_KEY on the backend and a transcript."}</span>}
+              {call.summary ?? <span className="text-zinc-500">{live ? "Generated after the call." : call.transcript?.length ? "No summary for this call." : "No summary — nothing was said on this call."}</span>}
               {successful !== undefined && successful !== null && (
                 <div className="mt-3">
                   <Badge tone={successful ? "green" : "gray"}>{successful ? "Met success criteria" : "Did not meet success criteria"}</Badge>

@@ -136,6 +136,22 @@ async def _plan_limit(_request, exc: PlanLimit):
     """Something the account's plan doesn't include — a 402 with an upgrade suggestion the UI can show."""
     return JSONResponse(status_code=402, content={"detail": exc.detail()})
 
+
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
+from fastapi.exception_handlers import http_exception_handler  # noqa: E402
+
+from app.services.public_errors import public_detail  # noqa: E402
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _public_http_error(request, exc: StarletteHTTPException):
+    """Customers never see setting names or internal vendors in errors; we log the real text."""
+    shown = public_detail(request.url.path, exc.detail)
+    if shown != exc.detail:
+        structlog.get_logger("errors").warning("error_hidden", path=request.url.path, detail=str(exc.detail)[:500])
+        exc = StarletteHTTPException(status_code=exc.status_code, detail=shown, headers=exc.headers)
+    return await http_exception_handler(request, exc)
+
 # ── CORS ──────────────────────────────────────────────────────────────────────
 
 app.add_middleware(

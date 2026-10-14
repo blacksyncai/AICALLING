@@ -28,6 +28,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runtime import agent_to_runtime, lead_variables
+from app.services.public_errors import public_summary
 from app.config import settings
 from app.models.account import Organization
 from app.models.agent import Agent
@@ -107,9 +108,8 @@ _BACKGROUND: set = set()
 _NO_ANSWER_CODES = {408, 480, 486, 487, 600, 603}
 
 _SIP_HINTS = {
-    401: "the carrier rejected the trunk's login — check the SIP trunk username/password",
-    403: "the carrier refused the call — check the trunk's credential list, termination URI, "
-         "geo-permissions, or (on a Twilio trial) that the number is verified",
+    401: "the phone carrier refused the call. If this keeps happening, message us in the chat",
+    403: "the phone carrier refused the call. If this keeps happening, message us in the chat",
     404: "the number was not found",
     484: "the number looks incomplete",
 }
@@ -165,7 +165,7 @@ async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, ro
         outcome = "no_answer" if code in _NO_ANSWER_CODES else "failed"
         hint = _SIP_HINTS.get(code, "")
         reason = (f"Not answered ({code} {status})." if outcome == "no_answer"
-                  else f"Call failed: {code} {status}" + (f" — {hint}." if hint else "."))
+                  else "Call failed" + (f" — {hint}." if hint else f" ({code} {status})."))
         log.error("livekit_sip_failed", room=room_name, to=req.sip_call_to, trunk=req.sip_trunk_id,
                   sip_code=code, sip_status=status, error=str(exc),
                   metadata=dict(exc.metadata) if exc.metadata else {})
@@ -177,7 +177,7 @@ async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, ro
     except Exception as exc:
         log.exception("livekit_sip_error", room=room_name, to=req.sip_call_to, trunk=req.sip_trunk_id,
                       error=str(exc), error_type=exc.__class__.__name__)
-        await _mark_call_failed(call_id, lead_id, "failed", f"Call failed: {exc}")
+        await _mark_call_failed(call_id, lead_id, "failed", "Call failed — the call couldn't be connected.")
     finally:
         await lk.aclose()
 
@@ -332,7 +332,7 @@ class CallService:
             await self._create_room_and_dispatch(lk, room_name, metadata)
         except Exception as exc:
             log.error("dispatch_call_failed", error=str(exc), room=room_name)
-            await _mark_call_failed(call_log.id, lead.id if lead else None, "failed", f"Could not start call: {exc}")
+            await _mark_call_failed(call_log.id, lead.id if lead else None, "failed", "Call failed — the call couldn't be started.")
             raise
         finally:
             await lk.aclose()
@@ -541,7 +541,7 @@ async def emit_call_events(call_id: uuid.UUID) -> None:
         "call_id": str(call.id),
         "status": call.status,
         "outcome": call.outcome,
-        "summary": call.summary,
+        "summary": public_summary(call.status, call.summary),
         "sentiment": call.sentiment,
         "duration_seconds": call.duration_seconds,
         "to_phone": call.to_phone,

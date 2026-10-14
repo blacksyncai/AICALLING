@@ -72,10 +72,7 @@ export function PhonePanel({
       </Button>
       {!enabled && (
         <Notice>
-          Phone calls need a LiveKit outbound SIP trunk (<code>LIVEKIT_SIP_OUTBOUND_TRUNK_ID</code>) on top of the voice keys.{" "}
-          <Link href="/settings" className="font-medium underline">
-            Setup guide
-          </Link>
+          Test calls aren&apos;t available right now. Message us in the chat and we&apos;ll get it sorted.
         </Notice>
       )}
       {error && <Notice tone="red">{error}</Notice>}

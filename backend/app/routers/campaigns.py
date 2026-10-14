@@ -449,8 +449,7 @@ def _ensure_can_dial(campaign: Campaign, org: Organization) -> None:
     if not settings.phone_ready:
         raise HTTPException(
             status_code=400,
-            detail="Phone calling isn't configured yet — see Settings for the keys you need "
-                   "(LiveKit, Deepgram, Cartesia, OpenAI and a LiveKit SIP outbound trunk).",
+            detail="Calling isn't available on your account right now — message us in the chat and we'll get it sorted.",
         )
     try:
         ensure_can_call(org)

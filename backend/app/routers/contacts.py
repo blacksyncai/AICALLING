@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, delete, func, or_, select, update
 
 from app.models.agent import Agent
+from app.services.public_errors import public_summary
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
@@ -298,7 +299,7 @@ async def get_contact(contact_id: uuid.UUID, ctx: CtxDep, db: DbDep):
     return {
         **contact_to_dict(lead, campaign.name if campaign else None),
         "calls": [{
-            "id": str(c.id), "status": c.status, "outcome": c.outcome, "summary": c.summary,
+            "id": str(c.id), "status": c.status, "outcome": c.outcome, "summary": public_summary(c.status, c.summary),
             "duration_seconds": c.duration_seconds, "agent_name": a.name if a else None,
             "started_at": _iso(c.started_at),
         } for c, a in calls],

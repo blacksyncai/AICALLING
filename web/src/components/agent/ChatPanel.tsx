@@ -1,7 +1,6 @@
 "use client";
 
 import { RotateCcw, Send, Wrench } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { post } from "@/lib/api";
 import type { ChatTurn, ToolEvent } from "@/lib/types";
@@ -128,10 +127,7 @@ export function ChatPanel({
       {!enabled && (
         <div className="mt-2">
           <Notice>
-            Chat testing needs <code>OPENAI_API_KEY</code> on the backend.{" "}
-            <Link href="/settings" className="font-medium underline">
-              Setup guide
-            </Link>
+            Chat testing isn&apos;t available right now. Message us in the chat and we&apos;ll get it sorted.
           </Notice>
         </div>
       )}

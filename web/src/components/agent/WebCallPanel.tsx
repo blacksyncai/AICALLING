@@ -196,10 +196,7 @@ export function WebCallPanel({
         </div>
         {!enabled && (
           <Notice>
-            Voice testing needs LiveKit, Deepgram, Cartesia and OpenAI keys on the backend, plus the agent worker running.{" "}
-            <Link href="/settings" className="font-medium underline">
-              Setup guide
-            </Link>
+            Voice testing isn&apos;t available right now. Message us in the chat and we&apos;ll get it sorted.
           </Notice>
         )}
         {error && <Notice tone="red">{error}</Notice>}

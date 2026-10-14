@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import func, select
 
 from app.services.billing.credits import exact, exact_balance_milli
+from app.services.public_errors import public_summary
 from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
@@ -71,7 +72,7 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         "status": c.status,
         "outcome": c.outcome,
         "sentiment": c.sentiment,
-        "summary": c.summary,
+        "summary": public_summary(c.status, c.summary),
         "duration_seconds": c.duration_seconds,
         # Inbound: the contact is the caller; to_phone is our own number.
         "to_phone": (c.from_phone if c.call_type == "inbound" else c.to_phone) or (lead.phone if lead else None),

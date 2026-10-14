@@ -100,7 +100,7 @@ export default function DashboardPage() {
   if (error) {
     return (
       <Card>
-        <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="Can't reach the backend" description={error.message} />
+        <EmptyState icon={<PhoneCall className="h-5 w-5" />} title="We couldn't load your dashboard" description="Please refresh in a moment. If it keeps happening, message us in the chat." />
       </Card>
     );
   }

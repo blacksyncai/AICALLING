@@ -1,3 +1,4 @@
+from app.services.public_errors import GENERIC
 import json
 
 from app.services import llm
@@ -71,7 +72,7 @@ def test_playground_end_call(client, agent_id, monkeypatch):
 
 def test_voice_and_phone_need_config(client, agent_id):
     r = client.post(f"/api/agents/{agent_id}/web-call", json={})
-    assert r.status_code == 400 and "Voice isn't configured" in r.json()["detail"]
+    assert r.status_code == 400 and r.json()["detail"] == GENERIC
     r = client.post(f"/api/agents/{agent_id}/phone-call", json={"to_phone": "+14155550123"})
     assert r.status_code == 400
 
@@ -210,7 +211,7 @@ def test_failed_dial_is_recorded_with_reason(client, agent_id, monkeypatch):
     asyncio.run(scenario())
     call = client.get(f"/api/calls/{call_id}").json()
     assert call["status"] == "failed" and call["outcome"] == "failed"
-    assert "403 Forbidden" in call["summary"] and "credential" in call["summary"]
+    assert call["summary"].startswith("Call failed") and "trunk" not in call["summary"]
 
     # The worker's later empty "no_answer" report must not overwrite the reason.
     client.post(f"/internal/calls/{call_id}/outcome", json={"outcome": "no_answer", "transcript": []})

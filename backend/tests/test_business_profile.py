@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.routers import business_profile as bp
+from app.services.public_errors import GENERIC
 from app.services import llm, website
 from tests.test_accounts import _login, _new_account
 
@@ -136,7 +137,7 @@ def test_missing_openai_key(owner, monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "openai_api_key", "")
     r = owner.post("/api/business-profile/analyze", json={"website": "acme-hvac.com"})
-    assert r.status_code == 400 and r.json()["detail"] == bp.NO_KEY_MSG
+    assert r.status_code == 400 and r.json()["detail"] == GENERIC
     assert owner.post("/api/business-profile/rescan").status_code == 400
 
 

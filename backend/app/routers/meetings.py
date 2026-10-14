@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.models.agent import Agent
+from app.services.public_errors import public_summary
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
@@ -88,7 +89,7 @@ def meeting_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign
         "campaign_id": str(c.campaign_id) if c.campaign_id else None,
         "campaign_name": campaign.name if campaign else None,
         "call_type": c.call_type or "outbound",
-        "summary": c.summary,
+        "summary": public_summary(getattr(c, "status", None), c.summary),
         "booked_at": _iso(_booked_at(c)),
         "follow_up_status": _status(c),
     }

@@ -1,3 +1,4 @@
+from app.services.public_errors import GENERIC
 import asyncio
 import json
 import uuid
@@ -492,7 +493,7 @@ def test_assist_validation_retry_and_errors(client, monkeypatch, make_client):
 
     monkeypatch.setattr(settings, "openai_api_key", "")
     r = client.post("/api/agent-builder/assist", json={"draft_id": draft["id"]})
-    assert r.status_code == 400 and r.json()["detail"] == "AI generation needs the OpenAI key to be configured."
+    assert r.status_code == 400 and r.json()["detail"] == GENERIC
 
 
 # ── Generate: custom, multi-preset, old drafts ───────────────────────────────

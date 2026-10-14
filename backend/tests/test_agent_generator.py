@@ -1,3 +1,4 @@
+from app.services.public_errors import GENERIC
 """Production agent generator: pipeline, quality gate, isolation, references, versions, playbook library."""
 
 import base64
@@ -168,7 +169,7 @@ def test_generation_needs_openai_and_is_org_scoped(client, make_client, monkeypa
     assert other.post("/api/agent-builder/generate", json={"draft_id": draft["id"]}).status_code == 404
     monkeypatch.setattr(settings, "openai_api_key", "")
     r = client.post("/api/agent-builder/generate", json={"draft_id": draft["id"]})
-    assert r.status_code == 400 and "OpenAI" in r.json()["detail"]
+    assert r.status_code == 400 and r.json()["detail"] == GENERIC
 
 
 # ── Customer references ───────────────────────────────────────────────────────

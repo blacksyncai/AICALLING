@@ -153,7 +153,7 @@ async def connect(key: str, body: ConnectIn, ctx: ManagerDep, db: DbDep):
     if not secret:
         raise HTTPException(status_code=400, detail=f"Paste your {p.auth_fields[0].label if p.auth_fields else 'API key'}.")
     if not secret_store.available():
-        raise HTTPException(status_code=503, detail="Secret storage isn't configured on the server.")
+        raise HTTPException(status_code=503, detail="We couldn't save this connection right now — please try again in a moment.")
     try:
         label = await p.verify(p.native_http(secret, config), config)
     except CrmError as exc:
