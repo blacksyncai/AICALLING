@@ -15,7 +15,7 @@ import { del, fetcher, patch, post } from "@/lib/api";
 import type { Agent, Call, Campaign, Lead, SettingsStatus } from "@/lib/types";
 import { CAMPAIGN_TONE, OUTCOME_TONE, formatDuration, humanize, timeAgo } from "@/lib/utils";
 
-type CampaignLead = Lead & { do_not_call?: boolean; attempts?: number; next_attempt_at?: string | null };
+type CampaignLead = Lead & { do_not_call?: boolean; attempts?: number; next_attempt_at?: string | null; fields_pending?: boolean };
 
 const SAMPLE_CSV = `name,phone,company,email,city
 Jane Cooper,+14155550123,Acme Inc,jane@acme.com,San Francisco
@@ -171,6 +171,13 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
   const toast = useToast();
   const { data: campaign, mutate: refreshCampaign, error } = useSWR<Campaign>(`/api/campaigns/${id}`, fetcher, { refreshInterval: 5000 });
   const { data: leadsData, mutate: refreshLeads } = useSWR<{ leads: CampaignLead[] }>(`/api/campaigns/${id}/leads?page_size=200`, fetcher, { refreshInterval: 5000 });
+  // Contacts added from a CRM before their fields were pulled: fetch them once so they show like CSV columns.
+  const [fieldsAsked, setFieldsAsked] = useState(false);
+  useEffect(() => {
+    if (fieldsAsked || !leadsData?.leads.some((l) => l.fields_pending)) return;
+    setFieldsAsked(true);
+    post(`/api/campaigns/${id}/crm-fields`, {}).then(() => refreshLeads()).catch(() => {});
+  }, [fieldsAsked, leadsData, id, refreshLeads]);
   const { data: calls } = useSWR<{ items: Call[] }>(`/api/calls/?campaign_id=${id}&page_size=50`, fetcher, { refreshInterval: 5000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
@@ -479,7 +486,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
                     <td className="px-3 py-2.5 text-zinc-600">{l.company || "—"}</td>
                     <td className="max-w-[220px] truncate px-3 py-2.5 text-xs text-zinc-500">
                       {Object.entries(l.custom_fields ?? {})
-                        .map(([k, v]) => `${k}: ${v}`)
+                        .map(([k, v]) => `${humanize(k)}: ${v}`)
                         .join(" · ") || "—"}
                     </td>
                     <td className="px-3 py-2.5">

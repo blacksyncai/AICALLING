@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, delete, func, or_, select, update
 
 from app.models.agent import Agent
+from app.services.crm.variables import visible_fields
 from app.services.public_errors import public_summary
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
@@ -88,7 +89,7 @@ def contact_to_dict(l: Lead, campaign_name: str | None = None) -> dict:
         "status": l.status,
         "notes": l.notes or "",
         "tags": l.tags or [],
-        "custom_fields": l.custom_fields or {},
+        "custom_fields": visible_fields(l.custom_fields),
         "source": "lead_finder" if l.intent_source == "dataskip" else l.intent_source,  # never name the data vendor
         "campaign_id": str(l.campaign_id) if l.campaign_id else None,
         "campaign_name": campaign_name,

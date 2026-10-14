@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, update
 
 from app.database import AsyncSessionLocal
+from app.services.crm.variables import needs_prefill, visible_fields
 from app.models.account import Organization
 from app.models.agent import Agent
 from app.models.campaign import Campaign
@@ -578,7 +579,8 @@ async def list_campaign_leads(
                 "status": l.status,
                 "qualification_score": l.qualification_score,
                 "notes": l.notes,
-                "custom_fields": l.custom_fields or {},
+                "custom_fields": visible_fields(l.custom_fields),
+                "fields_pending": needs_prefill(l),
                 "do_not_call": bool(l.do_not_call),
                 "attempts": l.attempts or 0,
                 "next_attempt_at": _aware(l.next_attempt_at).isoformat() if l.next_attempt_at else None,
@@ -588,6 +590,26 @@ async def list_campaign_leads(
             for l in leads
         ],
     }
+
+
+@router.post("/{campaign_id}/crm-fields")
+async def fill_crm_fields(campaign_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    """Pull CRM fields for this campaign's CRM contacts that don't have them yet (older Radar campaigns)."""
+    from app.models.crm import CrmConnection
+    from app.services.crm import sync as crm_sync
+
+    campaign = await _get_campaign(db, ctx, campaign_id)
+    agent = await db.get(Agent, campaign.agent_id) if campaign.agent_id else None
+    leads = (await db.execute(select(Lead).where(Lead.campaign_id == campaign_id))).scalars().all()
+    todo = [l for l in leads if needs_prefill(l)][:200]
+    if not agent or not todo:
+        return {"filled": 0}
+    conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == campaign.org_id))).scalars().all()
+    filled = 0
+    for conn in conns:
+        filled += await crm_sync.prefill_fields(conn, agent, [l for l in todo if conn.provider in (l.crm_refs or {})])
+    await db.commit()
+    return {"filled": filled}
 
 
 @router.post("/{campaign_id}/call")

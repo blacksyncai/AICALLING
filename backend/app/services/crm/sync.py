@@ -445,6 +445,54 @@ async def refresh_context(db, conn: CrmConnection, lead: Lead) -> None:
                                   "crm_context_at": dt.datetime.now(UTC).isoformat()}
 
 
+async def prefill_fields(conn: CrmConnection, agent, leads: list[Lead], budget: float = 40.0) -> int:
+    """Pull each contact's CRM fields now and put the agent's {{variables}} on the contact, so a campaign
+    from the CRM shows the same columns a CSV import would. Anything not filled in time is filled at dial."""
+    from app.services.crm import variables as crm_vars
+
+    p, http = http_for(conn)
+    if not p.can_map_fields:
+        return 0
+    todo = [(lead, (lead.crm_refs or {}).get(conn.provider)) for lead in leads]
+    todo = [(lead, ref) for lead, ref in todo if ref]
+    script_vars = crm_vars.script_variables(agent)
+    mapping = ((conn.settings or {}).get("var_maps") or {}).get(str(agent.id)) or {}
+    gate = asyncio.Semaphore(5)
+
+    async def one(ref):
+        async with gate:
+            try:
+                return await asyncio.wait_for(p.person_fields(http, conn.config or {}, ref), timeout=8)
+            except (CrmError, asyncio.TimeoutError) as exc:
+                log.info("crm_prefill_skipped", provider=conn.provider, error=str(exc)[:120])
+                return None
+
+    tasks = [asyncio.ensure_future(one(ref)) for _, ref in todo]
+    if tasks:
+        await asyncio.wait(tasks, timeout=budget)
+    now = dt.datetime.now(UTC).isoformat()
+    filled = 0
+    for (lead, _), task in zip(todo, tasks):
+        if not task.done():
+            task.cancel()
+            continue
+        fields = task.result()
+        if not fields:
+            continue
+        cf = dict(lead.custom_fields or {})
+        cf["crm_fields"] = {**(cf.get("crm_fields") or {}), conn.provider: fields}
+        cf["crm_context_at"] = cf.get("crm_context_at") or now
+        for var, value in crm_vars.resolve(script_vars, fields, mapping).items():
+            if var not in crm_vars.BUILT_IN:
+                cf[var] = value
+        for key in crm_vars.SHOWN:  # the columns a CSV export would usually carry
+            if fields.get(key) and not cf.get(key):
+                cf[key] = fields[key]
+        lead.custom_fields = cf
+        filled += 1
+    return filled
+
+
 def provider_of_key(key: str):
     from app.services.crm.providers import PROVIDERS, Provider
 

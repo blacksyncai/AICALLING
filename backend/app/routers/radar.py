@@ -162,12 +162,15 @@ async def launch(scan_id: uuid.UUID, body: LaunchIn, ctx: ManagerDep, db: DbDep)
     created, _ = await sync.save_contacts(db, conn, contacts, f"Radar: {play['title']}")
     phones = {normalize_phone(c.phone) for c in contacts}
     leads = (await db.execute(select(Lead).where(Lead.org_id == ctx.org.id))).scalars().all()
-    n = 0
+    picked = []
     for lead in leads:
         if normalize_phone(lead.phone) in phones and not lead.do_not_call:
             lead.campaign_id = campaign.id
             lead.status = "new" if lead.status in (None, "", "completed") else lead.status
-            n += 1
+            picked.append(lead)
+    n = len(picked)
+    # The agent's {{variables}} (address, price, assigned agent…) straight from the CRM, visible on the contacts.
+    await sync.prefill_fields(conn, agent, picked)
     await sync.add_log(db, conn, "import", "ok", f"Radar made a campaign of {n} from “{play['title']}”.")
     await db.commit()
     return {"campaign_id": str(campaign.id), "contacts": n}

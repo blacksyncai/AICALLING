@@ -31,6 +31,9 @@ SYNONYMS = {
     "background": "background", "notes": "background",
 }
 
+# CRM fields copied onto a contact when it's added from the CRM, so they show like CSV columns.
+SHOWN = ("address", "city", "state", "zip", "price", "stage", "source", "assigned_agent")
+
 
 def script_variables(agent) -> list[str]:
     """Every {{variable}} the agent's script uses, in order of first use."""
@@ -82,3 +85,18 @@ def apply(variables: dict, lead, agent, conns: list) -> dict:
             if var not in BUILT_IN or mapping.get(var) or not out.get(var):
                 out[var] = value
     return out
+
+
+_INTERNAL_KEYS = {"crm", "crm_context", "crm_context_at", "crm_fields"}
+
+
+def visible_fields(custom_fields: dict | None) -> dict:
+    """A contact's fields as customers see them: CSV columns and CRM-filled {{variables}}, no internals."""
+    return {k: v for k, v in (custom_fields or {}).items()
+            if k not in _INTERNAL_KEYS and not isinstance(v, (dict, list)) and v not in (None, "")}
+
+
+def needs_prefill(lead) -> bool:
+    """A CRM contact whose fields haven't been pulled yet."""
+    cf = lead.custom_fields or {}
+    return bool(lead.crm_refs) and not cf.get("crm_fields")

@@ -18,6 +18,32 @@ function fmtTs(ts?: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** A plain-language line for an agent action in the transcript; null hides internal steps. */
+function toolLabel(tool: string | undefined, args: Record<string, unknown> | undefined): string | null {
+  const a = args ?? {};
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  switch (tool) {
+    case "check_availability":
+    case "book_meeting":
+      return "Checked the calendar";
+    case "book_appointment":
+    case "confirm_meeting":
+      return "Booked the appointment" + (str(a.email) ? ` · ${str(a.email)}` : "");
+    case "transfer_call":
+      return "Transferred the call";
+    case "voicemail":
+      return a.action === "left_message" ? "Left a voicemail" : "Reached voicemail";
+    case "end_call":
+      return a.reason === "silence" ? "Ended the call after silence" : "Ended the call" + (str(a.outcome) ? ` · ${humanize(str(a.outcome))}` : "");
+    case "qualify_lead":
+      return "Qualified the lead";
+    case "log_qualification_answer":
+      return str(a.question) ? `Noted: ${str(a.question)} — ${str(a.answer)}` : null;
+    default:
+      return null;
+  }
+}
+
 export default function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const toast = useToast();
@@ -97,12 +123,13 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
             {!call.transcript?.length && <p className="text-sm text-zinc-500">{live ? "Waiting for the call to finish…" : "No transcript was captured."}</p>}
             {call.transcript?.map((t, i) =>
               t.role === "tool" ? (
-                <div key={i} className="flex items-center gap-2 pl-1 text-[11px] text-zinc-500">
-                  <Wrench className="h-3 w-3" />
-                  <span className="font-mono font-medium text-zinc-700">{t.tool}</span>
-                  <span className="truncate">{JSON.stringify(t.args ?? {})}</span>
-                  <span className="ml-auto shrink-0">{fmtTs(t.ts)}</span>
-                </div>
+                toolLabel(t.tool, t.args) && (
+                  <div key={i} className="flex items-center gap-2 pl-1 text-[11px] text-zinc-500">
+                    <Wrench className="h-3 w-3" />
+                    <span className="truncate font-medium text-zinc-700">{toolLabel(t.tool, t.args)}</span>
+                    <span className="ml-auto shrink-0">{fmtTs(t.ts)}</span>
+                  </div>
+                )
               ) : (
                 <div key={i} className={cn("flex gap-3", t.role === "user" && "flex-row-reverse")}>
                   <div
