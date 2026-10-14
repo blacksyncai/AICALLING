@@ -39,6 +39,10 @@ async def _chat(payload: dict, timeout: float = 45.0) -> dict:
         raise LLMNotConfigured("No API key is set on the backend for this model.")
     if not sends_temperature:
         payload = {k: v for k, v in payload.items() if k != "temperature"}
+    from app.agent.models import GROQ_MODELS
+
+    if payload.get("model") in GROQ_MODELS:
+        payload = {**payload, "reasoning_effort": "none"}  # no hidden thinking: it's only latency here
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             f"{base_url.rstrip('/')}/chat/completions",

@@ -45,6 +45,15 @@ LLM_MODELS: list[dict] = [
         "recommended_for": ["general"],
     },
     {
+        "id": "qwen/qwen3.8-27b",
+        "name": "BlackSync Ultra Fast",
+        "provider": "BlackSync",
+        "description": "Our quickest brain — the first word in under half a second, so conversations feel instant.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": ["general"],
+    },
+    {
         "id": "ministral-8b-latest",
         "name": "BlackSync Flash",
         "provider": "BlackSync",
@@ -157,6 +166,9 @@ CEREBRAS_MODELS = {"gpt-oss-120b", "qwen-3.8-27b"}
 # Models whose chat template rejects a request with no user message (Cerebras answers 400 "No user
 # query found"), e.g. the agent's opening line. The voice worker adds a short cue turn for them.
 NEEDS_USER_TURN: set[str] = {"qwen-3.8-27b"}  # Claude and Mistral models are added below (same rule).
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+# Served on Groq's LPU hardware, branded "BlackSync Ultra Fast".
+GROQ_MODELS = {"qwen/qwen3.8-27b"}
 MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 # Mistral models, branded "BlackSync Flash" (Ministral 3B/8B/14B, Mistral Small, Mistral Medium).
 MISTRAL_MODELS = {"ministral-8b-latest", "ministral-3b-latest", "ministral-14b-latest", "mistral-small-latest",
@@ -165,11 +177,21 @@ MISTRAL_MODELS = {"ministral-8b-latest", "ministral-3b-latest", "ministral-14b-l
 
 # Claude ("At least one non-system message is required") and Mistral ("Expected last role User") refuse an
 # opening request too.
-NEEDS_USER_TURN |= MISTRAL_MODELS | {m["id"] for m in LLM_MODELS if m["id"].startswith("claude-")}
+NEEDS_USER_TURN |= MISTRAL_MODELS | GROQ_MODELS | {m["id"] for m in LLM_MODELS if m["id"].startswith("claude-")}
 
 
 def is_anthropic_model(model_id: str | None) -> bool:
     return (model_id or "").startswith("claude-")
+
+
+def reasoning_effort_for(model_id: str | None) -> str | None:
+    """Reasoning setting a live call wants: as little as the model allows (it's pure latency on a call)."""
+    model_id = model_id or ""
+    if model_id in GROQ_MODELS:
+        return "none"
+    if model_id.startswith("gpt-oss"):
+        return "low"
+    return None
 
 
 def llm_endpoint(model_id: str | None) -> tuple[str, str, bool]:
@@ -185,6 +207,8 @@ def llm_endpoint(model_id: str | None) -> tuple[str, str, bool]:
         return settings.cerebras_api_key, CEREBRAS_BASE_URL, True
     if model_id in MISTRAL_MODELS:
         return settings.mistral_api_key, MISTRAL_BASE_URL, True
+    if model_id in GROQ_MODELS:
+        return settings.groq_api_key, GROQ_BASE_URL, True
     return settings.openai_api_key, settings.openai_base_url, True
 
 GROUPS: list[tuple[str, str]] = [
@@ -241,6 +265,7 @@ def model_catalog() -> list[dict]:
         if (not is_anthropic_model(m["id"]) or settings.anthropic_api_key)
         and (m["id"] not in CEREBRAS_MODELS or settings.cerebras_api_key)
         and (m["id"] not in MISTRAL_MODELS or settings.mistral_api_key)
+        and (m["id"] not in GROQ_MODELS or settings.groq_api_key)
     ]
     known = {m["id"] for m in models}
     for extra in dict.fromkeys([settings.llm_model]):

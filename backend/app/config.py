@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""
     # Mistral (OpenAI-compatible API) — the "BlackSync Flash" models.
     mistral_api_key: str = ""
+    groq_api_key: str = ""  # "BlackSync Ultra Fast"
     # Nango (OAuth for CRMs like Salesforce, HubSpot, Close); integrations configured in Nango show up in the app.
     nango_secret_key: str = ""
     # One-off repair jobs at startup (off in tests).

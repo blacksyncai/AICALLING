@@ -921,6 +921,10 @@ async def _draft_opening(cfg: dict, variables: dict) -> str:
         kwargs: dict = {}
         if sends_temperature:
             kwargs["temperature"] = float(cfg.get("temperature", 0.5))
+        from app.agent.models import GROQ_MODELS
+
+        if model in GROQ_MODELS:
+            kwargs["reasoning_effort"] = "none"
         resp = await asyncio.wait_for(client.chat.completions.create(
             model=model,
             messages=[
@@ -984,8 +988,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     voice_id = cfg.get("voice_id") or DEFAULT_VOICE_ID
     api_key, base_url, sends_temperature = llm_endpoint(model)
     llm_kwargs = dict(model=model, api_key=api_key, base_url=base_url)
-    if model.startswith("gpt-oss"):
-        llm_kwargs["reasoning_effort"] = "low"  # faster replies, and less private reasoning to leak into speech
+    from app.agent.models import reasoning_effort_for
+
+    if reasoning_effort_for(model):  # faster replies, and less private reasoning to leak into speech
+        llm_kwargs["reasoning_effort"] = reasoning_effort_for(model)
     if sends_temperature:
         llm_kwargs["temperature"] = float(cfg.get("temperature", 0.5))
     session_kwargs = dict(
