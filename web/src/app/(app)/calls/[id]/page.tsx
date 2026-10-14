@@ -1,22 +1,18 @@
 "use client";
 
-import { ArrowLeft, Calendar, Clock, Coins, ExternalLink, RefreshCw, Sparkles, Wrench } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, Coins, ExternalLink, RefreshCw, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { use, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
+import { TranscriptLines } from "@/components/calls/Transcript";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import type { Call } from "@/lib/types";
-import { cn, formatCredits, formatDateTime, formatDuration, humanize, parseDate, toolLabel } from "@/lib/utils";
+import { formatCredits, formatDateTime, formatDuration, humanize, parseDate } from "@/lib/utils";
 
-function fmtTs(ts?: number) {
-  if (ts === undefined) return "";
-  const s = Math.max(0, Math.round(ts));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
 
 export default function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -114,29 +110,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
           <CardHeader title="Transcript" />
           <div className="space-y-3 p-5">
             {!call.transcript?.length && <p className="text-sm text-zinc-500">{live ? "Waiting for the call to finish…" : "No transcript was captured."}</p>}
-            {call.transcript?.map((t, i) =>
-              t.role === "tool" ? (
-                toolLabel(t.tool, t.args) && (
-                  <div key={i} className="flex items-center gap-2 pl-1 text-[11px] text-zinc-500">
-                    <Wrench className="h-3 w-3" />
-                    <span className="truncate font-medium text-zinc-700">{toolLabel(t.tool, t.args)}</span>
-                    <span className="ml-auto shrink-0">{fmtTs(t.ts)}</span>
-                  </div>
-                )
-              ) : (
-                <div key={i} className={cn("flex gap-3", t.role === "user" && "flex-row-reverse")}>
-                  <div
-                    className={cn(
-                      "max-w-[80%] rounded-2xl px-3.5 py-2 text-sm",
-                      t.role === "user" ? "rounded-tr-sm bg-brand-600 text-white" : "rounded-tl-sm bg-zinc-100 text-zinc-800",
-                    )}
-                  >
-                    {t.text}
-                  </div>
-                  <span className="self-end text-[10px] text-zinc-400">{fmtTs(t.ts)}</span>
-                </div>
-              ),
-            )}
+            {call.transcript?.length ? <TranscriptLines transcript={call.transcript} /> : null}
           </div>
         </Card>
 

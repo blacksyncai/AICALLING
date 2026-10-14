@@ -6,7 +6,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
-import { Button, Card, EmptyState, PageHeader, Select, Spinner } from "@/components/ui";
+import { TranscriptLines } from "@/components/calls/Transcript";
+import { Button, Card, EmptyState, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model";
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -46,6 +47,7 @@ function CallLogs() {
   const type = params.get("call_type") ?? "";
   const sort = params.get("sort") ?? "";
   const [page, setPage] = useState(1);
+  const [peek, setPeek] = useState<Call | null>(null);
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(params.toString());
@@ -216,7 +218,15 @@ function CallLogs() {
                     <td className="px-5 py-3">
                       <div className="flex justify-end gap-1">
                         <IconLink href={`/calls/${c.id}`} label="Open call details" icon={FileText} />
-                        <IconLink href={`/calls/${c.id}#transcript`} label="Transcript" icon={MessageSquare} />
+                        <button
+                          type="button"
+                          onClick={() => setPeek(c)}
+                          title="Transcript"
+                          aria-label="Transcript"
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-brand-600 transition hover:bg-brand-50"
+                        >
+                          <MessageSquare className="h-4 w-4" />
+                        </button>
                         {c.has_recording && <IconLink href={`/calls/${c.id}#recording`} label="Play recording" icon={PlayCircle} />}
                       </div>
                     </td>
@@ -239,7 +249,41 @@ function CallLogs() {
           </Button>
         </div>
       )}
+      <Modal open={!!peek} onClose={() => setPeek(null)} title={peek ? `${peek.contact_name || (peek.call_type === "web" ? "Browser test" : peek.to_phone || "Call")} · transcript` : ""} wide>
+        {peek && <TranscriptPeek call={peek} />}
+      </Modal>
     </>
+  );
+}
+
+function TranscriptPeek({ call: c }: { call: Call }) {
+  const { data, error } = useSWR<Call>(`/api/calls/${c.id}`, fetcher);
+  const transcript = data?.transcript ?? [];
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
+        <OutcomeBadge outcome={c.outcome} status={c.status} />
+        <span>{durationWords(c.duration_seconds)}</span>
+        <span>{formatDateTime(c.started_at)}</span>
+        <Link href={`/calls/${c.id}`} className="ml-auto font-medium text-brand-700 hover:underline">
+          Open full call →
+        </Link>
+      </div>
+      {data?.summary && <p className="rounded-xl bg-zinc-50 px-3.5 py-2.5 text-sm leading-relaxed text-zinc-700">{data.summary}</p>}
+      <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+        {error ? (
+          <p className="text-sm text-red-600">Couldn&apos;t load this call.</p>
+        ) : !data ? (
+          <div className="flex justify-center py-10">
+            <Spinner />
+          </div>
+        ) : transcript.length ? (
+          <TranscriptLines transcript={transcript} />
+        ) : (
+          <p className="text-sm text-zinc-500">No transcript was captured for this call.</p>
+        )}
+      </div>
+    </div>
   );
 }
 
