@@ -8,6 +8,7 @@ with a code, which finish() swaps for an access + refresh token and the org's in
 from __future__ import annotations
 
 import base64
+import re
 import hashlib
 import secrets
 import time
@@ -56,9 +57,10 @@ def take(state: str) -> dict | None:
 
 
 async def _token(host: str, data: dict) -> dict:
+    """POST to the token endpoint. Our Connected App's id/secret unless the data brings the customer's own."""
+    data = {"client_id": settings.salesforce_client_id, "client_secret": settings.salesforce_client_secret, **data}
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(f"https://{host}/services/oauth2/token", data={
-            **data, "client_id": settings.salesforce_client_id, "client_secret": settings.salesforce_client_secret})
+        resp = await client.post(f"https://{host}/services/oauth2/token", data=data)
     body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
     if resp.status_code >= 400:
         raise CrmError(body.get("error_description") or body.get("error") or f"Sign-in failed ({resp.status_code}).",
@@ -81,3 +83,30 @@ async def refresh_access_token(refresh_token: str, host: str) -> str:
     if not body.get("access_token"):
         raise CrmError("Salesforce didn't return an access token. Reconnect Salesforce.", 401)
     return body["access_token"]
+
+
+_ORG_DOMAIN = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)*\.(my\.salesforce\.com|my\.salesforce-setup\.com)$")
+
+
+def org_host(url: str) -> str:
+    """The org's My Domain host from what the customer pasted ("https://acme.my.salesforce.com/…")."""
+    host = (url or "").strip().lower()
+    host = re.sub(r"^https?://", "", host).split("/")[0]
+    host = host.replace(".lightning.force.com", ".my.salesforce.com")  # they often copy the Lightning address
+    if not _ORG_DOMAIN.match(host):
+        raise CrmError("Use your Salesforce domain, like acme.my.salesforce.com (Setup → My Domain).")
+    return host
+
+
+async def client_credentials_token(instance_url: str, client_id: str, client_secret: str) -> str:
+    """An access token from the customer's own Connected App (Client Credentials Flow with a run-as user)."""
+    host = org_host(instance_url)
+    try:
+        body = await _token(host, {"grant_type": "client_credentials", "client_id": client_id,
+                                   "client_secret": client_secret})
+    except CrmError as exc:
+        if "client credentials" in str(exc).lower() or "not enabled" in str(exc).lower():
+            raise CrmError("Turn on 'Enable Client Credentials Flow' (with a Run As user) in your Salesforce Connected App.",
+                           exc.status) from exc
+        raise
+    return body.get("access_token") or ""

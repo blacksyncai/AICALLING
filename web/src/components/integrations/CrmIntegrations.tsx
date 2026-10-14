@@ -395,7 +395,7 @@ export function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; ex
         )}
         {p.native && (
           <>
-            {p.oauth && <div className="text-center text-xs text-zinc-400">or paste an API key</div>}
+            {(p.oauth || p.oauth_native) && <div className="text-center text-xs text-zinc-400">or paste your credentials</div>}
             {secretFields.map((f) => (
               <Field key={f.name} label={f.label} hint={f.help}>
                 <Input
@@ -407,7 +407,7 @@ export function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; ex
                 />
               </Field>
             ))}
-            <Button variant={p.oauth ? "secondary" : "primary"} className="w-full justify-center" loading={busy === "key"} onClick={() => void connectKey()}>
+            <Button variant={p.oauth || p.oauth_native ? "secondary" : "primary"} className="w-full justify-center" loading={busy === "key"} onClick={() => void connectKey()}>
               Connect
             </Button>
           </>

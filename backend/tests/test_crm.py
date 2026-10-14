@@ -121,11 +121,19 @@ CALL = CallInfo(call_id=str(uuid.uuid4()), outcome="meeting_booked", summary="Wa
 
 
 @pytest.mark.parametrize("key", list(PROVIDERS))
-def test_every_provider_creates_contact_and_logs_call(key, http_mock):
+def test_every_provider_creates_contact_and_logs_call(key, http_mock, monkeypatch):
     state, calls = http_mock
     state["responses"] = RESPONSES[key]
     p = PROVIDERS[key]
     config = {"location_id": "loc1", "spreadsheet": "https://docs.google.com/spreadsheets/d/SHEET/edit"}
+    if key == "salesforce":  # the customer's own Connected App (client credentials)
+        from app.services.crm import salesforce_oauth
+
+        async def token(host, data):
+            return {"access_token": "at"}
+
+        monkeypatch.setattr(salesforce_oauth, "_token", token)
+        config.update(domain="https://acme.lightning.force.com/lightning/page/home", client_id="cid")
     if p.native:
         http = p.native_http("https://hooks.slack.com/services/x" if key == "slack" else "secret", config)
     else:

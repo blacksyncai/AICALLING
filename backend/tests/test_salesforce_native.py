@@ -78,3 +78,29 @@ def test_expired_access_token_is_refreshed_once(sf_app):
     res = asyncio.run(http.request("GET", "/services/data/v60.0/query", params={"q": "fresh"}))
     assert res["records"] and grants[-1] == ("login.salesforce.com", {"grant_type": "refresh_token", "refresh_token": "rt-x"})
     assert seen[-1].headers["authorization"] == "Bearer at2"
+
+
+def test_own_connected_app_credentials(monkeypatch):
+    from app.services.crm.http import CrmError
+    from app.services.crm.providers import PROVIDERS
+
+    grants = []
+
+    async def token(host, data):
+        grants.append((host, data))
+        return {"access_token": "cc-token"}
+
+    monkeypatch.setattr(sf, "_token", token)
+    seen = []
+    monkeypatch.setattr(BaseHttp, "client_factory", staticmethod(lambda: httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: seen.append(r) or httpx.Response(200, json={"records": [{"Name": "Acme"}]})),
+        timeout=5)))
+    p = PROVIDERS["salesforce"]
+    assert p.native  # shows as Live: customers can paste their own app's credentials
+    http = p.native_http("sec", {"domain": "acme.lightning.force.com", "client_id": "cid-1"})
+    assert asyncio.run(p.verify(http, {})) == "Acme"
+    assert grants[-1] == ("acme.my.salesforce.com", {"grant_type": "client_credentials", "client_id": "cid-1",
+                                                     "client_secret": "sec"})
+    assert seen[-1].url.host == "acme.my.salesforce.com" and seen[-1].headers["authorization"] == "Bearer cc-token"
+    with pytest.raises(CrmError, match="my.salesforce.com"):
+        p.native_http("sec", {"domain": "evil.example.com", "client_id": "x"})  # only real Salesforce domains

@@ -1662,9 +1662,28 @@ class Salesforce(Provider):
     key, name = "salesforce", "Salesforce"
     description = "Log AI calls as completed tasks on the lead or contact, create leads and import leads to call."
     nango_providers = ("salesforce", "salesforce-sandbox")
-    native = False
-    docs_url = "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/"
+    # Self-serve: the customer's admin makes a Connected App with the Client Credentials Flow and pastes these.
+    auth_fields = [
+        AuthField("domain", "Salesforce domain", secret=False, placeholder="acme.my.salesforce.com",
+                  help="Setup → My Domain → Current My Domain URL."),
+        AuthField("client_id", "Consumer Key", secret=False, placeholder="3MVG9…",
+                  help="Setup → App Manager → New Connected App: enable OAuth (scope 'api') and 'Enable Client "
+                       "Credentials Flow', then in Manage → Edit Policies set a Run As user. Copy the Consumer Key "
+                       "and Secret from Manage Consumer Details."),
+        AuthField("api_key", "Consumer Secret"),
+    ]
+    docs_url = "https://help.salesforce.com/s/articleView?id=sf.connected_app_client_credentials_setup.htm"
     _v = "/services/data/v60.0"
+
+    def native_http(self, secret, config):
+        from app.services.crm.http import SalesforceHttp
+        from app.services.crm.salesforce_oauth import org_host
+
+        if not (config.get("client_id") or "").strip():
+            raise CrmError("Paste the Consumer Key from your Salesforce Connected App.")
+        host = org_host(config.get("domain", ""))
+        return SalesforceHttp({"client_id": config["client_id"].strip(), "client_secret": secret},
+                              {"instance_url": f"https://{host}"})
 
     def http(self, secret, config):
         if config.get("sf_native"):  # our own OAuth: secret holds the token pair (JSON)

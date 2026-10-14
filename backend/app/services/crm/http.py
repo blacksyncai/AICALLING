@@ -135,13 +135,15 @@ async def nango(method: str, path: str, *, json: Any = None, params: dict | None
 
 
 class SalesforceHttp(BaseHttp):
-    """Salesforce REST with our own OAuth tokens: calls the org's instance, refreshing the access token
-    (with the stored refresh token) whenever it has expired."""
+    """Salesforce REST straight to the org. Two ways in: our OAuth sign-in (a refresh token gets new access
+    tokens) or the customer's own Connected App (client credentials: their key + secret get access tokens)."""
 
-    _tokens: dict[str, str] = {}  # refresh token → current access token (per process)
+    _tokens: dict[str, str] = {}  # refresh token / client id → current access token (per process)
 
     def __init__(self, tokens: dict, config: dict):
-        self.refresh_token = tokens.get("refresh_token", "")
+        self.client_id = tokens.get("client_id", "")
+        self.client_secret = tokens.get("client_secret", "")
+        self.refresh_token = tokens.get("refresh_token", "") or (f"cc:{self.client_id}" if self.client_id else "")
         self.base_url = (config.get("instance_url") or "").rstrip("/")
         self.login_host = config.get("login_host") or "login.salesforce.com"
         if tokens.get("access_token") and self.refresh_token not in self._tokens:
@@ -152,9 +154,13 @@ class SalesforceHttp(BaseHttp):
                                        "Authorization": f"Bearer {self._tokens.get(self.refresh_token, '')}"}, {}, None)
 
     async def refresh(self) -> None:
-        from app.services.crm.salesforce_oauth import refresh_access_token
+        from app.services.crm.salesforce_oauth import client_credentials_token, refresh_access_token
 
-        self._tokens[self.refresh_token] = await refresh_access_token(self.refresh_token, self.login_host)
+        if self.client_id:
+            token = await client_credentials_token(self.base_url, self.client_id, self.client_secret)
+        else:
+            token = await refresh_access_token(self.refresh_token, self.login_host)
+        self._tokens[self.refresh_token] = token
 
     async def request(self, method, path, *, params=None, json=None):
         if not self._tokens.get(self.refresh_token):
