@@ -3,7 +3,10 @@ import tempfile
 
 # Point the app at a throwaway SQLite DB and a fake OpenAI key before it's imported.
 _db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db.name}"
+# TEST_DATABASE_URL runs the suite against a real database instead (e.g. Postgres, to check row locking).
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or f"sqlite+aiosqlite:///{_db.name}"
+if os.environ.get("TEST_DATABASE_URL"):
+    os.environ["DB_NULL_POOL"] = "1"
 os.environ["OPENAI_API_KEY"] = "test-key"
 os.environ["RUN_STARTUP_JOBS"] = "0"
 os.environ["AUTH_EMAIL"] = "admin@test.dev"

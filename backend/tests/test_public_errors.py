@@ -22,3 +22,12 @@ def test_internal_routes_need_the_worker_token_when_set(client, monkeypatch):
     assert client.get(url).status_code == 403
     assert client.get(url, headers={"X-Internal-Token": "nope"}).status_code == 403
     assert client.get(url, headers={"X-Internal-Token": "t0k"}).status_code == 404  # past the check
+
+
+def test_a_failed_label_on_a_real_conversation_is_not_redialable():
+    from app.agent.runtime import reconcile_outcome
+
+    talk = [{"role": "assistant", "text": "Hey, is this Sam?"}, {"role": "user", "text": "Yeah, who's this?"},
+            {"role": "user", "text": "Sure, tell me more about the property."}]
+    assert reconcile_outcome("failed", talk) == "completed"
+    assert reconcile_outcome("failed", []) == "failed"

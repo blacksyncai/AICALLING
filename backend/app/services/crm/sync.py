@@ -66,6 +66,13 @@ def http_for(conn: CrmConnection):
 
 async def add_log(db, conn: CrmConnection, kind: str, status: str, message: str,
                   call_id: uuid.UUID | None = None, external_id: str | None = None) -> None:
+    from app.services.public_errors import is_technical
+
+    if is_technical(message):
+        # Customers read this log: keep what happened, drop internal details (the original goes to our logs).
+        log.warning("crm_log_detail_hidden", provider=conn.provider, message=message[:500])
+        head, sep, _ = message.partition(": ")
+        message = (head + " — something went wrong on our end.") if sep else "Something went wrong on our end."
     db.add(CrmSyncLog(org_id=conn.org_id, connection_id=conn.id, call_id=call_id, kind=kind, status=status,
                       message=message[:1000], external_id=(external_id or None) and str(external_id)[:128]))
     if status == "error":
@@ -596,7 +603,10 @@ async def process_queue(db, conn: CrmConnection, now: dt.datetime | None = None)
                 await add_log(db, conn, "new_lead", "error", f"Couldn't call {lead.name} from the queue: {exc}")
                 continue
             if calling_id:
-                await p.move_deal(http, conn.config or {}, it["deal_id"], calling_id)
+                try:
+                    await p.move_deal(http, conn.config or {}, it["deal_id"], calling_id)
+                except CrmError as exc:  # the call is already placed; never let this undo it (it'd be redialed)
+                    log.warning("crm_move_after_dial_failed", provider=conn.provider, error=str(exc)[:200])
             started += 1
             await add_log(db, conn, "new_lead", "ok", f"{agent.name} is calling {lead.name} (queued in {inst['pipeline']['name']}).",
                           external_id=it["deal_id"])

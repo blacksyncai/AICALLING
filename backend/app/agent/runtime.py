@@ -305,8 +305,8 @@ def person_answered(transcript: list[dict] | None) -> bool:
 
 
 def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str | None:
-    """Never label a call where the contact talked as no answer / voicemail."""
-    if outcome in NO_CONVERSATION_OUTCOMES and person_answered(transcript):
+    """Never label a call where the contact talked as no answer / voicemail / failed (those get redialed)."""
+    if outcome in (*NO_CONVERSATION_OUTCOMES, "failed") and person_answered(transcript):
         return "completed"
     return outcome
 

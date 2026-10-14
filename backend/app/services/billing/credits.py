@@ -66,7 +66,10 @@ async def _live_lots(db: AsyncSession, org_id: uuid.UUID) -> list[CreditLot]:
 async def reconcile(db: AsyncSession, org: Organization) -> None:
     """Credits that predate lots (or were changed outside them) become a 'legacy' lot so the totals agree."""
     await db.flush()  # sessions don't autoflush; pending lot changes must count
-    await db.refresh(org, ["credits_balance"])
+    # Every balance change starts here: lock the account row so concurrent charges, expiries and refunds run
+    # one at a time (each then reads the balance and carry the previous one left, never a stale copy).
+    await db.execute(select(Organization.id).where(Organization.id == org.id).with_for_update())
+    await db.refresh(org, ["credits_balance", "credit_carry_milli"])
     in_lots = (await db.execute(select(func.coalesce(func.sum(CreditLot.credits_remaining), 0))
                                 .where(CreditLot.org_id == org.id))).scalar_one()
     diff = (org.credits_balance or 0) - int(in_lots)

@@ -47,6 +47,14 @@ class CallSetupError(RuntimeError):
     """Raised when a call can't be placed because something isn't configured."""
 
 
+class LeadBusy(CallSetupError):
+    """The contact is already being dialed or is on a call — never ring someone twice at once."""
+
+
+# Contacts being dialed right now in this process (one API process runs every dialer).
+_IN_DIAL: set = set()
+
+
 def _lk() -> api.LiveKitAPI:
     if not settings.livekit_ready:
         raise CallSetupError("LiveKit is not configured (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET).")
@@ -247,6 +255,26 @@ class CallService:
     async def dispatch_call(self, lead: Lead | None, db: AsyncSession, *, agent: Agent | None = None,
                             to_phone: str | None = None, campaign_id: uuid.UUID | None = None,
                             from_number: str | None = None) -> CallLog:
+        """Dial a phone number with the given agent — refusing a contact that's already being called."""
+        if lead is None:
+            return await self._dispatch(lead, db, agent=agent, to_phone=to_phone, campaign_id=campaign_id,
+                                        from_number=from_number)
+        recent = datetime.now(timezone.utc) - timedelta(minutes=20)
+        last = lead.last_called_at
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        if lead.id in _IN_DIAL or (lead.status == "calling" and last is not None and last >= recent):
+            raise LeadBusy("This contact is already on a call.")
+        _IN_DIAL.add(lead.id)
+        try:
+            return await self._dispatch(lead, db, agent=agent, to_phone=to_phone, campaign_id=campaign_id,
+                                        from_number=from_number)
+        finally:
+            _IN_DIAL.discard(lead.id)
+
+    async def _dispatch(self, lead: Lead | None, db: AsyncSession, *, agent: Agent | None = None,
+                        to_phone: str | None = None, campaign_id: uuid.UUID | None = None,
+                        from_number: str | None = None) -> CallLog:
         """Dial a phone number via LiveKit SIP outbound with the given agent."""
         if not settings.livekit_sip_outbound_trunk_id:
             raise CallSetupError(
@@ -396,6 +424,7 @@ class CallService:
         if call_log.ended_at and call_log.status in ("failed", "no_answer") and not transcript:
             return call_log
 
+        prev_outcome = call_log.outcome
         now = datetime.now(timezone.utc)
         # The worker reports a few seconds (up to ~20 s) after the caller hangs up; end the call when they left.
         if ended_at:
@@ -437,7 +466,8 @@ class CallService:
                 lead_values["do_not_call"] = True  # the contact asked not to be called again
             await db.execute(update(Lead).where(Lead.id == call_log.lead_id).values(**lead_values))
 
-        if call_log.campaign_id:
+        already_counted = prev_outcome in ("meeting_booked", "qualified", "interested")  # a repeated report
+        if call_log.campaign_id and not already_counted:
             inc: dict = {}
             if outcome == "meeting_booked":
                 inc = {"total_booked": Campaign.total_booked + 1, "total_qualified": Campaign.total_qualified + 1}
@@ -475,10 +505,11 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             return
         from app.agent.runtime import NO_CONVERSATION_OUTCOMES, person_answered
 
-        mislabeled = call_log.outcome in NO_CONVERSATION_OUTCOMES and person_answered(call_log.transcript)
+        mislabeled = (call_log.outcome in (*NO_CONVERSATION_OUTCOMES, "failed")
+                      and person_answered(call_log.transcript))
         if mislabeled:
             call_log.outcome = "completed"
-            if call_log.status == "no_answer":
+            if call_log.status in ("no_answer", "failed"):
                 call_log.status = "completed"
         agent = await db.get(Agent, call_log.agent_id) if call_log.agent_id else None
         result = await analyze_call(
@@ -500,6 +531,12 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             if call_log.duration_seconds or call_log.outcome != "failed":
                 from app.agent.runtime import reconcile_outcome
                 call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript)
+        # A corrected outcome must reach the contact too: someone who talked is never left in a redial state.
+        if call_log.lead_id and call_log.outcome not in ("no_answer", "voicemail", "failed"):
+            from app.routers.campaigns import RETRY_STATUSES
+
+            await db.execute(update(Lead).where(Lead.id == call_log.lead_id, Lead.status.in_(RETRY_STATUSES))
+                             .values(status=call_log.outcome))
         # Someone who asked not to be called again goes on the Do-Not-Call list.
         if call_log.outcome == "do_not_call" and call_log.lead_id:
             lead = await db.get(Lead, call_log.lead_id)
@@ -510,13 +547,13 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
 
 
 async def fix_mislabeled_outcomes(limit: int = 500) -> int:
-    """One-off repair: calls where the contact clearly talked but were labeled no answer / voicemail."""
+    """Repair: calls where the contact clearly talked but were labeled no answer / voicemail / failed."""
     from app.agent.runtime import NO_CONVERSATION_OUTCOMES, person_answered
     from app.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(select(CallLog.id, CallLog.transcript).where(
-            CallLog.outcome.in_(NO_CONVERSATION_OUTCOMES), CallLog.transcript.isnot(None),
+            CallLog.outcome.in_((*NO_CONVERSATION_OUTCOMES, "failed")), CallLog.transcript.isnot(None),
         ).order_by(CallLog.started_at.desc()).limit(limit))).all()
     ids = [str(r.id) for r in rows if person_answered(r.transcript)]
     for cid in ids:

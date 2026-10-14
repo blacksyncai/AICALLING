@@ -277,7 +277,7 @@ def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="compl
 
     asyncio.run(make())
     # Nobody spoke on a no-answer call (a contact who talks can't be "no answer").
-    transcript = ([] if outcome == "no_answer" else
+    transcript = ([] if outcome in ("no_answer", "failed") else
                   [{"role": "user", "text": "Please leave a message after the tone."}] if outcome == "voicemail" else
                   [{"role": "user", "text": "hi"}])
     for _ in range(2):  # duplicate outcome reports must not double-bill

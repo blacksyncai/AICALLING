@@ -291,6 +291,15 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         </div>
       )}
 
+      {campaign.status === "paused" && campaign.pause_reason === "setup" && (
+        <div className="mb-6 max-w-2xl">
+          <Notice tone="amber">
+            This campaign paused because calls couldn&apos;t be placed for a moment. Nothing is lost — press Resume to pick up
+            where it left off. If it pauses again, message us in the chat.
+          </Notice>
+        </div>
+      )}
+
       {campaign.status === "paused" && campaign.pause_reason === "credits" && (
         <div className="mb-6 max-w-2xl">
           <MatteAlertFeedback

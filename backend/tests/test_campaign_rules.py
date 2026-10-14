@@ -289,3 +289,71 @@ def test_running_campaigns_resume_after_restart(client, agent_id, monkeypatch):
 
     asyncio.run(go())
     assert run_id in started and idle_id not in started and started.count(run_id) == 1
+
+
+def test_call_selected_leaves_the_campaign_status_alone(client, agent_id, dialing):
+    camp = client.post("/api/campaigns/", json={"name": "Pick", "agent_id": agent_id}).json()
+    a = client.post("/api/contacts", json={"name": "A", "phone": "+14155550111", "campaign_id": camp["id"]}).json()
+    r = client.post(f"/api/campaigns/{camp['id']}/call", json={"lead_ids": [a["id"]]})
+    assert r.status_code == 200 and dialing == [a["id"]]
+    # A draft stays a draft — otherwise a restart would dial the whole list.
+    assert client.get(f"/api/campaigns/{camp['id']}").json()["status"] == "draft"
+
+
+def test_a_contact_already_on_a_call_is_never_dialed_again():
+    import asyncio
+
+    from app.services.outbound_call import LeadBusy, _IN_DIAL, call_service
+
+    on_call = SimpleNamespace(id=uuid.uuid4(), status="calling", last_called_at=datetime.now(UTC))
+    with pytest.raises(LeadBusy):
+        asyncio.run(call_service.dispatch_call(on_call, None))
+    dialing_now = SimpleNamespace(id=uuid.uuid4(), status="new", last_called_at=None)
+    _IN_DIAL.add(dialing_now.id)
+    try:
+        with pytest.raises(LeadBusy):
+            asyncio.run(call_service.dispatch_call(dialing_now, None))
+    finally:
+        _IN_DIAL.discard(dialing_now.id)
+
+
+def test_queue_pauses_instead_of_burning_the_list_when_calls_cannot_be_placed(client, agent_id, monkeypatch):
+    import asyncio
+
+    from app.config import Settings
+    from app.routers import campaigns as cr
+    from app.services.outbound_call import outbound_call_service
+
+    monkeypatch.setattr(Settings, "phone_ready", property(lambda self: True))
+    monkeypatch.setattr(cr, "within_calling_hours", lambda c, now: True)
+    tried: list[str] = []
+
+    async def broken(lead, db, **kw):
+        tried.append(str(lead.id))
+        raise RuntimeError("room service unavailable")
+
+    async def no_sleep(_s):
+        return None
+
+    monkeypatch.setattr(outbound_call_service, "dispatch_call", broken)
+    monkeypatch.setattr(cr.asyncio, "sleep", no_sleep)
+    camp = client.post("/api/campaigns/", json={"name": "Outage", "agent_id": agent_id}).json()
+    for i in range(6):
+        client.post("/api/contacts", json={"name": f"L{i}", "phone": f"+1415555013{i}", "campaign_id": camp["id"]})
+
+    async def run():
+        from app.database import AsyncSessionLocal
+        from app.models.campaign import Campaign
+
+        async with AsyncSessionLocal() as db:
+            c = await db.get(Campaign, uuid.UUID(camp["id"]))
+            c.status = "running"
+            await db.commit()
+        await cr._process_call_queue(camp["id"])
+
+    asyncio.run(run())
+    assert len(tried) == 3
+    got = client.get(f"/api/campaigns/{camp['id']}").json()
+    assert got["status"] == "paused" and got["pause_reason"] == "setup"
+    statuses = [l["status"] for l in client.get(f"/api/campaigns/{camp['id']}/leads").json()["leads"]]
+    assert statuses.count("new") >= 4

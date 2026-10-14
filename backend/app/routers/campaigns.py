@@ -25,6 +25,7 @@ from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.services import entitlements
 from app.services.accounts import InsufficientCredits, ensure_can_call
+from app.services.outbound_call import LeadBusy
 from app.services.auth import Context, CtxDep, DbDep
 from app.services.contacts import CsvError, parse_contacts_csv
 
@@ -661,47 +662,64 @@ async def call_selected_leads(
     if not valid_ids:
         raise HTTPException(status_code=400, detail="All selected contacts are on your Do-Not-Call list.")
 
-    # Mark the campaign running so the pipeline/stats reflect live activity.
-    if campaign.status in ("draft", "paused"):
-        campaign.status = "running"
-        campaign.pause_reason = None
-        campaign.updated_at = datetime.now(timezone.utc)
-        await db.commit()
-
-    background_tasks.add_task(_dispatch_selected, str(campaign_id), valid_ids)
+    if campaign.status == "cancelled":
+        raise HTTPException(status_code=400, detail="This campaign was cancelled — make a new one to call these contacts.")
+    # The campaign's own status is left alone: calling a few picked contacts doesn't start the whole list
+    # (a "running" campaign is dialed in full, including after a restart).
+    background_tasks.add_task(_dispatch_selected, str(campaign_id), valid_ids, campaign.status)
     log.info("call_selected", campaign_id=str(campaign_id), count=len(valid_ids))
     return {"dispatched": len(valid_ids), "lead_ids": valid_ids, "skipped_dnc": skipped_dnc}
 
 
-async def _dispatch_selected(campaign_id: str, lead_ids: list[str]) -> None:
-    """Background task: dial each selected lead sequentially via LiveKit SIP."""
+async def _dispatch_selected(campaign_id: str, lead_ids: list[str], started_as: str = "running") -> None:
+    """Background task: dial each selected lead in turn. Stops if the campaign is paused or cancelled meanwhile."""
     from app.services.outbound_call import outbound_call_service
 
     campaign_uuid = uuid.UUID(campaign_id)
+    keep_going = {started_as, "running", "completed"} - {"cancelled"}
     for lid in lead_ids:
-        if not await _wait_for_capacity(campaign_uuid):
-            break
-        async with AsyncSessionLocal() as db:
-            lead = await db.get(Lead, uuid.UUID(lid))
-            if not lead or lead.do_not_call:
-                continue
-            try:
-                campaign = await db.get(Campaign, campaign_uuid)
-                if campaign:
-                    _record_attempt(lead, campaign)
-                await outbound_call_service.dispatch_call(lead, db)
-                if campaign:
-                    campaign.total_dialed += 1
-                    campaign.updated_at = datetime.now(timezone.utc)
-                    await db.commit()
-            except InsufficientCredits as exc:
-                await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
+        async with _dial_lock(campaign_id):
+            if not await _wait_for_capacity(campaign_uuid, keep_going):
                 break
-            except Exception as exc:
-                log.error("call_selected_dispatch_error", lead_id=lid, error=str(exc))
+            if not await _dial_selected_one(campaign_uuid, lid, outbound_call_service):
+                break
         await asyncio.sleep(2)
 
     log.info("call_selected_completed", campaign_id=campaign_id, count=len(lead_ids))
+
+
+async def _dial_selected_one(campaign_uuid: uuid.UUID, lid: str, outbound_call_service) -> bool:
+    """Dial one picked contact. Returns False when calling has to stop (out of credits / over the plan)."""
+    async with AsyncSessionLocal() as db:
+        lead = await db.get(Lead, uuid.UUID(lid))
+        if not lead or lead.do_not_call:
+            return True
+        try:
+            campaign = await db.get(Campaign, campaign_uuid)
+            if campaign:
+                _record_attempt(lead, campaign)
+            await outbound_call_service.dispatch_call(lead, db)
+            if campaign:
+                campaign.total_dialed += 1
+                campaign.updated_at = datetime.now(timezone.utc)
+                await db.commit()
+        except InsufficientCredits as exc:
+            await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
+            return False
+        except LeadBusy:
+            await db.rollback()
+        except Exception as exc:
+            log.error("call_selected_dispatch_error", lead_id=lid, error=str(exc))
+    return True
+
+
+# One dial at a time per campaign (its queue and any "call selected" batch), so the capacity check and the
+# dial it allows can't interleave and exceed the campaign's simultaneous-call limit.
+_DIAL_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _dial_lock(campaign_id: str) -> asyncio.Lock:
+    return _DIAL_LOCKS.setdefault(campaign_id, asyncio.Lock())
 
 
 # ── Background call queue processor ──────────────────────────────────────────
@@ -715,13 +733,13 @@ async def _pause_for_credits(campaign_uuid: uuid.UUID, reason: str, kind: str = 
         campaign = await db.get(Campaign, campaign_uuid)
         if campaign and campaign.status == "running":
             campaign.status = "paused"
-            campaign.pause_reason = kind  # credits | plan (agent over the plan's limit)
+            campaign.pause_reason = kind  # credits | plan (agent over the plan's limit) | setup (calls failing)
             campaign.updated_at = datetime.now(timezone.utc)
             await db.commit()
     log.warning("campaign_paused_no_credits", campaign_id=str(campaign_uuid), reason=reason)
 
 
-async def _wait_for_capacity(campaign_uuid: uuid.UUID) -> bool:
+async def _wait_for_capacity(campaign_uuid: uuid.UUID, keep_going: set[str] | frozenset = frozenset({"running"})) -> bool:
     """
     Block until the campaign has fewer in-flight calls than its concurrency
     limit. Returns False if the campaign stopped running while waiting.
@@ -735,7 +753,7 @@ async def _wait_for_capacity(campaign_uuid: uuid.UUID) -> bool:
     while True:
         async with AsyncSessionLocal() as db:
             campaign = await db.get(Campaign, campaign_uuid)
-            if not campaign or campaign.status != "running":
+            if not campaign or campaign.status not in keep_going:
                 return False
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
             active = (await db.execute(
@@ -868,6 +886,7 @@ async def _process_call_queue(campaign_id: str) -> None:
 
     log.info("call_queue_started", campaign_id=campaign_id)
     campaign_uuid = uuid.UUID(campaign_id)
+    errors_in_a_row = 0
 
     while True:
         async with AsyncSessionLocal() as db:
@@ -888,54 +907,69 @@ async def _process_call_queue(campaign_id: str) -> None:
                 return
             continue
 
-        # Respect pause/cancel and the concurrency limit before each call.
-        if not await _wait_for_capacity(campaign_uuid):
-            log.info("call_queue_halted", campaign_id=campaign_id)
-            return
-
-        async with AsyncSessionLocal() as db:
-            campaign = await db.get(Campaign, campaign_uuid)
-            if not campaign or campaign.status != "running":
-                log.info("call_queue_halted", campaign_id=campaign_id,
-                         reason=campaign.status if campaign else "not_found")
+        wait = 0
+        async with _dial_lock(campaign_id):
+            # Respect pause/cancel and the concurrency limit before each call.
+            if not await _wait_for_capacity(campaign_uuid):
+                log.info("call_queue_halted", campaign_id=campaign_id)
                 return
-            now = datetime.now(timezone.utc)
-            lead, waiting, earliest = await _next_lead(db, campaign, now)
 
-            if lead is None:
-                if not waiting:
-                    campaign.status = "completed"
-                    campaign.updated_at = now
-                    await db.commit()
-                    log.info("call_queue_completed", campaign_id=campaign_id)
+            async with AsyncSessionLocal() as db:
+                campaign = await db.get(Campaign, campaign_uuid)
+                if not campaign or campaign.status != "running":
+                    log.info("call_queue_halted", campaign_id=campaign_id,
+                             reason=campaign.status if campaign else "not_found")
                     return
-                wait = (earliest - now).total_seconds() if earliest else 60
-            else:
-                wait = 0
-                lead_id, prev_attempts = lead.id, lead.attempts or 0
-                try:
-                    _record_attempt(lead, campaign, now)
-                    await outbound_call_service.dispatch_call(lead, db)
-                    campaign.total_dialed += 1
-                    campaign.updated_at = datetime.now(timezone.utc)
-                    await db.commit()
-                except InsufficientCredits as exc:
-                    await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
-                    return
-                except Exception as exc:
-                    log.error("call_queue_dispatch_error", lead_id=str(lead.id), error=str(exc))
-                    await db.rollback()
-                    # Count the failed try so a contact that can't be dialed
-                    # (bad number, setup error) isn't redialed in a tight loop.
-                    fresh = await db.get(Lead, lead_id)
-                    campaign = await db.get(Campaign, campaign_uuid)
-                    if fresh and campaign:
-                        await db.refresh(fresh)
-                        if (fresh.attempts or 0) == prev_attempts:
-                            _record_attempt(fresh, campaign)
-                        if fresh.status in ("new", "calling"):
-                            fresh.status = "failed"
+                now = datetime.now(timezone.utc)
+                if not within_calling_hours(campaign, now):
+                    continue  # the window closed while we waited for a free line — wait at the top
+                lead, waiting, earliest = await _next_lead(db, campaign, now)
+
+                if lead is None:
+                    if not waiting:
+                        campaign.status = "completed"
+                        campaign.updated_at = now
                         await db.commit()
+                        log.info("call_queue_completed", campaign_id=campaign_id)
+                        return
+                    wait = (earliest - now).total_seconds() if earliest else 60
+                else:
+                    wait = 0
+                    lead_id, prev_attempts = lead.id, lead.attempts or 0
+                    try:
+                        _record_attempt(lead, campaign, now)
+                        await outbound_call_service.dispatch_call(lead, db)
+                        campaign.total_dialed += 1
+                        campaign.updated_at = datetime.now(timezone.utc)
+                        await db.commit()
+                        errors_in_a_row = 0
+                    except InsufficientCredits as exc:
+                        await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
+                        return
+                    except LeadBusy:
+                        await db.rollback()  # already on a call from somewhere else; their result decides what's next
+                    except Exception as exc:
+                        log.error("call_queue_dispatch_error", lead_id=str(lead.id), error=str(exc))
+                        if not isinstance(exc, ValueError):  # a bad number is that contact's problem; anything else isn't
+                            errors_in_a_row += 1
+                            if errors_in_a_row >= 3:
+                                # Calls can't be placed at all right now (an outage or setup problem). Pause instead
+                                # of burning through the whole list; Resume picks it back up.
+                                await db.rollback()
+                                await _pause_for_credits(campaign_uuid, str(exc), "setup")
+                                return
+                        await db.rollback()
+                        # Count the failed try so a contact that can't be dialed
+                        # (bad number, setup error) isn't redialed in a tight loop.
+                        fresh = await db.get(Lead, lead_id)
+                        campaign = await db.get(Campaign, campaign_uuid)
+                        if fresh and campaign:
+                            await db.refresh(fresh)
+                            if (fresh.attempts or 0) == prev_attempts:
+                                _record_attempt(fresh, campaign)
+                            if fresh.status in ("new", "calling"):
+                                fresh.status = "failed"
+                            await db.commit()
 
         if wait:
             # Retries are pending but none is due yet — wait for the earliest.

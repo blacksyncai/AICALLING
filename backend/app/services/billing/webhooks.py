@@ -8,10 +8,11 @@ is only used to find those records and is cross-checked against them.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Organization
@@ -46,13 +47,26 @@ async def process(db: AsyncSession, event: dict) -> str:
     if row and row.status in ("processed", "ignored"):
         return "duplicate"
     if row is None:
-        row = StripeEvent(id=evt_id, type=etype)
-        db.add(row)
-        await db.commit()
+        db.add(StripeEvent(id=evt_id, type=etype))
+        try:
+            await db.commit()
+        except IntegrityError:  # the same event arriving twice at once — the other delivery recorded it
+            await db.rollback()
     if etype not in HANDLED:
-        row.status, row.processed_at = "ignored", _now()
+        await db.execute(update(StripeEvent).where(StripeEvent.id == evt_id)
+                         .values(status="ignored", processed_at=_now()))
         await db.commit()
         return "ignored"
+    # Claim the event so a re-delivery that arrives while it's still being applied can't apply it again
+    # (a claim older than 10 minutes is treated as abandoned).
+    claimed = await db.execute(update(StripeEvent).where(
+        StripeEvent.id == evt_id,
+        or_(StripeEvent.status.in_(("received", "failed")),
+            and_(StripeEvent.status == "processing", StripeEvent.processed_at < _now() - timedelta(minutes=10))),
+    ).values(status="processing", processed_at=_now()))
+    await db.commit()
+    if claimed.rowcount == 0:
+        return "duplicate"
     obj = event["data"]["object"]
     try:
         org_id = await _dispatch(db, etype, obj)
@@ -169,8 +183,10 @@ async def _payment_intent(db: AsyncSession, etype: str, pi: dict) -> uuid.UUID |
         await recharge.on_result(db, p, ok=True)
     else:
         err = ((pi.get("last_payment_error") or {}).get("message")) or "Payment failed"
+        was_pending = getattr(await purchases._lock_purchase(db, p.id), "status", None) == "pending"
         await purchases.mark_failed(db, p.id, err)
-        await recharge.on_result(db, p, ok=False, error=err)
+        if was_pending:  # the charge attempt already recorded this decline when it happened — count it once
+            await recharge.on_result(db, p, ok=False, error=err)
     await db.commit()
     return p.org_id
 

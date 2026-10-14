@@ -5,6 +5,7 @@ Works with Postgres (asyncpg) in production and SQLite (aiosqlite) for
 zero-setup local testing.
 """
 
+import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import inspect, text
@@ -26,7 +27,11 @@ def _normalize_url(url: str) -> str:
 DATABASE_URL = _normalize_url(settings.database_url)
 
 _engine_kwargs: dict = {"echo": settings.sql_echo, "pool_pre_ping": True}
-if not DATABASE_URL.startswith("sqlite"):
+if os.environ.get("DB_NULL_POOL"):
+    from sqlalchemy.pool import NullPool
+
+    _engine_kwargs["poolclass"] = NullPool  # tests on Postgres: each event loop gets its own connections
+elif not DATABASE_URL.startswith("sqlite"):
     _engine_kwargs.update(pool_size=10, max_overflow=20)
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
