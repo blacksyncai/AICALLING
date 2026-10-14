@@ -1063,8 +1063,17 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
             from app.agent.chat_order import contact_last
 
+            from app.agent.repeat_guard import no_repeats, said_lines, with_nudge
+
             chat_ctx = contact_last(chat_ctx, needs_user_last=model in MISTRAL_MODELS)
-            async for chunk in guarded(Agent.default.llm_node(self, chat_ctx, tools, model_settings), _cut):
+
+            def _attempt(nudged: bool):
+                return Agent.default.llm_node(self, with_nudge(chat_ctx) if nudged else chat_ctx, tools, model_settings)
+
+            def _repeat(dropped: str) -> None:
+                log.warning("llm_repeat_cut", room=ctx.room.name, model=model, dropped=dropped[:80])
+
+            async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat), _cut):
                 yield chunk
 
     async def _handle_voicemail() -> None:
