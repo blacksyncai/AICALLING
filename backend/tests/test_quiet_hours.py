@@ -30,3 +30,10 @@ def test_slot_choice_uses_the_calendar_timezone_and_the_latest_offer():
     assert pick_slot(every, "thursday at 9", "America/New_York") == early[0]
     # "The first one" after a second round of options is the first of that round.
     assert pick_slot(every, "first", "America/New_York", later) == later[0]
+
+
+def test_us_number_typed_with_plus_but_no_1_dials_the_us():
+    from app.services.outbound_call import validate_e164
+
+    assert validate_e164("+4157075948") == "+14157075948"   # not Switzerland
+    assert validate_e164("+442071838750") == "+442071838750"  # a real UK number stays as typed

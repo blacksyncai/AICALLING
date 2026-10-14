@@ -79,7 +79,21 @@ def validate_e164(phone: str) -> str:
             digits = ""
     if not (10 <= len(digits) <= 15) or set(digits) == {"0"} or digits.startswith("0"):
         raise ValueError(f"{phone!r} is not a valid E.164 phone number (e.g. +14155550123).")
+    if has_plus and len(digits) == 10 and _us_number_missing_1(digits):
+        digits = "1" + digits  # "+4157075948": a US number typed with + but no 1 (would dial Switzerland)
     return "+" + digits
+
+
+def _us_number_missing_1(digits: str) -> bool:
+    """True when +<digits> isn't a real number anywhere but +1<digits> is a valid US/Canada number."""
+    import phonenumbers
+
+    try:
+        as_typed = phonenumbers.parse("+" + digits)
+        as_us = phonenumbers.parse("+1" + digits)
+    except phonenumbers.NumberParseException:
+        return False
+    return not phonenumbers.is_valid_number(as_typed) and phonenumbers.is_valid_number(as_us)
 
 
 def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, call_type: str,
