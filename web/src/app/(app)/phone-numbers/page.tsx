@@ -4,6 +4,7 @@ import { Hash, Phone, Search, Star } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
+import { TextingCard } from "@/components/phone/TextingCard";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, PageHeader, Spinner } from "@/components/ui";
 import { api, fetcher, patch, post } from "@/lib/api";
@@ -132,6 +133,7 @@ export default function PhoneNumbersPage() {
             ) : (
               data.numbers.length > 0 && getNumber
             )}
+            <TextingCard />
             {data.requests.length > 0 && (
               <Card>
                 <CardHeader title="Your requests" />

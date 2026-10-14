@@ -312,3 +312,132 @@ async def admin_decline(request_id: uuid.UUID, _: AdminDep, db: DbDep):
     req.status = "declined"
     await db.commit()
     return _request_to_dict(req)
+
+
+# ── Texting (the account's own SMS provider) ─────────────────────────────────
+
+
+class MessagingIn(BaseModel):
+    provider: str = Field(pattern="^(twilio|telnyx)$")
+    account_sid: str = Field(default="", max_length=64)
+    secret: str = Field(default="", max_length=256)  # empty = keep the saved one (same provider)
+    from_number: str = Field(max_length=32)
+    messaging_profile_id: str = Field(default="", max_length=64)
+
+
+class MessagingTestIn(BaseModel):
+    to: str = Field(max_length=32)
+
+
+def _messaging_to_dict(conn) -> dict:
+    if conn is None:
+        return {"connected": False}
+    sid = conn.account_sid or ""
+    return {
+        "connected": True,
+        "provider": conn.provider,
+        "account_sid": f"{sid[:6]}…{sid[-4:]}" if sid else "",
+        "from_number": conn.from_number,
+        "messaging_profile_id": conn.messaging_profile_id,
+        "account_label": conn.account_label,
+        "last_error": conn.last_error,
+        "verified_at": conn.verified_at.isoformat() if conn.verified_at else None,
+        "last_sent_at": conn.last_sent_at.isoformat() if conn.last_sent_at else None,
+    }
+
+
+async def _messaging(db, org_id):
+    from app.models.messaging import MessagingConnection
+
+    return (await db.execute(select(MessagingConnection).where(MessagingConnection.org_id == org_id))).scalar_one_or_none()
+
+
+@router.get("/messaging")
+async def get_messaging(ctx: CtxDep, db: DbDep):
+    return _messaging_to_dict(await _messaging(db, ctx.org.id))
+
+
+@router.put("/messaging")
+async def save_messaging(body: MessagingIn, ctx: ManagerDep, db: DbDep):
+    """Connect (or update) the account's own texting provider. Credentials are checked before saving."""
+    from datetime import datetime, timezone
+
+    from app.models.messaging import MessagingConnection
+    from app.services import secret_store, sms
+    from app.services.contacts import normalize_phone
+
+    if not secret_store.available():
+        raise HTTPException(status_code=503, detail="We couldn't save this connection right now — please try again in a moment.")
+    existing = await _messaging(db, ctx.org.id)
+    secret = body.secret.strip()
+    if not secret and existing and existing.provider == body.provider:
+        secret = secret_store.decrypt_value(existing.secret_enc)
+    if not secret:
+        raise HTTPException(status_code=400, detail="Enter the Auth Token." if body.provider == "twilio" else "Enter the API key.")
+    from_number = normalize_phone(body.from_number)
+    if len(from_number) < 11:
+        raise HTTPException(status_code=400, detail="Enter the number to text from, e.g. +14155550123.")
+    sid = body.account_sid.strip() if body.provider == "twilio" else ""
+    if body.provider == "twilio" and not sid and existing and existing.provider == "twilio":
+        sid = existing.account_sid
+    try:
+        label = await sms.verify(body.provider, sid, secret, from_number)
+    except sms.SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # network trouble reaching the provider
+        log.warning("messaging_verify_failed", provider=body.provider, error=str(exc)[:200])
+        raise HTTPException(status_code=502, detail="We couldn't reach your texting provider — try again in a moment.")
+    conn = existing or MessagingConnection(org_id=ctx.org.id, provider=body.provider)
+    conn.provider = body.provider
+    conn.account_sid = sid
+    conn.secret_enc = secret_store.encrypt_value(secret)
+    conn.from_number = from_number
+    conn.messaging_profile_id = body.messaging_profile_id.strip() if body.provider == "telnyx" else ""
+    conn.account_label = label[:255]
+    conn.last_error = None
+    conn.verified_at = datetime.now(timezone.utc)
+    if existing is None:
+        db.add(conn)
+    await db.commit()
+    log.info("messaging_connected", org_id=str(ctx.org.id), provider=body.provider)
+    return _messaging_to_dict(conn)
+
+
+@router.delete("/messaging")
+async def delete_messaging(ctx: ManagerDep, db: DbDep):
+    conn = await _messaging(db, ctx.org.id)
+    if conn:
+        await db.delete(conn)
+        await db.commit()
+    return {"connected": False}
+
+
+@router.post("/messaging/test")
+async def test_messaging(body: MessagingTestIn, ctx: ManagerDep, db: DbDep):
+    """Send one test text to a number the manager types in (usually their own phone)."""
+    from datetime import datetime, timezone
+
+    from app.services import secret_store, sms
+    from app.services.contacts import normalize_phone
+
+    conn = await _messaging(db, ctx.org.id)
+    if conn is None:
+        raise HTTPException(status_code=400, detail="Connect a texting account first.")
+    to = normalize_phone(body.to)
+    if len(to) < 11:
+        raise HTTPException(status_code=400, detail="Enter the number to text, e.g. +14155550123.")
+    try:
+        await sms.send(conn.provider, conn.account_sid, secret_store.decrypt_value(conn.secret_enc), conn.from_number,
+                       to, f"Test text from {ctx.org.name or 'BlackSync'}: texting is set up and working.",
+                       conn.messaging_profile_id)
+    except sms.SmsError as exc:
+        conn.last_error = str(exc)
+        await db.commit()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.warning("messaging_test_failed", error=str(exc)[:200])
+        raise HTTPException(status_code=502, detail="We couldn't reach your texting provider — try again in a moment.")
+    conn.last_error = None
+    conn.last_sent_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"sent": True, "to": to}
