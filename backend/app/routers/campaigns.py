@@ -20,6 +20,7 @@ from app.database import AsyncSessionLocal
 from app.services.crm.variables import needs_prefill, visible_fields
 from app.models.account import Organization
 from app.models.agent import Agent
+from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.services import entitlements
@@ -565,6 +566,17 @@ async def list_campaign_leads(
 
     leads_result = await db.execute(stmt)
     leads = leads_result.scalars().all()
+    # Tiny result tags: voicemails left/reached and whether we ever talked to the person.
+    live = {"meeting_booked", "qualified", "not_qualified", "interested", "not_interested", "callback",
+            "transferred", "completed", "do_not_call"}
+    tags: dict = {l.id: {"voicemails": 0, "verified": False, "wrong_number": False} for l in leads}
+    if leads:
+        for lead_id, outcome in (await db.execute(select(CallLog.lead_id, CallLog.outcome).where(
+                CallLog.lead_id.in_(list(tags))))).all():
+            t = tags[lead_id]
+            t["voicemails"] += outcome == "voicemail"
+            t["verified"] = t["verified"] or outcome in live
+            t["wrong_number"] = t["wrong_number"] or outcome == "wrong_number"
 
     return {
         "campaign_id": str(campaign_id),
@@ -581,6 +593,7 @@ async def list_campaign_leads(
                 "notes": l.notes,
                 "custom_fields": visible_fields(l.custom_fields),
                 "fields_pending": needs_prefill(l),
+                **tags[l.id],
                 "do_not_call": bool(l.do_not_call),
                 "attempts": l.attempts or 0,
                 "next_attempt_at": _aware(l.next_attempt_at).isoformat() if l.next_attempt_at else None,

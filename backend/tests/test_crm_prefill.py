@@ -27,3 +27,33 @@ def test_prefill_puts_script_variables_and_csv_like_columns_on_contacts(monkeypa
     assert shown["city"] == "Oakland" and shown["stage"] == "Lead"
     assert "crm" not in shown and "crm_fields" not in shown and "name" not in shown
     assert not needs_prefill(lead)
+
+
+def test_radar_status_tags_campaign_calls_and_verified(client):
+    import uuid
+
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.models.campaign import Campaign
+    from app.models.lead import Lead
+    from app.routers.radar import _blacksync_status
+
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+
+    async def scenario():
+        async with AsyncSessionLocal() as db:
+            camp = Campaign(id=uuid.uuid4(), org_id=org_id, name="Old leads", status="draft")
+            db.add(camp)
+            a = Lead(id=uuid.uuid4(), org_id=org_id, name="A", phone="+14155550991", crm_refs={"followupboss": "7"},
+                     campaign_id=camp.id)
+            b = Lead(id=uuid.uuid4(), org_id=org_id, name="B", phone="+14155550992", crm_refs={"followupboss": "8"})
+            db.add_all([a, b])
+            await db.flush()
+            for lead, outcome in ((a, "voicemail"), (a, "interested"), (b, "no_answer")):
+                db.add(CallLog(org_id=org_id, lead_id=lead.id, livekit_room_name="r", status="completed", outcome=outcome))
+            await db.commit()
+            return await _blacksync_status(db, org_id, "followupboss")
+
+    st = asyncio.run(scenario())
+    assert st["7"]["campaign"] == "Old leads" and st["7"]["calls"] == 2 and st["7"]["voicemails"] == 1
+    assert st["7"]["verified"] and not st["8"]["verified"] and st["8"]["last_outcome"] == "no_answer"

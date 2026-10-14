@@ -9,7 +9,7 @@ import { RadarPreview } from "@/components/radar/RadarPreview";
 import { Badge, Button, Card, EmptyState, Input, Notice, PageHeader, Select, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, humanize, timeAgo } from "@/lib/utils";
 
 interface Item {
   external_id: string;
@@ -22,6 +22,38 @@ interface Item {
   created?: string | null;
   calls?: number | null;
   contacted?: boolean | null;
+  /** What BlackSync already did with this contact. */
+  bs?: {
+    campaign: string | null;
+    campaign_id: string | null;
+    calls: number;
+    voicemails: number;
+    verified: boolean;
+    wrong_number: boolean;
+    last_outcome: string | null;
+    dnc: boolean;
+  } | null;
+}
+
+/** Already in a campaign or already called — hidden unless the user asks to see them. */
+const handled = (i: Item) => !!(i.bs && (i.bs.campaign_id || i.bs.calls > 0));
+
+function StatusTags({ bs }: { bs: Item["bs"] }) {
+  if (!bs) return null;
+  const tag = "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none";
+  const last = bs.last_outcome && !["voicemail", "no_answer", "failed"].includes(bs.last_outcome) ? bs.last_outcome : null;
+  return (
+    <span className="mt-1 flex flex-wrap gap-1">
+      {bs.verified && <span className={cn(tag, "bg-emerald-100 text-emerald-700")}>Verified</span>}
+      {bs.wrong_number && <span className={cn(tag, "bg-red-100 text-red-700")}>Wrong number</span>}
+      {bs.dnc && <span className={cn(tag, "bg-red-100 text-red-700")}>Do not call</span>}
+      {bs.campaign && <span className={cn(tag, "max-w-[160px] truncate bg-brand-50 text-brand-700")}>In {bs.campaign}</span>}
+      {bs.calls > 0 && <span className={cn(tag, "bg-zinc-100 text-zinc-700")}>Called {bs.calls}×</span>}
+      {bs.voicemails > 0 && <span className={cn(tag, "bg-violet-100 text-violet-700")}>Voicemail{bs.voicemails > 1 ? ` ×${bs.voicemails}` : ""}</span>}
+      {bs.calls > 0 && !bs.verified && !bs.voicemails && bs.last_outcome === "no_answer" && <span className={cn(tag, "bg-zinc-100 text-zinc-600")}>No answer</span>}
+      {last && <span className={cn(tag, "bg-amber-100 text-amber-800")}>{humanize(last)}</span>}
+    </span>
+  );
 }
 interface Play {
   key: string;
@@ -209,6 +241,8 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
   const [added, setAdded] = useState("any");
   const [quiet, setQuiet] = useState("any");
   const [uncontacted, setUncontacted] = useState(false);
+  const [showHandled, setShowHandled] = useState(false);
+  const [launched, setLaunched] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set());
   const installed = crm.installs.find((i) => i.agent_id === agentId);
 
@@ -216,6 +250,7 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
     const now = Date.now();
     const needle = q.trim().toLowerCase();
     return play.items.filter((i) => {
+      if (!showHandled && (handled(i) || launched.has(i.external_id))) return false;
       if (needle && ![i.name, i.phone, i.company, i.reason, i.stage].some((v) => (v || "").toLowerCase().includes(needle))) return false;
       const age = AGE[added];
       if (age) {
@@ -227,7 +262,8 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
       if (uncontacted && !(i.contacted === false || (i.contacted == null && i.calls === 0))) return false;
       return true;
     });
-  }, [play.items, q, added, quiet, uncontacted]);
+  }, [play.items, q, added, quiet, uncontacted, showHandled, launched]);
+  const handledCount = play.items.filter((i) => handled(i) || launched.has(i.external_id)).length;
   const shown = open ? filtered.slice(0, 300) : filtered.slice(0, 5);
   const chosen = play.items.filter((i) => sel.has(i.external_id));
   const allShownPicked = filtered.length > 0 && filtered.every((i) => sel.has(i.external_id));
@@ -243,6 +279,7 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
       setResult(mode === "pipeline"
         ? { tone: "green", text: `Queued ${r.queued} in “${r.pipeline}” — calls start within a minute (8 AM – 9 PM).` }
         : { tone: "green", text: <>Campaign ready with {r.contacts} contacts. <Link className="font-medium underline" href={`/campaigns/${r.campaign_id}`}>Review and start it →</Link></> });
+      setLaunched((s) => new Set([...s, ...chosen.map((i) => i.external_id)]));
       setSel(new Set());
     } catch (e) {
       setResult({ tone: "red", text: e instanceof Error ? e.message : "Couldn't launch" });
@@ -264,7 +301,7 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
               <div className="text-xs text-zinc-600">{play.why}</div>
             </div>
           </div>
-          <span className="font-display text-3xl font-semibold tabular-nums text-zinc-900">{play.count}</span>
+          <span className="font-display text-3xl font-semibold tabular-nums text-zinc-900">{Math.max(play.count - handledCount, 0)}</span>
         </div>
         <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-zinc-700">
           <Zap className="h-3.5 w-3.5" /> {play.suggest}
@@ -294,6 +331,10 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
           <label className="flex items-center gap-1.5 text-zinc-600">
             <input type="checkbox" checked={uncontacted} onChange={(e) => setUncontacted(e.target.checked)} className="accent-brand-600" />
             Never contacted only
+          </label>
+          <label className="flex items-center gap-1.5 text-zinc-600">
+            <input type="checkbox" checked={showHandled} onChange={(e) => setShowHandled(e.target.checked)} className="accent-brand-600" />
+            Show ones already in a campaign or called{handledCount ? ` (${handledCount})` : ""}
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs">
@@ -327,6 +368,7 @@ function PlayCard({ play, scanId, crm, agents }: { play: Play; scanId: string; c
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-zinc-900">{i.name || i.company || i.phone}</span>
                 <span className="block truncate text-xs text-zinc-500">{i.reason}</span>
+                <StatusTags bs={i.bs} />
               </span>
               {i.stage && <Badge tone="gray" className="hidden sm:inline-flex">{i.stage}</Badge>}
             </label>

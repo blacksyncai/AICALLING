@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.models.agent import Agent
+from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.crm import CrmConnection, CrmScan
 from app.models.lead import Lead
@@ -33,6 +34,52 @@ def _scan_out(scan: CrmScan, provider: str) -> dict:
             **scan.result}
 
 
+_LIVE = {"meeting_booked", "qualified", "not_qualified", "interested", "not_interested", "callback", "transferred",
+         "completed", "do_not_call"}
+
+
+async def _blacksync_status(db, org_id, provider: str) -> dict[str, dict]:
+    """What BlackSync already did with each CRM contact: campaign, calls, voicemails, verified (a live talk)."""
+    leads = (await db.execute(select(Lead.id, Lead.crm_refs, Lead.campaign_id, Lead.do_not_call).where(
+        Lead.org_id == org_id, Lead.crm_refs.is_not(None)))).all()
+    by_lead = {}
+    for lead_id, refs, campaign_id, dnc in leads:
+        ref = (refs or {}).get(provider)
+        if ref:
+            by_lead[lead_id] = {"ext": str(ref), "campaign_id": campaign_id, "dnc": bool(dnc)}
+    if not by_lead:
+        return {}
+    names = dict((await db.execute(select(Campaign.id, Campaign.name).where(Campaign.org_id == org_id))).all())
+    calls = (await db.execute(select(CallLog.lead_id, CallLog.outcome, CallLog.status, CallLog.started_at).where(
+        CallLog.org_id == org_id, CallLog.lead_id.in_(list(by_lead))).order_by(CallLog.started_at))).all()
+    out: dict[str, dict] = {}
+    for lead_id, info in by_lead.items():
+        cid = info["campaign_id"]
+        out[info["ext"]] = {"campaign": names.get(cid) if cid else None, "campaign_id": str(cid) if cid in names else None,
+                            "calls": 0, "voicemails": 0, "verified": False, "wrong_number": False,
+                            "last_outcome": None, "dnc": info["dnc"]}
+    for lead_id, outcome, status, _ in calls:
+        st = out[by_lead[lead_id]["ext"]]
+        st["calls"] += 1
+        st["voicemails"] += outcome == "voicemail"
+        st["verified"] = st["verified"] or outcome in _LIVE
+        st["wrong_number"] = st["wrong_number"] or outcome == "wrong_number"
+        st["last_outcome"] = outcome or status
+    return out
+
+
+async def _scan_view(db, org_id, scan: CrmScan, provider: str) -> dict:
+    """The scan with each contact's BlackSync status, so already-handled people can be hidden or tagged."""
+    out = _scan_out(scan, provider)
+    status = await _blacksync_status(db, org_id, provider)
+    plays = []
+    for pl in out.get("plays") or []:
+        items = [{**i, "bs": status.get(str(i["external_id"]))} for i in pl["items"]]
+        plays.append({**pl, "items": items})
+    out["plays"] = plays
+    return out
+
+
 @router.get("")
 async def overview(ctx: ManagerDep, db: DbDep):
     await _require_radar(ctx, db)
@@ -47,7 +94,7 @@ async def overview(ctx: ManagerDep, db: DbDep):
         out.append({"provider": c.provider, "name": p.name, "account_label": c.account_label,
                     "installs": [{"agent_id": i["agent_id"], "agent_name": i.get("agent_name", ""),
                                   "pipeline_name": i["pipeline"]["name"]} for i in (c.settings or {}).get("installs") or []],
-                    "last_scan": _scan_out(last, c.provider) if last else None})
+                    "last_scan": await _scan_view(db, ctx.org.id, last, c.provider) if last else None})
     return {"crms": out}
 
 
@@ -102,7 +149,7 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth:
     await sync.add_log(db, conn, "import", "ok", f"Radar scanned {batch['scanned']} contacts: {found} worth calling now.")
     await db.commit()
     await db.refresh(row)
-    return _scan_out(row, key)
+    return await _scan_view(db, ctx.org.id, row, key)
 
 
 class LaunchIn(BaseModel):

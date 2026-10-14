@@ -15,7 +15,7 @@ import { del, fetcher, patch, post } from "@/lib/api";
 import type { Agent, Call, Campaign, Lead, SettingsStatus } from "@/lib/types";
 import { CAMPAIGN_TONE, OUTCOME_TONE, formatDuration, humanize, timeAgo } from "@/lib/utils";
 
-type CampaignLead = Lead & { do_not_call?: boolean; attempts?: number; next_attempt_at?: string | null; fields_pending?: boolean };
+type CampaignLead = Lead & { do_not_call?: boolean; attempts?: number; next_attempt_at?: string | null; fields_pending?: boolean; voicemails?: number; verified?: boolean; wrong_number?: boolean };
 
 const SAMPLE_CSV = `name,phone,company,email,city
 Jane Cooper,+14155550123,Acme Inc,jane@acme.com,San Francisco
@@ -492,6 +492,15 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
                     <td className="px-3 py-2.5">
                       <Badge tone={l.status === "new" ? "gray" : l.status === "calling" ? "brand" : (OUTCOME_TONE[l.status] ?? "gray")}>{humanize(l.status)}</Badge>
                       {(l.attempts ?? 0) > 1 && <span className="ml-1.5 text-xs text-zinc-400">{l.attempts} tries</span>}
+                      <span className="mt-1 flex flex-wrap gap-1">
+                        {l.verified && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-emerald-700">Verified</span>}
+                        {l.wrong_number && <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-red-700">Wrong number</span>}
+                        {(l.voicemails ?? 0) > 0 && (
+                          <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-700">
+                            Voicemail{(l.voicemails ?? 0) > 1 ? ` ×${l.voicemails}` : ""}
+                          </span>
+                        )}
+                      </span>
                     </td>
                   </tr>
                 ))}
