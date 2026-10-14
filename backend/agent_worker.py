@@ -380,7 +380,7 @@ async def _post_call_outcome(state, outcome: str) -> None:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
+            resp = await client.post(
                 f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome", headers=settings.internal_headers,
                 json={
                     "outcome": outcome,
@@ -394,6 +394,7 @@ async def _post_call_outcome(state, outcome: str) -> None:
                     "transcript": state.transcript,
                 },
             )
+            resp.raise_for_status()  # a rejected report must be retried, not logged as sent
         log.info("call_outcome_posted", call_log_id=state.call_log_id,
                  outcome=outcome, turns=len(state.transcript))
     except Exception as exc:
@@ -691,7 +692,7 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
+            resp = await client.post(
                 f"{settings.api_base_url}/internal/calls/{run.call_log_id}/outcome", headers=settings.internal_headers,
                 json={
                     "outcome": outcome,
@@ -703,6 +704,7 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
                     "ended_at": run.ended_wall,
                 },
             )
+            resp.raise_for_status()  # a rejected report must be retried, not logged as sent
         log.info("call_outcome_posted", call_log_id=run.call_log_id, outcome=outcome)
     except Exception as exc:
         run.outcome_posted = False
