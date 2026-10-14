@@ -63,7 +63,7 @@ async def _access_token() -> str:
 
 async def _request(method: str, url: str, **kwargs) -> httpx.Response:
     headers = {"Authorization": f"Bearer {await _access_token()}", **kwargs.pop("headers", {})}
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
         return await client.request(method, url, headers=headers, **kwargs)
 
 
