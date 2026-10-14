@@ -27,14 +27,16 @@ export function InboundCampaign({ campaign, calls, agents, onChange }: { campaig
   const number = phones?.numbers.find((n) => n.id === campaign.phone_number_id);
   const live = campaign.status === "running";
 
-  const act = async (name: string, fn: () => Promise<unknown>, ok?: string) => {
+  const act = async (name: string, fn: () => Promise<unknown>, ok?: string): Promise<boolean> => {
     setBusy(name);
     try {
       await fn();
       if (ok) toast(ok);
-      onChange();
+      if (name !== "delete") onChange();
+      return true;
     } catch (e) {
       toast((e as Error).message, "error");
+      return false;
     } finally {
       setBusy(null);
     }
@@ -85,7 +87,7 @@ export function InboundCampaign({ campaign, calls, agents, onChange }: { campaig
             variant="ghost"
             aria-label="Delete campaign"
             onClick={() => {
-              if (confirm("Delete this inbound campaign? Calls to the number will stop being answered.")) void act("delete", () => del(`/api/campaigns/${campaign.id}`)).then(() => router.push("/campaigns"));
+              if (confirm("Delete this inbound campaign? Calls to the number will stop being answered.")) void act("delete", () => del(`/api/campaigns/${campaign.id}`)).then((done) => done && router.push("/campaigns"));
             }}
           >
             <Trash2 className="h-4 w-4" />

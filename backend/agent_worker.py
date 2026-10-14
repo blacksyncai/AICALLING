@@ -654,6 +654,16 @@ def _last_contact_turn(transcript: list[dict]) -> str:
     return ""
 
 
+_TASKS: set = set()
+
+
+def _keep(task: asyncio.Task) -> asyncio.Task:
+    """Hold a reference to a fire-and-forget task so it isn't garbage-collected mid-flight."""
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    return task
+
+
 class _CallRun:
     """Per-call mutable state for a configurable agent."""
 
@@ -669,6 +679,8 @@ class _CallRun:
         self.email = ""
         self.t0 = 0.0
         self.ended_wall: float | None = None  # unix time the caller left
+        self.last_found: list[dict] = []  # the times offered most recently ("the first one")
+        self.post_task: asyncio.Task | None = None  # an outcome report in flight (awaited at shutdown)
         self.lat: dict[str, list[float]] = {"eou": [], "llm": [], "tts": []}
 
     def latency_summary(self) -> dict | None:
@@ -750,7 +762,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             "ts": round(_t.monotonic() - run.t0, 2) if run.t0 else 0.0,
         })
 
-    def _hangup(context: RunContext | None) -> None:
+    def _hangup(context: RunContext | None, outcome: str) -> None:
         async def _go() -> None:
             # Hang up once the goodbye has actually finished playing (a fixed delay cut long goodbyes
             # off and left short ones hanging), plus a beat so it doesn't feel abrupt.
@@ -759,9 +771,16 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     await asyncio.wait_for(context.wait_for_playout(), timeout=20)
             except Exception:
                 pass
+            if (context is not None and context.speech_handle.interrupted and run.ended_wall is None
+                    and any(p.identity.startswith("sip_") for p in ctx.room.remote_participants.values())):
+                # They talked over the goodbye ("wait, one more thing") and are still on — stay and let them
+                # finish. The outcome stays as the latest result; a later end_call or the shutdown reports it.
+                log.info("hangup_cancelled_interrupted", room=ctx.room.name, outcome=outcome)
+                return
+            run.post_task = asyncio.create_task(_post_run_outcome(run, outcome))
             await asyncio.sleep(1.2)
             await _delete_room(ctx.room.name)
-        asyncio.create_task(_go())
+        _keep(asyncio.create_task(_go()))
 
     guard = {"refused": False}
 
@@ -786,8 +805,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         _record("end_call", {"outcome": outcome})
         log.info("end_call", room=ctx.room.name, outcome=outcome, contact_words=len(last.split()),
                  turns=sum(1 for t in run.transcript if t.get("role") in ("user", "assistant")))
-        asyncio.create_task(_post_run_outcome(run, outcome))
-        _hangup(context)
+        _hangup(context, outcome)
         return None  # no output → no follow-up reply (it used to speak things like "[Call ended]")
 
     tools = [function_tool(end_call)]
@@ -811,6 +829,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                                            time_of_day=time_of_day, time=time,
                                            exclude={s["start"] for s in run.slots})
             run.slots = _cal.remember_slots(run.slots, found)
+            if found:
+                run.last_found = found
             _record("check_availability", {"preferred_date": preferred_date, "time_of_day": time_of_day, "time": time},
                     {"slots": [s["label"] for s in found]})
             if not found:
@@ -828,7 +848,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             """
             if not run.slots:
                 return "No slots offered yet. Call check_availability first."
-            chosen = _cal.pick_slot(run.slots, slot)
+            chosen = _cal.pick_slot(run.slots, slot, cfg.get("calendar_timezone"), run.last_found)
             if not chosen:
                 return ("Which slot? Offered: " + "; ".join(s["label"] for s in run.slots)
                         + ". Ask the contact to pick one, then pass its exact label.")
@@ -851,7 +871,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         tools += [function_tool(check_availability), function_tool(book_appointment)]
 
     transfer_to = (cfg.get("transfer_number") or "").strip()
-    if transfer_to and run.call_type == "outbound":
+    if transfer_to and run.call_type in ("outbound", "inbound"):  # the prompt offers it on every phone call
         async def transfer_call() -> str:
             """Transfer the caller to a human teammate. Tell them you're connecting them first."""
             from livekit import api as _lkapi
@@ -873,7 +893,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     participant_identity=sip_identity, room_name=ctx.room.name,
                     transfer_to=f"tel:{transfer_to}", play_dialtone=True,
                 ))
-                asyncio.create_task(_post_run_outcome(run, "transferred"))
+                run.post_task = asyncio.create_task(_post_run_outcome(run, "transferred"))
                 return "Transferred."
             except Exception as exc:
                 log.warning("transfer_failed", error=str(exc))
@@ -1055,10 +1075,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             pass
         left = False
         if vm_action == "leave_message" and vm_message:
-            # Wait for the greeting (and its beep) to finish: ~1.5 s of quiet, at most 30 s.
+            # Wait for the greeting (and its beep) to finish: ~2.5 s of quiet (greetings pause mid-way), at most 30 s.
             deadline = _time.monotonic() + 30
             while _time.monotonic() < deadline:
-                if not vm["speaking"] and _time.monotonic() - vm["changed"] > 1.5:
+                if not vm["speaking"] and _time.monotonic() - vm["changed"] > 2.5:
                     break
                 await asyncio.sleep(0.2)
             try:
@@ -1281,23 +1301,29 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 return
 
     silence_task = None
-    if call_type == "outbound":
+    if call_type in ("outbound", "inbound"):
         session.on("agent_state_changed", _activity("agent"))
         session.on("user_state_changed", _activity("user"))
         silence_task = asyncio.create_task(_hang_up_on_silence())
 
-    finished = {"done": False}
+    finished: dict = {"task": None}
 
     async def _shutdown() -> None:
-        if finished["done"]:
-            return
-        finished["done"] = True
+        # Session close and job shutdown both land here; they share one run and both wait for it to finish.
+        if finished["task"] is None:
+            finished["task"] = asyncio.ensure_future(_finish())
+        await asyncio.shield(finished["task"])
+
+    async def _finish() -> None:
         timer.cancel()
         if silence_task:
             silence_task.cancel()
         task = bg_state.get("task")
         if task:
             task.cancel()
+        # An outcome report already on its way (end_call / transfer): let it land, retry below if it failed.
+        if run.post_task is not None and not run.post_task.done():
+            await asyncio.wait({run.post_task}, timeout=6)
         from app.agent.runtime import is_voicemail_text, person_answered, reconcile_outcome
         if run.outcome:
             outcome = reconcile_outcome(run.outcome, run.transcript) or run.outcome
@@ -1307,11 +1333,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             outcome = "voicemail"
         else:
             outcome = "no_answer"
+        await _post_run_outcome(run, outcome)  # first: it's what matters if the job is cut short
         await _push_live_event(run.call_log_id, {
             "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
             "duration_sec": round((run.ended_wall or _time.time()) - wall_t0), "ts": str(_time.time()),
         })
-        await _post_run_outcome(run, outcome)
+        # If the session died on its own (e.g. a voice error), don't leave the caller on dead air.
+        if call_type != "web" and ctx.room.remote_participants:
+            await _delete_room(ctx.room.name)
 
     ctx.add_shutdown_callback(_shutdown)
 
@@ -1321,7 +1350,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         async def _later() -> None:
             await asyncio.sleep(1.0)  # let the last transcript items land
             await _shutdown()
-        asyncio.create_task(_later())
+        _keep(asyncio.create_task(_later()))
 
     session.on("close", _on_session_close)
 
@@ -1356,6 +1385,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             return
     # Some models need a user turn before they'll answer at all (see NEEDS_USER_TURN).
     cue = {"user_input": CALL_CONNECTED_CUE} if model in NEEDS_USER_TURN else {}
+    if first:
+        from app.agent.runtime import strip_tool_mentions
+        from app.agent.speech_guard import clean
+
+        first = strip_tool_mentions(clean(first))  # the drafted opening skips the reply filter
     try:
         if first:
             session.say(first, allow_interruptions=True)

@@ -16,6 +16,9 @@ import re
 _SEAM = re.compile(r"(?<=[a-z0-9][.?!])(?=[A-Z])")  # "invite?We" — two messages glued together
 _MARKERS = re.compile(r"[{}\[\]]|\(Note|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
                       re.IGNORECASE)
+# Internal names that must never be read out (tool calls / outcome codes written as text).
+_INTERNAL_NAMES = re.compile(r"\b(?:end_call|check_availability|book_appointment|transfer_call|meeting_booked|"
+                             r"not_interested|not_qualified|no_answer|do_not_call|wrong_number)\b|\bfunctions\.")
 _HOLD = 24  # keep this much unspoken until more arrives, so a marker split across chunks is still caught
 
 
@@ -30,7 +33,8 @@ class SpeechGuard:
         return self.cut_at is not None
 
     def _find_cut(self) -> int | None:
-        hits = [m.start() for m in (_SEAM.search(self.buffer), _MARKERS.search(self.buffer)) if m]
+        hits = [m.start() for m in (_SEAM.search(self.buffer), _MARKERS.search(self.buffer),
+                                    _INTERNAL_NAMES.search(self.buffer)) if m]
         return min(hits) if hits else None
 
     def feed(self, text: str) -> str:

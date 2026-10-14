@@ -2,7 +2,7 @@
 
 import { ArrowLeft, Calendar, Clock, Coins, ExternalLink, RefreshCw, Sparkles, Wrench } from "lucide-react";
 import Link from "next/link";
-import { use } from "react";
+import { use, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
@@ -10,7 +10,7 @@ import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import type { Call } from "@/lib/types";
-import { cn, formatCredits, formatDateTime, formatDuration, humanize, toolLabel } from "@/lib/utils";
+import { cn, formatCredits, formatDateTime, formatDuration, humanize, parseDate, toolLabel } from "@/lib/utils";
 
 function fmtTs(ts?: number) {
   if (ts === undefined) return "";
@@ -22,8 +22,11 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const toast = useToast();
   const { data: call, error, mutate } = useSWR<Call>(`/api/calls/${id}`, fetcher, {
-    refreshInterval: (c) => (!c || !c.ended_at || !c.summary ? 4000 : 0),
+    // Live calls, plus a short window after the end while the summary is written (some calls never get one).
+    refreshInterval: (c) =>
+      !c || !c.ended_at || (!c.summary && Date.now() - (parseDate(c.ended_at)?.getTime() ?? 0) < 120_000) ? 4000 : 0,
   });
+  const [reanalyzing, setReanalyzing] = useState(false);
 
   if (error) return <Notice tone="red">{error.message}</Notice>;
   if (!call)
@@ -61,7 +64,13 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
                 <Coins className="h-3 w-3" /> {call.credits_used ? `${formatCredits(call.credits_used)} credits` : "No charge (didn't connect)"}
               </span>
             )}
-            <span>{call.call_type === "web" ? "Browser test" : `Phone · ${call.to_phone ?? ""}${call.from_phone ? ` (from ${call.from_phone})` : ""}`}</span>
+            <span>
+              {call.call_type === "web"
+                ? "Browser test"
+                : call.call_type === "inbound"
+                  ? `Inbound call · from ${call.to_phone ?? call.from_phone ?? "unknown number"}`
+                  : `Phone · ${call.to_phone ?? ""}${call.from_phone ? ` (from ${call.from_phone})` : ""}`}
+            </span>
             {call.agent_id && (
               <Link href={`/agents/${call.agent_id}`} className="text-brand-600 hover:underline">
                 {call.agent_name}
@@ -77,10 +86,20 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
         {!live && (
           <Button
             size="sm"
+            loading={reanalyzing}
             onClick={async () => {
-              await post(`/api/calls/${id}/analyze`).catch((e) => toast(e.message, "error"));
-              toast("Re-analyzing — refreshes in a few seconds");
-              setTimeout(() => mutate(), 5000);
+              setReanalyzing(true);
+              try {
+                await post(`/api/calls/${id}/analyze`);
+                toast("Re-analyzing — refreshes in a few seconds");
+                setTimeout(() => {
+                  mutate();
+                  setReanalyzing(false);
+                }, 5000);
+              } catch (e) {
+                toast(e instanceof Error ? e.message : "Couldn't re-analyze", "error");
+                setReanalyzing(false);
+              }
             }}
           >
             <RefreshCw className="h-3.5 w-3.5" /> Re-analyze

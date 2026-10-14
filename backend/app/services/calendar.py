@@ -240,7 +240,7 @@ def _choice_hour(c: str) -> int | None:
     return hour
 
 
-def pick_slot(slots: list[dict], choice: str) -> dict | None:
+def pick_slot(slots: list[dict], choice: str, tz: str | None = None, recent: list[dict] | None = None) -> dict | None:
     """
     Resolve 'first' / 'B' / 'Tuesday at 6 in the evening' / an ISO time to one of
     the offered slots. Returns None when the choice is ambiguous — never guesses.
@@ -248,10 +248,11 @@ def pick_slot(slots: list[dict], choice: str) -> dict | None:
     if not slots:
         return None
     c = (choice or "").strip().lower()
+    ordered = recent or slots  # "the first one" means the first of the times just offered
     if c in ("a", "1", "first", "option a", "the first one", "the first"):
-        return slots[0]
-    if c in ("b", "2", "second", "option b", "the second one", "the second") and len(slots) > 1:
-        return slots[1]
+        return ordered[0]
+    if c in ("b", "2", "second", "option b", "the second one", "the second") and len(ordered) > 1:
+        return ordered[1]
     exact = [s for s in slots if c and (c == s["start"].lower() or c == s["label"].lower())]
     if exact:
         return exact[0]
@@ -266,6 +267,8 @@ def pick_slot(slots: list[dict], choice: str) -> dict | None:
             when = dt.datetime.fromisoformat(s["start"].replace("Z", "+00:00"))
         except ValueError:
             continue
+        if tz and when.tzinfo is not None:
+            when = when.astimezone(_zone(tz))  # the contact picks by the calendar's local day and hour
         if day and _WEEKDAYS[when.weekday()] != day:
             continue
         if iso and when.date().isoformat() != iso.group(1):

@@ -16,3 +16,17 @@ def test_unknown_or_toll_free_numbers_fall_back_to_the_campaign_hours():
     night = datetime(2026, 3, 11, 8, 0, tzinfo=timezone.utc)
     assert zones_for("+18005550123") == () and ok_to_call("+18005550123", night)
     assert ok_to_call("not a number", night)
+
+
+def test_slot_choice_uses_the_calendar_timezone_and_the_latest_offer():
+    from app.services.calendar import pick_slot
+
+    early = [{"start": "2026-03-12T13:00:00Z", "label": "Thursday, March 12 at 9:00 AM"},
+             {"start": "2026-03-12T18:00:00Z", "label": "Thursday, March 12 at 2:00 PM"}]
+    later = [{"start": "2026-03-13T15:00:00Z", "label": "Friday, March 13 at 11:00 AM"},
+             {"start": "2026-03-13T20:00:00Z", "label": "Friday, March 13 at 4:00 PM"}]
+    every = early + later
+    # 9 AM New York is 13:00 UTC — the contact means the local hour.
+    assert pick_slot(every, "thursday at 9", "America/New_York") == early[0]
+    # "The first one" after a second round of options is the first of that round.
+    assert pick_slot(every, "first", "America/New_York", later) == later[0]

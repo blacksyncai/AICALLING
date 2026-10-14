@@ -45,7 +45,7 @@ function ImportModal({ open, onClose, campaignId, onDone, initialCsv }: { open: 
     setBusy(true);
     try {
       const res = await post<{ created: number; skipped: number }>(`/api/campaigns/${campaignId}/leads/import`, { csv });
-      toast(`Imported ${res.created} contacts${res.skipped ? ` · skipped ${res.skipped} without a valid phone` : ""}`);
+      toast(`Imported ${res.created} contact${res.created === 1 ? "" : "s"}${res.skipped ? ` · skipped ${res.skipped} without a valid phone` : ""}`);
       setCsv("");
       onDone();
       onClose();
@@ -101,9 +101,9 @@ function ImportModal({ open, onClose, campaignId, onDone, initialCsv }: { open: 
           <Textarea rows={10} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder={`Drop a CSV here, paste it, or choose a file\n\n${SAMPLE_CSV}`} className="font-mono text-xs" />
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-zinc-500">{rows > 0 ? `${rows} rows` : "Paste CSV or choose a file"}</span>
+          <span className="text-xs text-zinc-500">{rows > 0 ? `${rows} row${rows === 1 ? "" : "s"}` : "Paste CSV or choose a file"}</span>
           <Button variant="primary" onClick={submit} loading={busy} disabled={rows < 1}>
-            Import {rows > 0 ? rows : ""} contacts
+            Import {rows > 0 ? rows : ""} {rows === 1 ? "contact" : "contacts"}
           </Button>
         </div>
       </div>
@@ -169,8 +169,16 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
   const { id } = use(params);
   const router = useRouter();
   const toast = useToast();
-  const { data: campaign, mutate: refreshCampaign, error } = useSWR<Campaign>(`/api/campaigns/${id}`, fetcher, { refreshInterval: 5000 });
-  const { data: leadsData, mutate: refreshLeads } = useSWR<{ leads: CampaignLead[] }>(`/api/campaigns/${id}/leads?page_size=200`, fetcher, { refreshInterval: 5000 });
+  // Poll fast only while it's dialing; a draft, paused or finished campaign barely changes.
+  const { data: campaign, mutate: refreshCampaign, error } = useSWR<Campaign>(`/api/campaigns/${id}`, fetcher, {
+    refreshInterval: (c) => (c?.status === "running" ? 5000 : 30000),
+  });
+  const live = campaign?.status === "running";
+  const { data: leadsData, mutate: refreshLeads } = useSWR<{ leads: CampaignLead[]; total?: number; status_counts?: Record<string, number> }>(
+    campaign && campaign.direction === "inbound" ? null : `/api/campaigns/${id}/leads?page_size=200`,
+    fetcher,
+    { refreshInterval: live ? 5000 : 0 },
+  );
   // Contacts added from a CRM before their fields were pulled: fetch them once so they show like CSV columns.
   const [fieldsAsked, setFieldsAsked] = useState(false);
   useEffect(() => {
@@ -178,7 +186,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
     setFieldsAsked(true);
     post(`/api/campaigns/${id}/crm-fields`, {}).then(() => refreshLeads()).catch(() => {});
   }, [fieldsAsked, leadsData, id, refreshLeads]);
-  const { data: calls } = useSWR<{ items: Call[] }>(`/api/calls/?campaign_id=${id}&page_size=50`, fetcher, { refreshInterval: 5000 });
+  const { data: calls } = useSWR<{ items: Call[] }>(`/api/calls/?campaign_id=${id}&page_size=50`, fetcher, { refreshInterval: live ? 5000 : 30000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
   const [importOpen, setImportOpen] = useState(false);
@@ -194,14 +202,16 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
     refreshLeads();
   };
 
-  async function action(name: string, fn: () => Promise<unknown>, success?: string) {
+  async function action(name: string, fn: () => Promise<unknown>, success?: string): Promise<boolean> {
     setBusy(name);
     try {
       await fn();
       if (success) toast(success);
-      refresh();
+      if (name !== "delete") refresh();
+      return true;
     } catch (e) {
       toast((e as Error).message, "error");
+      return false;
     } finally {
       setBusy(null);
     }
@@ -219,7 +229,10 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
     return <InboundCampaign campaign={campaign} calls={calls?.items ?? []} agents={agents ?? []} onChange={() => void refreshCampaign()} />;
   }
 
-  const counts = leads.reduce<Record<string, number>>((acc, l) => (l.do_not_call ? acc : ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc)), {});
+  const counts =
+    leadsData?.status_counts ??
+    leads.reduce<Record<string, number>>((acc, l) => (l.do_not_call ? acc : ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc)), {});
+  const totalLeads = leadsData?.total ?? leads.length;
   const pending = (counts.new ?? 0) + (campaign.pending_retries ?? 0);
   const running = campaign.status === "running";
   const allSelected = leads.length > 0 && selected.size === leads.length;
@@ -263,7 +276,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
             variant="ghost"
             aria-label="Delete campaign"
             onClick={() => {
-              if (confirm("Delete this campaign and its contacts? Call logs are kept.")) action("delete", () => del(`/api/campaigns/${id}`)).then(() => router.push("/campaigns"));
+              if (confirm("Delete this campaign and its contacts? Call logs are kept.")) action("delete", () => del(`/api/campaigns/${id}`)).then((ok) => ok && router.push("/campaigns"));
             }}
           >
             <Trash2 className="h-4 w-4" />
@@ -395,7 +408,8 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
           </div>
         )}
         <CardHeader
-          title={`Contacts (${leads.length})`}
+          title={`Contacts (${totalLeads.toLocaleString()})`}
+          description={totalLeads > leads.length ? `Showing the newest ${leads.length} — every contact is still called.` : undefined}
           action={
             <div className="flex flex-wrap gap-2">
               {selected.size > 0 && (

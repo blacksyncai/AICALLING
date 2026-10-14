@@ -28,6 +28,10 @@ import type { BusyEvent, Meeting } from "./types";
 
 const DAY = 86400000;
 
+function shiftDays(d: Date, days: number): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, d.getHours(), d.getMinutes());
+}
+
 function startOfWeek(d: Date): Date {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // Monday
@@ -69,7 +73,7 @@ export function MeetingsCalendar({
     return next && next >= thisWeek.getTime() + 7 * DAY ? startOfWeek(new Date(next)) : thisWeek;
   });
   const [zoom, setZoom] = useState(100);
-  const weekEnd = new Date(week.getTime() + 7 * DAY);
+  const weekEnd = shiftDays(week, 7); // calendar days, so a daylight-saving change doesn't shift the week
   const todayId = localParts(new Date()).date;
 
   const rows: TimelineRowData[] = useMemo(
@@ -145,7 +149,7 @@ export function MeetingsCalendar({
     return blocks.some((b) => b.rowId === rowId && a < timeToMinutes(b.startTime) + b.duration && timeToMinutes(b.startTime) < a + duration);
   }
 
-  const last = new Date(weekEnd.getTime() - DAY);
+  const last = shiftDays(weekEnd, -1);
   const weekLabel = `${week.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${
     week.getMonth() === last.getMonth() ? last.getDate() : last.toLocaleDateString(undefined, { month: "short", day: "numeric" })
   }, ${last.getFullYear()}`;
@@ -156,7 +160,7 @@ export function MeetingsCalendar({
       {/* Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-1">
-          <button type="button" className={navBtn} onClick={() => setWeek(new Date(week.getTime() - 7 * DAY))} aria-label="Previous week">
+          <button type="button" className={navBtn} onClick={() => setWeek(shiftDays(week, -7))} aria-label="Previous week">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
@@ -166,7 +170,7 @@ export function MeetingsCalendar({
           >
             Today
           </button>
-          <button type="button" className={navBtn} onClick={() => setWeek(new Date(week.getTime() + 7 * DAY))} aria-label="Next week">
+          <button type="button" className={navBtn} onClick={() => setWeek(shiftDays(week, 7))} aria-label="Next week">
             <ChevronRight className="h-4 w-4" />
           </button>
           <h3 className="ml-2 font-display text-base font-semibold tracking-tight text-zinc-900">{weekLabel}</h3>

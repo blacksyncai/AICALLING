@@ -579,8 +579,16 @@ async def list_campaign_leads(
             t["verified"] = t["verified"] or outcome in live
             t["wrong_number"] = t["wrong_number"] or outcome == "wrong_number"
 
+    # Whole-list numbers (the page itself holds at most page_size contacts).
+    total = (await db.execute(select(func.count()).select_from(Lead).where(Lead.campaign_id == campaign_id))).scalar_one()
+    status_counts = dict((await db.execute(
+        select(Lead.status, func.count()).where(
+            Lead.campaign_id == campaign_id, or_(Lead.do_not_call.is_(None), Lead.do_not_call.is_(False)))
+        .group_by(Lead.status))).all())
     return {
         "campaign_id": str(campaign_id),
+        "total": total,
+        "status_counts": status_counts,
         "leads": [
             {
                 "id": str(l.id),

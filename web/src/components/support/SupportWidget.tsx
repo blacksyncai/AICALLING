@@ -572,6 +572,7 @@ function TicketView({ id, onSeen }: { id: string; onSeen: () => void }) {
   const { data, mutate } = useSWR<{ ticket: SupportTicket; replies: TicketReply[] }>(`/api/support/tickets/${id}`, fetcher, { refreshInterval: 15000 });
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => { if (data) onSeen(); }, [data, onSeen]);
   if (!data) return <Spin />;
   const t = data.ticket;
@@ -598,11 +599,12 @@ function TicketView({ id, onSeen }: { id: string; onSeen: () => void }) {
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} placeholder={t.status === "closed" || t.status === "resolved" ? "Reply to reopen this ticket…" : "Reply…"}
             className="max-h-28 flex-1 resize-none bg-transparent text-sm outline-none" />
           <button type="button" disabled={busy || !text.trim()} aria-label="Send reply"
-            onClick={async () => { setBusy(true); try { await post(`/api/support/tickets/${id}/replies`, { body: text }); setText(""); await mutate(); } finally { setBusy(false); } }}
+            onClick={async () => { setBusy(true); setErr(null); try { await post(`/api/support/tickets/${id}/replies`, { body: text }); setText(""); await mutate(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500 text-white disabled:opacity-40">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </button>
         </div>
+        {err && <p className="mt-1.5 px-1 text-xs text-red-600">{err}</p>}
       </div>
     </>
   );
@@ -652,6 +654,8 @@ function Help({ initial, go }: { initial: string; go: (v: View) => void }) {
 
 function ArticleView({ slug, go }: { slug: string; go: (v: View) => void }) {
   const { data, error } = useSWR<Article>(`/api/support/articles/${slug}`, fetcher);
+  const [starting, setStarting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   if (error) return <Empty text="This article isn't available." />;
   if (!data) return <Spin />;
   return (
@@ -661,10 +665,22 @@ function ArticleView({ slug, go }: { slug: string; go: (v: View) => void }) {
       <div className="mt-3 whitespace-pre-wrap text-[13.5px] leading-relaxed text-zinc-700">{data.body}</div>
       <div className="mt-6 rounded-2xl bg-zinc-50 p-4 text-sm">
         <div className="font-medium text-zinc-900">Still need help?</div>
-        <button type="button" onClick={async () => { const c = await post<SupportConversation>("/api/support/conversations", {}); go({ name: "chat", id: c.id }); }}
-          className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3.5 py-2 text-xs font-medium text-white">
-          <LifeBuoy className="h-3.5 w-3.5" /> Chat with support
+        <button type="button" disabled={starting}
+          onClick={async () => {
+            setStarting(true);
+            setErr(null);
+            try {
+              const c = await post<SupportConversation>("/api/support/conversations", {});
+              go({ name: "chat", id: c.id });
+            } catch (e) {
+              setErr((e as Error).message);
+              setStarting(false);
+            }
+          }}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3.5 py-2 text-xs font-medium text-white disabled:opacity-60">
+          {starting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LifeBuoy className="h-3.5 w-3.5" />} Chat with support
         </button>
+        {err && <p className="mt-1.5 text-xs text-red-600">{err}</p>}
       </div>
     </div>
   );

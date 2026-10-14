@@ -144,12 +144,12 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
       if (!live) {
         const r = await post<{ url: string }>(`/api/billing/plans/${plan.key}/checkout`);
         window.location.href = r.url;
-        return;
+        return; // stays busy while the browser leaves for checkout
       }
       setPreview({ plan, data: await post<Preview>(`/api/billing/plans/${plan.key}/preview`) });
+      setBusy(null);
     } catch (e) {
       toast((e as Error).message, "error");
-    } finally {
       setBusy(null);
     }
   }

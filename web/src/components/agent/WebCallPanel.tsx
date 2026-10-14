@@ -68,9 +68,25 @@ export function WebCallPanel({
 
   useEffect(() => () => void roomRef.current?.disconnect(), []);
 
+  // Guards a double-click on Start, and lets End cancel a call that's still connecting.
+  const startingRef = useRef(false);
+  const cancelledRef = useRef(false);
+
   async function start() {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    cancelledRef.current = false;
     setError("");
+    try {
+      await connect();
+    } finally {
+      startingRef.current = false;
+    }
+  }
+
+  async function connect() {
     if (!(await beforeStart())) return;
+    if (cancelledRef.current) return;
     setPhase("connecting");
     setLines([]);
     setElapsed(0);
@@ -114,8 +130,11 @@ export function WebCallPanel({
         setLines((prev) => prev.map((l) => (l.id === id ? { ...l, final: true } : l)));
       });
 
+      if (cancelledRef.current) return void room.disconnect();
       await room.connect(url, token);
+      if (cancelledRef.current) return void room.disconnect();
       await room.localParticipant.setMicrophoneEnabled(true);
+      if (cancelledRef.current) return void room.disconnect();
       setPhase("live");
     } catch (e) {
       setError((e as Error).message);
@@ -125,6 +144,7 @@ export function WebCallPanel({
   }
 
   async function end() {
+    cancelledRef.current = true;
     await roomRef.current?.disconnect();
     setPhase("ended");
   }

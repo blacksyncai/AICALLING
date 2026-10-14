@@ -68,10 +68,20 @@ export default function PhoneNumbersPage() {
   const [returned, setReturned] = useState<"success" | "canceled" | null>(null);
   useEffect(() => {
     const v = new URLSearchParams(window.location.search).get("checkout");
-    if (v === "success" || v === "canceled") setReturned(v);
+    if (v === "success" || v === "canceled") {
+      setReturned(v);
+      window.history.replaceState(null, "", window.location.pathname); // a reload shouldn't repeat it
+    }
   }, []);
-  // Right after checkout, poll briefly while the payment webhook buys the number.
-  const { data, mutate, error } = useSWR<MyPhoneNumbers>("/api/phone-numbers", fetcher, { refreshInterval: returned === "success" ? 3000 : 0 });
+  // Right after checkout, poll for a minute while the payment webhook buys the number.
+  const [polling, setPolling] = useState(false);
+  useEffect(() => {
+    if (returned !== "success") return;
+    setPolling(true);
+    const t = setTimeout(() => setPolling(false), 60_000);
+    return () => clearTimeout(t);
+  }, [returned]);
+  const { data, mutate, error } = useSWR<MyPhoneNumbers>("/api/phone-numbers", fetcher, { refreshInterval: polling ? 3000 : 0 });
 
   if (error) return <Notice tone="red">{error.message}</Notice>;
   if (!data)
@@ -291,15 +301,15 @@ function BuyNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => void
       const r = await post<{ checkout_url?: string }>("/api/phone-numbers/purchase", { number: n.number, confirm_charge: !cost.free });
       if (r?.checkout_url) {
         window.location.href = r.checkout_url;
-        return;
+        return; // stays busy while the browser leaves for checkout
       }
       setResults(null);
       setArea("");
       refresh();
       toast(`${n.friendly} added`);
+      setBuying(null);
     } catch (err) {
       toast((err as Error).message, "error");
-    } finally {
       setBuying(null);
     }
   }

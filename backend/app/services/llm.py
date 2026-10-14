@@ -153,10 +153,13 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                     cfg.get("calendar_timezone"), time_of_day=args.get("time_of_day", ""), time=args.get("time", ""),
                     exclude={x["start"] for x in state.get("slots") or []})
                 state["slots"] = calendar.remember_slots(state.get("slots") or [], slots)
+                if slots:
+                    state["last_found"] = slots
                 result = ("Open: " + "; ".join(s["label"] for s in slots)) if slots else \
                     "No new openings for that. Offer a different day or time of day."
             elif name == "book_appointment":
-                slot = calendar.pick_slot(state.get("slots") or [], args.get("slot", ""))
+                slot = calendar.pick_slot(state.get("slots") or [], args.get("slot", ""), cfg.get("calendar_timezone"),
+                                          state.get("last_found"))
                 user_turns = [m["content"] for m in history if m.get("role") == "user"]
                 if not state.get("slots"):
                     result = "No slots offered yet — call check_availability first."

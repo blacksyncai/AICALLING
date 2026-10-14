@@ -15,7 +15,7 @@ import { formatDateTime, formatDuration, humanize } from "@/lib/utils";
 
 const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "no_answer", "completed", "failed"];
 const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
-const TYPE_CHIP: Record<string, string> = { outbound: "Phone calls", web: "Browser tests" };
+const TYPE_CHIP: Record<string, string> = { outbound: "Outbound calls", inbound: "Inbound calls", web: "Browser tests" };
 const PAGE = 25;
 
 export default function CallsPage() {
@@ -93,7 +93,8 @@ function CallLogs() {
         </Select>
         <Select className="sm:w-56" value={type} onChange={(e) => setFilter("call_type", e.target.value)} aria-label="Call type">
           <option value="">Phone + browser</option>
-          <option value="outbound">Phone calls</option>
+          <option value="outbound">Outbound calls</option>
+          <option value="inbound">Inbound calls</option>
           <option value="web">Browser tests</option>
         </Select>
       </div>

@@ -43,3 +43,8 @@ def test_streamed_in_pieces():
 def test_stage_directions_in_brackets_are_not_spoken():
     assert clean("Okay, thanks so much. Have a great day! [Call ended]") == "Okay, thanks so much. Have a great day!"
     assert clean("[Call ended]") == ""
+
+
+def test_internal_names_are_not_spoken_but_emails_with_underscores_are():
+    assert clean("Got it, thanks for your time. end_call") == "Got it, thanks for your time."
+    assert clean("Is that john_smith@gmail.com?") == "Is that john_smith@gmail.com?"
