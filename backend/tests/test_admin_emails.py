@@ -58,3 +58,45 @@ def test_admin_sends_catch_up_emails_once(client, monkeypatch):
 def test_admin_emails_are_admin_only(make_client):
     anon = make_client()
     assert anon.get("/api/admin/emails").status_code in (401, 403)
+
+
+def test_admin_invites_new_people(client, monkeypatch):
+    from app.config import settings
+    from app.services import email
+
+    sent = []
+
+    async def fake_send(to, subject, html, sender=None):
+        sent.append((to, subject, html))
+        return True
+
+    monkeypatch.setattr(settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email, "send_email", fake_send)
+    existing = f"has-acct-{uuid.uuid4().hex[:6]}@example.com"
+    _new_user(existing)
+    new = f"Invitee-{uuid.uuid4().hex[:6]}@Example.com"
+
+    p = client.get("/api/admin/emails/invites/preview",
+                   params={"first_name": "Jordan", "email": new, "inviter": "Hamza", "note": "Would love your take!"}).json()
+    assert p["subject"] == "Hamza invited you to try BlackSync AI"
+    assert "Hey Jordan, Hamza invited you to test out BlackSync AI." in p["html"]
+    assert "Would love your take!" in p["html"] and "/sign-up?email=" in p["html"]
+
+    r = client.post("/api/admin/emails/invites", json={"inviter": "Hamza", "people": [
+        {"first_name": "Jordan", "email": new}, {"first_name": "Dup", "email": new.lower()},
+        {"first_name": "Dana", "email": existing}, {"email": "not-an-email"}]}).json()
+    assert r["sent"] == [new.lower()] and r["invalid"] == ["not-an-email"]
+    assert r["skipped"] == [{"email": existing, "reason": "already has an account"}]
+    assert len(sent) == 1 and sent[0][0] == new.lower() and "Hey Jordan" in sent[0][2]
+
+    # Again: skipped unless resending.
+    r = client.post("/api/admin/emails/invites", json={"people": [{"email": new}]}).json()
+    assert r["sent"] == [] and r["skipped"][0]["reason"] == "already invited"
+    r = client.post("/api/admin/emails/invites", json={"people": [{"email": new}], "resend": True}).json()
+    assert r["sent"] == [new.lower()] and "Hey Jordan" in sent[-1][2]  # keeps the name from the first invite
+
+    row = next(i for i in client.get("/api/admin/emails/invites").json()["items"] if i["email"] == new.lower())
+    assert row["send_count"] == 2 and row["joined_at"] is None
+    _new_user(new.lower())
+    row = next(i for i in client.get("/api/admin/emails/invites").json()["items"] if i["email"] == new.lower())
+    assert row["joined_at"]

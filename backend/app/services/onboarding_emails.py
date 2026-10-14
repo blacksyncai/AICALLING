@@ -86,9 +86,9 @@ def _help_block(booking_url: str | None, heading: str = "Prefer a little help?",
 
 
 def _designed(*, title: str, preheader: str, eyebrow: str, heading: str, intro: str, steps: str,
-              cta_label: str, cta_note: str, help_block: str) -> str:
+              cta_label: str, cta_note: str, help_block: str, cta_href: str | None = None) -> str:
     """The BlackSync email layout: dark header, eyebrow + heading, numbered steps, one big button, optional help."""
-    href = html.escape(f"{_app_url()}/dashboard", quote=True)
+    href = html.escape(cta_href or f"{_app_url()}/dashboard", quote=True)
     steps_html = (f"""<tr>
             <td style="padding:10px 28px 24px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#faf6f2;border-radius:12px;">
@@ -230,6 +230,39 @@ def followup_email(user: User, booking_url: str) -> tuple[str, str]:
                                label="Book a Free Walkthrough"),
     )
     return "Want a hand setting up your AI agent?", body
+
+
+def platform_invite_email(first_name: str, email: str, inviter: str, note: str = "") -> tuple[str, str]:
+    """An admin's personal invite for someone without an account: try the platform, sign up with this email."""
+    from urllib.parse import quote
+
+    first = html.escape(first_name.strip())
+    who = html.escape(inviter.strip() or "The BlackSync team")
+    note_html = ""
+    if note.strip():
+        lines = "<br>".join(html.escape(x) for x in note.strip().splitlines())
+        note_html = (f'<br><br><span style="display:block;border-left:3px solid #f15a24;padding:4px 0 4px 14px;'
+                     f'color:#444;font-style:italic;">{lines}<br><span style="font-style:normal;color:#888;">'
+                     f'&mdash; {who}</span></span>')
+    body = _designed(
+        title=f"{inviter.strip() or 'BlackSync'} invited you to BlackSync AI",
+        preheader=f"{inviter.strip() or 'We'} invited you to test out the new BlackSync AI calling platform.",
+        eyebrow="YOU'RE INVITED",
+        heading=f"Hey{' ' + first if first else ''}, {who} invited you to test out BlackSync AI.",
+        intro="We're opening our new AI calling platform to a few people, and we'd love for you to try it. "
+              "BlackSync agents call your leads, answer your phone and book meetings on your calendar &mdash; "
+              "and they sound like a real person." + note_html,
+        steps=_steps([
+            ("Create your account", "Takes under a minute &mdash; no card needed. Use this email so we know it's you."),
+            ("Build your first agent", "Tell BlackSync about your business and it writes the script, voice and call flow."),
+            ("Hear it call", "Talk to your agent right in your browser, tweak anything, then point it at your leads."),
+        ]),
+        cta_label="Accept Your Invite",
+        cta_note="Free to try &mdash; no card needed",
+        help_block="",
+        cta_href=f"{_app_url()}/sign-up?email={quote(email.strip())}",
+    )
+    return f"{inviter.strip() or 'BlackSync'} invited you to try BlackSync AI", body
 
 
 async def send_welcome(db, user_id: uuid.UUID, org_id: uuid.UUID) -> bool:

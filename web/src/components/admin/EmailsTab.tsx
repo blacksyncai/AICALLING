@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Modal, Notice, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
+import { InvitesCard } from "./InvitesCard";
 import { cn } from "@/lib/utils";
 
 type Kind = "welcome" | "catchup" | "walkthrough";
@@ -99,6 +100,8 @@ export function EmailsTab() {
   return (
     <div className="space-y-4">
       {!data.email_enabled && <Notice tone="amber">Email isn&apos;t set up on the server, so nothing can be sent.</Notice>}
+
+      <InvitesCard emailEnabled={data.email_enabled} />
 
       <div className="grid gap-3 md:grid-cols-3">
         {data.kinds.map((k) => {

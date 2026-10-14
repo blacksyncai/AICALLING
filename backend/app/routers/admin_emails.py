@@ -7,13 +7,14 @@ who already got it and a send skips them unless the admin explicitly chooses to 
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.account import Membership, Organization, User
 from app.services.auth import AdminDep, DbDep
@@ -127,3 +128,96 @@ async def send(body: SendBody, admin: AdminDep, db: DbDep):
     log.info("admin_emails_sent", kind=body.kind, by=str(admin.id), sent=len(sent), skipped=len(skipped),
              failed=len(failed))
     return {"sent": sent, "skipped": skipped, "failed": failed}
+
+
+# ── Invites: email people who don't have an account yet ─────────────────────────
+
+
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class Invitee(BaseModel):
+    first_name: str = Field(default="", max_length=100)
+    email: str = Field(max_length=320)
+
+
+class InviteBody(BaseModel):
+    people: list[Invitee] = Field(min_length=1, max_length=200)
+    inviter: str = Field(default="", max_length=100)
+    note: str = Field(default="", max_length=1000)
+    resend: bool = False  # also email people who were already invited
+
+
+def _inviter(admin: User, name: str) -> str:
+    return name.strip() or (admin.first_name or "").strip() or "The BlackSync team"
+
+
+@router.get("/invites")
+async def invites(admin: AdminDep, db: DbDep):
+    from app.models.invite import PlatformInvite
+
+    rows = (await db.execute(select(PlatformInvite).order_by(PlatformInvite.sent_at.desc()).limit(500))).scalars().all()
+    emails = [r.email for r in rows]
+    joined = {}
+    if emails:
+        for u in (await db.execute(select(User).where(func.lower(User.email).in_(emails)))).scalars().all():
+            joined[u.email.lower()] = _iso(u.created_at)
+    return {
+        "default_inviter": _inviter(admin, ""),
+        "items": [{"id": str(r.id), "email": r.email, "first_name": r.first_name, "inviter": r.inviter_name,
+                   "sent_at": _iso(r.sent_at), "send_count": r.send_count, "joined_at": joined.get(r.email)}
+                  for r in rows],
+    }
+
+
+@router.get("/invites/preview")
+async def invite_preview(admin: AdminDep, first_name: str = "", email: str = "", inviter: str = "", note: str = ""):
+    from app.services.onboarding_emails import platform_invite_email
+
+    subject, html = platform_invite_email(first_name[:100] or "Alex", email[:320] or "alex@example.com",
+                                          _inviter(admin, inviter[:100]), note[:1000])
+    return {"subject": subject, "html": html, "to": email or "alex@example.com"}
+
+
+@router.post("/invites")
+async def send_invites(body: InviteBody, admin: AdminDep, db: DbDep):
+    from app.models.invite import PlatformInvite
+    from app.services.email import email_enabled, send_email
+    from app.services.onboarding_emails import platform_invite_email
+
+    if not email_enabled():
+        raise HTTPException(status_code=409, detail="Email isn't set up on the server.")
+    inviter = _inviter(admin, body.inviter)
+    sent, skipped, failed, invalid = [], [], [], []
+    seen = set()
+    for p in body.people:
+        email = p.email.strip().lower()
+        if email in seen:
+            continue
+        seen.add(email)
+        if not _EMAIL.match(email):
+            invalid.append(p.email)
+            continue
+        if (await db.execute(select(User.id).where(func.lower(User.email) == email))).first():
+            skipped.append({"email": email, "reason": "already has an account"})
+            continue
+        row = (await db.execute(select(PlatformInvite).where(PlatformInvite.email == email))).scalar_one_or_none()
+        if row and not body.resend:
+            skipped.append({"email": email, "reason": "already invited"})
+            continue
+        first = p.first_name.strip() or (row.first_name if row else "")
+        subject, html = platform_invite_email(first, email, inviter, body.note)
+        if not await send_email(email, subject, html):
+            failed.append(email)
+            continue
+        now = datetime.now(timezone.utc)
+        if row:
+            row.first_name, row.inviter_name, row.note = first, inviter, body.note
+            row.sent_at, row.send_count, row.invited_by = now, row.send_count + 1, admin.id
+        else:
+            db.add(PlatformInvite(email=email, first_name=first, inviter_name=inviter, note=body.note,
+                                  invited_by=admin.id, sent_at=now))
+        await db.commit()
+        sent.append(email)
+    log.info("platform_invites_sent", by=str(admin.id), sent=len(sent), skipped=len(skipped), failed=len(failed))
+    return {"sent": sent, "skipped": skipped, "failed": failed, "invalid": invalid}
