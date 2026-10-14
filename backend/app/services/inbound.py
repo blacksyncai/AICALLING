@@ -41,7 +41,11 @@ def _lk() -> api.LiveKitAPI:
 
 
 async def _inbound_trunk(lk: api.LiveKitAPI):
-    trunks = (await lk.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())).items
+    from app.services.bandwidth import BRIDGE_TRUNK_NAME
+
+    # The Bandwidth hand-off trunk is managed separately; numbers from the main carrier never go on it.
+    trunks = [t for t in (await lk.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())).items
+              if t.name != BRIDGE_TRUNK_NAME]
     if not trunks:
         raise InboundError("Inbound calling isn't set up on the platform yet (no LiveKit inbound trunk).")
     want = getattr(settings, "livekit_sip_inbound_trunk_id", "") or ""
