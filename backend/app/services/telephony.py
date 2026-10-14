@@ -199,7 +199,9 @@ async def sync_inbound_numbers() -> int:
     from app.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
-        nums = (await db.execute(select(PhoneNumber.number).where(PhoneNumber.status == "active"))).scalars().all()
+        nums = (await db.execute(select(PhoneNumber.number).where(
+            PhoneNumber.status == "active",
+            (PhoneNumber.carrier.is_(None)) | (PhoneNumber.carrier != "bandwidth")))).scalars().all()  # Bandwidth: own trunk
     for n in nums:
         await _inbound_ready(n)
     return len(nums)
