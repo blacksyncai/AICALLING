@@ -261,7 +261,7 @@ def test_refund_and_dispute_claw_back_unused_credits(client, make_client, stripe
 # ── Credits engine ────────────────────────────────────────────────────────────
 
 
-def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="completed"):
+def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="completed", answered=True):
     from app.database import AsyncSessionLocal
     from app.models.call_log import CallLog
 
@@ -272,7 +272,8 @@ def _finish_call(client, org_id, agent_id, seconds, call_id=None, outcome="compl
         async with AsyncSessionLocal() as db:
             db.add(CallLog(id=call_id, org_id=uuid.UUID(org_id), agent_id=uuid.UUID(agent_id), call_type="outbound",
                            to_phone="+14155550123", livekit_room_name=f"call-{call_id}", status="connected",
-                           started_at=now - timedelta(seconds=seconds + 5), answered_at=now - timedelta(seconds=seconds)))
+                           started_at=now - timedelta(seconds=seconds + 5),
+                           answered_at=now - timedelta(seconds=seconds) if answered else None))
             await db.commit()
 
     asyncio.run(make())
@@ -308,9 +309,12 @@ def test_per_second_billing_rates_carry_and_never_negative(client, make_client):
     org2, c2 = _account(client, make_client, "No Answer Co", credits=5)
     agent2 = c2.get("/api/agents/").json()[0]
     for outcome in ("no_answer", "failed"):
-        cid = _finish_call(client, org2["id"], agent2["id"], 40, outcome=outcome)
+        cid = _finish_call(client, org2["id"], agent2["id"], 40, outcome=outcome, answered=False)
         assert c2.get(f"/api/calls/{cid}").json()["credits_used"] == 0
     assert _balance(c2) == 5
+    # A line that picked up but nobody spoke is connected time: billed like any call (40 s at 1.0 + one line minute).
+    cid = _finish_call(client, org2["id"], agent2["id"], 40, outcome="no_answer")
+    assert c2.get(f"/api/calls/{cid}").json()["credits_used"] == 0.72
 
 
 def test_included_credits_spent_first_and_expire_purchased_never(client, make_client, stripe, monkeypatch):

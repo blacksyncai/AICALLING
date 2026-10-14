@@ -316,8 +316,10 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
     agent = await db.get(Agent, call.agent_id) if call.agent_id else None
     seconds = max(0, int(call.duration_seconds or 0))
     phone = call.call_type in ("outbound", "inbound")
-    # Only connected talk time is billed: a call that rang out, was busy or failed costs nothing.
-    if call.outcome in UNBILLED_OUTCOMES or (phone and call.answered_at is None and seconds == 0):
+    # Only connected talk time is billed: a call that rang out, was busy or never connected costs nothing.
+    # A line that picked up and stayed silent ("no answer" after pickup) is connected time and is billed.
+    if (call.outcome in UNBILLED_OUTCOMES and (not phone or call.answered_at is None)) or \
+            (phone and call.answered_at is None and seconds == 0):
         seconds = 0
     rate = call.credit_rate if call.credit_rate is not None else await rate_for_agent(db, agent)
     call.credit_rate = rate  # keep the rate this call was billed at
