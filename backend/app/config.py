@@ -131,6 +131,9 @@ class Settings(BaseSettings):
 
     # ── Deployment ────────────────────────────────────────────────────────────
     webhook_base_url: str = "http://localhost:8000"
+    # Shared by the API and the voice worker in one container (start.sh makes one per boot); the worker
+    # sends it on every /internal call. Empty = no check (local dev, tests).
+    internal_token: str = ""
     # Public URL of the web app — used in invite links (falls back to the request's host).
     app_url: str = ""
 
@@ -206,6 +209,10 @@ class Settings(BaseSettings):
         if url.startswith("ws://"):
             return "http://" + url[len("ws://"):]
         return url
+
+    @property
+    def internal_headers(self) -> dict:
+        return {"X-Internal-Token": self.internal_token} if self.internal_token else {}
 
     @property
     def api_base_url(self) -> str:

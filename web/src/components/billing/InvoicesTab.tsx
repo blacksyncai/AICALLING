@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Notice, Spinner } from "@/components/ui";
 import { Card, CardHeader, emptyCls, listCls, rowCls } from "./surface";
-import { cn } from "@/lib/utils";
+import { cn, humanize } from "@/lib/utils";
 import { fetcher, post } from "@/lib/api";
 import { type Card as CardInfo, type Purchase, fmtDate, fmtDateTime, usd } from "./types";
 
@@ -88,7 +88,7 @@ export function InvoicesTab({ canManage }: { canManage: boolean }) {
                   <span className="block font-medium text-zinc-800">{i.number ?? i.id}</span>
                   <span className="text-xs text-zinc-500">{fmtDate(i.created)}</span>
                 </span>
-                <Badge tone={STATUS_TONE[i.status] ?? "gray"}>{i.status}</Badge>
+                <Badge tone={STATUS_TONE[i.status] ?? "gray"}>{humanize(i.status)}</Badge>
                 <span className="w-20 text-right tabular-nums">{usd(i.total_cents)}</span>
                 <span className="flex gap-2">
                   {i.hosted_url && (
@@ -126,7 +126,7 @@ export function InvoicesTab({ canManage }: { canManage: boolean }) {
                     {p.error ? ` · ${p.error}` : ""}
                   </span>
                 </span>
-                <Badge tone={STATUS_TONE[p.status] ?? "gray"}>{p.status.replace("_", " ")}</Badge>
+                <Badge tone={STATUS_TONE[p.status] ?? "gray"}>{humanize(p.status)}</Badge>
                 <span className="w-20 text-right tabular-nums">{usd(p.amount_cents)}</span>
               </li>
             ))}

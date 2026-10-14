@@ -10,38 +10,12 @@ import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import type { Call } from "@/lib/types";
-import { cn, formatCredits, formatDateTime, formatDuration, humanize } from "@/lib/utils";
+import { cn, formatCredits, formatDateTime, formatDuration, humanize, toolLabel } from "@/lib/utils";
 
 function fmtTs(ts?: number) {
   if (ts === undefined) return "";
   const s = Math.max(0, Math.round(ts));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-/** A plain-language line for an agent action in the transcript; null hides internal steps. */
-function toolLabel(tool: string | undefined, args: Record<string, unknown> | undefined): string | null {
-  const a = args ?? {};
-  const str = (v: unknown) => (typeof v === "string" ? v : "");
-  switch (tool) {
-    case "check_availability":
-    case "book_meeting":
-      return "Checked the calendar";
-    case "book_appointment":
-    case "confirm_meeting":
-      return "Booked the appointment" + (str(a.email) ? ` · ${str(a.email)}` : "");
-    case "transfer_call":
-      return "Transferred the call";
-    case "voicemail":
-      return a.action === "left_message" ? "Left a voicemail" : "Reached voicemail";
-    case "end_call":
-      return a.reason === "silence" ? "Ended the call after silence" : "Ended the call" + (str(a.outcome) ? ` · ${humanize(str(a.outcome))}` : "");
-    case "qualify_lead":
-      return "Qualified the lead";
-    case "log_qualification_answer":
-      return str(a.question) ? `Noted: ${str(a.question)} — ${str(a.answer)}` : null;
-    default:
-      return null;
-  }
 }
 
 export default function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -172,8 +146,8 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
                 <dl className="mt-3 space-y-1.5 text-xs">
                   {[
                     ["Waiting for caller to finish", call.metrics.avg_eou],
-                    ["AI first word (LLM)", call.metrics.avg_llm_ttft],
-                    ["Voice first audio (TTS)", call.metrics.avg_tts_ttfb],
+                    ["AI thinking time", call.metrics.avg_llm_ttft],
+                    ["Voice start time", call.metrics.avg_tts_ttfb],
                   ].map(([label, v]) => (
                     <div key={label as string} className="flex justify-between gap-3">
                       <dt className="text-zinc-500">{label}</dt>
@@ -190,8 +164,8 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
               {extracted.length === 0 && <p className="px-5 py-4 text-sm text-zinc-500">Nothing extracted yet.</p>}
               {extracted.map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4 px-5 py-2.5 text-sm">
-                  <dt className="font-mono text-xs text-zinc-500">{k}</dt>
-                  <dd className="text-right text-zinc-800">{v === null || v === undefined || v === "" ? "—" : String(v)}</dd>
+                  <dt className="text-xs text-zinc-500">{humanize(k)}</dt>
+                  <dd className="text-right text-zinc-800">{v === null || v === undefined || v === "" ? "—" : Array.isArray(v) ? v.map(String).join(", ") : typeof v === "object" ? Object.entries(v as Record<string, unknown>).map(([a, b]) => `${humanize(a)}: ${String(b)}`).join(" · ") : String(v)}</dd>
                 </div>
               ))}
             </dl>

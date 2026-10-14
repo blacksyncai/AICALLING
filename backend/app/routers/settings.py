@@ -210,7 +210,15 @@ def _fallback_response(message: str) -> dict:
 
 
 @router.get("/status")
-async def integration_status():
+async def integration_status(user=Depends(get_current_user)):
+    caps = {
+        "chat_test": bool(settings.openai_api_key),
+        "web_call": settings.voice_ready,
+        "phone_call": settings.phone_ready,
+        "post_call_analysis": bool(settings.openai_api_key),
+    }
+    if not getattr(user, "is_superadmin", False):
+        return {"capabilities": caps}  # customers only need to know what works, not what it runs on
     return {
         "database": "sqlite" if settings.is_sqlite else "postgres",
         "integrations": {

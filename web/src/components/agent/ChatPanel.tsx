@@ -4,7 +4,7 @@ import { RotateCcw, Send, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { post } from "@/lib/api";
 import type { ChatTurn, ToolEvent } from "@/lib/types";
-import { cn, humanize } from "@/lib/utils";
+import { cn, humanize, toolLabel } from "@/lib/utils";
 import { Button, Notice } from "../ui";
 
 type Item = ChatTurn | { role: "tool"; event: ToolEvent };
@@ -87,12 +87,15 @@ export function ChatPanel({
       <div ref={scrollRef} className="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg bg-zinc-50 p-3">
         {items.map((m, i) =>
           m.role === "tool" ? (
-            <div key={i} className="flex items-start gap-1.5 text-[11px] text-zinc-500">
-              <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>
-                <span className="font-mono font-medium text-zinc-700">{m.event.tool}</span>({Object.values(m.event.args).map(String).join(", ")}) → {m.event.result}
-              </span>
-            </div>
+            toolLabel(m.event.tool, m.event.args) && (
+              <div key={i} className="flex items-start gap-1.5 text-[11px] text-zinc-500">
+                <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>
+                  <span className="font-medium text-zinc-700">{toolLabel(m.event.tool, m.event.args)}</span>
+                  {m.event.result ? ` — ${m.event.result}` : ""}
+                </span>
+              </div>
+            )
           ) : (
             <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
               <div

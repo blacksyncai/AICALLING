@@ -26,7 +26,7 @@ export default function PricingPage() {
         <div className="mb-8 flex items-center justify-between">
           <span className="font-display text-lg font-semibold text-zinc-900">BlackSync AI</span>
           <Link href="/sign-up" className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">
-            Start free
+            Create your account
           </Link>
         </div>
         <PricingHeading title="Simple plans for AI calling" description="Every plan includes calling credits each month and every core feature. Need more? Credits, agent slots and numbers can be added any time." />

@@ -38,3 +38,8 @@ def test_streamed_in_pieces():
 
     out, cut = asyncio.run(run())
     assert out == "Which works better for you?" and cut and cut[0].startswith("We need")
+
+
+def test_stage_directions_in_brackets_are_not_spoken():
+    assert clean("Okay, thanks so much. Have a great day! [Call ended]") == "Okay, thanks so much. Have a great day!"
+    assert clean("[Call ended]") == ""

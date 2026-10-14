@@ -2,8 +2,10 @@
 
 import { Cpu, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
+import useSWR from "swr";
 import { VoicePicker } from "@/components/agent/VoicePicker";
 import { Field, Input, Notice, Select, Toggle } from "@/components/ui";
+import { fetcher } from "@/lib/api";
 import type { BuilderCatalog, DraftData } from "@/lib/builder";
 import type { Voice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -21,7 +23,14 @@ export const LANGUAGES: [string, string][] = [
   ["multi", "Multilingual"],
 ];
 
-export const RECOMMENDED_MODEL = "GPT-4.1 nano";
+export const RECOMMENDED_MODEL = "our recommended model";
+
+/** A model's display name (never its raw id). */
+export function useModelName(id: string | undefined | null): string {
+  const { data } = useSWR<{ models: { id: string; name: string }[] }>(id ? "/api/settings/models" : null, fetcher, { revalidateOnFocus: false });
+  if (!id) return RECOMMENDED_MODEL;
+  return data?.models.find((m) => m.id === id)?.name ?? "the agent's model";
+}
 export const MODEL_NOTE = "We'll use the recommended model; change it anytime in the agent editor.";
 
 export type VoicesResponse = { source: string; voices: Voice[]; featured?: Voice[] };
@@ -111,7 +120,7 @@ export function PersonalityFields({
       <div className="flex items-start gap-2 rounded-lg bg-zinc-100/70 px-3 py-2 text-xs text-zinc-600">
         <Cpu className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" />
         <span>
-          <span className="font-medium text-zinc-800">AI model: {RECOMMENDED_MODEL} (recommended).</span> {MODEL_NOTE}
+          <span className="font-medium text-zinc-800">AI model: {RECOMMENDED_MODEL}.</span> {MODEL_NOTE}
         </span>
       </div>
 

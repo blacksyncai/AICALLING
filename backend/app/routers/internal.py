@@ -5,20 +5,29 @@ Internal router — called only by the voice worker over the private network
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runtime import agent_to_runtime
+from app.config import settings
 from app.database import get_db
 from app.models.agent import Agent
 
 log = structlog.get_logger(__name__)
-router = APIRouter(prefix="/internal", tags=["internal"], include_in_schema=False)
+async def _internal_only(x_internal_token: Annotated[str | None, Header()] = None) -> None:
+    """Only the voice worker in this container may call these (it knows the per-boot token)."""
+    if settings.internal_token and not hmac.compare_digest(x_internal_token or "", settings.internal_token):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+router = APIRouter(prefix="/internal", tags=["internal"], include_in_schema=False,
+                   dependencies=[Depends(_internal_only)])
 
 
 class CallOutcomePayload(BaseModel):

@@ -175,9 +175,18 @@ async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, ro
         except Exception:
             pass
     except Exception as exc:
-        log.exception("livekit_sip_error", room=room_name, to=req.sip_call_to, trunk=req.sip_trunk_id,
-                      error=str(exc), error_type=exc.__class__.__name__)
-        await _mark_call_failed(call_id, lead_id, "failed", "Call failed — the call couldn't be connected.")
+        if "timed out" in str(exc).lower():
+            # Rang out (ringing_timeout) — nobody picked up. That's a no-answer, not a failure.
+            log.info("livekit_sip_no_answer", room=room_name, to=req.sip_call_to, error=str(exc)[:120])
+            await _mark_call_failed(call_id, lead_id, "no_answer", "Not answered.")
+        else:
+            log.exception("livekit_sip_error", room=room_name, to=req.sip_call_to, trunk=req.sip_trunk_id,
+                          error=str(exc), error_type=exc.__class__.__name__)
+            await _mark_call_failed(call_id, lead_id, "failed", "Call failed — the call couldn't be connected.")
+        try:
+            await lk.room.delete_room(api.DeleteRoomRequest(room=room_name))
+        except Exception:
+            pass
     finally:
         await lk.aclose()
 

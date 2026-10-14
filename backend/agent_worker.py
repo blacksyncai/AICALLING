@@ -176,7 +176,7 @@ class PounceAgent(Agent):
             try:
                 async with _httpx.AsyncClient(timeout=5.0) as client:
                     await client.patch(
-                        f"{settings.api_base_url}/internal/leads/{self._state.lead_id}",
+                        f"{settings.api_base_url}/internal/leads/{self._state.lead_id}", headers=settings.internal_headers,
                         json={"question": question, "answer": answer},
                     )
             except Exception as exc:
@@ -360,7 +360,7 @@ async def _push_live_event(call_log_id: str, event: dict) -> None:
     try:
         async with _httpx.AsyncClient(timeout=2.0) as client:
             await client.post(
-                f"{settings.api_base_url}/internal/calls/{call_log_id}/live-event",
+                f"{settings.api_base_url}/internal/calls/{call_log_id}/live-event", headers=settings.internal_headers,
                 json=event,
             )
     except Exception as exc:
@@ -381,7 +381,7 @@ async def _post_call_outcome(state, outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome",
+                f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome", headers=settings.internal_headers,
                 json={
                     "outcome": outcome,
                     "qualification_score": state.qualification_score,
@@ -692,7 +692,7 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{settings.api_base_url}/internal/calls/{run.call_log_id}/outcome",
+                f"{settings.api_base_url}/internal/calls/{run.call_log_id}/outcome", headers=settings.internal_headers,
                 json={
                     "outcome": outcome,
                     "agreed_meeting_time": run.meeting_time,
@@ -713,7 +713,7 @@ async def _fetch_agent_config(agent_id: str) -> dict | None:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(f"{settings.api_base_url}/internal/agents/{agent_id}/runtime")
+            resp = await client.get(f"{settings.api_base_url}/internal/agents/{agent_id}/runtime", headers=settings.internal_headers)
             resp.raise_for_status()
             return resp.json()
     except Exception as exc:
@@ -763,7 +763,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
 
     guard = {"refused": False}
 
-    async def end_call(outcome: str, context: RunContext) -> str:
+    async def end_call(outcome: str, context: RunContext) -> str | None:
         """Hang up the call. Call this only AFTER you've said goodbye.
 
         Args:
@@ -786,7 +786,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                  turns=sum(1 for t in run.transcript if t.get("role") in ("user", "assistant")))
         asyncio.create_task(_post_run_outcome(run, outcome))
         _hangup(context)
-        return "Call is ending. Do not say anything else."
+        return None  # no output → no follow-up reply (it used to speak things like "[Call ended]")
 
     tools = [function_tool(end_call)]
 
@@ -1039,6 +1039,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             def _cut(dropped: str) -> None:
                 log.warning("llm_leak_cut", room=ctx.room.name, model=model, dropped=dropped[:80])
 
+            from app.agent.chat_order import contact_last
+
+            chat_ctx = contact_last(chat_ctx)
             async for chunk in guarded(Agent.default.llm_node(self, chat_ctx, tools, model_settings), _cut):
                 yield chunk
 
@@ -1402,7 +1405,7 @@ async def _run_inbound(ctx: JobContext) -> None:
     routed = None
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(f"{settings.api_base_url}/internal/inbound-call",
+            resp = await client.post(f"{settings.api_base_url}/internal/inbound-call", headers=settings.internal_headers,
                                      json={"to": to_number, "from_number": from_number, "room": ctx.room.name})
             if resp.status_code == 200:
                 routed = resp.json()

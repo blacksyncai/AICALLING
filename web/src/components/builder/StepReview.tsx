@@ -7,7 +7,7 @@ import { CUSTOM_USE_CASE, type BuilderCatalog, type BusinessProfile, type DraftD
 import { cn } from "@/lib/utils";
 import { customDescription, presetKeys, selectedKeys, useCasesFor } from "./goal";
 import { decidesLater, recommendedRows } from "./StepFineTune";
-import { LANGUAGES, RECOMMENDED_MODEL, type VoicesResponse } from "./StepPersonality";
+import { LANGUAGES, useModelName, type VoicesResponse } from "./StepPersonality";
 import { StepTitle, displayHost } from "./parts";
 
 const REPRESENT: Record<string, string> = {
@@ -38,6 +38,7 @@ export function StepReview({
   const b = data.business ?? {};
   const g = data.goal ?? {};
   const be = data.behavior ?? {};
+  const modelName = useModelName(be.llm_model);
   const industry = catalog?.industries.find((i) => i.key === b.industry)?.label ?? b.industry;
   const ucs = useCasesFor(catalog, b.industry);
   const keys = selectedKeys(g);
@@ -106,7 +107,7 @@ export function StepReview({
         </Group>
         <Group title="Voice" onEdit={() => onEdit(5)}>
           <Row label="Voice" value={`${voice}${language ? ` · ${language}` : ""}`} />
-          <Row label="AI model" value={`${be.llm_model || RECOMMENDED_MODEL}`} />
+          <Row label="AI model" value={modelName.charAt(0).toUpperCase() + modelName.slice(1)} />
         </Group>
       </div>
     </div>

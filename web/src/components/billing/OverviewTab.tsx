@@ -4,7 +4,7 @@ import { Coins, CreditCard, Hash, UserSearch } from "lucide-react";
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui";
 import { Card, CardHeader, PillAction, emptyCls, listCls, rowCls } from "./surface";
-import { cn } from "@/lib/utils";
+import { cn, humanize } from "@/lib/utils";
 import { type Overview, fmtDate, fmtDateTime, usd } from "./types";
 import { amount } from "./units";
 
@@ -55,7 +55,7 @@ export function OverviewTab({ overview: o, go }: { overview: Overview; go: Go })
               "Pay as you go with credit packs"
             ) : (
               <span className="flex flex-wrap items-center gap-1.5">
-                <Badge tone={STATUS_TONE[plan.status] ?? "gray"}>{plan.status.replace("_", " ")}</Badge>
+                <Badge tone={STATUS_TONE[plan.status] ?? "gray"}>{plan.status === "trialing" ? "Active" : humanize(plan.status)}</Badge>
                 {plan.cancel_at_period_end ? `Ends ${fmtDate(plan.current_period_end)}` : plan.current_period_end ? `Renews ${fmtDate(plan.current_period_end)}` : null}
               </span>
             )

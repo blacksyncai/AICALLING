@@ -57,3 +57,29 @@ export const OUTCOME_TONE: Record<string, "green" | "blue" | "amber" | "red" | "
 };
 
 export const CAMPAIGN_TONE = { draft: "gray", running: "green", paused: "amber", completed: "blue", cancelled: "red" } as const;
+
+/** A plain-language line for an agent action in the transcript; null hides internal steps. */
+export function toolLabel(tool: string | undefined, args: Record<string, unknown> | undefined): string | null {
+  const a = args ?? {};
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  switch (tool) {
+    case "check_availability":
+    case "book_meeting":
+      return "Checked the calendar";
+    case "book_appointment":
+    case "confirm_meeting":
+      return "Booked the appointment" + (str(a.email) ? ` · ${str(a.email)}` : "");
+    case "transfer_call":
+      return "Transferred the call";
+    case "voicemail":
+      return a.action === "left_message" ? "Left a voicemail" : "Reached voicemail";
+    case "end_call":
+      return a.reason === "silence" ? "Ended the call after silence" : "Ended the call" + (str(a.outcome) ? ` · ${humanize(str(a.outcome))}` : "");
+    case "qualify_lead":
+      return "Qualified the lead";
+    case "log_qualification_answer":
+      return str(a.question) ? `Noted: ${str(a.question)} — ${str(a.answer)}` : null;
+    default:
+      return null;
+  }
+}

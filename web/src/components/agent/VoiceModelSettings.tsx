@@ -75,7 +75,7 @@ export function VoiceModelSettings({
           </Select>
         </Field>
         <div>
-          <div className="mb-1.5 text-xs font-medium text-zinc-700">LLM model</div>
+          <div className="mb-1.5 text-xs font-medium text-zinc-700">AI model</div>
           <ModelPicker
             catalog={models}
             loading={modelsLoading}
@@ -123,7 +123,7 @@ export function VoiceModelSettings({
           <div id="voice-advanced" className="grid gap-5 border-t border-zinc-100 p-4 sm:grid-cols-2">
             <Field
               label={`Creativity (temperature) · ${draft.temperature.toFixed(1)}`}
-              hint={draft.llm_model.startsWith("claude-") ? "Claude models set this themselves; it's ignored for them." : "Lower = more consistent, higher = more varied."}
+              hint={draft.llm_model.startsWith("claude-") ? "This model sets its own creativity level." : "Lower = more consistent, higher = more varied."}
             >
               <input
                 type="range"

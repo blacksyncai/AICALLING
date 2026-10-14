@@ -5,8 +5,8 @@ Reasoning models (gpt-oss on Cerebras) sometimes stream their private notes and 
 the reply: "...for the invite?We need to capture email then book.Sure, you can send it to tony@...{ "slot":
 ... }". Everything after the first sign of that is dropped — never spoken, never kept in the call's history.
 
-Signs: a sentence running straight into the next with no space ("invite?We"), braces (JSON), and note /
-role markers. Tool calls in the same stream still go through.
+Signs: a sentence running straight into the next with no space ("invite?We"), braces (JSON), stage directions
+in square brackets ("[Call ended]"), and note / role markers. Tool calls in the same stream still go through.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 _SEAM = re.compile(r"(?<=[a-z0-9][.?!])(?=[A-Z])")  # "invite?We" — two messages glued together
-_MARKERS = re.compile(r"[{}]|\(Note|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
+_MARKERS = re.compile(r"[{}\[\]]|\(Note|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
                       re.IGNORECASE)
 _HOLD = 24  # keep this much unspoken until more arrives, so a marker split across chunks is still caught
 

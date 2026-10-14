@@ -16,7 +16,7 @@ import { AnimatedTabList } from "@/components/ui/animated-tabs";
 import { Badge, Button, Card, Field, Input, Notice, Select, Spinner, Toggle } from "@/components/ui";
 import { del, fetcher, patch, post, put } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, humanize, timeAgo } from "@/lib/utils";
 
 type Section = "push" | "pipeline" | "import" | "auto" | "triggers" | "variables" | "activity";
 interface Overview {
@@ -603,7 +603,7 @@ function ImportBuilder({ p, onSavedRule }: { p: Provider; onSavedRule: () => voi
                         {on && <CheckCircle2 className="h-3.5 w-3.5 text-brand-600" />}
                       </div>
                       <div className="mt-1 line-clamp-2 text-sm font-medium text-zinc-900">{st.label}</div>
-                      {st.kind !== "active" && <div className="mt-0.5 text-[11px] text-zinc-500">{st.kind}</div>}
+                      {st.kind !== "active" && <div className="mt-0.5 text-[11px] text-zinc-500">{st.kind === "won" ? "Won stage" : st.kind === "lost" ? "Lost stage" : humanize(st.kind)}</div>}
                     </button>
                     {i < (pipeline.stages?.length ?? 0) - 1 && <ArrowRight className="h-3.5 w-3.5 text-zinc-300" />}
                   </div>

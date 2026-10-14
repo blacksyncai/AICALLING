@@ -62,7 +62,7 @@ function CostPill({ rate, compact }: { rate?: number; compact?: boolean }) {
 const isBlackSync = (m: ModelOption) => m.provider === "BlackSync";
 
 function customModel(id: string): ModelOption {
-  return { id, name: id, provider: "Custom", description: "Saved on this agent; not in the model catalog.", speed: null, tags: [], recommended_for: [], status: "unknown", group: "other" };
+  return { id, name: "Current model", provider: "", description: "The model this agent uses now.", speed: null, tags: [], recommended_for: [], status: "unknown", group: "other" };
 }
 
 /**
@@ -100,7 +100,7 @@ export function ModelPicker({
   const rateOf = (id: string) => rates?.model_rates[id];
 
   const models = useMemo(() => {
-    const list: ModelOption[] = catalog?.models?.length ? catalog.models : fallbackIds.map(customModel).map((m) => ({ ...m, provider: "OpenAI", description: "" }));
+    const list: ModelOption[] = catalog?.models?.length ? catalog.models : fallbackIds.map(customModel).map((m) => ({ ...m, provider: "", description: "" }));
     return value && !list.some((m) => m.id === value) ? [...list, customModel(value)] : list;
   }, [catalog, fallbackIds, value]);
   const selected = models.find((m) => m.id === value);
@@ -165,7 +165,7 @@ export function ModelPicker({
           {selected && rateOf(value) === undefined && (
             <span className="text-zinc-500">
               {" · "}
-              {[selected.provider, selected.speed === "fast" ? "Fast" : null].filter(Boolean).join(" · ")}
+              {[isBlackSync(selected) ? selected.provider : null, selected.speed === "fast" ? "Fast" : null].filter(Boolean).join(" · ")}
             </span>
           )}
         </span>
@@ -237,8 +237,8 @@ export function ModelPicker({
                               <CostPill rate={rateOf(m.id)} />
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                              <span className={cn("font-medium", isBlackSync(m) ? "text-violet-500" : "text-zinc-400")}>{m.provider}</span>
-                              {m.speed && <span className="text-zinc-500">· {m.speed === "fast" ? "Fast" : "Standard speed"}</span>}
+                              {isBlackSync(m) && <span className="font-medium text-violet-500">{m.provider}</span>}
+                              {m.speed && <span className="text-zinc-500">{isBlackSync(m) ? "· " : ""}{m.speed === "fast" ? "Fast" : "Standard speed"}</span>}
                               {m.tags.includes("recommended") && (
                                 <span className="rounded bg-brand-50 px-1.5 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-100">Recommended</span>
                               )}

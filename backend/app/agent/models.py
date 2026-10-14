@@ -241,8 +241,8 @@ def model_catalog() -> list[dict]:
     for extra in dict.fromkeys([settings.llm_model]):
         if extra and extra not in known:
             models.append({
-                "id": extra, "name": extra, "provider": "OpenAI",
-                "description": "Server default model (LLM_MODEL).", "speed": None,
+                "id": extra, "name": "Default model", "provider": "",
+                "description": "The platform's default model.", "speed": None,
                 "tags": [], "recommended_for": [], "status": "available", "group": "other",
             })
     return models

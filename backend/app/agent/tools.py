@@ -232,7 +232,7 @@ async def _fire_log_answer(state: CallState, question: str, answer: str) -> None
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.patch(
-                f"{settings.api_base_url}/internal/leads/{state.lead_id}",
+                f"{settings.api_base_url}/internal/leads/{state.lead_id}", headers=settings.internal_headers,
                 json={"question": question, "answer": answer},
             )
     except Exception as exc:
@@ -244,7 +244,7 @@ async def _fire_end_call(state: CallState, outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome",
+                f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome", headers=settings.internal_headers,
                 json={
                     "outcome": outcome,
                     "qualification_score": state.qualification_score,

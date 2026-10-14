@@ -254,7 +254,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
               onClick={() => action("start", () => post(`/api/campaigns/${id}/start`), "Campaign started — dialing now")}
               loading={busy === "start"}
               disabled={!canDial || pending === 0 || !["draft", "paused"].includes(campaign.status)}
-              title={!canDial ? "Finish phone setup first" : pending === 0 ? "No contacts left to call" : undefined}
+              title={!canDial ? "Phone calling isn't available yet" : pending === 0 ? "No contacts left to call" : undefined}
             >
               <Play className="h-4 w-4" /> {campaign.status === "paused" ? "Resume" : "Start campaign"}
             </Button>
@@ -274,10 +274,8 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
       {!canDial && status && (
         <div className="mb-6">
           <Notice>
-            Phone calling isn&apos;t configured yet, so this campaign can&apos;t dial. You can still build the list now.{" "}
-            <Link href="/settings" className="font-medium underline">
-              Finish setup
-            </Link>
+            Phone calling isn&apos;t switched on for your account yet, so this campaign can&apos;t dial. You can still build
+            the list now — message us in the chat and we&apos;ll get it set up.
           </Notice>
         </div>
       )}
@@ -343,7 +341,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
               ))}
             </Select>
           </Field>
-          <Field label="Simultaneous calls" hint="How many calls can be live at once. Check your SIP trunk's limits.">
+          <Field label="Simultaneous calls" hint="How many calls can be live at once. More finishes the list faster; your plan may cap this.">
             <Select
               value={campaign.max_concurrent_calls}
               disabled={running}

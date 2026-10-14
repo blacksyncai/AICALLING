@@ -237,3 +237,46 @@ def test_calendar_offers_spread_new_and_specific_times():
     assert 15 in hour(choose_slots(starts, tz, "2030-01-10", time="15:00"))
     # A full day falls through to the next one with room.
     assert hour(choose_slots(starts, tz, "2030-01-10", exclude=set(starts[:8]))) == [10]
+
+
+def test_ring_out_is_recorded_as_no_answer(client, agent_id, monkeypatch):
+    """LiveKit's 'sip request timed out' (ringing_timeout hit) means nobody picked up."""
+    import asyncio
+    import uuid
+
+    from livekit import api
+
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.services import outbound_call
+
+    call_id = uuid.uuid4()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+
+    async def scenario():
+        async with AsyncSessionLocal() as db:
+            db.add(CallLog(id=call_id, org_id=org_id, agent_id=uuid.UUID(agent_id), call_type="outbound",
+                           livekit_room_name="call-y", status="initiated", to_phone="+14155550124"))
+            await db.commit()
+
+        class FakeSip:
+            async def create_sip_participant(self, req, timeout=None):
+                raise RuntimeError("ServerError(code=canceled, message=sip request timed out, status=408)")
+
+        class FakeRoom:
+            async def delete_room(self, req):
+                return None
+
+        class FakeLK:
+            sip, room = FakeSip(), FakeRoom()
+
+            async def aclose(self):
+                return None
+
+        monkeypatch.setattr(outbound_call, "_lk", lambda: FakeLK())
+        req = api.CreateSIPParticipantRequest(sip_trunk_id="ST_x", sip_call_to="+14155550124", room_name="call-y")
+        await outbound_call._dial_and_watch(req, call_id, None, "call-y")
+
+    asyncio.run(scenario())
+    call = client.get(f"/api/calls/{call_id}").json()
+    assert call["outcome"] == "no_answer" and call["summary"] == "Not answered."

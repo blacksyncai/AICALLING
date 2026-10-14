@@ -260,7 +260,6 @@ export function VoicePicker({
   ) : value ? (
     <>
       <span className="font-medium text-zinc-900">Custom voice</span>
-      <span className="font-mono text-xs text-zinc-500"> · {value}</span>
     </>
   ) : (
     <span className="text-zinc-500">Choose a voice</span>
