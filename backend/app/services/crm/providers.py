@@ -1881,8 +1881,305 @@ class GoogleSheets(Provider):
         return out
 
 
+# ── Real-estate CRMs: BoldTrail / kvCORE, Lofty, Sierra Interactive ───────────
+
+
+def _digits10(phone: str) -> str:
+    d = "".join(ch for ch in phone or "" if ch.isdigit())
+    return d[-10:] if len(d) >= 10 else d
+
+
+class BoldTrail(Provider):
+    """kvCORE's public API (BoldTrail is kvCORE's new name). Notes and calls are PUT on singular /contact paths."""
+
+    key, name = "boldtrail", "BoldTrail / kvCORE"
+    description = "Log every AI call on the contact with the summary and result, create contacts and import contacts to call."
+    auth_fields = [AuthField("api_key", "API token", placeholder="eyJ0eXAi…",
+                             help="BoldTrail/kvCORE → Lead Engine → Lead Dropbox → My API Tokens → Generate (Contacts access).")]
+    docs_url = "https://help.insiderealestate.com/en/articles/4263959-boldtrail-api-tokens"
+    can_new_leads = False  # no reliable "created since" order in the public API yet
+
+    def native_http(self, secret, config):
+        return NativeHttp("https://api.kvcore.com/v2/public", headers={"Authorization": f"Bearer {secret}"})
+
+    async def verify(self, http, config):
+        res = await http.request("GET", "/contacts", params={"limit": 1})
+        return f"{res.get('total', 0):,} contacts" if isinstance(res, dict) and res.get("total") is not None else "kvCORE account"
+
+    @staticmethod
+    def _contact(r: dict) -> Contact | None:
+        phone = next((r.get(k) for k in ("cell_phone_1", "cell_phone_2", "home_phone", "work_phone") if r.get(k)), "")
+        if not phone:
+            return None
+        name = r.get("name") or " ".join(x for x in (r.get("first_name"), r.get("last_name")) if x)
+        return Contact(name or "", str(phone), r.get("email") or "", "", str(r.get("id")),
+                       _parse_time(r.get("created_at") or r.get("date_created")),
+                       stage=_KV_STATUS.get(r.get("status"), ""), dnc=r.get("phone_on") in (0, False, "0"))
+
+    async def find_or_create(self, http, config, c, create):
+        if c.email:
+            res = await http.request("GET", "/contacts", params={"filter[email]": c.email, "limit": 1})
+            rows = (res or {}).get("data") or []
+            if rows:
+                return str(rows[0]["id"])
+        if not create:
+            return None
+        first, last = split_name(c.name)
+        body = {"first_name": first or c.phone, "last_name": last, "cell_phone_1": _digits10(c.phone),
+                "source": "BlackSync AI", "status": 0}
+        if c.email:
+            body["email"] = c.email
+        res = await http.request("POST", "/contact", json=body)
+        cid = (res or {}).get("id") or ((res or {}).get("data") or {}).get("id")
+        return str(cid) if cid else None
+
+    async def log_call(self, http, config, external_id, call):
+        result = 3 if call.connected else 1 if call.outcome == "wrong_number" else 2  # Contacted / Bad number / Not home
+        await http.request("PUT", f"/contact/{external_id}/action/call", json={
+            "date": (call.started_at or dt.datetime.now(dt.timezone.utc)).isoformat(),
+            "direction": "outbound", "result": result, "notes": call.note()})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out: list[Contact] = []
+        page = 1
+        while len(out) < limit:
+            res = await http.request("GET", "/contacts", params={"page": page, "limit": 100})
+            rows = (res or {}).get("data") or []
+            for r in rows:
+                c = self._contact(r)
+                if c and not (since and c.created_at and c.created_at <= since):
+                    out.append(c)
+            if not rows or page >= int((res or {}).get("last_page") or page):
+                break
+            page += 1
+        return out[:limit]
+
+
+_KV_STATUS = {0: "New", 1: "Client", 2: "Closed", 3: "Sphere", 4: "Active", 5: "Contract", 6: "Archived", 7: "Prospect"}
+
+
+_LOFTY_OUTCOME = {"voicemail": "VoiceMessage", "no_answer": "NoAnswer", "failed": "NoAnswer",
+                  "wrong_number": "BadNumber", "do_not_call": "DNCContact"}
+
+
+class Lofty(Provider):
+    key, name = "lofty", "Lofty"
+    description = "Log every AI call on the lead with the summary and result, create leads, import leads and auto-call new ones."
+    auth_fields = [AuthField("api_key", "API key", help="Lofty → Settings → Integrations → API → generate a key.")]
+    docs_url = "https://developer.lofty.com"
+
+    def native_http(self, secret, config):
+        return NativeHttp("https://api.lofty.com", headers={"Authorization": f"token {secret}"})
+
+    async def verify(self, http, config):
+        me = await http.request("GET", "/v1.0/me")
+        me = (me or {}).get("data", me) or {}
+        return " ".join(x for x in (me.get("firstName"), me.get("lastName")) if x) or me.get("email") or "Lofty account"
+
+    @staticmethod
+    def _contact(r: dict) -> Contact | None:
+        phones = [p for p in r.get("phones") or [] if p]
+        if not phones:
+            return None
+        emails = [e for e in r.get("emails") or [] if e]
+        name = " ".join(x for x in (r.get("firstName"), r.get("lastName")) if x)
+        tags = [t.get("tagName", "") for t in r.get("tags") or [] if isinstance(t, dict)]
+        return Contact(name, str(phones[0]), emails[0] if emails else "", "", str(r.get("leadId")),
+                       _parse_time(r.get("createTime")), tags=[t for t in tags if t], stage=r.get("stage") or "",
+                       dnc=bool(r.get("cannotCall")))
+
+    async def _find(self, http, **params) -> str | None:
+        res = await http.request("GET", "/v1.0/leads", params={**params, "limit": 1, "preciseSearchFlag": "true"})
+        leads = (res or {}).get("leads") or []
+        return str(leads[0]["leadId"]) if leads else None
+
+    async def find_or_create(self, http, config, c, create):
+        found = (c.email and await self._find(http, email=c.email)) or (c.phone and await self._find(http, phone=_digits10(c.phone)))
+        if found or not create:
+            return found or None
+        first, last = split_name(c.name)
+        body = {"firstName": first or c.phone, "lastName": last, "phones": [_digits10(c.phone)] if c.phone else [],
+                "emails": [c.email] if c.email else [], "source": "BlackSync AI"}
+        res = await http.request("POST", "/v1.0/leads", json=body)
+        lid = (res or {}).get("leadId") or ((res or {}).get("data") or {}).get("leadId")
+        return str(lid) if lid else None
+
+    async def log_call(self, http, config, external_id, call):
+        await http.request("POST", "/v1.0/logType", json={
+            "leadId": int(external_id), "logType": "logCall", "content": call.note()[:5000],
+            "leadPhoneNumber": _digits10(call.phone) or call.phone,
+            "callingOutcome": "Talked" if call.connected else _LOFTY_OUTCOME.get(call.outcome or "", "NoAnswer"),
+            "outboundOrInbound": "outbound", "isPin": False})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out: list[Contact] = []
+        offset = 0
+        while len(out) < limit:
+            res = await http.request("GET", "/v1.0/leads", params={"offset": offset, "limit": 100,
+                                                                    "sort": "CreateTime", "desc": "true"})
+            rows = (res or {}).get("leads") or []
+            stop = False
+            for r in rows:
+                c = self._contact(r)
+                created = _parse_time(r.get("createTime"))
+                if since and created and created <= since:
+                    stop = True
+                    break
+                if c:
+                    out.append(c)
+            if stop or len(rows) < 100:
+                break
+            offset += 100
+        return out[:limit]
+
+    can_map_fields = True
+
+    async def field_catalog(self, http, config):
+        return [{"key": k, "label": label} for k, label in (
+            ("first_name", "First name"), ("last_name", "Last name"), ("full_name", "Full name"), ("email", "Email"),
+            ("address", "Address (street)"), ("city", "City"), ("state", "State"), ("zip", "ZIP"),
+            ("full_address", "Full address"), ("price", "Price range"), ("source", "Lead source"),
+            ("stage", "Stage"), ("assigned_agent", "Assigned agent"), ("tags", "Tags"))]
+
+    async def person_fields(self, http, config, external_id):
+        res = await http.request("GET", f"/v1.0/leads/{int(external_id)}", params={"withTrash": "false"})
+        p = (res or {}).get("lead") or (res or {}).get("data") or res or {}
+        prop = next(iter(p.get("leadPropertyList") or []), {}) or {}
+        inq = p.get("leadInquiry") or {}
+        lo, hi = inq.get("priceMin"), inq.get("priceMax")
+        price = (f"${int(lo):,}–${int(hi):,}" if lo and hi else f"${int(lo or hi):,}" if (lo or hi) else "")
+        out = {
+            "first_name": p.get("firstName") or "", "last_name": p.get("lastName") or "",
+            "full_name": " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x),
+            "email": next(iter(p.get("emails") or []), ""), "phone": next(iter(p.get("phones") or []), ""),
+            "address": prop.get("streetAddress") or "", "city": prop.get("city") or "", "state": prop.get("state") or "",
+            "zip": prop.get("zipCode") or "",
+            "full_address": ", ".join(x for x in (prop.get("streetAddress"), prop.get("city"),
+                                                  " ".join(y for y in (prop.get("state"), prop.get("zipCode")) if y)) if x),
+            "price": price, "source": p.get("source") or p.get("leadSource") or "", "stage": p.get("stage") or "",
+            "assigned_agent": p.get("assignedUser") if isinstance(p.get("assignedUser"), str) else "",
+            "tags": ", ".join(t.get("tagName", "") for t in p.get("tags") or [] if isinstance(t, dict))[:300],
+        }
+        for a in p.get("customAttributes") or []:
+            if a.get("attributeName") and a.get("value") not in (None, ""):
+                out[FollowUpBoss._slug(a["attributeName"])] = str(a["value"])
+        return {k: str(v)[:500] for k, v in out.items() if v not in (None, "")}
+
+
+class SierraInteractive(Provider):
+    key, name = "sierra", "Sierra Interactive"
+    description = "Add a note with every AI call's summary and result to the lead, import leads and auto-call new ones."
+    auth_fields = [AuthField("api_key", "API key",
+                             help="Sierra → gear icon → Integrations → Sierra Interactive → copy the API key (admin access).")]
+    docs_url = "https://api.sierrainteractivedev.com"
+
+    def native_http(self, secret, config):
+        return NativeHttp("https://api.sierrainteractivedev.com",
+                          headers={"Sierra-ApiKey": secret, "Sierra-OriginatingSystemName": "BlackSync AI"})
+
+    @staticmethod
+    async def _call(http, method: str, path: str, **kw) -> Any:
+        res = await http.request(method, path, **kw)
+        if isinstance(res, dict) and res.get("success") is False:
+            raise CrmError(res.get("errorMessage") or "The CRM refused the request.")
+        return (res or {}).get("data") if isinstance(res, dict) else res
+
+    async def verify(self, http, config):
+        data = await self._call(http, "GET", "/users", params={"pageSize": 1})
+        recs = (data or {}).get("records") or []
+        return (recs[0].get("siteName") if recs else "") or "Sierra account"
+
+    @staticmethod
+    def _contact(r: dict) -> Contact | None:
+        if not r.get("phone"):
+            return None
+        name = " ".join(x for x in (r.get("firstName"), r.get("lastName")) if x)
+        tags = r.get("tags") or []
+        return Contact(name, str(r["phone"]), r.get("email") or "", "", str(r.get("id")), _parse_time(r.get("creationDate")),
+                       tags=[t if isinstance(t, str) else t.get("name", "") for t in tags], stage=r.get("leadStatus") or "",
+                       dnc=str(r.get("phoneStatus") or "").lower() in ("invalid", "donotcall", "do not call"))
+
+    async def find_or_create(self, http, config, c, create):
+        for params in ({"email": c.email} if c.email else None, {"phone": _digits10(c.phone)} if c.phone else None):
+            if not params:
+                continue
+            data = await self._call(http, "GET", "/leads/find", params={**params, "pageSize": 1})
+            leads = (data or {}).get("leads") or []
+            if leads:
+                return str(leads[0]["id"])
+        if not create or not c.email:
+            return None  # Sierra can't create a lead without an email address
+        import secrets
+
+        first, last = split_name(c.name)
+        data = await self._call(http, "POST", "/leads", json={
+            "email": c.email, "password": secrets.token_urlsafe(12), "firstName": first or c.phone, "lastName": last,
+            "phone": _digits10(c.phone), "source": "BlackSync AI", "sendRegistrationEmail": False})
+        lid = (data or {}).get("leadId") or (data or {}).get("id")
+        return str(lid) if lid else None
+
+    async def log_call(self, http, config, external_id, call):
+        # No call-log endpoint in Sierra's API: the call goes on the lead as a note (without pinging the agent).
+        await self._call(http, "POST", f"/leads/{external_id}/note",
+                         json={"message": f"AI call: {call.outcome_label}\n\n{call.note()}", "shouldNotify": False})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out: list[Contact] = []
+        page = 1
+        while len(out) < limit:
+            params = {"pageNumber": page, "pageSize": 100, "sortColumn": "RegisteredDate", "sortOrder": "desc",
+                      "includeTags": "true"}
+            if since:
+                params["leadCreationDateFrom"] = since.strftime("%m/%d/%Y")
+            data = await self._call(http, "GET", "/leads/find", params=params)
+            rows = (data or {}).get("leads") or []
+            stop = False
+            for r in rows:
+                created = _parse_time(r.get("creationDate"))
+                if since and created and created <= since:
+                    stop = True
+                    break
+                c = self._contact(r)
+                if c:
+                    out.append(c)
+            if stop or page >= int((data or {}).get("totalPages") or page):
+                break
+            page += 1
+        return out[:limit]
+
+    can_map_fields = True
+
+    async def field_catalog(self, http, config):
+        return [{"key": k, "label": label} for k, label in (
+            ("first_name", "First name"), ("last_name", "Last name"), ("full_name", "Full name"), ("email", "Email"),
+            ("address", "Address (street)"), ("city", "City"), ("state", "State"), ("zip", "ZIP"),
+            ("full_address", "Full address"), ("price", "Price range"), ("source", "Lead source"),
+            ("stage", "Status"), ("assigned_agent", "Assigned agent"), ("tags", "Tags"))]
+
+    async def person_fields(self, http, config, external_id):
+        p = await self._call(http, "GET", f"/leads/get/{external_id}", params={"includeTags": "true"}) or {}
+        sp = p.get("searchPreference") or {}
+        lo, hi = sp.get("minPrice"), sp.get("maxPrice")
+        price = (f"${int(lo):,}–${int(hi):,}" if lo and hi else f"${int(lo or hi):,}" if (lo or hi) else "")
+        agent = p.get("assignedTo") or {}
+        out = {
+            "first_name": p.get("firstName") or "", "last_name": p.get("lastName") or "",
+            "full_name": " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x),
+            "email": p.get("email") or "", "phone": p.get("phone") or "",
+            "address": p.get("streetAddress") or "", "city": p.get("city") or "", "state": p.get("state") or "",
+            "zip": p.get("zip") or "",
+            "full_address": ", ".join(x for x in (p.get("streetAddress"), p.get("city"),
+                                                  " ".join(y for y in (p.get("state"), p.get("zip")) if y)) if x),
+            "price": price, "source": p.get("source") or "", "stage": p.get("leadStatus") or "",
+            "assigned_agent": " ".join(x for x in (agent.get("agentUserFirstName"), agent.get("agentUserLastName")) if x),
+            "tags": ", ".join(t if isinstance(t, str) else t.get("name", "") for t in p.get("tags") or [])[:300],
+        }
+        return {k: str(v)[:500] for k, v in out.items() if v not in (None, "")}
+
+
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
-    FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(), GoogleSheets(), Slack(),
+    FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
+    BoldTrail(), Lofty(), SierraInteractive(), GoogleSheets(), Slack(),
 )}
 
 

@@ -65,6 +65,21 @@ RESPONSES = {
         ("POST", "/crm/v6/Leads"): {"data": [{"details": {"id": "55"}}]},
         ("POST", "/crm/v6/Leads/55/Notes"): {"data": []},
     },
+    "boldtrail": {
+        ("GET", "/v2/public/contacts"): {"data": []},
+        ("POST", "/v2/public/contact"): {"id": 77},
+        ("PUT", "/v2/public/contact/77/action/call"): {},
+    },
+    "lofty": {
+        ("GET", "/v1.0/leads"): {"leads": []},
+        ("POST", "/v1.0/leads"): {"leadId": 901},
+        ("POST", "/v1.0/logType"): {"code": 0},
+    },
+    "sierra": {
+        ("GET", "/leads/find"): {"success": True, "data": {"leads": []}},
+        ("POST", "/leads"): {"success": True, "data": {"leadId": 31}},
+        ("POST", "/leads/31/note"): {"success": True, "data": {}},
+    },
     "google_sheets": {
         ("POST", "values/'BlackSync calls'!A1:append"): {},
     },

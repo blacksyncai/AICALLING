@@ -99,7 +99,8 @@ const BRAND: Record<string, string> = {
 const DOMAIN: Record<string, string> = {
   followupboss: "followupboss.com", close: "close.com", hubspot: "hubspot.com", highlevel: "gohighlevel.com",
   pipedrive: "pipedrive.com", salesforce: "salesforce.com", zoho: "zoho.com", attio: "attio.com",
-  google_sheets: "sheets.google.com", slack: "slack.com",
+  google_sheets: "sheets.google.com", slack: "slack.com", boldtrail: "kvcore.com", lofty: "lofty.com",
+  sierra: "sierrainteractive.com",
 };
 
 export function Logo({ p }: { p: Provider }) {
@@ -124,8 +125,6 @@ export function Logo({ p }: { p: Provider }) {
 // Native connectors on the roadmap (shown as "coming soon" next to the ones the API lists as not ready yet).
 const UPCOMING = [
   { key: "monday", name: "Monday.com", domain: "monday.com", description: "Log AI calls on items and import contacts from boards." },
-  { key: "boldtrail", name: "BoldTrail / kvCORE", domain: "boldtrail.com", description: "Log AI calls on leads and auto-call new ones." },
-  { key: "lofty", name: "Lofty", domain: "lofty.com", description: "Log AI calls and notes on leads, and import leads to call." },
   { key: "calendly", name: "Calendly", domain: "calendly.com", description: "Book meetings straight into your Calendly event types." },
 ];
 

@@ -104,8 +104,8 @@ def test_catalog_shape(client):
     assert integ["calcom"]["status"] == "needs_setup"  # no Cal.com key in tests
     assert integ["transfer"]["status"] == integ["webhooks"]["status"] == integ["csv"]["status"] == "available"
     crms = [i for i in cat["integrations"] if i["category"] == "crm"]
-    assert len(crms) == 11 and all(i["status"] == "coming_soon" and i["industries"] for i in crms)
-    assert integ["follow_up_boss"]["detail"].startswith("Connect today through Zapier")
+    assert len(crms) == 10 and all(i["status"] == "available" and i["industries"] for i in crms)
+    assert integ["follow_up_boss"]["detail"].startswith("Connect it under Integrations")
     assert integ["google_calendar"]["status"] == integ["calendly"]["status"] == "coming_soon"
 
 

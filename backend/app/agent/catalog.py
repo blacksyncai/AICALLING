@@ -877,8 +877,7 @@ _CRMS: list[tuple[str, str, list[str]]] = [
     ("follow_up_boss", "Follow Up Boss", ["real_estate", "mortgage"]),
     ("lofty", "Lofty", ["real_estate"]),
     ("sierra_interactive", "Sierra Interactive", ["real_estate"]),
-    ("kvcore", "kvCORE", ["real_estate"]),
-    ("boldtrail", "BoldTrail", ["real_estate"]),
+    ("boldtrail", "BoldTrail / kvCORE", ["real_estate"]),
     ("gohighlevel", "GoHighLevel", ["home_services", "real_estate", "healthcare", "insurance",
                                     "professional_services", "automotive", "other"]),
     ("hubspot", "HubSpot", ["professional_services", "financial_services", "recruiting", "logistics", "other"]),
@@ -911,8 +910,10 @@ def integrations() -> list[dict]:
         {"key": "calendly", "label": "Calendly", "category": "scheduling",
          "status": "coming_soon", "detail": _ZAPIER_DETAIL},
     ]
-    items += [{"key": key, "label": label, "category": "crm", "status": "coming_soon",
-               "detail": _ZAPIER_DETAIL, "industries": inds} for key, label, inds in _CRMS]
+    # Every CRM here has a native connector now (Integrations page).
+    items += [{"key": key, "label": label, "category": "crm", "status": "available",
+               "detail": "Connect it under Integrations to log every call and call your leads.", "industries": inds}
+              for key, label, inds in _CRMS]
     return items
 
 
