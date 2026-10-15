@@ -385,7 +385,7 @@ def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: 
     hi += 2 if flags.get("intake") else 0  # an intake branches by the reason for the call
     stages = []
     for st in _objs(p.get("stages"), "stages", hi + 1):
-        stages.append({"name": _s(st.get("name"), "stages.name", 60),
+        stages.append({"name": _s(st.get("name"), "stages.name", 60).replace("_", " ").strip().capitalize(),
                        "goal": _s(st.get("goal"), "stages.goal", 200),
                        "lines": _lines(st.get("lines"), f"stages.{st.get('name') or '?'}.lines",
                                        10 if flags.get("intake") else 6),

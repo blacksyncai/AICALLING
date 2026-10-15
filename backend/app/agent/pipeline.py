@@ -491,7 +491,8 @@ leads to it says "then go to the close")."""
 _OUTBOUND_METHOD = """OUTBOUND CALL METHOD (prospecting and reactivation calls — follow it)
 1. Learn before you pitch. After the greeting and a light permission check tied to their situation ("Do you have a
    quick second to talk about <their thing>?"), ask one to three easy questions about THEIR current situation (how
-   it's going, what they do today, recent activity) before explaining the offer. Acknowledge each answer in a way
+   it's going, what they do today, recent activity) before explaining the offer. Ask for the quick second once:
+   if the first message already asks it, the opening doesn't ask again. Acknowledge each answer in a way
    that uses what they said. The opening says who's calling and asks for the quick second; it doesn't pitch.
 2. The reason for the call comes next, in one or two plain sentences that connect to what they just said. Add the
    value (what the business could bring) only when they're curious, then ask an open "would you consider ... if it
