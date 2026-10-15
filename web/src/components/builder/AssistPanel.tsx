@@ -104,10 +104,10 @@ export function AssistPanel({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="flex items-center gap-2 text-xs text-zinc-500">
             <Sparkles className="h-3.5 w-3.5 shrink-0 text-brand-600" />
-            {canAsk ? "AI will check your goal and ask only what it needs." : "Pick a goal or describe one, and AI will take it from there."}
+            {canAsk ? "AI checks your mission and asks only about details that would change the script." : "Describe the mission, and AI will check whether anything important is missing."}
           </p>
           <Button size="sm" variant="primary" onClick={ask} disabled={!canAsk} className="shrink-0">
-            Continue <ArrowRight className="h-3.5 w-3.5" />
+            Quick check <ArrowRight className="h-3.5 w-3.5" />
           </Button>
         </div>
       )}

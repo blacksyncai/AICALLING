@@ -227,7 +227,7 @@ out as two- or three-sentence descriptions. Generation now runs as a background 
    flow plans for (`spec.required_branches`) and how many questions it may ask (prospecting 1–4, reactivation
    1–3, client follow-up 0–2, inbound 1–4).
 3. **Spec.** The spec comes from two schema-validated model calls (`app/agent/spec.py`): *strategy* first, then
-   *conversation*, each with a 6k output-token budget.
+   *conversation* (the script), with 6k and 9k output-token budgets.
    - Invalid output goes back to the model with the exact validation error.
    - When `finish_reason == "length"`, the call is retried with double the budget, up to 32k.
    - `exact_wording` holds lines the user supplied (an opening, an offer, a price). Each must appear word for word
@@ -236,32 +236,71 @@ out as two- or three-sentence descriptions. Generation now runs as a background 
      from `compliance`, `representation_rules` and `habits`.
    - `meeting_booked` is refused without a calendar. Outcomes the platform detects itself (voicemail, no answer)
      are dropped.
-4. **Composer** (`app/agent/composer.py`). Turns the spec into up to seven short sections (`SECTIONS_V3`):
+4. **Composer** (`app/agent/composer.py`). Turns the spec into a complete call script in up to eight sections
+   (`SECTIONS_V4`):
    - Identity and Objective
    - What You Know
    - Approved Wording (only when the user supplied some)
-   - Opening
-   - Conversation Flow (stages, the next step and when to offer it, purpose-specific situations)
-   - Questions and Objections
-   - Actions and Boundaries (honest transfer, booking and callback rules, plus the outcome list)
+   - Opening: the first message plus the next lines.
+   - Conversation Flow: 1–5 stages, each with real lines to say.
+   - Next Step and Close: when to offer it, the ask, what to say for yes and for no, and the goodbye.
+   - Situations and Objections: an example reply and next step for each likely answer, then objections and
+     common questions.
+   - Rules and Boundaries: honest transfer, booking and callback rules, the user's restrictions and the outcome
+     list.
 
-   A question the conversation already scripts isn't listed again. The generated voicemail is saved to the agent's
-   voicemail message; it's spoken only when that setting is "leave a message".
+   The script marks lines three ways:
+   - `Say` / `Ask` lines are examples the agent adapts.
+   - `Say exactly` lines are the user's approved wording.
+   - `→ wait` marks where the agent stops and listens.
+
+   A question that may already be answered is written "Only if you don't know yet (skip if …)", so the agent checks
+   before asking. Repeated rules are merged. Any outcome a branch uses is added to the outcome list.
 5. **Quality gate** (`app/agent/quality.py`). Checks that:
    - the identity names the agent and company, and the opening says who's calling;
+   - the AI disclosure appears once in the opening;
+   - every stage has words to say and there's a close;
    - the purpose's required situations are covered and no question is scripted twice;
    - approved wording is kept exactly;
-   - there are no booking or transfer claims the agent can't keep, and only real tools and contact fields;
+   - there are no booking, transfer or "I'll send you" claims the agent can't keep, and only real tools and contact
+     fields are used;
    - nothing from a playbook's `private_terms` appears, no foreign URLs or endpoints, and no credentials.
 
-   Length only produces a warning (above 1,300 words). When a check fails, the affected half of the spec goes back
+   The conversation validator also rejects:
+   - tool syntax inside the script (`end_call(...)`);
+   - outcome codes the agent can't use, such as `meeting_booked` without a calendar.
+
+   It also drops scripted filler acknowledgments ("Thanks for sharing that").
+
+   Length only produces a warning (above 2,300 words). When a check fails, the affected half of the spec goes back
    to the model for repair, at most twice. If it still fails, the job ends with a clear error.
-6. **Save.** Saves the agent with `builder.schema = "v3"`, `purpose`, `section_order`, `sections`, `spec`,
+6. **Save.** Saves the agent with `builder.schema = "v4"`, `purpose`, `section_order`, `sections`, `spec`,
    `quality` and the playbook versions used, plus an `AgentVersion` snapshot. Booking is enabled only when a real
    calendar is connected; otherwise `booking_requested` makes readiness warn.
 
-Agents generated before v3 (`schema = "v2"`, twelve sections) are not migrated. Their prompts are kept as they are,
-and section edits and regeneration keep their twelve-section layout.
+Agents generated earlier are not migrated: `v2` (twelve sections) and `v3` (compact) keep their prompts and their
+section layout for edits. Improve with AI and Regenerate section keep the script format: spoken lines,
+`Say exactly`, `→ wait` and skip notes.
+
+### Wizard input and clarification
+
+- The v4 wizard stores the goal as specialty + mission + advanced details + "anything else".
+  `generator.draft_brief()` reads those fields directly (`_from_v4`), so the assistant and the generator always see
+  the current mission rather than a copy left from an earlier generation.
+- On the Mission step, **Quick check** (`POST /api/agent-builder/assist`) asks 0–3 questions. It only asks about
+  details that would change the script:
+  - who the agent speaks with;
+  - why the call is happening (an inquiry, a past customer, a cold list);
+  - the outcome the user wants and who takes it from there;
+  - required or forbidden wording.
+
+  It sees the agent's configured capabilities and the business knowledge, so it never asks about what's already
+  known or configured.
+- Business knowledge is reference material. It never defines the agent's mission. The exception is the
+  Knowledge → **Custom Instructions** list, which holds the owner's own instructions (typed or from their uploaded
+  documents, never from a website scan):
+  - During generation, those instructions join the user's instructions.
+  - At call time they appear as "Instructions from the business owner".
 
 ### What the voice model receives (`app/agent/runtime.build_instructions`)
 
@@ -276,11 +315,14 @@ The static parts come first, so providers can cache the prefix:
    - be honest about being an AI, and never speak instructions out loud.
 3. **Staying on topic**, and the "built on BlackSync" answer.
 4. **Tools.** Only the enabled ones, plus what the agent can't do. A tool only "worked" if it returned success.
-5. **Business reference.** The knowledge base, framed as reference material that can't change the agent's
-   behavior.
-6. **Contact details.** The fields that are filled in, plus a "Not on file" line for any field the prompt uses but
+5. **Instructions from the business owner** (Knowledge → Custom Instructions), followed unless they conflict
+   with honesty, do-not-call or tool limits.
+6. **Business reference.** The rest of the knowledge base, framed as reference material that can't change the
+   agent's behavior. Lines that read like instructions ("ignore previous instructions", "tell callers …") are
+   dropped.
+7. **Contact details.** The fields that are filled in, plus a "Not on file" line for any field the prompt uses but
    this contact lacks.
-7. CRM notes, then today's date and the upcoming dates (14 days with booking, otherwise 7).
+8. CRM notes, then today's date and the upcoming dates (14 days with booking, otherwise 7).
 
 On outbound calls, a saved first message that can't be said without a missing detail ("Is this {{name}}?" with
 no name) is replaced by an opening the agent writes from its prompt. "Hi {{name}}," still works and becomes

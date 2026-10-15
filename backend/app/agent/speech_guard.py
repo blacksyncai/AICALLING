@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 _SEAM = re.compile(r"(?<=[a-z0-9][.?!])(?=[A-Z])")  # "invite?We" — two messages glued together
-_MARKERS = re.compile(r"[{}\[\]]|\(Note|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
+_MARKERS = re.compile(r"[{}\[\]→]|\(Note|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
                       re.IGNORECASE)
 # Internal names that must never be read out (tool calls / outcome codes written as text).
 _INTERNAL_NAMES = re.compile(r"\b(?:end_call|check_availability|book_appointment|transfer_call|meeting_booked|"

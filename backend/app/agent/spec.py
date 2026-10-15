@@ -5,8 +5,9 @@ before any prompt text exists (stage B of the pipeline, see app/agent/pipeline.p
 It is produced in two parts so neither model response gets too long:
 - strategy:     purpose, identity, objective, style, approved wording, questions,
                 tools plan, outcomes, compliance, fact provenance
-- conversation: first message, what follows it, flow stages, the situations this
-                kind of call really meets, objections, direct answers, voicemail, next step
+- conversation: the script — first message, opening lines, stages with spoken lines and
+                wait points, the close (ask, yes, no, goodbye), the situations this kind of
+                call really meets with example replies, objections, direct answers, voicemail
 
 Sizes scale with the purpose: a short client follow-up gets a short spec, not the
 discovery process of a prospecting call. Rules every call needs (one question at a
@@ -212,9 +213,7 @@ def validate_strategy(p: dict, *, allowed_vars: set[str], allowed_tools: set[str
     for e in _objs(p.get("exact_wording"), "exact_wording", 6):
         text = _s(e.get("text"), "exact_wording.text", 600)
         if customer_text and not is_verbatim(text, customer_text):
-            raise InvalidOutput(
-                f"exact_wording must be copied word for word from the user's own input; \"{text[:80]}\" isn't. "
-                "Leave exact_wording empty if the user didn't supply approved wording.")
+            continue  # not the user's own words (a paraphrase or the mission) — never presented as approved wording
         exact.append({"use": _s(e.get("use"), "exact_wording.use", 200), "text": text,
                       "is_opening": e.get("is_opening") is True})
     out["exact_wording"] = exact
@@ -247,7 +246,9 @@ def validate_strategy(p: dict, *, allowed_vars: set[str], allowed_tools: set[str
 
     tools = []
     for t in _objs(p.get("tools"), "tools", 4):
-        name = _s(t.get("tool"), "tools.tool", 40).removesuffix("()")
+        name = re.sub(r"\(.*\)$", "", _s(t.get("tool"), "tools.tool", 40))
+        if name not in ALL_TOOLS:
+            continue  # not a tool at all ("callback") — the plan for it lives elsewhere
         if name not in allowed_tools:
             raise InvalidOutput(f"tools lists '{name}', which this agent doesn't have. Available tools: {', '.join(sorted(allowed_tools))}")
         if name == TOOL_END_CALL:
@@ -318,6 +319,48 @@ def question_last(text: str) -> str:
     return (greeting + " ".join(statements + questions)).strip()
 
 
+def _line(v, name: str, need_say: bool = True) -> dict:
+    """One scripted line: words to say (an example unless it's approved wording), whether to wait for the answer,
+    and optionally when it applies / when to skip it."""
+    if not isinstance(v, dict):
+        raise InvalidOutput(f"each item in {name} must be an object with \"say\"")
+    say = _s(v.get("say"), f"{name}.say", 400, required=need_say)
+    return {"say": say, "wait": v.get("wait") is True or say.rstrip().endswith("?"),
+            "if": _s(v.get("if"), f"{name}.if", 200, required=False),
+            "skip_if": _s(v.get("skip_if"), f"{name}.skip_if", 200, required=False)}
+
+
+# A scripted "Thanks for sharing that." makes every turn sound the same; the runtime rules cover acknowledging.
+_GENERIC_ACK = re.compile(r"^(?:ok(?:ay)?|great|perfect|got it|understood|sure|thanks?|thank you)?[ ,!.-]*"
+                          r"(?:(?:thanks?|thank you)(?: so much)? for (?:letting me know|sharing(?: that)?|that|telling me)"
+                          r"|that(?:'s| is)? (?:helps?|helpful(?: to know)?|makes sense|good to know|great to hear)"
+                          r"|that gives me a (?:good|clear|better) (?:sense|idea|picture)(?: of [\w' ]+)?"
+                          r"|got it|understood|i (?:understand|see)|good to know|appreciate (?:that|you sharing))"
+                          r"(?:[ ,]*(?:thank you|thanks)(?: (?:so much )?for (?:sharing(?: that)?|letting me know|telling me))?)?"
+                          r"[ .!]*$", re.I)
+
+
+def _lines(v, name: str, max_items: int, min_items: int = 1) -> list[dict]:
+    if v is None:
+        v = []
+    if not isinstance(v, list):
+        raise InvalidOutput(f"{name} must be a list of lines")
+    out = [ln for ln in (_line(x, name) for x in v) if not _GENERIC_ACK.match(ln["say"].strip())]
+    if len(out) < min_items:
+        raise InvalidOutput(f"{name} needs at least {min_items} spoken line(s)")
+    return out[:max_items]
+
+
+# How many stages each purpose gets: a short follow-up isn't a discovery call.
+STAGE_RANGE = {"prospecting": (2, 5), "reactivation": (2, 4), "client_follow_up": (1, 3), "inbound": (2, 4)}
+
+
+def usable_outcomes(flags: dict) -> set[str]:
+    """Outcomes a script may end on: everything but what the platform detects itself, and meeting_booked only
+    when the agent can really book."""
+    return set(CALL_OUTCOMES) - _PLATFORM_OUTCOMES - (set() if flags.get("booking") else {"meeting_booked"})
+
+
 def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: set[str], direction: str,
                           flags: dict, purpose: str, exact_opening: str = "") -> dict:
     first = _s(p.get("first_message"), "first_message", 300)
@@ -326,15 +369,28 @@ def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: 
         raise InvalidOutput("first_message uses the same {{field}} twice; use each detail at most once")
     # Approved wording is kept exactly as the user wrote it; generated openers get the question moved last.
     out = {"first_message": exact_opening or question_last(first)}
-    out["after_opening"] = _strs(p.get("after_opening"), "after_opening", 3, 300, 1)
+    out["opening"] = _lines(p.get("opening"), "opening", 4, 1 if direction != "inbound" else 0)
 
+    lo, hi = STAGE_RANGE.get(purpose, (2, 4))
     stages = []
-    for st in _objs(p.get("stages"), "stages", 4, 2):
-        stages.append({"name": _s(st.get("name"), "stages.name", 40), "goal": _s(st.get("goal"), "stages.goal", 300)})
+    for st in _objs(p.get("stages"), "stages", hi + 1):
+        stages.append({"name": _s(st.get("name"), "stages.name", 40),
+                       "goal": _s(st.get("goal"), "stages.goal", 200),
+                       "lines": _lines(st.get("lines"), f"stages.{st.get('name') or '?'}.lines", 6),
+                       "move_on": _s(st.get("move_on"), "stages.move_on", 200, required=False)})
+    if len(stages) < lo:
+        raise InvalidOutput(f"stages needs at least {lo} stage(s) with spoken lines for a {purpose} call")
+    if len(stages) > hi:
+        raise InvalidOutput(f"stages has {len(stages)} stages; a {purpose} call should have at most {hi}")
+    asked = sum(1 for st in stages for ln in st["lines"] if ln["say"].rstrip().endswith("?"))
+    cap = QUESTION_RANGE.get(purpose, (1, 4))[1] + 3
+    if asked > cap:
+        raise InvalidOutput(f"the stages script {asked} questions; a {purpose} call should script at most {cap}. "
+                            "Keep only the questions that decide the next step and mark the rest skip_if known.")
     out["stages"] = stages
 
     branches, seen = [], set()
-    for b in _objs(p.get("branches"), "branches", 10, 2):
+    for b in _objs(p.get("branches"), "branches", 12, 2):
         key = _s(b.get("key"), "branches.key", 40)
         if key not in BRANCHES:
             raise InvalidOutput(f"branch key '{key}' isn't valid. Use: {', '.join(BRANCHES)}")
@@ -346,27 +402,47 @@ def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: 
             outcome = "wrong_number"  # always this code; the runtime's rule says so too
         elif outcome and outcome not in allowed_outcomes:
             raise InvalidOutput(f"branch '{key}' ends with outcome '{outcome}', which isn't in this agent's dispositions")
-        branches.append({"key": key, "guidance": _s(b.get("guidance"), f"branches.{key}.guidance", 400),
-                         "say": _s(b.get("say"), f"branches.{key}.say", 250, required=False), "outcome": outcome})
+        branches.append({"key": key, "say": _s(b.get("reply") or b.get("say"), f"branches.{key}.reply", 300),
+                         "then": _s(b.get("then"), f"branches.{key}.then", 300, required=False), "outcome": outcome})
     missing = [k for k in required_branches(purpose, direction) if k not in seen]
     if missing:
         raise InvalidOutput(f"branches is missing required keys: {', '.join(missing)}")
     out["branches"] = branches
 
     objections = []
-    for o in _objs(p.get("objections"), "objections", 5):
+    for o in _objs(p.get("objections"), "objections", 6):
         objections.append({"objection": _s(o.get("objection"), "objections.objection", 150),
-                           "response": _s(o.get("response"), "objections.response", 300)})
+                           "say": _s(o.get("say") or o.get("response"), "objections.say", 300),
+                           "if_again": _s(o.get("if_again"), "objections.if_again", 250, required=False)})
     out["objections"] = objections
     answers = []
     for a in _objs(p.get("direct_answers"), "direct_answers", 6):
         answers.append({"question": _s(a.get("question"), "direct_answers.question", 150),
                         "answer": _s(a.get("answer"), "direct_answers.answer", 300)})
     out["direct_answers"] = answers
+
+    c = p.get("close") if isinstance(p.get("close"), dict) else {}
+    out["close"] = {
+        "when": _s(c.get("when"), "close.when", 250),
+        "ask": _s(c.get("ask"), "close.ask", 250),
+        "if_yes": _s(c.get("if_yes"), "close.if_yes", 300),
+        "if_yes_say": _s(c.get("if_yes_say"), "close.if_yes_say", 250, required=False),
+        "if_no": _s(c.get("if_no"), "close.if_no", 300),
+        "if_no_say": _s(c.get("if_no_say"), "close.if_no_say", 250, required=False),
+        "goodbye": _s(c.get("goodbye"), "close.goodbye", 200),
+    }
     out["voicemail"] = _s(p.get("voicemail"), "voicemail", 400, required=False) if direction != "inbound" else ""
-    nxt = p.get("next_step") if isinstance(p.get("next_step"), dict) else {}
-    out["next_step"] = {"ask": _s(nxt.get("ask"), "next_step.ask", 250),
-                        "if_yes": _s(nxt.get("if_yes"), "next_step.if_yes", 300)}
+    allowed_codes = set(allowed_outcomes) | {"wrong_number", "do_not_call"}
     for text in _walk_strings(out):
         check_variables(text, allowed_vars, "The conversation")
+        if _TOOL_SYNTAX.search(text):
+            raise InvalidOutput(f"\"{text[:80]}\" uses tool syntax. Describe actions in plain words (\"transfer the "
+                                "call\", \"end the call\"); the agent's tools are described separately.")
+        bad = [c for c in _CODE.findall(text) if c in CALL_OUTCOMES and c not in allowed_codes]
+        if bad:
+            raise InvalidOutput(f"\"{text[:80]}\" uses outcome {bad[0]}, which isn't in this agent's dispositions")
     return out
+
+
+_TOOL_SYNTAX = re.compile(r"\b(?:end_call|transfer_call|check_availability|book_appointment)\s*\(", re.I)
+_CODE = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")

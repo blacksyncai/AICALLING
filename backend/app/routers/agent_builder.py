@@ -168,7 +168,8 @@ async def assist(body: AssistRequest, ctx: CtxDep, db: DbDep):
         generator.draft_brief(draft.data or {}, require_business=False)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return await _run_llm(generator.assist(draft.data or {}))
+    knowledge = await generator.knowledge_for(db, ctx.org.id)
+    return await _run_llm(generator.assist(draft.data or {}, knowledge))
 
 
 GEN_TIMEOUT = timedelta(minutes=10)
@@ -266,7 +267,7 @@ async def run_generation(draft_id: uuid.UUID, org_id: uuid.UUID, user_id: uuid.U
 
 
 def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result: dict, knowledge: str) -> Agent:
-    from app.agent.composer import SECTIONS_V3
+    from app.agent.composer import SECTIONS_V4
 
     spec, composed, report = result["spec"], result["composed"], result["report"]
     strategy, flags, brief = spec["strategy"], ctx["flags"], ctx["brief"]
@@ -330,8 +331,8 @@ def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result:
         temperature=0.5,
         ai_disclosure=flags["ai_disclosure"],
         builder={
-            "schema": "v3",
-            "section_order": [list(x) for x in SECTIONS_V3],
+            "schema": "v4",
+            "section_order": [list(x) for x in SECTIONS_V4],
             "purpose": strategy["purpose"],
             "industry": ctx["business"]["industry"],
             "use_case": brief["primary"]["key"],
@@ -484,7 +485,7 @@ async def regenerate(agent_id: uuid.UUID, body: RegenerateRequest, ctx: CtxDep, 
     if body.section not in keys:
         raise HTTPException(status_code=400, detail="That isn't a section of the agent's instructions.")
     knowledge = await generator.knowledge_for(db, ctx.org.id)
-    if (agent.builder or {}).get("schema") in ("v2", "v3"):
+    if (agent.builder or {}).get("schema") in ("v2", "v3", "v4"):
         extra = await _regen_context(db, ctx, agent)
         text = await _run_llm(pipeline.regenerate_section(agent, body.section, body.instruction, knowledge, extra))
         return {"section": body.section, "text": text}

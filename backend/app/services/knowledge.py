@@ -28,6 +28,8 @@ SECTIONS: list[tuple[str, str]] = [
     ("custom", "Custom Instructions"),
 ]
 SECTION_KEYS = [k for k, _ in SECTIONS]
+# Heading the "custom" section gets in an agent's knowledge text (app/agent/runtime.py looks for it).
+OWNER_HEADING = "Instructions from the business owner"
 SECTION_TITLES = dict(SECTIONS)
 ORIGINS = ("website", "manual", "upload")
 
@@ -145,7 +147,8 @@ def knowledge_text(profile: BusinessProfile | None) -> str:
             continue
         if lines:
             lines.append("")
-        lines.append(f"## {sec['title']}")
+        # The owner's own instructions are labelled so the call runtime follows them (the rest is reference).
+        lines.append(f"## {OWNER_HEADING if sec['key'] == 'custom' else sec['title']}")
         for item in sec["items"]:
             suffix = " (unconfirmed)" if item.get("needs_review") else ""
             lines.append(f"- {item['text']}{suffix}")

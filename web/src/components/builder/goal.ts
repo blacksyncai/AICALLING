@@ -37,6 +37,11 @@ export function goalBasis(goal: DraftGoal): string {
   const custom = keys.includes(CUSTOM_USE_CASE) || presetKeys(goal).length === 0;
   const c = goal.custom ?? {};
   return JSON.stringify([
+    // v4 wizard: specialty, mission and the details around it.
+    goal.specialty?.key ?? "",
+    goal.mission?.trim() ?? "",
+    goal.additional?.trim() ?? "",
+    goal.advanced ?? {},
     goal.direction ?? "",
     keys,
     custom ? [customDescription(goal).trim(), c.audience?.trim() ?? "", c.tone?.trim() ?? "", c.outcome?.trim() ?? ""] : [],

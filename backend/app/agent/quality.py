@@ -12,8 +12,8 @@ import re
 
 from app.agent import spec as S
 
-# Length is a warning only: a complex agent may need more, but most shouldn't.
-MAX_WORDS_WARN = 1300
+# Length is a warning only: a full script needs room, but a prompt past this is usually repeating itself.
+MAX_WORDS_WARN = 2300
 
 _URL = re.compile(r"\b(?:https?://|www\.)[^\s\"'<>)]+", re.I)
 _DOMAIN = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|co|cloud|app|dev|us|si)\b", re.I)
@@ -23,11 +23,14 @@ _SECRET = re.compile(
 _FUNC = re.compile(r"\b([a-z]+(?:_[a-z]+)+)\(")
 _UNSUPPORTED = re.compile(
     r"\b(I'll|I will|I can|I'm going to|let me)\s+(?:just\s+)?(text|sms|send you (?:a|an) (?:text|email|link|sms)|email you|"
-    r"update (?:your|the) (?:crm|record)|charge|process (?:a|the|your) payment)", re.I)
+    r"update (?:your|the) (?:crm|record)|charge|process (?:a|the|your) payment)"
+    r"|\b(?:I can|I'll|I will|let me|we can)\s+(?:also\s+)?(?:send|email|text)\b|\bsend (?:it |that |some )?(?:your way|over to you)\b"
+    r"|\binformation I can send\b", re.I)
 _BOOK_CLAIM = re.compile(r"\b(?:I've|I have|I'll|I will|let me|I can)\s+(?:go ahead and\s+)?(?:book|schedule|get you (?:booked|scheduled))"
                          r"|\byou're (?:all )?(?:booked|scheduled)\b", re.I)
 _TRANSFER_CLAIM = re.compile(r"\b(?:I'll|I will|let me|I can|I'm going to)\s+(?:go ahead and\s+)?(?:transfer|connect|patch|put) you"
-                             r"(?: through| over| to| with)?", re.I)
+                             r"(?: through| over| to| with)?|\b(?:connecting|transferring|patching) you\b"
+                             r"|\bput(?:ting)? you through\b", re.I)
 
 
 def _words(text: str) -> int:
@@ -97,7 +100,7 @@ def run(spec: dict, composed: dict, ctx: dict) -> dict:
     words = _words(prompt)
     checks.append({"key": "length", "label": "Concise instructions",
                    "status": "warn" if words > MAX_WORDS_WARN else "pass",
-                   "detail": f"{words} words of agent-specific instructions.", "part": "conversation"})
+                   "detail": f"{words} words of agent-specific script and instructions.", "part": "conversation"})
 
     # Identity and opening.
     name, company = st["agent_name"], ctx["business"]["name"]
@@ -105,13 +108,21 @@ def run(spec: dict, composed: dict, ctx: dict) -> dict:
                          name.lower() in sections["identity"].lower() and company.lower() in sections["identity"].lower(),
                          f"{name} represents {company}.", "The identity must name the agent and the company."))
     exact_opening = any(e["is_opening"] for e in st["exact_wording"])
-    opening_ok = exact_opening or ctx["direction"] == "inbound" or \
-        name.lower() in first.lower() or company.lower() in first.lower() or \
-        any(name.lower() in x.lower() or company.lower() in x.lower() for x in cv["after_opening"])
+    said = " ".join([first] + [x["say"] for x in cv["opening"]]).lower()
+    opening_ok = exact_opening or ctx["direction"] == "inbound" or name.lower() in said or company.lower() in said
     checks.append(_check("opening", "Opening says who's calling", opening_ok,
                          "The opening introduces the agent or the business.",
-                         "The first message or the line after it must say who's calling (agent or company name).",
+                         "The first message or the opening lines must say who's calling (agent or company name).",
                          part="conversation"))
+    told = [x for x in [first] + [ln["say"] for ln in cv["opening"]] if re.search(r"\bAI\b|virtual assistant", x)]
+    checks.append(_check("opening_once", "Opening says each thing once", len(told) <= 1,
+                         "The AI disclosure is said once.",
+                         "The opening says it's an AI more than once — keep it in one line: " + " | ".join(told) + ".",
+                         part="conversation"))
+    thin = [x["name"] for x in cv["stages"] if not any(ln["say"] for ln in x["lines"])]
+    checks.append(_check("script", "Every stage has words to say", not thin and bool(cv["close"]["ask"]),
+                         f"{len(cv['stages'])} stages with spoken lines, plus a close.",
+                         "These stages have no spoken lines: " + ", ".join(thin) + ".", part="conversation"))
 
     # Purpose-specific situations.
     have = {b["key"] for b in cv["branches"]}
@@ -121,10 +132,9 @@ def run(spec: dict, composed: dict, ctx: dict) -> dict:
                          f"Missing situations: {', '.join(missing)}.", part="conversation"))
 
     # The same scripted question twice makes the agent re-ask.
-    from app.agent.composer import open_questions, spoken_lines
+    from app.agent.composer import spoken_lines
 
-    dupes = repeated_questions(spoken_lines({**cv, "first_message": first})
-                               + [q["ask"] for q in open_questions(st, cv)])
+    dupes = repeated_questions(spoken_lines({**cv, "first_message": first}))
     checks.append(_check("repeats", "No question scripted twice", not dupes, "Each question is planned once.",
                          "These questions are scripted more than once — keep each in one place: " + " | ".join(dupes) + ".",
                          part="conversation"))

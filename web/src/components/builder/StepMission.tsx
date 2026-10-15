@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { VoiceTextarea } from "@/components/MicButton";
 import { Field, Input, Notice, Toggle } from "@/components/ui";
 import { post } from "@/lib/api";
-import { SOMETHING_ELSE, type BuilderCatalog, type DraftGoal, type MissionAdvanced } from "@/lib/builder";
+import { SOMETHING_ELSE, type AssistResponse, type BuilderCatalog, type DraftGoal, type MissionAdvanced } from "@/lib/builder";
+import { AssistPanel } from "./AssistPanel";
 import { MIN_DESCRIPTION } from "./goal";
 import { Collapsible, StepTitle } from "./parts";
 import { bookingStatus, type Behavior } from "./StepPersonality";
@@ -33,6 +34,7 @@ export function StepMission({
   onBehavior,
   catalog,
   flush,
+  runAssist,
   showErrors,
 }: {
   draftId: string;
@@ -43,6 +45,8 @@ export function StepMission({
   catalog: BuilderCatalog | undefined;
   /** Saves the draft so the suggestion is based on the latest answers. */
   flush: () => Promise<void>;
+  /** Saves the draft, then asks the AI which missing details would change the script. */
+  runAssist: (goal: DraftGoal) => Promise<AssistResponse>;
   showErrors: boolean;
 }) {
   const [loading, setLoading] = useState(false);
@@ -132,6 +136,8 @@ export function StepMission({
             placeholder="e.g. Never discuss commission. Mention we've sold 200+ homes in Austin."
           />
         </Field>
+
+        <AssistPanel goal={goal} setGoal={setGoal} canAsk={missionReady(goal) && !loading} runAssist={runAssist} />
 
         <Collapsible title="Advanced details" meta={filled ? `${filled} set` : "Optional"}>
           <div className="space-y-4">

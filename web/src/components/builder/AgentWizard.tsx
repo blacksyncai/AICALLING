@@ -12,6 +12,7 @@ import {
   CUSTOM_USE_CASE,
   SOMETHING_ELSE,
   type AgentDraft,
+  type AssistResponse,
   type BuilderCatalog,
   type BusinessProfile,
   type DraftData,
@@ -234,6 +235,18 @@ export function AgentWizard() {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => void save(), AUTOSAVE_MS);
   }, [step, data, draftId, save]);
+
+  // The quick-check questions on the Mission step read the saved draft, so save first.
+  const runAssist = useCallback(
+    async (g: DraftGoal) => {
+      latest.current = { ...latest.current, data: { ...latest.current.data, goal: g } };
+      dirty.current = true;
+      await flush();
+      if (!lastSaveOk.current) throw new Error("We couldn't save your answers. Check your connection and try again.");
+      return post<AssistResponse>("/api/agent-builder/assist", { draft_id: draftRef.current });
+    },
+    [flush],
+  );
 
   // Save whatever is pending if the user leaves through the sidebar.
   useEffect(() => () => void flush(), [flush]);
@@ -489,6 +502,7 @@ export function AgentWizard() {
                 onBehavior={setBehavior}
                 catalog={catalog}
                 flush={flush}
+                runAssist={runAssist}
                 showErrors={showErrors}
               />
             )}

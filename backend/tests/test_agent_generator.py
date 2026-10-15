@@ -70,8 +70,9 @@ def test_generates_complete_agent_end_to_end(client, monkeypatch):
     headings = [line[3:] for line in sp.splitlines() if line.startswith("## ")]
     # Purpose-specific and compact; no "Approved wording" section when the user supplied none.
     assert headings == ["Identity and Objective", "What You Know", "Opening", "Conversation Flow",
-                        "Questions and Objections", "Actions and Boundaries"]
-    assert 300 < len(sp.split()) < 1300
+                        "Next Step and Close", "Situations and Objections", "Rules and Boundaries"]
+    assert 600 < len(sp.split()) < 2300
+    assert sp.count(': "') >= 8 and "→ wait" in sp  # an actual script, not a description
     assert agent["first_message"] == "Hi, is this {{name}}?"
     assert "do_not_call" in sp and "Maya" in sp and "Transfer to a person" in sp
     # Rules every call gets at runtime aren't repeated in the editable prompt.
@@ -79,7 +80,7 @@ def test_generates_complete_agent_end_to_end(client, monkeypatch):
     assert agent["voicemail_message"].startswith("Hi {{name}}, this is Maya")
 
     b = agent["builder"]
-    assert b["schema"] == "v3" and set(b["sections"]) == {k for k, _ in b["section_order"]}
+    assert b["schema"] == "v4" and set(b["sections"]) == {k for k, _ in b["section_order"]}
     assert b["purpose"] == "reactivation"
     assert all(c["status"] == "pass" for c in b["quality"]["checks"]), b["quality"]
     assert b["spec"]["strategy"]["facts"] and b["generation"]["references"] == ["Our old script"]
@@ -119,7 +120,7 @@ def test_invalid_spec_gets_exact_error_and_retry(client, monkeypatch):
 
 def test_leaked_reference_details_are_repaired(client, monkeypatch):
     leaky = copy.deepcopy(CONVERSATION)
-    leaky["objections"][0]["response"] = "Jeff at Realty One sold a home on Valley Ridge Drive for top dollar."
+    leaky["objections"][0]["say"] = "Jeff at Realty One sold a home on Valley Ridge Drive for top dollar."
     sent = _route_chat(monkeypatch, extra=[("conversation", _reply(json.dumps(leaky)))])
     draft, status = _generate(client)
     assert status["status"] == "done", status
@@ -222,7 +223,7 @@ def test_edits_are_versioned_and_restorable(client, monkeypatch):
     })
     assert r.status_code == 200
     b = r.json()["builder"]
-    assert b["schema"] == "v3" and b["quality"]["checks"]  # generator metadata is protected
+    assert b["schema"] == "v4" and b["quality"]["checks"]  # generator metadata is protected
     versions = client.get(f"/api/agents/{aid}/versions").json()["versions"]
     assert [v["source"] for v in versions] == ["edited", "generated"]
     first = versions[-1]
@@ -247,7 +248,7 @@ def test_regenerate_generated_section_is_leak_checked(client, monkeypatch):
         return next(replies)
 
     monkeypatch.setattr(llm, "_chat", fake_chat)
-    r = client.post(f"/api/agent-builder/agents/{aid}/regenerate", json={"section": "questions", "instruction": "roof first"})
+    r = client.post(f"/api/agent-builder/agents/{aid}/regenerate", json={"section": "flow", "instruction": "roof first"})
     assert r.status_code == 200, r.text
     assert r.json()["text"].startswith("Ask about their roof first")
     assert "Realty One" in sent[1]["messages"][-1]["content"]  # the rejection told the model what to remove
@@ -276,6 +277,7 @@ def test_earlier_generated_agents_keep_their_twelve_sections():
 
     assert generator.section_order({"schema": "v2"}) == composer.SECTIONS_V2
     assert generator.section_order({"schema": "v3"}) == composer.SECTIONS_V3
+    assert generator.section_order({"schema": "v4"}) == composer.SECTIONS_V4
     text = composer.assemble({"identity": "You are Sam.", "turn_taking": "Wait."}, composer.SECTIONS_V2)
     assert text == "## Agent Identity & Role\n\nYou are Sam.\n\n## Turn-Taking Edge Cases\n\nWait."
 
