@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { MIN_DESCRIPTION } from "./goal";
 import { Chip, Segmented, StepTitle, industryIcon } from "./parts";
 import { LANGUAGES, type Behavior, type VoicesResponse } from "./StepPersonality";
-import { VoiceCards } from "./VoiceCards";
+import { HOUSE_VOICES, VoiceCards } from "./VoiceCards";
 
 type Business = NonNullable<DraftData["business"]>;
 type Direction = NonNullable<DraftGoal["direction"]>;
@@ -230,7 +230,7 @@ export function StepIdentity({
               ))}
             </Select>
           </div>
-          <VoiceCards voices={voices} value={behavior.voice_id ?? ""} language={behavior.language ?? "en"} onChange={(id) => onBehavior({ voice_id: id })} />
+          <VoiceCards voices={voices} value={behavior.voice_id || HOUSE_VOICES[0]} language={behavior.language ?? "en"} onChange={(id) => onBehavior({ voice_id: id })} />
         </section>
 
         {askName && (

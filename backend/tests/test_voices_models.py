@@ -261,3 +261,10 @@ def test_hidden_owned_voice_not_listed():
     voices = build_catalog([], [{"id": hidden, "name": "Giovanna"}, {"id": "own-1", "name": "Mine"}], can_preview=True)
     ids = {v["id"] for v in voices}
     assert hidden not in ids and "own-1" in ids
+
+
+def test_new_agents_default_to_marissa(client):
+    marissa = "97f03c16-fab2-4747-b655-9caefbd68fcf"
+    for template in ("blank", "sales_sdr"):
+        agent = client.post("/api/agents/", json={"template": template}).json()
+        assert agent["voice_id"] == marissa, template

@@ -1,6 +1,6 @@
 """
 House voices — the named Cartesia voices offered as one-click options in the
-agent editor, in picker order. New agents default to DEFAULT_VOICE_ID (Lauren).
+agent editor, in picker order. New agents default to DEFAULT_VOICE_ID (Marissa M).
 
 Voice picker categories (app/routers/settings.py):
 - Premium: cloned voices only — entries marked "clone" here, voices owned/cloned
@@ -71,5 +71,5 @@ HIDDEN_VOICE_IDS = {
     "3a5cc58b-260a-4da6-9840-4966242e109e",  # "Leena" (Cartesia) — Leena uses the Mistral clones instead
 }
 
-# New agents start with Lauren (independent of the picker order above).
-DEFAULT_VOICE_ID = "6c756032-11c3-4be8-a120-74f9673fb700"
+# New agents start with Marissa M (Version 1, the Cartesia house clone).
+DEFAULT_VOICE_ID = "97f03c16-fab2-4747-b655-9caefbd68fcf"
