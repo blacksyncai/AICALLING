@@ -280,3 +280,34 @@ def test_ring_out_is_recorded_as_no_answer(client, agent_id, monkeypatch):
     asyncio.run(scenario())
     call = client.get(f"/api/calls/{call_id}").json()
     assert call["outcome"] == "no_answer" and call["summary"] == "Not answered."
+
+
+def test_browser_test_is_recorded_only_when_asked(client, agent_id, monkeypatch):
+    import json as _json
+
+    from app.config import settings
+    from app.services import outbound_call
+
+    for k, v in {"livekit_url": "wss://lk.test", "livekit_api_key": "k", "livekit_api_secret": "s" * 32,
+                 "openai_api_key": "o", "deepgram_api_key": "d", "cartesia_api_key": "c",
+                 "recordings_s3_bucket": "b", "recordings_s3_access_key": "a", "recordings_s3_secret_key": "z"}.items():
+        monkeypatch.setattr(settings, k, v)
+    sent = []
+
+    async def fake_dispatch(self, lk, room, metadata):
+        sent.append(_json.loads(metadata))
+
+    monkeypatch.setattr(outbound_call.CallService, "_create_room_and_dispatch", fake_dispatch)
+    monkeypatch.setattr(outbound_call, "_lk", lambda: type("LK", (), {"aclose": lambda self: _noop()})())
+
+    plain = client.post(f"/api/agents/{agent_id}/web-call", json={}).json()
+    assert plain["recording"] is False and "record_key" not in sent[-1]
+    assert client.get(f"/api/calls/{plain['call_id']}").json()["has_recording"] is False
+
+    rec = client.post(f"/api/agents/{agent_id}/web-call", json={"record": True}).json()
+    assert rec["recording"] is True and sent[-1]["record_key"].endswith(f"{rec['call_id']}.ogg")
+    assert client.get(f"/api/calls/{rec['call_id']}").json()["has_recording"] is True
+
+
+async def _noop():
+    return None

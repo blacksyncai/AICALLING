@@ -109,6 +109,8 @@ class ChatRequest(BaseModel):
 
 class WebCallRequest(BaseModel):
     variables: dict = {}
+    # Browser tests aren't recorded unless the tester ticks "Record this call".
+    record: bool = False
 
 
 class PhoneCallRequest(BaseModel):
@@ -379,7 +381,7 @@ async def start_web_call(agent_id: uuid.UUID, body: WebCallRequest, ctx: CtxDep,
     agent = await _get_agent(db, ctx, agent_id)
     try:
         await ensure_can_test(db, ctx.org)
-        return await call_service.start_web_call(agent, db, body.variables)
+        return await call_service.start_web_call(agent, db, body.variables, record=body.record)
     except InsufficientCredits as exc:
         raise HTTPException(status_code=402, detail=str(exc))
     except CallSetupError as exc:

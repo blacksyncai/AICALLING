@@ -226,8 +226,12 @@ class CallService:
         log.info("agent_dispatched", room=room_name, agent_name=agent_name,
                  dispatch_id=getattr(dispatch, "id", ""))
 
-    async def start_web_call(self, agent: Agent, db: AsyncSession, variables: dict | None = None) -> dict:
-        """Browser voice test: returns {url, token, room, call_id} for livekit-client."""
+    async def start_web_call(self, agent: Agent, db: AsyncSession, variables: dict | None = None,
+                             record: bool = False) -> dict:
+        """Browser voice test: returns {url, token, room, call_id, recording} for livekit-client.
+
+        record=True: the voice worker records the conversation itself (both sides, mixed after the call) and
+        uploads it to the recordings bucket — no LiveKit egress involved."""
         if not settings.voice_ready:
             raise CallSetupError(
                 "Voice isn't configured. Set LIVEKIT_URL/API_KEY/API_SECRET, OPENAI_API_KEY, "
@@ -242,6 +246,11 @@ class CallService:
         await db.flush()
         variables = {"name": "there", **(variables or {})}
         metadata = _build_metadata(call_log, agent, variables, "web", None)
+        if record and settings.recordings_ready:
+            from app.services import recordings
+
+            call_log.recording_key = recordings.key_for(agent.org_id, call_log.id)
+            metadata = json.dumps({**json.loads(metadata), "record_key": call_log.recording_key})
         await db.commit()
 
         lk = _lk()
@@ -264,7 +273,8 @@ class CallService:
             .with_ttl(timedelta(hours=1))
             .to_jwt()
         )
-        return {"url": settings.livekit_url, "token": token, "room": room_name, "call_id": str(call_log.id)}
+        return {"url": settings.livekit_url, "token": token, "room": room_name, "call_id": str(call_log.id),
+                "recording": bool(call_log.recording_key)}
 
     async def dispatch_call(self, lead: Lead | None, db: AsyncSession, *, agent: Agent | None = None,
                             to_phone: str | None = None, campaign_id: uuid.UUID | None = None,

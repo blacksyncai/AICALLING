@@ -47,6 +47,9 @@ export function WebCallPanel({
   const [agentState, setAgentState] = useState("connecting");
   const [callId, setCallId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  // Off unless the tester asks: browser tests are only recorded when "Record this call" is ticked.
+  const [record, setRecord] = useState(false);
+  const [recording, setRecording] = useState(false);
 
   const agentLevel = useLevel(() => {
     const room = roomRef.current;
@@ -92,11 +95,14 @@ export function WebCallPanel({
     setElapsed(0);
     setAgentState("connecting");
     try {
-      const { url, token, call_id } = await post<{ url: string; token: string; call_id: string }>(
-        `/api/agents/${agentId}/web-call`,
-        { variables },
-      );
+      const { url, token, call_id, recording: isRecording } = await post<{
+        url: string;
+        token: string;
+        call_id: string;
+        recording?: boolean;
+      }>(`/api/agents/${agentId}/web-call`, { variables, record });
       setCallId(call_id);
+      setRecording(!!isRecording);
       const room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
 
@@ -184,6 +190,11 @@ export function WebCallPanel({
           <div className="text-sm font-medium">{phase === "idle" ? "Talk to your agent" : stateLabel}</div>
           <div className="text-xs text-zinc-500">
             {phase === "live" ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}` : "Uses your microphone — headphones recommended"}
+            {phase === "live" && recording && (
+              <span className="ml-2 inline-flex items-center gap-1 font-medium text-red-600">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-600" /> Recording
+              </span>
+            )}
           </div>
         </div>
         {phase === "live" && (
@@ -214,6 +225,17 @@ export function WebCallPanel({
             </Button>
           )}
         </div>
+        {(phase === "idle" || phase === "ended") && enabled && (
+          <label className="inline-flex cursor-pointer select-none items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-700">
+            <input
+              type="checkbox"
+              checked={record}
+              onChange={(e) => setRecord(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-zinc-300 accent-red-600"
+            />
+            Record this call
+          </label>
+        )}
         {!enabled && (
           <Notice>
             Voice testing isn&apos;t available right now. Message us in the chat and we&apos;ll get it sorted.
@@ -222,7 +244,7 @@ export function WebCallPanel({
         {error && <Notice tone="red">{error}</Notice>}
         {phase === "ended" && callId && (
           <Link href={`/calls/${callId}`} className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700">
-            View call log & AI summary <ExternalLink className="h-3 w-3" />
+            {recording ? "Recording, call log & AI summary" : "View call log & AI summary"} <ExternalLink className="h-3 w-3" />
           </Link>
         )}
       </div>

@@ -1210,6 +1210,19 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                                             reason=str(getattr(ev, "reason", "")), error=str(getattr(ev, "error", "") or "")[:300]))
     await session.start(agent, room=ctx.room)
 
+    # "Record this call" on a browser test: the worker records both sides itself (see app/agent/call_recorder.py).
+    recorder = None
+    if call_type == "web" and metadata.get("record_key"):
+        from app.agent.call_recorder import CallRecorder
+
+        try:
+            recorder = CallRecorder(session, metadata["record_key"])
+            if not await recorder.start():
+                recorder = None
+        except Exception as exc:  # a recording problem must never affect the call
+            log.warning("call_recording_start_failed", room=ctx.room.name, error=str(exc)[:200])
+            recorder = None
+
     # Answering-machine detection: LiveKit's AMD classifies the first seconds after pickup (human / voicemail /
     # IVR / mailbox full) and holds the agent's opening line until it decides. Phrase matching stays as backup.
     if call_type == "outbound" and vm_action != "ignore" and settings.openai_api_key:
@@ -1356,6 +1369,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         else:
             outcome = "no_answer"
         await _post_run_outcome(run, outcome)  # first: it's what matters if the job is cut short
+        if recorder is not None:
+            await recorder.finish()
         await _push_live_event(run.call_log_id, {
             "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
             "duration_sec": round((run.ended_wall or _time.time()) - wall_t0), "ts": str(_time.time()),
