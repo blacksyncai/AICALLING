@@ -272,3 +272,33 @@ def test_every_read_tool_answers(client, make_client):
     assert "Something went wrong" not in str(out), out
     out, err = _tool(anon, token, "launch_agent", {"agent_id": agent["id"]})
     assert "Something went wrong" not in str(out), out
+
+
+def test_chatgpt_client_metadata_document(client, make_client, monkeypatch):
+    """ChatGPT identifies itself with https://chatgpt.com/oauth/client.json (its real document, below)."""
+    from app.routers import oauth
+
+    cid = "https://chatgpt.com/oauth/client.json"
+    doc = {"client_id": cid, "client_uri": "https://chatgpt.com/", "redirect_uris": [REDIRECT],
+           "token_endpoint_auth_method": "private_key_jwt", "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+           "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"], "client_name": "ChatGPT",
+           "token_endpoint_auth_signing_alg": "RS256", "jwks_uri": "https://chatgpt.com/oauth/jwks.json"}
+
+    async def fake_fetch(client_id):
+        return doc if client_id == cid else None
+
+    monkeypatch.setattr(oauth, "_fetch_metadata_document", fake_fetch)
+    anon = make_client()
+    verifier, challenge = _pkce()
+    r = anon.get("/api/oauth/authorize", params={
+        "response_type": "code", "client_id": cid, "redirect_uri": REDIRECT, "state": "s", "scope": "blacksync",
+        "code_challenge": challenge, "code_challenge_method": "S256", "resource": f"{BASE}/api/mcp"},
+        follow_redirects=False)
+    assert r.status_code == 302 and urlparse(r.headers["location"]).path == "/connect", r.text
+    req = parse_qs(urlparse(r.headers["location"]).query)["req"][0]
+    assert client.get("/api/oauth/request", params={"req": req}).json()["client_name"] == "ChatGPT"
+    code = parse_qs(urlparse(client.post("/api/oauth/approve", json={"req": req}).json()["redirect"]).query)["code"][0]
+    tok = anon.post("/api/oauth/token", data={"grant_type": "authorization_code", "code": code, "client_id": cid,
+                                              "redirect_uri": REDIRECT, "code_verifier": verifier})
+    assert tok.status_code == 200, tok.text
+    assert _rpc(anon, tok.json()["access_token"], "ping")["result"] == {}

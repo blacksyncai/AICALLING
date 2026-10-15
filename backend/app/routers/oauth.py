@@ -194,6 +194,7 @@ async def _fetch_metadata_document(client_id: str) -> dict | None:
         async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as http:
             r = await http.get(client_id, headers={"Accept": "application/json"})
         if r.status_code != 200 or len(r.content) > 20_000:
+            log.warning("oauth_cimd_fetch_failed", client_id=client_id, status=r.status_code)
             return None
         doc = r.json()
     except Exception as exc:
@@ -223,9 +224,12 @@ async def get_client(db, client_id: str) -> OAuthClient | None:
     if not doc:
         return client  # keep using the last good copy if the host is briefly down
     uris = [u for u in (doc.get("redirect_uris") or []) if isinstance(u, str) and _valid_redirect(u)][:20]
-    method = doc.get("token_endpoint_auth_method") or "none"
-    if method != "none":  # only public clients with PKCE are accepted this way
-        return None
+    # Only public clients with PKCE are accepted this way: fine when "none" is the client's method or one it also
+    # supports (ChatGPT's document prefers private_key_jwt but lists none; it then uses the method we advertise).
+    methods = {doc.get("token_endpoint_auth_method") or "none", *(doc.get("token_endpoint_auth_methods_supported") or [])}
+    if "none" not in methods:
+        log.warning("oauth_cimd_rejected", client_id=client_id, reason="no public-client auth method")
+        return client
     if client is None:
         client = OAuthClient(client_id=client_id, source="cimd")
         db.add(client)
