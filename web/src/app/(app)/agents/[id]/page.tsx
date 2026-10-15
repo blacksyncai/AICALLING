@@ -78,6 +78,14 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
   const [testTab, setTestTab] = useState<TestTab>("chat");
   const [saving, setSaving] = useState(false);
   const [testVars, setTestVars] = useState<Record<string, string>>({ name: "Jamie", company: "Globex" });
+  const testContact = saved?.builder?.test_contact;
+  // Agents with their own demo contact (the FSBO agent's homeowner) test with it.
+  const testContactKey = JSON.stringify(testContact ?? null);
+  useEffect(() => {
+    const contact = JSON.parse(testContactKey) as Record<string, string> | null;
+    if (contact) setTestVars(contact);
+  }, [testContactKey]);
+  const testKeys = testContact ? Object.keys(testContact) : (["name", "company", "email", "role"] as string[]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
   const readinessUrl = `/api/agent-builder/agents/${id}/readiness`;
@@ -559,9 +567,9 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             />
             {testTab !== "phone" && (
               <details className="mt-3 rounded-lg border border-zinc-200 px-3 py-2 text-xs">
-                <summary className="cursor-pointer font-medium text-zinc-600">Test contact: {testVars.name || "—"} · {testVars.company || "—"}</summary>
+                <summary className="cursor-pointer font-medium text-zinc-600">Test contact: {testVars.name || "—"} · {(testContact ? testVars[testKeys[1]] : testVars.company) || "—"}</summary>
                 <div className="mt-2 grid grid-cols-2 gap-2">
-                  {(["name", "company", "email", "role"] as const).map((k) => (
+                  {testKeys.map((k) => (
                     <Input key={k} placeholder={k} value={testVars[k] ?? ""} onChange={(e) => setTestVars((v) => ({ ...v, [k]: e.target.value }))} className="h-8 text-xs" />
                   ))}
                 </div>

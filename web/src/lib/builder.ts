@@ -311,6 +311,8 @@ export function sectionOrder(builder: BuilderInfo | null | undefined): [string, 
 }
 
 export interface BuilderInfo {
+  /** Contact used for test calls (e.g. the FSBO agent's demo homeowner). */
+  test_contact?: Record<string, string>;
   /** "v3" (compact, purpose-specific) or "v2" (twelve sections) = built by the production generator. */
   schema?: string;
   section_order?: [string, string][];

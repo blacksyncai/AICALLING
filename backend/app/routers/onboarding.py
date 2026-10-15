@@ -107,6 +107,14 @@ async def start(body: StartBody, user: UserDep, db: DbDep):
     user.active_org_id = org.id
     await db.flush()
 
+    # Real estate: start with the FSBO prospecting agent, in their name (paused until they launch it).
+    if body.industry == "real_estate" and (not goals or "fsbo_prospecting" in goals):
+        from app.agent import fsbo
+
+        broker = " ".join(x for x in (user.first_name, user.last_name) if x and x != "Admin").strip()
+        db.add(fsbo.new_agent(org.id, body.company.strip(), broker or body.company.strip(),
+                              team_size=body.team_size, timezone=org.timezone))
+
     # Brief the welcome demo agent on what they told us.
     demo = (await db.execute(select(Agent).where(Agent.org_id == org.id, Agent.template == "welcome_demo"))).scalar_one_or_none()
     if demo:

@@ -39,13 +39,25 @@ def test_trial_onboarding_real_estate(client, make_client):
     assert org["name"] == "Summit Realty" and org["industry"] == "real_estate"
     assert org["lead_finder_enabled"] is True and org["credits_balance"] == 30
     assert org["onboarding"]["goals"] == ["expired_listings", "fsbo_prospecting"]
-    agents = c.get("/api/agents/").json()
-    assert [a["template"] for a in agents] == ["welcome_demo"]
-    demo = c.get(f"/api/agents/{agents[0]['id']}").json()
+    agents = {a["template"]: a for a in c.get("/api/agents/").json()}
+    assert set(agents) == {"welcome_demo", "fsbo_prospecting"}
+    # Real estate starts with the FSBO agent in the account's own name, paused until they launch it.
+    fsbo = c.get(f"/api/agents/{agents['fsbo_prospecting']['id']}").json()
+    assert fsbo["status"] == "paused" and fsbo["ai_disclosure"] is False
+    assert "Maya from Summit Realty" in fsbo["system_prompt"] and "Central Time" in fsbo["system_prompt"]
+    assert "Waldina" not in fsbo["system_prompt"] and fsbo["first_message"] == "Hey, this is {{name}}, right?"
+    assert fsbo["builder"]["test_contact"]["name"] == "David"
+    demo = c.get(f"/api/agents/{agents['welcome_demo']['id']}").json()
     assert "Summit Realty" in demo["system_prompt"] and "Expired Listings" in demo["system_prompt"]
     assert c.get("/api/business-profile").json()["industry"] == "real_estate"
     # Only once per login.
     assert c.post("/api/onboarding/start", json={"company": "Again", "industry": "other"}).status_code == 409
+
+
+def test_real_estate_without_fsbo_goal_gets_no_fsbo_agent(client, make_client):
+    c = _orphan_login(client, make_client)
+    c.post("/api/onboarding/start", json={"company": "Lease Co", "industry": "real_estate", "goals": ["expired_listings"]})
+    assert [a["template"] for a in c.get("/api/agents/").json()] == ["welcome_demo"]
 
 
 def test_trial_onboarding_logistics_has_no_lead_finder(client, make_client):

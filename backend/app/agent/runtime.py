@@ -13,15 +13,33 @@ from datetime import datetime, timedelta, timezone
 _VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 
 
+_HOUSE_NO = re.compile(r"^\s*\d+[a-zA-Z]?(?:-[a-zA-Z0-9]+)?\s+")
+_UNIT = re.compile(r"\s+(?:apt|apartment|unit|suite|ste|#)\s*\S+$", re.I)
+
+
+def street_name(address: str) -> str:
+    """"214 Asheville Street, Houston, TX" → "Asheville Street" (how people say an address on the phone)."""
+    street = (address or "").split(",")[0].strip()
+    return _UNIT.sub("", _HOUSE_NO.sub("", street)).strip()
+
+
+def with_derived(variables: dict | None) -> dict:
+    """Contact fields plus the ones scripts derive from them (property_street from property_address)."""
+    out = dict(variables or {})
+    if not out.get("property_street") and out.get("property_address"):
+        out["property_street"] = street_name(str(out["property_address"]))
+    return out
+
+
 def render_vars(text: str, variables: dict | None) -> str:
     """Replace {{var}} placeholders. Unknown vars become a neutral fallback."""
-    variables = {k: v for k, v in (variables or {}).items() if v not in (None, "")}
+    variables = {k: v for k, v in with_derived(variables).items() if v not in (None, "")}
 
     def _sub(m: re.Match) -> str:
         key = m.group(1)
         if key in variables:
             return str(variables[key])
-        return {"name": "there", "company": "your company"}.get(key, "")
+        return {"name": "there", "company": "your company", "property_street": "your street"}.get(key, "")
 
     return _VAR_RE.sub(_sub, text or "")
 
@@ -210,6 +228,7 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
     reference, then this contact's details (static parts first, so providers can cache the prefix)."""
     # The call rules come first: models follow "don't re-ask what they told you" much more reliably when it's read
     # before the script than after it (measured on the default fast model).
+    variables = with_derived(variables)
     script = render_vars(cfg.get("system_prompt", ""), variables).strip()
     parts = [conversation_rules(cfg), ("# YOUR ROLE AND SCRIPT\n" + script) if script else "", guardrails(cfg),
              _tools_block(cfg, channel)]

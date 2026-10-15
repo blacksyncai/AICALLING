@@ -195,3 +195,20 @@ def test_inbound_scripts_never_use_contact_fields_after_the_greeting():
     with pytest.raises(S.InvalidOutput, match="inbound callers aren't on file"):
         S.validate_conversation(cv, allowed_vars=VARS, allowed_outcomes=S.usable_outcomes(FLAGS), direction="inbound",
                                 flags=FLAGS, purpose="inbound")
+
+
+def test_fsbo_default_agent_fills_in_the_account():
+    from app.agent import fsbo
+
+    d = fsbo.build("The Agency Team", "Waldina Galeano", team_size="21_plus", timezone="America/Chicago")
+    text = runtime.build_instructions({"system_prompt": d["system_prompt"], "business_name": "The Agency Team",
+                                       "ai_disclosure": False}, fsbo.TEST_CONTACT)
+    assert "You are Maya from The Agency Team, calling on behalf of Waldina Galeano" in text
+    assert '"Hey David, this is Maya from The Agency Team. Do you have a quick second to talk about the property on ' \
+           'Asheville Street?"' in text
+    assert "more than twenty agents" in text and "two Central" in text and "{{" not in text
+    # A solo agent never claims a team; a contact without an address hears "your property".
+    solo = fsbo.build("Rivera Homes", "Ana Rivera", team_size="just_me")["system_prompt"]
+    assert "team of" not in solo and "Ana or someone" not in solo
+    assert runtime.street_name("1200-B Oak Ridge Dr Apt 4, Austin, TX 78701") == "Oak Ridge Dr"
+    assert "Not on file: property_address" in runtime.build_instructions({"system_prompt": solo}, {"name": "Jo"})

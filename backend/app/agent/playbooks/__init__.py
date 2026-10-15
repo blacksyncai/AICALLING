@@ -217,4 +217,46 @@ Guardrails
 Post-call output
 - Record the stated reason it didn't work, activity level, timeline, priority summary, the agreed format (visit or call), booked time, and any objection; disposition from a fixed list.""",
     },
+    {
+        "slug": "fsbo_prospecting",
+        "title": "FSBO prospecting — learn first, then earn a 15-minute conversation",
+        "tags": {
+            "verticals": ["real_estate"],
+            "directions": ["outbound"],
+            "goals": ["fsbo", "for_sale_by_owner", "listing", "seller_followup", "book_meeting"],
+            "styles": ["warm", "relaxed", "confident", "conversational"],
+        },
+        "private_terms": ["Waldina", "Galeano", "The Agency Team", "Asheville", "Vulcan7", "BoldTrail"],
+        "patterns": """PATTERN CARD — For-sale-by-owner prospecting (homeowner selling it themselves)
+
+When it fits: outbound calls to homeowners listing their own property, where the goal is a short conversation with the broker or a team agent, never a listing agreement on the call.
+
+Order of the call
+- Confirm the person ("Hey, this is [name], right?"), wait. Then name, company and the property by its STREET only ("the property on [street]"), and ask if they have a quick second. Wait.
+- Learn before pitching: is it still available → how long on the market → getting much interest (inquiries, showings)? One at a time, acknowledge each answer, skip anything already said. If they ask why you're calling, answer straight away.
+- Reason for the call in one sentence: you understand they're selling it themselves and the broker wanted to see if they'd be open to a quick conversation. Wait.
+- Only if curious: one sentence on what the broker/team brings (team size or reach mentioned once, as context, never as a promise). Then: "Are you set on handling the whole sale yourself, or would you consider some help if the numbers made sense?"
+- Open → clarify timeline if unknown → offer fifteen minutes with the broker or someone on the team. Once they agree, stop selling.
+
+Objections (one thoughtful answer each, then close politely if still no)
+- "FSBO for a reason / don't want an agent" → "Totally get that. Is avoiding the commission the main reason?" Respond to their actual reason; don't force commission.
+- Commission → agree it's what they walk away with that matters; ask if they'd compare numbers if working with someone left them with more after fees; offer the fifteen minutes to compare. Never promise a higher price or net.
+- "I can sell it myself" → "You may well be able to. What would we need to bring to the table for a conversation to be worthwhile?" Tie the invite to the need they name.
+- Little interest → "What do you think has been holding things up?" Acknowledge without criticizing the property or their approach.
+- Plenty of interest → ask if it has turned into an offer; if moving forward with one, wish them well.
+- "Do you have a buyer?" → no specific buyer; the team can explore whether someone could be a fit, no promise. Never invent buyers, offers, showings or guarantees.
+- "What do you charge?" / "What would you do differently?" → the broker explains fees and strategy directly; no invented rates, valuations, packages or claims.
+- Already listed with an agent → if exclusive, thank them and leave it; never encourage cancelling.
+- "Send me something" → ask what would be useful and how to send it; say you'll pass it along (never claim it was sent).
+- Busy → ask for a better time, capture it, end.
+
+Callback flow
+- Day first, then time, in the homeowner's time zone; confirm once naturally ("tomorrow afternoon around two Central?"). Say you'll pass it along so the team can confirm. No claimed booking or transfer without a tool.
+
+Voice
+- Warm, relaxed, confident, conversational. One or two short sentences per turn, one question at a time, brief honest acknowledgments ("Got it", "Yeah, that makes sense"); no "Nice" after something frustrating.
+
+Post-call
+- Record only what they said: availability, time on market, inquiries/showings/offers, timeline, priorities and objections, agent representation, interest in the conversation, callback day/time/zone, outcome, wrong number or do-not-call; unknown otherwise.""",
+    },
 ]
