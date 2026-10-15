@@ -81,7 +81,7 @@ export function Onboarding() {
 
   const includes = [
     { icon: Coins, text: `${opts?.trial_credits ?? 30} calling credits to start — no card needed`, on: true },
-    { icon: Headphones, text: "Marissa, a demo agent you can talk to right away", on: true },
+    { icon: Headphones, text: "Synchro, a demo agent you can talk to right away", on: true },
     { icon: Sparkles, text: industryLabel ? `Build with AI, set up for ${industryLabel}` : "Build with AI, set up for your industry", on: !!industry },
     { icon: UserSearch, text: "Lead Finder — look up property owners", on: leadFinder },
   ];

@@ -639,7 +639,7 @@ export function BlackSyncPipelines({
         </div>
         {tags ? (
           <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-            Pick an agent and you get a tag like <span className="text-zinc-200">AI Call - Marissa</span>. Tag anyone in {p.name} — one person or a
+            Pick an agent and you get a tag like <span className="text-zinc-200">AI Call - Synchro</span>. Tag anyone in {p.name} — one person or a
             whole smart list — and the agent calls them within a minute, already knowing their stage, notes, calls and the homes they viewed. The
             tag then flips to the result (<span className="text-zinc-200">AI Booked, AI Voicemail, AI Talked…</span>) so you can build smart
             lists on it, and the person&apos;s agent gets a task for callbacks and booked meetings. No answers are retried up to 3 times.

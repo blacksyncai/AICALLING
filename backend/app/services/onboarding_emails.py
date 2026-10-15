@@ -176,7 +176,7 @@ def welcome_email(user: User, org_name: str, industry_label: str | None = None,
         intro=f"{_workspace_line(org_name, industry_label)}, and you've got <strong>complimentary calling credits</strong> "
               "to build, customize, and test your first AI agent. No credit card required.",
         steps=_steps([
-            ("Meet Marissa", "Your AI onboarding assistant will learn about your business and help you get started."),
+            ("Meet Synchro", "Your AI onboarding assistant will learn about your business and help you get started."),
             ("Build your agent", "Choose a voice, describe your business, and let AI help create your first agent."),
             ("Test it live", "Speak to your agent right in your browser and hear how it handles real conversations."),
         ]),
@@ -199,7 +199,7 @@ def catchup_email(user: User, org_name: str, industry_label: str | None = None,
         intro=f"{_workspace_line(org_name, industry_label, 'is set up')}, and your <strong>calling credits</strong> are "
               "still there. Here's the fastest way to hear BlackSync work for your business:",
         steps=_steps([
-            ("Talk to Marissa", "Hear an AI agent live in your browser — she'll answer anything about the platform."),
+            ("Talk to Synchro", "Hear an AI agent live in your browser — Synchro will answer anything about the platform."),
             ("Build your first agent", "Tell BlackSync about your business and it writes the script, voice and call flow."),
             ("Test it, then launch", "Call it from your browser, tweak anything, then point it at your leads or your phone line."),
         ]),

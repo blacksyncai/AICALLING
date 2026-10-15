@@ -762,7 +762,7 @@ function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof
             rows={3}
             maxLength={1000}
             value={draft.voicemail_message ?? ""}
-            placeholder="Hi {{name}}, this is Marissa from BlackSync — sorry I missed you. I'll try you again soon, or call us back at this number. Thanks!"
+            placeholder="Hi {{name}}, this is Synchro from BlackSync — sorry I missed you. I'll try you again soon, or call us back at this number. Thanks!"
             onChange={(e) => set("voicemail_message", e.target.value)}
           />
         </Field>

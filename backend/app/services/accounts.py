@@ -80,7 +80,7 @@ async def create_organization(db: AsyncSession, name: str, *, credits: int = 0,
     org = Organization(id=uuid.uuid4(), name=name.strip() or "New account")
     db.add(org)
     await db.flush()
-    agent = new_agent_from_template("welcome_demo")  # Marissa, the BlackSync welcome guide
+    agent = new_agent_from_template("welcome_demo")  # Synchro, the BlackSync welcome guide
     agent.org_id = org.id
     db.add(agent)
     if credits:

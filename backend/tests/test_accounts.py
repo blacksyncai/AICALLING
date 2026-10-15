@@ -244,7 +244,7 @@ def test_new_accounts_start_with_the_welcome_demo(client, make_client):
     agents = owner.get("/api/agents/").json()
     assert len(agents) == 1
     demo = agents[0]
-    assert demo["template"] == "welcome_demo" and demo["name"] == "Marissa"
+    assert demo["template"] == "welcome_demo" and demo["name"] == "Synchro"
     assert demo["voice_id"] == "97f03c16-fab2-4747-b655-9caefbd68fcf" and demo["max_duration_seconds"] == 420
     assert demo["first_message"].startswith("Hey, welcome to BlackSync AI!")
     assert demo["specialty"] == "Welcome Demo"

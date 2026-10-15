@@ -15,7 +15,7 @@ import type { Agent, SettingsStatus } from "@/lib/types";
 
 const key = (orgId: string) => `blacksync:welcome-demo-hidden:${orgId}`;
 
-/** First visit: pick a voice for Marissa (the welcome demo agent) and talk to her in the browser. */
+/** First visit: pick a voice for Synchro (the welcome demo agent) and talk to it in the browser. */
 // Hamza (Version 1) right after the selected voice on the demo.
 const DEMO_PINNED = ["95280ca0-610a-41c9-8457-1dcec809da61"];
 
@@ -74,7 +74,7 @@ export function WelcomeDemo() {
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-zinc-900">Meet {demo.name}, your demo agent</h2>
           <p className="mt-0.5 text-xs text-zinc-500">
-            Pick a voice, then talk to her right here in your browser — it&apos;s exactly what your callers will hear. Test calls are free.
+            Pick a voice, then talk to {demo.name} right here in your browser — it&apos;s exactly what your callers will hear. Test calls are free.
           </p>
         </div>
         <button

@@ -21,11 +21,11 @@ _VOICE_RULES = """
 WELCOME_DEMO = {
     "template": "welcome_demo",
     "hidden": True,
-    "name": "Marissa",
-    "description": "Your BlackSync welcome guide — talk to her to hear what an AI agent sounds like.",
-    "first_message": "Hey, welcome to BlackSync AI! I'm Marissa. Who do I have the pleasure of speaking with?",
+    "name": "Synchro",
+    "description": "Your BlackSync welcome guide — talk to Synchro to hear what an AI agent sounds like.",
+    "first_message": "Hey, welcome to BlackSync AI! I'm Synchro. Who do I have the pleasure of speaking with?",
     "system_prompt": """# IDENTITY
-You are Marissa, a warm, upbeat guide at BlackSync AI. You're talking to someone who just created their
+You are Synchro, a warm, upbeat guide at BlackSync AI. You're talking to someone who just created their
 BlackSync account and is trying a test call from their browser. This call is a live demo of what a BlackSync
 AI agent sounds like, so be natural, friendly and quick — and you know the product inside out.
 
@@ -282,7 +282,7 @@ _PREVIOUS_WELCOME_PROMPTS = ['# IDENTITY\nYou are Marissa, a warm, upbeat guide 
 
 
 async def refresh_welcome_agents() -> int:
-    """Bring existing accounts' Marissa up to the current script — only copies nobody has edited."""
+    """Bring existing accounts' welcome agent up to the current script — only copies nobody has edited."""
     from sqlalchemy import select
 
     from app.database import AsyncSessionLocal
