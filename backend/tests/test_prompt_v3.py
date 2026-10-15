@@ -169,3 +169,12 @@ def test_speech_guard_never_speaks_wait_markers():
     from app.agent.speech_guard import clean
 
     assert clean("I'm so sorry for your loss. May I ask your name? → wait") == "I'm so sorry for your loss. May I ask your name?"
+
+
+def test_conditions_read_naturally_whatever_the_model_wrote():
+    from app.agent.composer import _say
+
+    line = {"say": "Where are they now?", "wait": True, "if": "", "skip_if": "skip_if if already shared"}
+    assert _say(line, set()) == '- Only if you don\'t know yet (skip if already shared): Ask: "Where are they now?" → wait'
+    line = {"say": "That helps.", "wait": False, "if": "If they share a timeline", "skip_if": ""}
+    assert _say(line, set()) == '- If they share a timeline: Say: "That helps."'

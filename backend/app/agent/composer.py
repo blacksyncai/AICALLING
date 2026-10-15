@@ -116,7 +116,8 @@ def _clause(text: str) -> str:
     """A condition to follow "when": drops a leading "when", "once" or "after" the model already wrote."""
     import re
 
-    return _lower_first(re.sub(r"^(?:when|once|after|as soon as)\s+", "", (text or "").strip(), flags=re.I))
+    return _lower_first(re.sub(r"^(?:(?:skip[_ ]if|only if|if|when|once|after|as soon as)\s+)+", "", (text or "").strip(),
+                               flags=re.I))
 
 
 def _say(line: dict, exact: set[str]) -> str:
@@ -127,7 +128,7 @@ def _say(line: dict, exact: set[str]) -> str:
         out += " → wait"
     # The condition comes first, so the agent checks it before speaking.
     if line.get("skip_if"):
-        out = f"Only if you don't know yet (skip if {_lower_first(line['skip_if'])}): {out}"
+        out = f"Only if you don't know yet (skip if {_clause(line['skip_if'])}): {out}"
     elif line.get("if"):
         out = f"If {_clause(line['if'])}: {out}"
     return "- " + out
