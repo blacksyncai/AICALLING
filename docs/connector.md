@@ -52,7 +52,7 @@ Tools that change data have `readOnlyHint: false`. `call_with_agent` and `start_
 | --- | --- |
 | Getting started | `get_started` (checklist and next step), `list_industries`, `create_account` |
 | Knowledge | `get_business_profile`, `update_business_profile`, `scan_website`, `add_knowledge` |
-| Agents | `list_agents`, `get_agent`, `list_voices`, `build_agent` / `get_agent_build_status` (background generation, same pipeline as Build with AI), `update_agent`, `launch_agent`, `call_with_agent` |
+| Agents | `list_agents`, `get_agent`, `list_voices`, `get_script_guide` + `create_agent` (the assistant writes the full script with the user and saves it to a new, paused agent — no Build with AI credits), `update_agent`, `launch_agent`, `call_with_agent` |
 | Results | `list_calls`, `get_call` (transcript), `get_analytics` |
 | Contacts and campaigns | `list_contacts`, `add_contacts`, `list_campaigns`, `get_campaign`, `create_campaign`, `start_campaign`, `pause_campaign` |
 | Account | `list_phone_numbers`, `get_billing` |

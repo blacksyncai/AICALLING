@@ -34,7 +34,7 @@ PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
     "BlackSync AI runs AI phone agents that call leads and answer calls for businesses. Use get_started first: it "
     "shows the account, a setup checklist and the next step. To onboard a new business: create_account (if they "
-    "have none), scan_website or add_knowledge, build_agent (then poll get_agent_build_status) — or, to write the script with the user, get_script_guide then create_agent, a test with "
+    "have none), scan_website or add_knowledge, get_script_guide, then write the agent's full script with the user and save it with create_agent, a test with "
     "call_with_agent to their own phone, launch_agent, add_contacts, create_campaign and start_campaign. Ask before "
     "anything that places calls or changes the account, and confirm phone numbers before calling them. Never invent "
     "results: read calls with list_calls / get_call."

@@ -96,7 +96,8 @@ def test_connect_and_use_tools(client, make_client):
     assert anon.post("/api/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"},
                      headers={"Authorization": f"Bearer {token}"}).status_code == 202
     tools = {x["name"]: x for x in _rpc(anon, token, "tools/list")["result"]["tools"]}
-    assert {"get_started", "build_agent", "call_with_agent", "list_calls", "search", "fetch"} <= set(tools)
+    assert {"get_started", "create_agent", "get_script_guide", "call_with_agent", "list_calls", "search", "fetch"} <= set(tools)
+    assert "build_agent" not in tools  # the assistant writes scripts itself; no Build with AI credits
     assert tools["call_with_agent"]["annotations"]["destructiveHint"] is True
     assert tools["list_calls"]["annotations"]["readOnlyHint"] is True
     assert tools["get_started"]["securitySchemes"][0]["type"] == "oauth2"
@@ -139,26 +140,6 @@ def test_connect_and_use_tools(client, make_client):
     bad, err = _tool(anon, token, "get_agent", {"agent_id": str(uuid.uuid4())})
     assert err and "not found" in bad["error"].lower()
     assert "error" in _rpc(anon, token, "tools/call", {"name": "nope"})
-
-
-def test_build_agent_starts_generation(client, make_client, monkeypatch):
-    from app.connector import tools
-
-    started = []
-    monkeypatch.setattr(tools, "_run_later", lambda coro: (started.append(1), coro.close()))
-    anon = make_client()
-    token = _connect(client, anon)["access_token"]
-    out, err = _tool(anon, token, "build_agent", {
-        "mission": "Call homeowners who asked about solar and book a free roof assessment.",
-        "direction": "outbound", "agent_name": "Maya", "objections": "Too expensive"})
-    assert not err, out
-    assert out["status"] == "running" and started == [1]
-    status, err = _tool(anon, token, "get_agent_build_status", {"build_id": out["build_id"]})
-    assert not err and status["status"] == "running"
-    draft = client.get(f"/api/agent-builder/drafts/{out['build_id']}").json()
-    goal = draft["data"]["goal"]
-    assert goal["mission"].startswith("Call homeowners") and goal["advanced"]["objections"] == "Too expensive"
-    assert draft["data"]["behavior"]["agent_name"] == "Maya"
 
 
 def test_onboarding_from_the_assistant(client, make_client):

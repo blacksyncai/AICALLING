@@ -147,7 +147,8 @@ async def get_started(s: Session, args: dict) -> dict:
     if s.ctx is None:
         return {"user": who, "has_account": False,
                 "next_step": "Create the account with create_account (company name and industry; list_industries "
-                             "shows the choices). After that, build the first AI agent with build_agent."}
+                             "shows the choices). After that, write the first agent's script with the user "
+                             "(get_script_guide) and create it with create_agent."}
     org, db = s.ctx.org, s.db
 
     async def count(model, *where):
@@ -176,7 +177,7 @@ async def get_started(s: Session, args: dict) -> dict:
     checklist = [
         {"step": "Business details and knowledge", "done": knowledge_items > 0,
          "how": "scan_website (fastest) or add_knowledge", "items": knowledge_items},
-        {"step": "Build an AI agent", "done": bool(built), "how": "build_agent", "agents": len(built)},
+        {"step": "Build an AI agent", "done": bool(built), "how": "get_script_guide, then write the script with the user and create_agent", "agents": len(built)},
         {"step": "Test the agent", "done": calls > 0, "how": "call_with_agent to the user's own phone, or the "
                                                               "browser test in the web app"},
         {"step": "Get a phone number", "done": numbers > 0, "how": f"In the web app: {link('/phone-numbers')}"},
@@ -198,7 +199,7 @@ async def get_started(s: Session, args: dict) -> dict:
 
 @tool("list_industries", "Industries and agent types",
       """Lists the industries BlackSync supports and, for each, the ready-made agent types ("specialties") with their
-call direction. Use the keys with create_account (industry) and build_agent (specialty_key).""",
+call direction. Use the industry key with create_account; the agent types are ideas for what to build.""",
       {"industry": {"type": "string", "description": "Only this industry key (optional)."}})
 async def list_industries(s: Session, args: dict) -> dict:
     from app.agent import catalog
@@ -238,7 +239,8 @@ async def create_account(s: Session, args: dict) -> dict:
         raise ToolError(f"Check the details: {exc}")
     await start(body, s.user, s.db)
     return {"created": True, "company": body.company,
-            "next_step": "Add business knowledge (scan_website if they have a site), then build_agent.",
+            "next_step": "Add business knowledge (scan_website if they have a site), then write the agent's "
+                         "script with the user (get_script_guide) and create_agent.",
             "app_url": link("/dashboard")}
 
 
@@ -346,7 +348,7 @@ async def get_agent(s: Session, args: dict) -> dict:
     return {**{k: a.get(k) for k in keep}, "url": link(f"/agents/{a['id']}")}
 
 
-@tool("list_voices", "List voices", "Voices an agent can use (pass the id to build_agent or update_agent).")
+@tool("list_voices", "List voices", "Voices an agent can use (pass the id to create_agent or update_agent).")
 async def list_voices(s: Session, args: dict) -> dict:
     from app.routers.settings import list_voices as lv
 
@@ -355,84 +357,6 @@ async def list_voices(s: Session, args: dict) -> dict:
     voices = out.get("voices", []) if isinstance(out, dict) else []
     keep = ("id", "name", "gender", "accent", "language", "description", "category")
     return {"voices": [{k: v.get(k) for k in keep if v.get(k) is not None} for v in voices[:60]]}
-
-
-@tool("build_agent", "Build an AI agent",
-      """Builds a complete AI calling agent from the user's description, the same way "Build with AI" does in the
-web app (to write the script yourself instead, use get_script_guide and create_agent): it writes the call script, opening, questions, objection handling and closing. Runs in the background
-(about a minute): poll get_agent_build_status with the returned build_id. Before calling, make sure you know what
-the agent should do (the mission), whether it makes or answers calls, and ideally who it talks to.""",
-      {"mission": {"type": "string", "description": "What the agent should do on calls, in the user's words."},
-       "direction": {"type": "string", "enum": ["outbound", "inbound"], "description": "Makes calls or answers them."},
-       "specialty_key": {"type": "string", "description": "A specialty key from list_industries (optional)."},
-       "agent_name": {"type": "string", "description": "The name the agent uses on calls (optional)."},
-       "voice_id": {"type": "string", "description": "From list_voices (optional; a natural default is used)."},
-       "audience": {"type": "string", "description": "Who it speaks with (optional)."},
-       "tone": {"type": "string", "description": "How it should come across (optional)."},
-       "qualification": {"type": "string", "description": "What makes a good lead (optional)."},
-       "questions": {"type": "string", "description": "Questions it must ask (optional)."},
-       "objections": {"type": "string", "description": "Objections to expect (optional)."},
-       "transfer_number": {"type": "string", "description": "Number to transfer interested callers to (optional)."},
-       "additional_instructions": {"type": "string", "description": "Anything else it must do or avoid (optional)."}},
-      ["mission", "direction"], read_only=False)
-async def build_agent(s: Session, args: dict) -> dict:
-    from app.agent import catalog
-    from app.routers.agent_builder import DraftCreate, GenerateRequest, create_draft, generate
-    from app.routers.business_profile import get_business_profile as get_p
-
-    ctx = s.need_account()
-    mission = (args.get("mission") or "").strip()
-    if len(mission) < 15:
-        raise ToolError("Describe what the agent should do in a sentence or two.")
-    profile = await get_p(ctx, s.db)
-    industry = profile.get("industry") or ctx.org.industry or "other"
-    if not catalog.industry_label(industry):
-        industry = "other"
-    specs = {sp["key"]: sp for sp in catalog.specialties_for(industry)}
-    sp = specs.get(args.get("specialty_key") or "")
-    specialty = ({"key": sp["key"], "use_cases": sp.get("use_cases", []), "label": sp["label"]} if sp
-                 else {"key": "something_else", "use_cases": [], "description": mission[:300]})
-    advanced = {k: str(args[k])[:300] for k in ("audience", "tone", "qualification", "questions", "objections")
-                if args.get(k)}
-    behavior: dict = {"decide_later": True}
-    if args.get("agent_name"):
-        behavior["agent_name"] = str(args["agent_name"])[:40]
-    if args.get("voice_id"):
-        behavior["voice_id"] = str(args["voice_id"])[:120]
-    if args.get("transfer_number"):
-        behavior.update(decide_later=False, transfer_number=str(args["transfer_number"])[:32])
-    data = {
-        "business": {"name": profile.get("name") or ctx.org.name, "industry": industry,
-                     "website": profile.get("website") or "", "description": profile.get("description") or ""},
-        "goal": {"specialty": specialty, "direction": args.get("direction") or "outbound", "direction_set": True,
-                 "mission": mission[:1500], "mission_source": "user", "advanced": advanced,
-                 "additional": str(args.get("additional_instructions") or "")[:2000]},
-        "behavior": behavior,
-        "source": "assistant",
-    }
-    draft = await create_draft(DraftCreate(data=data, step=1), ctx, s.db)
-    bg = BackgroundTasks()
-    status = await generate(GenerateRequest(draft_id=uuid.UUID(draft["id"])), bg, ctx, s.db)
-    await _schedule(bg)
-    return {"build_id": draft["id"], "status": status["status"], "stage": status.get("stage"),
-            "next_step": "Call get_agent_build_status with this build_id in about 30 seconds."}
-
-
-@tool("get_agent_build_status", "Agent build progress",
-      "Progress of an agent started with build_agent. When done, returns the new agent's id.",
-      {"build_id": ID}, ["build_id"])
-async def get_agent_build_status(s: Session, args: dict) -> dict:
-    from app.routers.agent_builder import generation_status
-
-    g = await generation_status(_uuid(args, "build_id"), s.need_account(), s.db)
-    labels = dict((x["key"], x["label"]) for x in g.get("stages", []))
-    out = {"status": g["status"], "stage": labels.get(g.get("stage"), g.get("stage")), "error": g.get("error"),
-           "agent_id": g.get("agent_id")}
-    if g.get("agent_id"):
-        out.update(url=link(f"/agents/{g['agent_id']}"),
-                   next_step="Show the user the agent (get_agent), offer a test call (call_with_agent) and "
-                             "launch_agent when they're happy.")
-    return out
 
 
 SCRIPT_GUIDE = """HOW A BLACKSYNC CALL SCRIPT IS WRITTEN (the structure our best agents use)
@@ -482,8 +406,8 @@ async def get_script_guide(s: Session, args: dict) -> dict:
 
 
 @tool("create_agent", "Create an agent from your own script",
-      """Creates an AI calling agent from a script you write (call get_script_guide first). Use this instead of
-build_agent when you've written the full script with the user. The agent starts paused: offer a test call
+      """Creates an AI calling agent from the script you write with the user (call get_script_guide first and follow
+its structure; write the full script, not a summary). The agent starts paused: offer a test call
 (call_with_agent) and launch_agent when they're happy.""",
       {"name": {"type": "string", "description": "Agent name shown in BlackSync, e.g. \"FSBO Prospecting · Maya\"."},
        "system_prompt": {"type": "string", "description": "The complete call script/instructions (markdown)."},
