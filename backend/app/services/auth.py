@@ -283,6 +283,7 @@ async def require_superadmin(user: Annotated[User, Depends(get_current_user)]) -
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 CtxDep = Annotated[Context, Depends(get_ctx)]
+UserDep = Annotated[User, Depends(get_current_user)]
 
 
 # ── Admin portal lock ─────────────────────────────────────────────────────────

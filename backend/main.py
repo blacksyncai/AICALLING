@@ -192,6 +192,10 @@ from app.routers import bandwidth_hooks  # noqa: E402
 app.include_router(bandwidth_hooks.router)
 from app.routers import resend_hooks  # noqa: E402
 app.include_router(resend_hooks.router)
+from app.routers import mcp, oauth  # noqa: E402
+app.include_router(oauth.router)
+app.include_router(oauth.well_known)
+app.include_router(mcp.router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Pages need a session. The API (proxied to the backend) verifies the session itself,
 // and sign-in, sign-up and invite links must open while signed out.
-const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/login", "/invite(.*)", "/pricing", "/api/(.*)"]);
+const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/login", "/invite(.*)", "/pricing", "/connect/help", "/.well-known/(.*)", "/api/(.*)"]);
 
 // New visitors land on sign-up (existing customers tap "Sign in" there); other pages go to sign-in.
 const isFrontDoor = createRouteMatcher(["/", "/dashboard"]);

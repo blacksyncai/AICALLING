@@ -22,6 +22,8 @@ const nextConfig: NextConfig = {
         { source: `/api/${c}/`, destination: `${BACKEND_ORIGIN}/api/${c}/` },
       ]),
       { source: "/api/:path*", destination: `${BACKEND_ORIGIN}/api/:path*` },
+      // OAuth discovery for the ChatGPT / Claude connector (served by the API).
+      { source: "/.well-known/:path*", destination: `${BACKEND_ORIGIN}/.well-known/:path*` },
     ];
   },
 };
