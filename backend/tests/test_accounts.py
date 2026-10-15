@@ -311,3 +311,35 @@ def test_viewing_a_customer_account_needs_the_admin_unlock(client, make_client):
     admin.post("/api/admin/unlock", json={"password": "portal-pass-456"})
     assert admin.post("/api/auth/switch-org", json={"org_id": org["id"]}).status_code == 200
     assert admin.post("/api/auth/switch-org", json={"org_id": None}).status_code == 200
+
+
+def test_existing_welcome_agents_are_renamed_synchro(client, make_client):
+    import asyncio
+    import uuid as _uuid
+
+    from app.agent import templates
+    from app.database import AsyncSessionLocal
+    from app.models.agent import Agent
+
+    _, e1 = _new_account(client, name="Was Marissa Co")
+    _, e2 = _new_account(client, name="Renamed Demo Co")
+    a1 = _login(make_client, e1).get("/api/agents/").json()[0]["id"]
+    a2 = _login(make_client, e2).get("/api/agents/").json()[0]["id"]
+    voice = templates.WELCOME_DEMO["voice_id"]
+
+    async def go():
+        async with AsyncSessionLocal() as db:
+            x = await db.get(Agent, _uuid.UUID(a1))
+            x.name, x.first_message = "Marissa", "Hey, welcome to BlackSync AI! I'm Marissa. Who do I have the pleasure of speaking with?"
+            x.system_prompt = x.system_prompt.replace("You are Synchro,", "You are Marissa,") + "\nMention our Austin office."
+            (await db.get(Agent, _uuid.UUID(a2))).name = "Jordan"
+            await db.commit()
+        await templates.refresh_welcome_agents()
+        async with AsyncSessionLocal() as db:
+            return await db.get(Agent, _uuid.UUID(a1)), await db.get(Agent, _uuid.UUID(a2))
+
+    one, two = asyncio.run(go())
+    assert one.name == "Synchro" and "I'm Synchro" in one.first_message
+    assert "You are Synchro," in one.system_prompt and "Austin office" in one.system_prompt
+    assert one.voice_id == voice  # the voice keeps its name and sound
+    assert two.name == "Jordan"

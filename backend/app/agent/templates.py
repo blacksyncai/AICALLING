@@ -303,6 +303,14 @@ async def refresh_welcome_agents() -> int:
             elif a.system_prompt == WELCOME_DEMO["system_prompt"] and a.knowledge_base in _PREVIOUS_WELCOME_KBS:
                 a.knowledge_base = WELCOME_DEMO["knowledge_base"]  # unedited copy: pick up new prices
                 n += 1
+            # The welcome agent was renamed Marissa → Synchro (the voice keeps its name). Copies the owner
+            # renamed keep their own name.
+            if a.name == "Marissa":
+                a.name = WELCOME_DEMO["name"]
+                a.description = WELCOME_DEMO["description"]
+                a.first_message = (a.first_message or "").replace("I'm Marissa", "I'm Synchro")
+                a.system_prompt = (a.system_prompt or "").replace("You are Marissa,", "You are Synchro,")
+                n += 1
         await db.commit()
     return n
 
