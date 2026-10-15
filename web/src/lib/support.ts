@@ -61,6 +61,9 @@ export interface SupportTicket {
   updated_at: string | null;
   customer_name: string | null;
   unread: boolean;
+  /** "OK for a BlackSync team member to call you?" (null on older tickets) and the number to use. */
+  call_ok?: boolean | null;
+  call_phone?: string | null;
   attachments?: SupportAttachment[];
   org_id?: string;
   org_name?: string;

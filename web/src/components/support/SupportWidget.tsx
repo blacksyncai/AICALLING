@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { LogoMark } from "@/components/Logo";
 import { fetcher, post } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import {
   type Article, KB_CATEGORY, type SupportAttachment, type SupportConversation, type SupportMessage, type SupportTicket,
   TICKET_CATEGORIES, TICKET_STATUS, type TicketReply, categoryLabel, cleanAi, newClientId, streamPost, timeShort,
@@ -507,14 +508,19 @@ function NewTicket({ conversationId, done }: { conversationId?: string; done: (i
   const [files, setFiles] = useState<SupportAttachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { session } = useSession();
+  // Ticked by default: most people want a call; they can untick it.
+  const [callOk, setCallOk] = useState(true);
+  const [callPhone, setCallPhone] = useState("");
+  const phone = callPhone || session?.user.phone || "";
 
   async function submit() {
     setBusy(true);
     setErr(null);
     try {
       const t = conversationId
-        ? await post<SupportTicket>(`/api/support/conversations/${conversationId}/ticket`, { subject, category, description })
-        : await post<SupportTicket>("/api/support/tickets", { subject, category, description, attachments: files.map((f) => f.id) });
+        ? await post<SupportTicket>(`/api/support/conversations/${conversationId}/ticket`, { subject, category, description, call_ok: callOk, call_phone: phone })
+        : await post<SupportTicket>("/api/support/tickets", { subject, category, description, attachments: files.map((f) => f.id), call_ok: callOk, call_phone: phone });
       done(t.id);
     } catch (e) {
       setErr((e as Error).message);
@@ -559,8 +565,18 @@ function NewTicket({ conversationId, done }: { conversationId?: string; done: (i
           </div>
         </div>
       )}
+      <div className="rounded-xl bg-zinc-50 px-3 py-2.5">
+        <label className="flex cursor-pointer items-start gap-2 text-xs text-zinc-700">
+          <input type="checkbox" checked={callOk} onChange={(e) => setCallOk(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600" />
+          <span>I authorize a BlackSync AI team member to call me about this.</span>
+        </label>
+        {callOk && (
+          <input value={phone} onChange={(e) => setCallPhone(e.target.value)} type="tel" maxLength={40} placeholder="Best number to reach you"
+            aria-label="Best number to reach you" className={cn(field, "mt-2 bg-white")} />
+        )}
+      </div>
       {err && <p className="text-xs text-red-600">{err}</p>}
-      <button type="button" disabled={busy || (!conversationId && (subject.trim().length < 3 || description.trim().length < 3))} onClick={() => void submit()}
+      <button type="button" disabled={busy || (callOk && !phone.trim()) || (!conversationId && (subject.trim().length < 3 || description.trim().length < 3))} onClick={() => void submit()}
         className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-brand-500 to-brand-600 text-sm font-semibold text-white disabled:opacity-40">
         {busy && <Loader2 className="h-4 w-4 animate-spin" />} Submit ticket
       </button>

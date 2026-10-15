@@ -119,6 +119,7 @@ def _ticket_out(t: SupportTicket, users: dict | None = None, org: Organization |
            "last_reply_by": t.last_reply_by, "last_reply_at": iso(t.last_reply_at),
            "created_at": iso(t.created_at), "updated_at": iso(t.updated_at),
            "customer_name": (cust.full_name or cust.email) if cust else None,
+           "call_ok": t.call_ok, "call_phone": t.call_phone,
            "unread": bool(t.last_reply_by == "staff" and (not t.customer_read_at or core.aware(t.customer_read_at) < core.aware(t.last_reply_at)))}
     if staff:
         out.update(org_id=str(t.org_id), org_name=org.name if org else "", assigned_to=str(t.assigned_to) if t.assigned_to else None,
@@ -398,7 +399,23 @@ async def customer_typing(conv_id: uuid.UUID, ctx: CtxDep, db: DbDep):
     return {"ok": True}
 
 
-class ChatTicketIn(BaseModel):
+class CallConsent(BaseModel):
+    # "I authorize a BlackSync AI team member to call me" — ticked by default in the form.
+    call_ok: bool | None = None
+    call_phone: str = Field(default="", max_length=40)
+
+
+async def _save_consent(db, t: SupportTicket, body: CallConsent, user) -> None:
+    if body.call_ok is None:
+        return
+    phone = body.call_phone.strip() or (user.phone if user else "") or ""
+    t.call_ok, t.call_phone = body.call_ok, (phone[:40] or None) if body.call_ok else None
+    if body.call_ok and phone and user is not None and not user.phone:
+        user.phone = phone[:50]  # remember it for next time
+    await db.commit()
+
+
+class ChatTicketIn(CallConsent):
     subject: str = Field(default="", max_length=200)
     category: str = "other"
     description: str = Field(default="", max_length=8000)
@@ -415,6 +432,7 @@ async def ticket_from_chat(conv_id: uuid.UUID, body: ChatTicketIn, ctx: CtxDep, 
         raise HTTPException(status_code=400, detail="Pick a category.")
     t = await core.create_ticket(db, org=ctx.org, user=ctx.user, subject=body.subject.strip() or c.subject or "Support request",
                                  description=body.description, category=body.category, conversation=c)
+    await _save_consent(db, t, body, ctx.user)
     return _ticket_out(t)
 
 
@@ -431,7 +449,7 @@ async def my_tickets(ctx: CtxDep, db: DbDep, limit: int = 50):
     return {"tickets": [_ticket_out(t, users) for t in rows]}
 
 
-class TicketIn(BaseModel):
+class TicketIn(CallConsent):
     subject: str = Field(min_length=3, max_length=200)
     description: str = Field(min_length=3, max_length=8000)
     category: str = "other"
@@ -449,6 +467,7 @@ async def create_ticket(body: TicketIn, ctx: CtxDep, db: DbDep):
         row = await db.get(SupportAttachment, uuid.UUID(a))
         row.ticket_id = t.id
     await db.commit()
+    await _save_consent(db, t, body, ctx.user)
     return _ticket_out(t)
 
 

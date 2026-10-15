@@ -524,6 +524,15 @@ function TicketPanel({ id, staff, onBack, onChanged, openConv }: { id: string; s
         </div>
         <h3 className="mt-1 text-base font-semibold text-zinc-900">{t.subject}</h3>
         <div className="text-xs text-zinc-500">{t.customer_name} · {t.customer_email} · <Link href={`/admin/accounts/${t.org_id}`} className="hover:underline">{t.org_name}</Link></div>
+        {t.call_ok != null && (
+          <div className={cn("mt-1 text-xs font-medium", t.call_ok ? "text-emerald-700" : "text-zinc-500")}>
+            {t.call_ok ? (
+              <>OK to call{t.call_phone ? <>: <a href={`tel:${t.call_phone}`} className="hover:underline">{t.call_phone}</a></> : ""}</>
+            ) : (
+              "Prefers not to be called — reply by ticket"
+            )}
+          </div>
+        )}
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Select value={t.status} onChange={(e) => void update({ status: e.target.value })} className="h-8 text-xs" aria-label="Status">
             {Object.entries(TICKET_STATUS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}

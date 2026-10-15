@@ -105,6 +105,9 @@ class SupportTicket(Base):
     customer_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_reply_by: Mapped[str | None] = mapped_column(String(12), nullable=True)  # customer | staff
+    # The customer's answer to "OK for a BlackSync team member to call you?" and the number to use.
+    call_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    call_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 

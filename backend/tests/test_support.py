@@ -332,3 +332,17 @@ def test_help_center_seed_adds_new_articles_and_keeps_admin_edits():
 def test_ai_reply_is_plain_text():
     assert ai.clean("Go to **Billing & Usage** → **Credits**.\n* **Ultra** (1.2/min)\n### Steps [[OFFER_PERSON]]") == (
         "Go to Billing & Usage → Credits.\n- Ultra (1.2/min)\nSteps", True)
+
+
+def test_ticket_records_whether_we_may_call(client, make_client, fake_ai):
+    org, c = _customer(client, make_client, "Callback Co")
+    t = c.post("/api/support/tickets", json={"subject": "Calls dropping", "description": "Agent hangs up early",
+                                             "category": "technical", "call_ok": True, "call_phone": "+1 512 555 0142"}).json()
+    assert t["call_ok"] is True and t["call_phone"] == "+1 512 555 0142"
+    staff = client.get(f"/api/admin/support/tickets/{t['id']}").json()["ticket"]
+    assert staff["call_ok"] is True and staff["call_phone"] == "+1 512 555 0142"
+    # The number is remembered on the profile, so the next ticket fills it in.
+    assert c.get("/api/auth/me").json()["user"]["phone"] == "+1 512 555 0142"
+    t2 = c.post("/api/support/tickets", json={"subject": "Billing question", "description": "Invoice copy please",
+                                              "category": "billing", "call_ok": False}).json()
+    assert t2["call_ok"] is False and t2["call_phone"] is None
