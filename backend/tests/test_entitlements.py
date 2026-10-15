@@ -125,7 +125,7 @@ def test_agent_slots_raise_the_limit_and_removing_never_deletes(client, make_cli
     # Remove the slot: all three agents stay; the newest can't call; activation is refused.
     assert c.post("/api/billing/addons/agents", json={"quantity": 0, "confirm": True}).json()["agent_slots"] == 0
     assert stripe.slot_calls[-1] == (0, None)
-    assert len([a for a in c.get("/api/agents/").json() if a["name"].startswith("S")]) == 3
+    assert len([a for a in c.get("/api/agents/").json() if a["name"] in ("S0", "S1", "S2")]) == 3
     ent = c.get("/api/billing/entitlements").json()
     assert ent["over_limit"] == ["agents"]
 
