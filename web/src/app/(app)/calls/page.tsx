@@ -1,11 +1,13 @@
 "use client";
 
-import { FileText, Globe, Info, MessageSquare, PhoneCall, PhoneOutgoing, PlayCircle, X } from "lucide-react";
+import { FileText, Globe, Info, MessageSquare, PhoneCall, PhoneOutgoing, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
+import { CallAudioProvider, PlayButton } from "@/components/calls/CallAudio";
+import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
 import { TranscriptLines } from "@/components/calls/Transcript";
 import { Button, Card, EmptyState, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model";
@@ -29,7 +31,9 @@ export default function CallsPage() {
         </div>
       }
     >
-      <CallLogs />
+      <CallAudioProvider>
+        <CallLogs />
+      </CallAudioProvider>
     </Suspense>
   );
 }
@@ -164,13 +168,15 @@ function CallLogs() {
                         {c.agent_name ?? "—"} · {formatDateTime(c.started_at)}
                       </span>
                     </span>
-                    <OutcomeBadge outcome={c.outcome} status={c.status} />
+                    <span className="flex shrink-0 items-center gap-1">
+                      {c.has_recording && <PlayButton id={c.id} label={c.contact_name ?? (c.call_type === "web" ? "Browser test" : c.to_phone ?? "Call")} />}
+                      <OutcomeBadge outcome={c.outcome} status={c.status} />
+                    </span>
                   </div>
                   <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
                     {c.call_type === "web" ? <Globe className="h-3.5 w-3.5" /> : <PhoneOutgoing className="h-3.5 w-3.5" />}
                     <span>{durationWords(c.duration_seconds)}</span>
                     {c.credits_used != null && c.credits_used > 0 && <span>{c.credits_used.toFixed(3)} credits</span>}
-                    {c.has_recording && <PlayCircle className="h-3.5 w-3.5 text-brand-600" />}
                   </div>
                   {c.summary && <p className="mt-1.5 line-clamp-2 text-xs text-zinc-600">{c.summary}</p>}
                 </Link>
@@ -227,7 +233,7 @@ function CallLogs() {
                         >
                           <MessageSquare className="h-4 w-4" />
                         </button>
-                        {c.has_recording && <IconLink href={`/calls/${c.id}#recording`} label="Play recording" icon={PlayCircle} />}
+                        {c.has_recording ? <PlayButton id={c.id} label={c.contact_name ?? (c.call_type === "web" ? "Browser test" : c.to_phone ?? "Call")} /> : <span className="h-8 w-8" aria-hidden="true" />}
                       </div>
                     </td>
                   </tr>
@@ -269,6 +275,7 @@ function TranscriptPeek({ call: c }: { call: Call }) {
           Open full call →
         </Link>
       </div>
+      {c.has_recording && <RecordingPlayer callId={c.id} live={false} />}
       {data?.summary && <p className="rounded-xl bg-zinc-50 px-3.5 py-2.5 text-sm leading-relaxed text-zinc-700">{data.summary}</p>}
       <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
         {error ? (

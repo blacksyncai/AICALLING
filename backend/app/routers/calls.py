@@ -91,6 +91,7 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         # Exact credits this call used (per second at its rate); 0 when it never connected.
         "credits_used": _credits_used(c),
         "lead_id": str(c.lead_id) if c.lead_id else None,
+        "has_recording": bool(c.recording_key),
     }
     if full:
         d["transcript"] = c.transcript or []
@@ -99,7 +100,6 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         d["prospect_email"] = c.prospect_email
         d["livekit_room_name"] = c.livekit_room_name
         d["from_phone"] = c.from_phone
-        d["has_recording"] = bool(c.recording_key)
     return d
 
 
