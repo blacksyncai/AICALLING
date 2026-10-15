@@ -13,7 +13,14 @@ import type { VoicesResponse } from "./StepPersonality";
 
 const PREVIEW_LINE = "Hey there, this is a quick preview of how I'll sound on your calls. Does this work for you?";
 
-/** Up to four voices to show up front: the chosen one, then house voices in the agent's language. */
+/** The house voices (Marissa and Hamza, Version 1) — always offered up front. */
+export const HOUSE_VOICES = ["97f03c16-fab2-4747-b655-9caefbd68fcf", "95280ca0-610a-41c9-8457-1dcec809da61"];
+
+/**
+ * Four voices to show up front, in a stable order so cards never jump around when one is picked:
+ * Marissa and Hamza first, then house voices in the agent's language. A chosen voice that isn't among them
+ * takes the last slot.
+ */
 export function suggestedVoices(voices: VoicesResponse | undefined, language: string, selected: string, pinned: string[] = []): Voice[] {
   const all = [...(voices?.featured ?? []), ...(voices?.voices ?? [])];
   const seen = new Set<string>();
@@ -24,13 +31,18 @@ export function suggestedVoices(voices: VoicesResponse | undefined, language: st
   const pool = featured.length ? featured : unique.filter(fits);
   const standard = pool.filter((v) => v.category !== "premium");
   const premium = pool.filter((v) => v.category === "premium");
-  const picks = [...standard.slice(0, 3), ...premium.slice(0, 1)];
-  const chosen = unique.find((v) => v.id === selected);
-  // The chosen voice first, then any pinned ones (e.g. the house clone on the welcome demo), then the picks.
-  const pins = pinned.map((id) => unique.find((v) => v.id === id)).filter((v): v is Voice => !!v);
-  const ordered = chosen ? [chosen, ...pins, ...picks] : [...pins, ...picks];
+  const byId = (id: string) => unique.find((v) => v.id === id);
+  const fixed = [...HOUSE_VOICES, ...pinned].map(byId).filter((v): v is Voice => !!v);
   const ids = new Set<string>();
-  return ordered.filter((v) => (ids.has(v.id) ? false : (ids.add(v.id), true))).slice(0, 4);
+  const out = [...fixed, ...standard, ...premium]
+    .filter((v) => (ids.has(v.id) ? false : (ids.add(v.id), true)))
+    .slice(0, 4);
+  const chosen = byId(selected);
+  if (chosen && !out.some((v) => v.id === chosen.id)) {
+    if (out.length < 4) out.push(chosen);
+    else out[3] = chosen;
+  }
+  return out;
 }
 
 function usePreview(language: string) {
