@@ -327,9 +327,16 @@ def _line(v, name: str, need_say: bool = True) -> dict:
     if not isinstance(v, dict):
         raise InvalidOutput(f"each item in {name} must be an object with \"say\"")
     say = _s(v.get("say"), f"{name}.say", 400, required=need_say)
-    return {"say": say, "wait": v.get("wait") is True or say.rstrip().endswith("?"),
-            "if": _s(v.get("if"), f"{name}.if", 200, required=False),
-            "skip_if": _s(v.get("skip_if"), f"{name}.skip_if", 200, required=False)}
+    cond = {k: _s(v.get(k), f"{name}.{k}", 200, required=False) for k in ("if", "skip_if")}
+    for k, c in cond.items():
+        if _CODE_COND.search(c):
+            raise InvalidOutput(f"{name}.{k} \"{c[:80]}\" reads like code; write the condition in plain words "
+                                "(e.g. \"If they're the decision maker\")")
+    return {"say": say, "wait": v.get("wait") is True or say.rstrip().endswith("?"), **cond}
+
+
+# Conditions are read by the agent as instructions: "decision_maker == 'yes' && fit" reads as code, not a person.
+_CODE_COND = re.compile(r"==|!=|&&|\|\||\b[a-z]+_[a-z_]+\s*(?:=|is (?:true|false|unknown))|\bnull\b|\bNone\b")
 
 
 # A scripted "Thanks for sharing that." makes every turn sound the same; the runtime rules cover acknowledging.

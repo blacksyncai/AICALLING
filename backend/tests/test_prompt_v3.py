@@ -212,3 +212,19 @@ def test_fsbo_default_agent_fills_in_the_account():
     assert "team of" not in solo and "Ana or someone" not in solo
     assert runtime.street_name("1200-B Oak Ridge Dr Apt 4, Austin, TX 78701") == "Oak Ridge Dr"
     assert "Not on file: property_address" in runtime.build_instructions({"system_prompt": solo}, {"name": "Jo"})
+
+
+def test_conditions_must_read_as_plain_words():
+    with pytest.raises(S.InvalidOutput, match="plain words"):
+        S._line({"say": "Thanks for taking my call.", "if": "decision maker == 'yes' && fit"}, "stages.lines")
+    assert S._line({"say": "Got it.", "if": "If they're the decision maker"}, "x")["if"] == "If they're the decision maker"
+
+
+def test_outbound_method_only_for_calls_that_earn_the_next_step():
+    from app.agent import pipeline
+
+    assert pipeline._outbound_method({"direction": "outbound", "purpose": "prospecting"})
+    assert pipeline._outbound_method({"direction": "outbound", "purpose": ""})  # custom goal: model picks
+    assert not pipeline._outbound_method({"direction": "outbound"}, "client_follow_up")
+    assert not pipeline._outbound_method({"direction": "inbound", "purpose": "inbound"})
+    assert "Learn before you pitch" in pipeline._OUTBOUND_METHOD

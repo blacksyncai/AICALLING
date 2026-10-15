@@ -223,7 +223,7 @@ Post-call output
         "tags": {
             "verticals": ["real_estate"],
             "directions": ["outbound"],
-            "goals": ["fsbo", "for_sale_by_owner", "listing", "seller_followup", "book_meeting"],
+            "goals": ["fsbo"],
             "styles": ["warm", "relaxed", "confident", "conversational"],
         },
         "private_terms": ["Waldina", "Galeano", "The Agency Team", "Asheville", "Vulcan7", "BoldTrail"],

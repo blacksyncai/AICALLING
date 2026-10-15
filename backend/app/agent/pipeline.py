@@ -468,8 +468,9 @@ _CONVERSATION_SHAPE = """Return ONE JSON object with exactly these keys. A "line
  "direct_answers": [{"question": "a question this audience asks", "answer": "short spoken answer from known facts only"}],
  "voicemail": "short spoken voicemail message ('' for inbound-only agents)"
 }
-opening: 1-3 lines after the first message (outbound: who you are and why you're calling, then a permission or
-first question; inbound: [] when the first message already asks how to help). Say each thing once — e.g. the AI
+opening: 1-3 lines after the first message (outbound: who you are, then a permission check or first question — and
+why you're calling, unless the OUTBOUND CALL METHOD below says to learn first; inbound: [] when the first message
+already asks how to help). Say each thing once — e.g. the AI
 disclosure appears in one line only. stages: prospecting 2-5, reactivation 2-4, client_follow_up 1-3, inbound 2-4.
 Each stage has 2-4 lines that sound like a conversation, not a form: a short bridge or value line that connects to
 what they said, the stage's question (from the strategy, with skip_if), and a follow-up or acknowledgment for the
@@ -483,6 +484,36 @@ like end_call(...) — and use only this agent's outcome codes. Situation keys y
 from known facts; where approved wording covers it, use it exactly. Never script the same question in two places:
 the first message's question isn't asked again, and the next-step question lives only in close.ask (a branch that
 leads to it says "then go to the close")."""
+
+
+# How outbound prospecting and reactivation calls are shaped (from the house FSBO script, which outperformed
+# pitch-first scripts): learn first, give the reason once they've talked, one thoughtful answer per objection.
+_OUTBOUND_METHOD = """OUTBOUND CALL METHOD (prospecting and reactivation calls — follow it)
+1. Learn before you pitch. After the greeting and a light permission check tied to their situation ("Do you have a
+   quick second to talk about <their thing>?"), ask one to three easy questions about THEIR current situation (how
+   it's going, what they do today, recent activity) before explaining the offer. Acknowledge each answer in a way
+   that uses what they said. The opening says who's calling and asks for the quick second; it doesn't pitch.
+2. The reason for the call comes next, in one or two plain sentences that connect to what they just said. Add the
+   value (what the business could bring) only when they're curious, then ask an open "would you consider ... if it
+   made sense?" question. If they ask "why are you calling?" at any point, answer straight away — include it in
+   direct_answers.
+3. Objections get one thoughtful answer, never a canned rebuttal:
+   - When an objection hides a reason ("we do it ourselves", "I don't want a <provider>", "we're all set"), first
+     acknowledge it and ask what the main reason is ("Is <the likely reason> the main thing?"), then respond to the
+     reason they actually give.
+   - "We can handle it ourselves" → "You may well be able to. What would we need to bring to the table for a
+     conversation to be worthwhile?" — then tie the next step to the need they name.
+   - If they push back again, thank them and let them go politely (if_again).
+4. Don't manufacture a problem. If things are going well for them (happy with what they have, already moving
+   forward), say that's good to hear; ask at most one light question about whether they'd still compare options,
+   otherwise wish them well and end.
+5. Questions you can't answer from known facts (price, fees, strategy, specifics) are answered honestly: the person
+   the agent hands off to explains them directly; "I don't want to give you an inaccurate number." Never invent
+   numbers, availability, results or buyers/customers.
+6. Once they agree to the next step, stop selling. Without a booking tool, take a callback preference: day first,
+   then time, confirm their time zone, repeat it once naturally ("So Thursday around two Eastern?"), then say you'll
+   pass it along so the team can confirm. Never say it's booked.
+7. Extraction fields record only what the contact actually said; every field allows "unknown"."""
 
 
 def _strategy_validator(ctx: dict):
@@ -508,11 +539,20 @@ def _conversation_validator(ctx: dict, strategy: dict):
         direction=ctx["direction"], flags=ctx["flags"], purpose=strategy["purpose"], exact_opening=opening[:300])
 
 
+def _outbound_method(ctx: dict, purpose: str | None = None) -> bool:
+    """Outbound calls that have to earn the next step: prospecting and reactivation (not client follow-ups)."""
+    if ctx["direction"] == "inbound":
+        return False
+    purpose = purpose if purpose is not None else (ctx.get("purpose") or "")
+    return purpose in ("prospecting", "reactivation", "")
+
+
 async def build_strategy(ctx: dict) -> dict:
     validate = _strategy_validator(ctx)
     return await llm_json([
         {"role": "system", "content": _RULES},
-        {"role": "user", "content": f"{_context_block(ctx)}\n\nSTAGE 1 — AGENT STRATEGY\n{_STRATEGY_SHAPE}"},
+        {"role": "user", "content": f"{_context_block(ctx)}\n\nSTAGE 1 — AGENT STRATEGY\n{_STRATEGY_SHAPE}"
+                                    + (f"\n\n{_OUTBOUND_METHOD}" if _outbound_method(ctx) else "")},
     ], validate, max_tokens=STRATEGY_TOKENS, label="strategy")
 
 
@@ -523,7 +563,8 @@ async def build_conversation(ctx: dict, strategy: dict) -> dict:
         {"role": "system", "content": _RULES},
         {"role": "user", "content": f"{_context_block(ctx)}\n\nAGENT STRATEGY (already decided — follow it):\n"
                                     f"{json.dumps(strategy, ensure_ascii=False)}\n\nSTAGE 2 — CONVERSATION\n"
-                                    f"{_CONVERSATION_SHAPE}\nRequired situation keys for this {strategy['purpose']} agent: {required}."},
+                                    f"{_CONVERSATION_SHAPE}\nRequired situation keys for this {strategy['purpose']} agent: {required}."
+                                    + (f"\n\n{_OUTBOUND_METHOD}" if _outbound_method(ctx, strategy["purpose"]) else "")},
     ], validate, max_tokens=CONVERSATION_TOKENS, label="conversation")
 
 

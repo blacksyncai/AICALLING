@@ -25,6 +25,10 @@ MAX_PATTERNS = 3
 async def seed_playbooks(db) -> int:
     """Install the bundled playbooks once (by slug). Admin edits are never overwritten."""
     have = set((await db.execute(select(Playbook.slug))).scalars().all())
+    # The first FSBO seed matched every mission ("for", "by"); retag it unless an admin already changed it.
+    fsbo = (await db.execute(select(Playbook).where(Playbook.slug == "fsbo_prospecting"))).scalar_one_or_none()
+    if fsbo is not None and "for_sale_by_owner" in ((fsbo.tags or {}).get("goals") or []):
+        fsbo.tags = next(i["tags"] for i in SEED if i["slug"] == "fsbo_prospecting")
     added = 0
     for item in SEED:
         if item["slug"] in have:
@@ -37,7 +41,7 @@ async def seed_playbooks(db) -> int:
             private_terms=item["private_terms"], note="Initial import",
         ))
         added += 1
-    if added:
+    if added or db.dirty:
         await db.commit()
         log.info("playbooks_seeded", added=added)
     return added
