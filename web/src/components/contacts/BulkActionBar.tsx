@@ -2,14 +2,17 @@
 
 import { Ban, FolderPlus, Tag, Trash2, X, CircleDot } from "lucide-react";
 import { useState } from "react";
+import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { Button, Field, Input, Modal, Select } from "@/components/ui";
-import { post } from "@/lib/api";
-import type { Campaign } from "@/lib/types";
+import { fetcher, post } from "@/lib/api";
+import type { Agent, Campaign } from "@/lib/types";
 import { humanize } from "@/lib/utils";
 import { type BulkAction, CONTACT_STATUSES } from "./shared";
 
 type PickerAction = "add_to_campaign" | "set_status" | "add_tag" | "dnc";
+
+const NEW = "__new__";
 
 const TITLES: Record<PickerAction, string> = {
   add_to_campaign: "Add to campaign",
@@ -33,11 +36,19 @@ export function BulkActionBar({
   const [picker, setPicker] = useState<PickerAction | null>(null);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newAgent, setNewAgent] = useState("");
   const n = ids.length;
+  // Agents a new campaign can use (not the welcome demo).
+  const { data: agentList } = useSWR<Agent[]>(picker === "add_to_campaign" ? "/api/agents/" : null, fetcher);
+  const agents = (agentList ?? []).filter((a) => a.template !== "welcome_demo");
+  const creating = picker === "add_to_campaign" && value === NEW;
 
   function open(a: PickerAction) {
     setPicker(a);
-    setValue(a === "add_to_campaign" ? (campaigns[0]?.id ?? "") : a === "set_status" ? "interested" : a === "dnc" ? "dnc_on" : "");
+    setValue(a === "add_to_campaign" ? (campaigns[0]?.id ?? NEW) : a === "set_status" ? "interested" : a === "dnc" ? "dnc_on" : "");
+    setNewName("");
+    setNewAgent("");
   }
 
   async function run(action: BulkAction, extra: Record<string, string> = {}) {
@@ -56,8 +67,31 @@ export function BulkActionBar({
     }
   }
 
+  async function createAndAdd() {
+    setBusy(true);
+    try {
+      const c = await post<{ id: string; name: string }>("/api/campaigns/", {
+        name: newName.trim(),
+        agent_id: newAgent || agents[0]?.id || null,
+      });
+      const res = await post<{ updated: number }>("/api/contacts/bulk", { ids, action: "add_to_campaign", campaign_id: c.id });
+      toast(`Created “${c.name}” with ${res.updated} contact${res.updated === 1 ? "" : "s"}. Start it from Campaigns when you're ready.`);
+      setPicker(null);
+      onClear();
+      onDone();
+    } catch (err) {
+      toast((err as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function submitPicker(e: React.FormEvent) {
     e.preventDefault();
+    if (creating) {
+      if (newName.trim()) void createAndAdd();
+      return;
+    }
     if (!picker || !value.trim()) return;
     if (picker === "dnc") return run(value as BulkAction);
     const key = picker === "add_to_campaign" ? "campaign_id" : picker === "set_status" ? "status" : "tag";
@@ -68,7 +102,7 @@ export function BulkActionBar({
     <>
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2">
         <span className="mr-1 text-xs font-semibold text-brand-800">{n} selected</span>
-        <Button size="sm" onClick={() => open("add_to_campaign")} disabled={busy || campaigns.length === 0} title={campaigns.length === 0 ? "Create a campaign first" : undefined}>
+        <Button size="sm" onClick={() => open("add_to_campaign")} disabled={busy}>
           <FolderPlus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Add to campaign</span>
           <span className="sm:hidden">Campaign</span>
         </Button>
@@ -104,6 +138,7 @@ export function BulkActionBar({
           {picker === "add_to_campaign" && (
             <Field label="Campaign">
               <Select value={value} onChange={(e) => setValue(e.target.value)}>
+                <option value={NEW}>+ New campaign…</option>
                 {campaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -111,6 +146,23 @@ export function BulkActionBar({
                 ))}
               </Select>
             </Field>
+          )}
+          {creating && (
+            <>
+              <Field label="Campaign name">
+                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Mortgage partners – October" autoFocus />
+              </Field>
+              <Field label="Agent" hint="The campaign is saved as a draft, so nobody is called until you start it.">
+                <Select value={newAgent || agents[0]?.id || ""} onChange={(e) => setNewAgent(e.target.value)}>
+                  {agents.length === 0 && <option value="">No agents yet: pick one later</option>}
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </>
           )}
           {picker === "set_status" && (
             <Field label="Status">
@@ -140,8 +192,8 @@ export function BulkActionBar({
             <Button type="button" onClick={() => setPicker(null)}>
               Cancel
             </Button>
-            <Button variant="primary" loading={busy} disabled={!value.trim()}>
-              Apply
+            <Button variant="primary" loading={busy} disabled={creating ? !newName.trim() : !value.trim()}>
+              {creating ? "Create & add" : "Apply"}
             </Button>
           </div>
         </form>
