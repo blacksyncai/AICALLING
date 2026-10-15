@@ -1,15 +1,43 @@
 "use client";
 
-import { AlertTriangle, Check, ChevronDown, Loader2, Play, Search, Square, X } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Loader2,
+  Play,
+  Search,
+  Square,
+  X,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Voice, VoiceCategory } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button, Input, Select } from "../ui";
-import { capitalize, languageMismatch, languageName, listKeyHandler, usePopover } from "./picker-utils";
+import { VoiceAvatar } from "@/components/ui/voice-avatar";
+import styles from "./voice-chooser.module.css";
+import {
+  capitalize,
+  languageMismatch,
+  languageName,
+  listKeyHandler,
+  usePopover,
+} from "./picker-utils";
 
-const PREVIEW_LINE = "Hey there, this is a quick preview of how I'll sound on your calls. Does this work for you?";
+const PREVIEW_LINE =
+  "Hey there, this is a quick preview of how I'll sound on your calls. Does this work for you?";
 const MAX_ROWS = 200;
-const DEFAULT_LABELS: Record<Cat, string> = { premium: "Premium Human Voices", standard: "Standard AI Voices" };
+const DEFAULT_LABELS: Record<Cat, string> = {
+  premium: "Premium Human Voices",
+  standard: "Standard AI Voices",
+};
 
 type Cat = "premium" | "standard";
 /** One list row: a single voice, or one speaker's tones grouped together. */
@@ -34,7 +62,9 @@ function groupRows(list: Voice[]): Row[] {
 }
 
 function voiceMeta(v: Voice) {
-  return [v.gender && capitalize(v.gender), v.accent, languageName(v.language)].filter(Boolean).join(" · ");
+  return [v.gender && capitalize(v.gender), v.accent, languageName(v.language)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
@@ -75,12 +105,18 @@ export function VoicePicker({
   inline?: boolean;
 }) {
   const uid = useId();
-  const { open, setOpen, close, rootRef, triggerRef } = usePopover<HTMLButtonElement>();
+  const { open, setOpen, close, rootRef, triggerRef } =
+    usePopover<HTMLButtonElement>();
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  const featuredIds = useMemo(() => new Set(featured.map((f) => f.id)), [featured]);
+  const featuredIds = useMemo(
+    () => new Set(featured.map((f) => f.id)),
+    [featured],
+  );
   const catOf = useCallback(
-    (v: Voice): Cat => v.category ?? (featuredIds.has(v.id) || v.is_clone || v.mine ? "premium" : "standard"),
+    (v: Voice): Cat =>
+      v.category ??
+      (featuredIds.has(v.id) || v.is_clone || v.mine ? "premium" : "standard"),
     [featuredIds],
   );
 
@@ -91,12 +127,18 @@ export function VoicePicker({
   }, [voices, featured]);
   const selected = all.find((v) => v.id === value);
   const labels: Record<Cat, string> = {
-    premium: categories?.find((c) => c.key === "premium")?.label ?? DEFAULT_LABELS.premium,
-    standard: categories?.find((c) => c.key === "standard")?.label ?? DEFAULT_LABELS.standard,
+    premium:
+      categories?.find((c) => c.key === "premium")?.label ??
+      DEFAULT_LABELS.premium,
+    standard:
+      categories?.find((c) => c.key === "standard")?.label ??
+      DEFAULT_LABELS.standard,
   };
   const counts: Record<Cat, number> = {
-    premium: new Set(all.filter((v) => catOf(v) === "premium").map(rowKey)).size,
-    standard: new Set(all.filter((v) => catOf(v) === "standard").map(rowKey)).size,
+    premium: new Set(all.filter((v) => catOf(v) === "premium").map(rowKey))
+      .size,
+    standard: new Set(all.filter((v) => catOf(v) === "standard").map(rowKey))
+      .size,
   };
 
   const [tab, setTab] = useState<Cat>("premium");
@@ -135,7 +177,11 @@ export function VoicePicker({
   }, []);
 
   function openPicker() {
-    const cat = selected ? catOf(selected) : counts.premium ? "premium" : "standard";
+    const cat = selected
+      ? catOf(selected)
+      : counts.premium
+        ? "premium"
+        : "standard";
     setTab(cat === "premium" && !counts.premium ? "standard" : cat);
     setQ("");
     setAccent("");
@@ -167,9 +213,17 @@ export function VoicePicker({
         const res = await fetch("/api/settings/voices/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ voice_id: v.id, text: PREVIEW_LINE, speed, language }),
+          body: JSON.stringify({
+            voice_id: v.id,
+            text: PREVIEW_LINE,
+            speed,
+            language,
+          }),
         });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? "Preview failed");
+        if (!res.ok)
+          throw new Error(
+            (await res.json().catch(() => ({}))).detail ?? "Preview failed",
+          );
         url = URL.createObjectURL(await res.blob());
         clipCache.current.set(key, url);
       }
@@ -191,13 +245,27 @@ export function VoicePicker({
   }
 
   // Filters are built from the voices in the current tab.
-  const inTab = useMemo(() => all.filter((v) => catOf(v) === tab), [all, tab, catOf]);
+  const inTab = useMemo(
+    () => all.filter((v) => catOf(v) === tab),
+    [all, tab, catOf],
+  );
   const languages = useMemo(
-    () => [...new Set(inTab.map((v) => v.language).filter(Boolean) as string[])].sort((a, b) => languageName(a).localeCompare(languageName(b))),
+    () =>
+      [
+        ...new Set(inTab.map((v) => v.language).filter(Boolean) as string[]),
+      ].sort((a, b) => languageName(a).localeCompare(languageName(b))),
     [inTab],
   );
   const accents = useMemo(
-    () => [...new Set(inTab.filter((v) => !lang || v.language === lang).map((v) => v.accent).filter(Boolean) as string[])].sort(),
+    () =>
+      [
+        ...new Set(
+          inTab
+            .filter((v) => !lang || v.language === lang)
+            .map((v) => v.accent)
+            .filter(Boolean) as string[],
+        ),
+      ].sort(),
     [inTab, lang],
   );
   const effLang = languages.includes(lang) ? lang : "";
@@ -209,19 +277,30 @@ export function VoicePicker({
       return (
         (!effLang || v.language === effLang) &&
         (!effAccent || v.accent === effAccent) &&
-        (!needle || `${v.name} ${v.description ?? ""} ${v.accent ?? ""}`.toLowerCase().includes(needle))
+        (!needle ||
+          `${v.name} ${v.description ?? ""} ${v.accent ?? ""}`
+            .toLowerCase()
+            .includes(needle))
       );
     },
     [q, effLang, effAccent],
   );
-  const filtered = useMemo(() => groupRows(inTab.filter(matches)), [inTab, matches]);
+  const filtered = useMemo(
+    () => groupRows(inTab.filter(matches)),
+    [inTab, matches],
+  );
   const shown = filtered.slice(0, MAX_ROWS);
   // The voice a row stands for: the agent's voice if it's in the row, else the tone last clicked, else the first.
   const current = (r: Row) =>
-    r.voices.find((v) => v.id === value) ?? r.voices.find((v) => v.id === toneOf[r.key]) ?? r.voices[0];
+    r.voices.find((v) => v.id === value) ??
+    r.voices.find((v) => v.id === toneOf[r.key]) ??
+    r.voices[0];
   const otherTab: Cat = tab === "premium" ? "standard" : "premium";
   const otherMatches = useMemo(
-    () => (q.trim() ? all.filter((v) => catOf(v) === otherTab && matches(v)).length : 0),
+    () =>
+      q.trim()
+        ? all.filter((v) => catOf(v) === otherTab && matches(v)).length
+        : 0,
     [all, catOf, otherTab, matches, q],
   );
 
@@ -235,7 +314,9 @@ export function VoicePicker({
 
   useEffect(() => {
     if (active < 0) return;
-    listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+    listRef.current
+      ?.querySelector(`[data-index="${active}"]`)
+      ?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
   function choose(id: string) {
@@ -243,16 +324,23 @@ export function VoicePicker({
     close();
   }
 
-  const onKeyDown = listKeyHandler(shown.length, active, setActive, (i) => choose(current(shown[i]).id));
+  const onKeyDown = listKeyHandler(shown.length, active, setActive, (i) =>
+    choose(current(shown[i]).id),
+  );
   const optionId = (i: number) => `${uid}-opt-${i}`;
-  const mismatch = selected && languageMismatch(selected.language, agentLanguage ?? language);
+  const mismatch =
+    selected && languageMismatch(selected.language, agentLanguage ?? language);
 
   const triggerLabel = selected ? (
     <>
       <span className="font-medium text-zinc-900">{selected.name}</span>
       <span className="text-zinc-500">
         {" — "}
-        {[catOf(selected) === "premium" ? "Premium" : "Standard", languageName(selected.language), selected.gender && capitalize(selected.gender)]
+        {[
+          catOf(selected) === "premium" ? "Premium" : "Standard",
+          languageName(selected.language),
+          selected.gender && capitalize(selected.gender),
+        ]
           .filter(Boolean)
           .join(" · ")}
       </span>
@@ -266,7 +354,7 @@ export function VoicePicker({
   );
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className={cn("relative", styles.picker)}>
       <button
         ref={triggerRef}
         type="button"
@@ -280,11 +368,20 @@ export function VoicePicker({
         }}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={selected ? `Voice: ${selected.name}. Change voice` : value ? `Voice: custom ${value}. Change voice` : "Choose a voice"}
+        aria-label={
+          selected
+            ? `Voice: ${selected.name}. Change voice`
+            : value
+              ? `Voice: custom ${value}. Change voice`
+              : "Choose a voice"
+        }
         className={cn(
-          "flex min-h-11 w-full items-center gap-3 rounded-xl border bg-white px-3 py-2 text-left text-sm transition",
+          "flex min-h-11 w-full items-center gap-3 rounded-xl border bg-white px-3 py-3 text-left text-sm transition",
+          styles.trigger,
           "focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100",
-          open ? "border-brand-500 ring-2 ring-brand-100" : "border-zinc-200 hover:border-zinc-300",
+          open
+            ? "border-brand-500 ring-2 ring-brand-100"
+            : "border-zinc-200 hover:border-zinc-300",
           listLoading && "cursor-wait opacity-70",
         )}
       >
@@ -295,19 +392,32 @@ export function VoicePicker({
           </>
         ) : (
           <>
-            <Avatar name={selected?.name ?? (value ? "#" : "?")} premium={!!selected && catOf(selected) === "premium"} />
+            <VoiceAvatar
+              voice={selected ?? { id: value || "unselected" }}
+              className="h-10 w-10"
+            />
             <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
-            <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-400 transition", open && "rotate-180")} />
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 shrink-0 text-zinc-400 transition",
+                open && "rotate-180",
+              )}
+            />
           </>
         )}
       </button>
 
       {mismatch && (
-        <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700" role="status">
+        <p
+          className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700"
+          role="status"
+        >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
-            This voice speaks {languageName(selected.language)}; your agent is set to {languageName(agentLanguage ?? language)} — pick a{" "}
-            {languageName(agentLanguage ?? language)} voice or switch the agent language (or use Multilingual).
+            This voice speaks {languageName(selected.language)}; your agent is
+            set to {languageName(agentLanguage ?? language)} — pick a{" "}
+            {languageName(agentLanguage ?? language)} voice or switch the agent
+            language (or use Multilingual).
           </span>
         </p>
       )}
@@ -315,25 +425,69 @@ export function VoicePicker({
 
       {open && (
         <>
-          {!inline && <div className="fixed inset-0 z-40 bg-zinc-900/30 sm:hidden" aria-hidden onClick={() => close(false)} />}
+          {!inline && (
+            <div
+              className="fixed inset-0 z-40 bg-zinc-900/30 sm:hidden"
+              aria-hidden
+              onClick={() => close(false)}
+            />
+          )}
           <div
             role="dialog"
             aria-label="Choose a voice"
             data-solid
             className={cn(
+              styles.dialog,
               inline
-                ? "relative mt-2 flex max-h-[min(26rem,65vh)] flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
-                : "fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 sm:max-h-[min(32rem,70vh)] sm:rounded-xl",
+                ? "relative mt-2 flex max-h-[min(34rem,75vh)] flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
+                : "fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 sm:max-h-[min(40rem,70vh)] sm:rounded-xl",
             )}
           >
-            <div className={cn("flex items-center justify-between px-3 pt-3", inline ? "hidden" : "sm:hidden")}>
-              <span className="text-sm font-semibold">Choose a voice</span>
-              <button type="button" onClick={() => close()} className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-100" aria-label="Close">
-                <X className="h-4 w-4" />
-              </button>
+            <div className={styles.libraryHeader}>
+              <div>
+                <span className={styles.libraryEyebrow}>
+                  BLACKSYNC VOICE LIBRARY
+                </span>
+                <h3>Find your agent’s voice.</h3>
+                <p>Listen, compare and make it yours.</p>
+              </div>
+              <div className={styles.headerActions}>
+                <div className={styles.facepile} aria-hidden="true">
+                  {groupRows(inTab)
+                    .slice(0, 3)
+                    .map((row) => (
+                      <VoiceAvatar
+                        key={row.key}
+                        voice={row.voices[0]}
+                        className="h-7 w-7"
+                      />
+                    ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => close()}
+                  className={styles.closeButton}
+                  aria-label="Close voice library"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
-            <div role="tablist" aria-label="Voice category" className="flex gap-2 px-3 pt-3">
+            {selected && (
+              <div className={styles.selectionSummary}>
+                <span className={styles.selectionDot} />
+                <span>
+                  Your agent’s voice: <strong>{selected.name}</strong>
+                </span>
+                <Check size={13} />
+              </div>
+            )}
+            <div
+              role="tablist"
+              aria-label="Voice category"
+              className="flex gap-2 px-3 pt-3"
+            >
               {(["premium", "standard"] as Cat[]).map((c) => (
                 <button
                   key={c}
@@ -353,7 +507,14 @@ export function VoicePicker({
                   )}
                 >
                   {c === "premium" ? "Premium voices" : "Standard voices"}
-                  <span className={cn("rounded-full px-1.5 text-[11px] font-medium tabular-nums", tab === c ? "bg-white/20 text-white" : "bg-zinc-200/70 text-zinc-600")}>
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 text-[11px] font-medium tabular-nums",
+                      tab === c
+                        ? "bg-white/20 text-white"
+                        : "bg-zinc-200/70 text-zinc-600",
+                    )}
+                  >
                     {counts[c]}
                   </span>
                 </button>
@@ -373,13 +534,20 @@ export function VoicePicker({
                   role="combobox"
                   aria-expanded
                   aria-controls={`${uid}-list`}
-                  aria-activedescendant={active >= 0 ? optionId(active) : undefined}
+                  aria-activedescendant={
+                    active >= 0 ? optionId(active) : undefined
+                  }
                   aria-autocomplete="list"
                   aria-label="Search voices"
                 />
               </div>
               {languages.length > 1 && (
-                <Select className="w-auto max-w-[45%]" value={effLang} onChange={(e) => setLang(e.target.value)} aria-label="Filter by language">
+                <Select
+                  className="w-auto max-w-[45%]"
+                  value={effLang}
+                  onChange={(e) => setLang(e.target.value)}
+                  aria-label="Filter by language"
+                >
                   <option value="">All languages</option>
                   {languages.map((l) => (
                     <option key={l} value={l}>
@@ -389,7 +557,12 @@ export function VoicePicker({
                 </Select>
               )}
               {accents.length > 0 && (
-                <Select className="w-auto max-w-[45%]" value={effAccent} onChange={(e) => setAccent(e.target.value)} aria-label="Filter by accent">
+                <Select
+                  className="w-auto max-w-[45%]"
+                  value={effAccent}
+                  onChange={(e) => setAccent(e.target.value)}
+                  aria-label="Filter by accent"
+                >
                   <option value="">All accents</option>
                   {accents.map((a) => (
                     <option key={a} value={a}>
@@ -400,20 +573,41 @@ export function VoicePicker({
               )}
             </div>
 
-            <ul ref={listRef} id={`${uid}-list`} role="listbox" aria-label={labels[tab]} className="scroll-thin min-h-0 flex-1 overflow-y-auto py-1">
+            <ul
+              ref={listRef}
+              id={`${uid}-list`}
+              role="listbox"
+              aria-label={labels[tab]}
+              className={cn(
+                "scroll-thin min-h-0 flex-1 overflow-y-auto",
+                styles.voiceList,
+              )}
+            >
               {shown.length === 0 && (
-                <li role="presentation" className="px-4 py-6 text-center text-sm text-zinc-500">
+                <li
+                  role="presentation"
+                  className="px-4 py-6 text-center text-sm text-zinc-500"
+                >
                   No voices match{q.trim() ? ` “${q.trim()}”` : ""}
                   {effLang ? ` in ${languageName(effLang)}` : ""}.
                   <div className="mt-2 flex flex-wrap justify-center gap-3 text-xs">
                     {(effLang || effAccent) && (
-                      <button type="button" className="font-medium text-brand-600 hover:text-brand-700" onClick={() => (setLang(""), setAccent(""))}>
+                      <button
+                        type="button"
+                        className="font-medium text-brand-600 hover:text-brand-700"
+                        onClick={() => (setLang(""), setAccent(""))}
+                      >
                         Clear filters
                       </button>
                     )}
                     {otherMatches > 0 && (
-                      <button type="button" className="font-medium text-brand-600 hover:text-brand-700" onClick={() => setTab(otherTab)}>
-                        {otherMatches} match{otherMatches === 1 ? "" : "es"} in {labels[otherTab]}
+                      <button
+                        type="button"
+                        className="font-medium text-brand-600 hover:text-brand-700"
+                        onClick={() => setTab(otherTab)}
+                      >
+                        {otherMatches} match{otherMatches === 1 ? "" : "es"} in{" "}
+                        {labels[otherTab]}
                       </button>
                     )}
                   </div>
@@ -422,7 +616,7 @@ export function VoicePicker({
               {shown.map((r, i) => {
                 const v = current(r);
                 const grouped = r.voices.length > 1 || !!v.family;
-                const title = grouped ? v.family ?? v.name : v.name;
+                const title = grouped ? (v.family ?? v.name) : v.name;
                 const isSel = r.voices.some((x) => x.id === value);
                 const previewable = canPreview(v);
                 const meta = voiceMeta(v);
@@ -433,32 +627,46 @@ export function VoicePicker({
                     data-index={i}
                     role="option"
                     aria-selected={isSel}
+                    data-active={i === active}
+                    data-selected={isSel}
                     onClick={() => choose(v.id)}
                     onMouseMove={() => active !== i && setActive(i)}
                     className={cn(
-                      "flex cursor-pointer items-center gap-3 px-3 py-2",
+                      "flex cursor-pointer items-start gap-3 px-3 py-3",
+                      styles.voiceRow,
                       i === active && "bg-zinc-50",
                       isSel && "bg-brand-50",
                     )}
                   >
-                    <Avatar name={title} premium={catOf(v) === "premium"} />
+                    <VoiceAvatar voice={v} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 text-sm font-medium text-zinc-900">
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-medium text-zinc-900">
                         <span className="truncate">{title}</span>
                         {catOf(v) === "premium" && (
-                          <span className="shrink-0 rounded bg-brand-50 px-1.5 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-100">Premium</span>
+                          <span className="shrink-0 rounded bg-brand-50 px-1.5 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-100">
+                            Premium
+                          </span>
                         )}
                         {(v.is_clone ?? v.mine) && (
-                          <span className="shrink-0 rounded bg-violet-50 px-1.5 text-[10px] font-semibold text-violet-700">Clone</span>
+                          <span className="shrink-0 rounded bg-violet-50 px-1.5 text-[10px] font-semibold text-violet-700">
+                            Clone
+                          </span>
                         )}
                       </div>
-                      {(meta || v.description) && (
-                        <div className="truncate text-xs text-zinc-500" title={v.description || undefined}>
-                          {[meta, v.description].filter(Boolean).join(" · ")}
-                        </div>
+                      {meta && (
+                        <p className="mt-1 text-xs text-zinc-500">{meta}</p>
+                      )}
+                      {v.description && (
+                        <p className={styles.voiceDescription}>
+                          {v.description}
+                        </p>
                       )}
                       {grouped && (
-                        <div className="mt-1.5 flex flex-wrap gap-1" role="radiogroup" aria-label={`${title} tone`}>
+                        <div
+                          className="mt-1.5 flex flex-wrap gap-1"
+                          role="radiogroup"
+                          aria-label={`${title} tone`}
+                        >
                           {r.voices.map((t) => {
                             const on = t.id === v.id;
                             return (
@@ -488,7 +696,13 @@ export function VoicePicker({
                         </div>
                       )}
                     </div>
-                    <span title={previewable ? undefined : "Voice previews aren't available yet"}>
+                    <span
+                      title={
+                        previewable
+                          ? undefined
+                          : "Voice previews aren't available yet"
+                      }
+                    >
                       <button
                         type="button"
                         disabled={!previewable}
@@ -497,8 +711,15 @@ export function VoicePicker({
                           togglePreview(v);
                         }}
                         onKeyDown={(e) => e.stopPropagation()}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-200 disabled:hover:text-zinc-600"
-                        aria-label={playing === v.id ? `Stop preview of ${v.name}` : `Preview ${v.name}`}
+                        className={cn(
+                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-200 disabled:hover:text-zinc-600",
+                          styles.previewButton,
+                        )}
+                        aria-label={
+                          playing === v.id
+                            ? `Stop preview of ${v.name}`
+                            : `Preview ${v.name}`
+                        }
                       >
                         {fetching === v.id ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -509,24 +730,44 @@ export function VoicePicker({
                         )}
                       </button>
                     </span>
-                    <Check className={cn("h-4 w-4 shrink-0 text-brand-600", !isSel && "invisible")} aria-hidden />
+                    <Check
+                      className={cn(
+                        "h-4 w-4 shrink-0 text-brand-600",
+                        !isSel && "invisible",
+                      )}
+                      aria-hidden
+                    />
                   </li>
                 );
               })}
               {filtered.length > MAX_ROWS && (
-                <li role="presentation" className="p-3 text-center text-xs text-zinc-400">
-                  Showing {MAX_ROWS} of {filtered.length}. Search to narrow it down.
+                <li
+                  role="presentation"
+                  className="p-3 text-center text-xs text-zinc-400"
+                >
+                  Showing {MAX_ROWS} of {filtered.length}. Search to narrow it
+                  down.
                 </li>
               )}
             </ul>
 
-            <div className="space-y-2 border-t border-zinc-100 px-3 py-2 text-xs text-zinc-500">
+            <div
+              className={cn(
+                "space-y-2 border-t border-zinc-100 px-4 py-3 text-xs text-zinc-500",
+                styles.libraryFooter,
+              )}
+            >
               {error && (
                 <p className="text-red-600" role="alert">
                   {error}
                 </p>
               )}
-              {(message || source === "fallback") && <p>{message ?? "The full voice library isn't available right now — showing a short list."}</p>}
+              {(message || source === "fallback") && (
+                <p>
+                  {message ??
+                    "The full voice library isn't available right now — showing a short list."}
+                </p>
+              )}
               {pasting ? (
                 <div className="flex items-center gap-2">
                   <Input
@@ -543,7 +784,12 @@ export function VoicePicker({
                       }
                     }}
                   />
-                  <Button type="button" size="sm" disabled={!pasted.trim()} onClick={() => choose(pasted.trim())}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!pasted.trim()}
+                    onClick={() => choose(pasted.trim())}
+                  >
                     Use
                   </Button>
                 </div>
@@ -564,19 +810,5 @@ export function VoicePicker({
         </>
       )}
     </div>
-  );
-}
-
-function Avatar({ name, premium }: { name: string; premium?: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-        premium ? "bg-brand-100 text-brand-700" : "bg-zinc-100 text-zinc-600",
-      )}
-    >
-      {(name.trim()[0] ?? "?").toUpperCase()}
-    </span>
   );
 }
