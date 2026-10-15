@@ -49,16 +49,36 @@ STAGES = [
 ]
 
 # Extra guidance for industries where the default (sales) tone would be wrong.
-INDUSTRY_TONE = {
-    "funeral_services": (
-        "\n- Tone: callers are often grieving. Be calm, warm, patient and unhurried — never salesy or upbeat. Offer "
-        "condolences, use plain gentle language, never pressure, and for a death (a \"first call\") take the essentials "
-        "and connect the on-call funeral director right away. For calls coming in, the platform sets the house "
-        "first message (thank them for calling, introduce yourself as a virtual assistant, ask who you're speaking "
-        "with) — write the rest of the script to follow on from it."
-    ),
-}
+INTAKE_INDUSTRIES = {"funeral_services"}
 
+INDUSTRY_TONE = {
+    "funeral_services": """
+- Tone: callers are often grieving. Calm, warm, patient and unhurried — never salesy or upbeat. Plain, gentle
+  language. Never pressure.
+- How funeral homes handle calls (the script must follow this):
+  1. The platform sets the house first message for calls coming in: thank them for calling, introduce yourself as a
+     virtual assistant here to make sure we get their call, and ask who you're speaking with. Don't repeat it.
+  2. Next, thank them using the name they just gave (callers aren't on file, so no {{name}} placeholder) and ask
+     the reason for the call: "Thanks for that. What's the reason for your call today?" with "if": "they gave their
+     name — use it". No condolences yet: most callers aren't reporting a death.
+  3. Then branch on the reason:
+     - A death ("first call"): one short condolence, then take the essentials one question at a time, skipping
+       anything already said — the name of the person who passed; where they are now (home address, or facility
+       name and room); roughly when they passed; whether hospice, a nurse or a doctor has pronounced the death, or
+       whether it was unexpected (then the medical examiner or police may need to release them first — never
+       promise a pickup time); the caller's relationship and whether they're the one making arrangements; the best
+       callback number (read it back once); anything the director should know (religious timing, stairs, family
+       arriving). Then connect the on-call funeral director, or say the on-call director will call them back
+       shortly. Hospital, nursing home and hospice staff calling about a death: take the facility, unit or room,
+       their name and direct line, the deceased's name and the family contact.
+     - Service, visitation, directions or an obituary: answer from the funeral home's information; if it isn't
+       there, take a message for a director.
+     - Pre-planning: take their name, number and best time, and say a pre-planning advisor will call them.
+     - A family already working with a director: take a message for their director.
+     - Pricing: only what the funeral home's information says; otherwise a director will go over it with them.
+     - Florists, clergy, cemeteries and other businesses: take a message.
+  4. Close by confirming what happens next and who will call them."""
+}
 
 def recommended_opener(ctx: dict, spec: dict) -> str | None:
     """The house opener for industries that have one (funeral homes answering calls), else None."""
@@ -67,7 +87,7 @@ def recommended_opener(ctx: dict, spec: dict) -> str | None:
     name = (spec["strategy"].get("agent_name") or "").strip() or "your assistant"
     business = (ctx["business"].get("name") or "").strip() or "us"
     return (f"Hi, thank you for calling {business}. This is {name}, a virtual assistant here to make sure we get "
-            "your call. Who do I have the pleasure of speaking with?")
+            "your call. Who am I speaking with?")
 
 
 class GenerationError(generator.GenerationError):
@@ -138,6 +158,8 @@ def _flags(data: dict, actions: list[str]) -> dict:
     flags["booking"] = bool(flags["booking"] and catalog.calendar_configured())
     flags["representation"] = b.get("representation") if b.get("representation") in ("team_member", "ai_assistant", "custom") else "ai_assistant"
     flags["custom_intro"] = (b.get("custom_intro") or "").strip()[:300]
+    # Industries whose calls are an intake (a funeral home's death call) need room for more questions.
+    flags["intake"] = (data.get("business") or {}).get("industry") in INTAKE_INDUSTRIES
     return flags
 
 

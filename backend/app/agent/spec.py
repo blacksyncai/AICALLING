@@ -230,6 +230,8 @@ def validate_strategy(p: dict, *, allowed_vars: set[str], allowed_tools: set[str
     out["variables"] = variables
 
     lo, hi = QUESTION_RANGE[chosen]
+    if flags.get("intake"):
+        hi += 4  # an intake call (a death call) takes several details, one at a time
     if flags.get("depth") == "light":
         hi = min(hi, 2)
     questions = []
@@ -333,6 +335,7 @@ def _line(v, name: str, need_say: bool = True) -> dict:
 # A scripted "Thanks for sharing that." makes every turn sound the same; the runtime rules cover acknowledging.
 _GENERIC_ACK = re.compile(r"^(?:ok(?:ay)?|great|perfect|got it|understood|sure|thanks?|thank you)?[ ,!.-]*"
                           r"(?:(?:thanks?|thank you)(?: so much)? for (?:letting me know|sharing(?: that)?|that|telling me)"
+                          r"(?: with me)?"
                           r"|that(?:'s| is)? (?:helps?|helpful(?: to know)?|makes sense|good to know|great to hear)"
                           r"|that gives me a (?:good|clear|better) (?:sense|idea|picture)(?: of [\w' ]+)?"
                           r"|got it|understood|i (?:understand|see)|good to know|appreciate (?:that|you sharing))"
@@ -372,18 +375,20 @@ def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: 
     out["opening"] = _lines(p.get("opening"), "opening", 4, 1 if direction != "inbound" else 0)
 
     lo, hi = STAGE_RANGE.get(purpose, (2, 4))
+    hi += 2 if flags.get("intake") else 0  # an intake branches by the reason for the call
     stages = []
     for st in _objs(p.get("stages"), "stages", hi + 1):
-        stages.append({"name": _s(st.get("name"), "stages.name", 40),
+        stages.append({"name": _s(st.get("name"), "stages.name", 60),
                        "goal": _s(st.get("goal"), "stages.goal", 200),
-                       "lines": _lines(st.get("lines"), f"stages.{st.get('name') or '?'}.lines", 6),
+                       "lines": _lines(st.get("lines"), f"stages.{st.get('name') or '?'}.lines",
+                                       10 if flags.get("intake") else 6),
                        "move_on": _s(st.get("move_on"), "stages.move_on", 200, required=False)})
     if len(stages) < lo:
         raise InvalidOutput(f"stages needs at least {lo} stage(s) with spoken lines for a {purpose} call")
     if len(stages) > hi:
         raise InvalidOutput(f"stages has {len(stages)} stages; a {purpose} call should have at most {hi}")
     asked = sum(1 for st in stages for ln in st["lines"] if ln["say"].rstrip().endswith("?"))
-    cap = QUESTION_RANGE.get(purpose, (1, 4))[1] + 3
+    cap = QUESTION_RANGE.get(purpose, (1, 4))[1] + 3 + (6 if flags.get("intake") else 0)
     if asked > cap:
         raise InvalidOutput(f"the stages script {asked} questions; a {purpose} call should script at most {cap}. "
                             "Keep only the questions that decide the next step and mark the rest skip_if known.")
@@ -432,6 +437,13 @@ def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: 
         "goodbye": _s(c.get("goodbye"), "close.goodbye", 200),
     }
     out["voicemail"] = _s(p.get("voicemail"), "voicemail", 400, required=False) if direction != "inbound" else ""
+    if direction == "inbound":
+        # The caller isn't a contact on file: their name comes from the conversation, not a placeholder.
+        for text in _walk_strings({k: v for k, v in out.items() if k != "first_message"}):
+            if _VAR.search(text):
+                raise InvalidOutput(f"\"{text[:80]}\" uses a {{{{field}}}}, but inbound callers aren't on file. Write the "
+                                    "line without it (\"Thanks for that. What's the reason for your call today?\") and "
+                                    "set \"if\" to \"they gave their name — use it\".")
     allowed_codes = set(allowed_outcomes) | {"wrong_number", "do_not_call"}
     for text in _walk_strings(out):
         check_variables(text, allowed_vars, "The conversation")

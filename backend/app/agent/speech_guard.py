@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 _SEAM = re.compile(r"(?<=[a-z0-9][.?!])(?=[A-Z])")  # "invite?We" — two messages glued together
-_MARKERS = re.compile(r"[{}\[\]→]|\(Note|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
+_MARKERS = re.compile(r"[{}\[\]→]|\((?:Note|wait|waiting|pause|stop)|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
                       re.IGNORECASE)
 # Internal names that must never be read out (tool calls / outcome codes written as text).
 _INTERNAL_NAMES = re.compile(r"\b(?:end_call|check_availability|book_appointment|transfer_call|meeting_booked|"
@@ -39,6 +39,7 @@ class SpeechGuard:
 
     def feed(self, text: str) -> str:
         """New model text in; the part that's safe to speak now out."""
+        text = text.replace("*", "")  # markdown emphasis ("**937-555-0142**") would be read out
         if self.cut:
             self.buffer += text  # kept only for the log
             return ""

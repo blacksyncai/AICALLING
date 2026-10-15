@@ -178,3 +178,20 @@ def test_conditions_read_naturally_whatever_the_model_wrote():
     assert _say(line, set()) == '- Only if you don\'t know yet (skip if already shared): Ask: "Where are they now?" → wait'
     line = {"say": "That helps.", "wait": False, "if": "If they share a timeline", "skip_if": ""}
     assert _say(line, set()) == '- If they share a timeline: Say: "That helps."'
+
+
+def test_speech_guard_drops_stage_directions_and_markdown():
+    from app.agent.speech_guard import clean
+
+    assert clean("And your relationship to Robert? (Waiting for your response)") == "And your relationship to Robert?"
+    assert clean("The number I have is **937-555-0142**. Is that correct?") == \
+        "The number I have is 937-555-0142. Is that correct?"
+
+
+def test_inbound_scripts_never_use_contact_fields_after_the_greeting():
+    cv = copy.deepcopy(CONVERSATION)
+    cv["opening"] = [{"say": "Thanks, {{name}}. What's the reason for your call today?", "wait": True}]
+    cv["branches"] = cv["branches"] + [{"key": "question", "say": "Let me take a message for the team."}]
+    with pytest.raises(S.InvalidOutput, match="inbound callers aren't on file"):
+        S.validate_conversation(cv, allowed_vars=VARS, allowed_outcomes=S.usable_outcomes(FLAGS), direction="inbound",
+                                flags=FLAGS, purpose="inbound")

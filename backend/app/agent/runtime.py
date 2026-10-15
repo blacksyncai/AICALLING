@@ -107,6 +107,8 @@ def conversation_rules(cfg: dict) -> str:
         "introduction or pitch. Never say a line you already said word for word; if they didn't hear you, say it "
         "again more simply.\n"
         "- If you didn't catch something or it's ambiguous, ask. Don't guess.\n"
+        "- Never say you'll check, look something up or put them on hold unless you're using a tool to do it right "
+        "then. If you don't have the answer, say so and offer to have someone follow up.\n"
         "- When they're ready for the next step, move to it; don't keep qualifying. Offer the next step once; "
         "if they decline, don't keep pushing.\n"
         "- If they say no or want to go, respect it and end politely. If they ask not to be called or contacted "

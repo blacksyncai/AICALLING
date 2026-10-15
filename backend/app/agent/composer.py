@@ -116,8 +116,9 @@ def _clause(text: str) -> str:
     """A condition to follow "when": drops a leading "when", "once" or "after" the model already wrote."""
     import re
 
-    return _lower_first(re.sub(r"^(?:(?:skip[_ ]if|only if|if|when|once|after|as soon as)\s+)+", "", (text or "").strip(),
-                               flags=re.I))
+    text = re.sub(r"^(?:(?:skip[_ ]if|only if|if|when|once|after|as soon as)\s+)+", "", (text or "").strip(), flags=re.I)
+    # "deceased_name is already provided" → "deceased name is already provided"
+    return _lower_first(re.sub(r"\b([a-z]+)_([a-z_]+)\b", lambda m: m.group(0).replace("_", " "), text))
 
 
 def _say(line: dict, exact: set[str]) -> str:
