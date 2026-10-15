@@ -311,7 +311,7 @@ export function sectionOrder(builder: BuilderInfo | null | undefined): [string, 
 }
 
 export interface BuilderInfo {
-  /** "v2" = built by the production generator (12 operating sections). */
+  /** "v3" (compact, purpose-specific) or "v2" (twelve sections) = built by the production generator. */
   schema?: string;
   section_order?: [string, string][];
   quality?: { words: number; repairs: number; checks: QualityCheck[] };

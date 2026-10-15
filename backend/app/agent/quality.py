@@ -11,11 +11,9 @@ from __future__ import annotations
 import re
 
 from app.agent import spec as S
-from app.agent.composer import SECTION_KEYS_V2, TITLES_V2
 
-MIN_WORDS_FAIL = 450      # below this the prompt is a description, not operating instructions
-MIN_WORDS_WARN = 900
-MIN_SECTION_WORDS = 25
+# Length is a warning only: a complex agent may need more, but most shouldn't.
+MAX_WORDS_WARN = 1300
 
 _URL = re.compile(r"\b(?:https?://|www\.)[^\s\"'<>)]+", re.I)
 _DOMAIN = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|co|cloud|app|dev|us|si)\b", re.I)
@@ -26,6 +24,10 @@ _FUNC = re.compile(r"\b([a-z]+(?:_[a-z]+)+)\(")
 _UNSUPPORTED = re.compile(
     r"\b(I'll|I will|I can|I'm going to|let me)\s+(?:just\s+)?(text|sms|send you (?:a|an) (?:text|email|link|sms)|email you|"
     r"update (?:your|the) (?:crm|record)|charge|process (?:a|the|your) payment)", re.I)
+_BOOK_CLAIM = re.compile(r"\b(?:I've|I have|I'll|I will|let me|I can)\s+(?:go ahead and\s+)?(?:book|schedule|get you (?:booked|scheduled))"
+                         r"|\byou're (?:all )?(?:booked|scheduled)\b", re.I)
+_TRANSFER_CLAIM = re.compile(r"\b(?:I'll|I will|let me|I can|I'm going to)\s+(?:go ahead and\s+)?(?:transfer|connect|patch|put) you"
+                             r"(?: through| over| to| with)?", re.I)
 
 
 def _words(text: str) -> int:
@@ -71,64 +73,66 @@ def _part_of(spec: dict, needles: list[str]) -> str:
     return "conversation" if any(n.lower() in conv for n in needles) else "strategy"
 
 
+def repeated_questions(lines: list[str]) -> list[str]:
+    """Questions scripted in more than one place — the agent would end up asking them twice."""
+    seen, dupes = set(), []
+    for line in lines:
+        for q in re.findall(r"[^.!?]*\?", line or ""):
+            key = S._norm(q)
+            if len(key.split()) < 4:
+                continue  # "Sound good?" can fairly come up twice
+            if key in seen and q.strip() not in dupes:
+                dupes.append(q.strip())
+            seen.add(key)
+    return dupes
+
+
 def run(spec: dict, composed: dict, ctx: dict) -> dict:
     st, cv = spec["strategy"], spec["conversation"]
     flags, sections = ctx["flags"], composed["sections"]
     prompt, first = composed["system_prompt"], composed["first_message"]
-    everything = f"{prompt}\n{first}"
+    everything = f"{prompt}\n{first}\n{composed.get('voicemail') or ''}"
     checks: list[dict] = []
 
-    # Completeness of every required section.
-    thin = [TITLES_V2[k] for k in SECTION_KEYS_V2 if _words(sections.get(k, "")) < MIN_SECTION_WORDS]
-    checks.append(_check("sections", "All 12 sections are complete", not thin, "Every section has real content.",
-                         f"These sections are too thin: {', '.join(thin)}."))
     words = _words(prompt)
-    checks.append({"key": "length", "label": "Detailed operating instructions",
-                   "status": "fail" if words < MIN_WORDS_FAIL else ("warn" if words < MIN_WORDS_WARN else "pass"),
-                   "detail": f"{words} words of instructions.", "part": "conversation"})
+    checks.append({"key": "length", "label": "Concise instructions",
+                   "status": "warn" if words > MAX_WORDS_WARN else "pass",
+                   "detail": f"{words} words of agent-specific instructions.", "part": "conversation"})
 
     # Identity and opening.
     name, company = st["agent_name"], ctx["business"]["name"]
     checks.append(_check("identity", "Identity names the agent and company",
                          name.lower() in sections["identity"].lower() and company.lower() in sections["identity"].lower(),
                          f"{name} represents {company}.", "The identity must name the agent and the company."))
-    opening_text = " ".join([first] + [x["say"] for x in cv["opening"]]).lower()
-    checks.append(_check("opening", "Opening has real lines and waits",
-                         (name.lower() in opening_text or company.lower() in opening_text)
-                         and any(x["wait"] for x in cv["opening"]) and len(cv["opening"]) >= 2,
-                         "The opening introduces the agent and stops to listen.",
-                         "The opening must use the agent's name or company, have at least two lines, and wait for replies.",
+    exact_opening = any(e["is_opening"] for e in st["exact_wording"])
+    opening_ok = exact_opening or ctx["direction"] == "inbound" or \
+        name.lower() in first.lower() or company.lower() in first.lower() or \
+        any(name.lower() in x.lower() or company.lower() in x.lower() for x in cv["after_opening"])
+    checks.append(_check("opening", "Opening says who's calling", opening_ok,
+                         "The opening introduces the agent or the business.",
+                         "The first message or the line after it must say who's calling (agent or company name).",
                          part="conversation"))
-    if flags["ai_disclosure"]:
-        checks.append(_check("disclosure", "AI disclosure", re.search(r"\bAI\b", sections["identity"]) is not None,
-                             "The agent is honest that it's an AI.", "The identity must state the AI disclosure rule."))
 
-    # Conversation branches.
+    # Purpose-specific situations.
     have = {b["key"] for b in cv["branches"]}
-    missing = [S.BRANCHES[k] for k in S.required_branches(ctx["direction"], flags) if k not in have]
-    checks.append(_check("branches", "Call flow covers real situations", not missing,
-                         f"{len(have)} branches, including every required one.",
-                         f"Missing branches: {', '.join(missing)}.", part="conversation"))
-    checks.append(_check("turn_taking", "Turn-taking and stop points",
-                         "stop and wait" in prompt.lower() and "turn boundary" in sections["turn_taking"].lower(),
-                         "Questions are marked as stop points.", "Questions must be marked as stop points.",
+    missing = [S.BRANCHES[k] for k in S.required_branches(st["purpose"], ctx["direction"]) if k not in have]
+    checks.append(_check("branches", "Covers the situations this call meets", not missing,
+                         f"{len(have)} situations for a {st['purpose'].replace('_', ' ')} call.",
+                         f"Missing situations: {', '.join(missing)}.", part="conversation"))
+
+    # The same scripted question twice makes the agent re-ask.
+    from app.agent.composer import open_questions, spoken_lines
+
+    dupes = repeated_questions(spoken_lines({**cv, "first_message": first})
+                               + [q["ask"] for q in open_questions(st, cv)])
+    checks.append(_check("repeats", "No question scripted twice", not dupes, "Each question is planned once.",
+                         "These questions are scripted more than once — keep each in one place: " + " | ".join(dupes) + ".",
                          part="conversation"))
 
-    # Qualification, objections, outcomes.
-    qs = st["qualification"]["questions"]
-    need_q = 3 if flags.get("depth") == "thorough" else 2
-    checks.append(_check("qualification", "Use-case-specific qualification with a stop rule",
-                         len(qs) >= need_q and all(q["why"] for q in qs) and bool(st["qualification"]["stop_rule"]),
-                         f"{len(qs)} questions, each with a reason, plus a stop rule.",
-                         f"Need at least {need_q} questions with reasons and a stop rule."))
-    checks.append(_check("objections", "Objection handling", len(cv["objections"]) >= 3,
-                         f"{len(cv['objections'])} objections with responses.", "Need at least 3 realistic objections.",
-                         part="conversation"))
-    codes = {d["outcome"] for d in st["outcomes"]["dispositions"]}
-    checks.append(_check("outcomes", "Post-call outcomes and extraction",
-                         "do_not_call" in codes and len(codes) >= 4 and len(st["outcomes"]["extraction_fields"]) >= 2,
-                         f"{len(codes)} outcomes and {len(st['outcomes']['extraction_fields'])} extracted fields.",
-                         "Need at least 4 outcomes including do_not_call, and at least 2 extracted fields."))
+    # Approved wording is kept exactly.
+    lost = [e["text"] for e in st["exact_wording"] if not S.is_verbatim(e["text"], everything)]
+    checks.append(_check("approved", "Approved wording kept exactly", not lost, "User-approved lines are verbatim.",
+                         "These approved lines were changed or dropped: " + " | ".join(x[:60] for x in lost) + "."))
 
     # Tools: only real ones, consistent with what's enabled.
     allowed = set(ctx["tools"])
@@ -140,10 +144,17 @@ def run(spec: dict, composed: dict, ctx: dict) -> dict:
                          "Mentions actions the agent can't do: " + ", ".join(bad_funcs + promises) + ".",
                          part=_part_of(spec, bad_funcs + promises)))
     if not flags["booking"]:
-        checks.append(_check("booking_off", "No booking without a calendar",
-                             not re.search(r"\b(?:I've|I have|I'll|I will|let me)\s+(?:book|schedule)", everything, re.I),
-                             "The agent never claims to book.", "The agent promises to book, but booking isn't available.",
-                             part="conversation"))
+        claims = sorted({m.group(0) for m in _BOOK_CLAIM.finditer(everything)})
+        checks.append(_check("booking_off", "No booking without a calendar", not claims,
+                             "The agent never claims to book.",
+                             "Booking isn't available, but the agent says: " + ", ".join(claims) + ".",
+                             part=_part_of(spec, claims)))
+    if not flags["transfer"]:
+        claims = sorted({m.group(0) for m in _TRANSFER_CLAIM.finditer(everything)})
+        checks.append(_check("transfer_off", "No transfer without a transfer number", not claims,
+                             "The agent never offers a live transfer.",
+                             "Live transfer isn't available, but the agent says: " + ", ".join(claims) + ".",
+                             part=_part_of(spec, claims)))
 
     # Variables.
     unknown = sorted({m.group(1) for m in S._VAR.finditer(everything)} - set(ctx["variables"]))

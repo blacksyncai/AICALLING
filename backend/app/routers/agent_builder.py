@@ -266,7 +266,7 @@ async def run_generation(draft_id: uuid.UUID, org_id: uuid.UUID, user_id: uuid.U
 
 
 def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result: dict, knowledge: str) -> Agent:
-    from app.agent.composer import SECTIONS_V2
+    from app.agent.composer import SECTIONS_V3
 
     spec, composed, report = result["spec"], result["composed"], result["report"]
     strategy, flags, brief = spec["strategy"], ctx["flags"], ctx["brief"]
@@ -284,13 +284,14 @@ def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result:
     std = [f for f in generator.STANDARD_FIELDS if f["name"] not in {x["name"] for x in fields}]
     behavior = data.get("behavior") or {}
     model = behavior.get("llm_model") if isinstance(behavior.get("llm_model"), str) and behavior.get("llm_model") else RUNTIME_DEFAULT_MODEL
-    obj = strategy["objectives"]
+    obj = strategy["objective"]
     plan = {
         "title": strategy["title"],
+        "purpose": strategy["purpose"],
         "primary_objective": obj["primary"],
-        "target_audience": strategy["audience"],
-        "qualification_questions": [q["ask"] for q in strategy["qualification"]["questions"]],
-        "desired_outcomes": obj["success_criteria"],
+        "target_audience": strategy["identity"]["calling_context"],
+        "qualification_questions": [q["ask"] for q in strategy["questions"]],
+        "desired_outcomes": [x for x in (obj["primary"], obj["fallback"]) if x],
         "transfer_rules": flags["transfer_when"] if flags["transfer"] else "",
         "booking_rules": "Books with the connected calendar." if flags["booking"] else "",
         "follow_up_logic": strategy["outcomes"]["callback_rules"],
@@ -318,7 +319,9 @@ def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result:
         first_message=composed["first_message"],
         knowledge_base=knowledge,
         extraction_fields=std + fields,
-        success_criteria=" ".join(obj["success_criteria"])[:2000],
+        success_criteria=" ".join(x for x in (obj["primary"], obj["fallback"]) if x)[:2000],
+        # Spoken only if the voicemail setting is switched to "leave a message".
+        voicemail_message=(composed.get("voicemail") or "")[:1000] or None,
         enable_booking=flags["booking"],
         transfer_number=flags["transfer_number"][:50],
         voice_id=flags["voice_id"] or DEFAULT_VOICE_ID,
@@ -327,8 +330,9 @@ def _agent_from_result(org_id, draft: AgentDraft, data: dict, ctx: dict, result:
         temperature=0.5,
         ai_disclosure=flags["ai_disclosure"],
         builder={
-            "schema": "v2",
-            "section_order": [list(x) for x in SECTIONS_V2],
+            "schema": "v3",
+            "section_order": [list(x) for x in SECTIONS_V3],
+            "purpose": strategy["purpose"],
             "industry": ctx["business"]["industry"],
             "use_case": brief["primary"]["key"],
             "use_cases": use_case_keys,
@@ -480,7 +484,7 @@ async def regenerate(agent_id: uuid.UUID, body: RegenerateRequest, ctx: CtxDep, 
     if body.section not in keys:
         raise HTTPException(status_code=400, detail="That isn't a section of the agent's instructions.")
     knowledge = await generator.knowledge_for(db, ctx.org.id)
-    if (agent.builder or {}).get("schema") == "v2":
+    if (agent.builder or {}).get("schema") in ("v2", "v3"):
         extra = await _regen_context(db, ctx, agent)
         text = await _run_llm(pipeline.regenerate_section(agent, body.section, body.instruction, knowledge, extra))
         return {"section": body.section, "text": text}
@@ -488,7 +492,7 @@ async def regenerate(agent_id: uuid.UUID, body: RegenerateRequest, ctx: CtxDep, 
 
 
 async def _regen_context(db, ctx: Context, agent: Agent) -> dict:
-    """Real tools/fields and leak terms for rewriting one section of a v2 agent."""
+    """Real tools/fields and leak terms for rewriting one section of a generated (v2/v3) agent."""
     import json
 
     from app.agent import spec as S

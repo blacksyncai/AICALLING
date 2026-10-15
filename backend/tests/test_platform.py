@@ -55,7 +55,7 @@ def test_playground_runs_booking_tools(client, agent_id, monkeypatch):
     assert body["tool_events"][0]["tool"] == "check_availability"
     assert len(body["state"]["slots"]) == 3  # mock slots when Cal.com isn't configured
     system = sent[0]["messages"][0]["content"]
-    assert "Jamie" in system and "Globex" in system and "KNOWLEDGE BASE" in system
+    assert "Jamie" in system and "Globex" in system and "BUSINESS REFERENCE" in system
     assert {t["function"]["name"] for t in sent[0]["tools"]} == {"end_call", "check_availability", "book_appointment"}
 
 

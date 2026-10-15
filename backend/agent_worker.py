@@ -643,6 +643,7 @@ async def _play_continuous_bg(room, control: dict) -> None:
 _END_OUTCOMES = (
     "meeting_booked", "qualified", "not_qualified", "interested", "not_interested",
     "callback", "transferred", "voicemail", "no_answer", "completed", "failed",
+    "wrong_number", "do_not_call",
 )
 
 
@@ -789,7 +790,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
 
         Args:
             outcome: The result of the call. One of meeting_booked, qualified, not_qualified,
-                interested, not_interested, callback, transferred, voicemail, no_answer, completed.
+                interested, not_interested, callback, transferred, voicemail, no_answer, wrong_number,
+                do_not_call, completed.
         """
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
         if outcome == "meeting_booked" and not run.meeting_time:
@@ -966,7 +968,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     # Write the opening line while the phone is still ringing, so the agent can speak the moment
     # the contact says hello instead of waiting on the LLM after pickup.
     opening_task = None
-    if call_type == "outbound" and not render_vars(cfg.get("first_message", ""), variables).strip():
+    from app.agent.runtime import opening_reads_wrong
+
+    # A saved opening that needs a detail this contact doesn't have ("Is this {{name}}?") would come out wrong,
+    # so the agent writes its own first line from the prompt instead.
+    fixed_opening = "" if opening_reads_wrong(cfg.get("first_message", ""), variables) else cfg.get("first_message", "")
+    if call_type == "outbound" and not render_vars(fixed_opening, variables).strip():
         opening_task = asyncio.create_task(_draft_opening(cfg, variables))
 
     if call_type == "outbound":
@@ -1376,7 +1383,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 asyncio.create_task(_delete_room(ctx.room.name))
         ctx.room.on("participant_disconnected", _on_left)
 
-    first = render_vars(cfg.get("first_message", ""), variables).strip()
+    first = render_vars(fixed_opening if call_type == "outbound" else cfg.get("first_message", ""), variables).strip()
     if call_type == "outbound":
         # Let the contact finish their "Hello?" (or ~1.2 s of quiet), then speak the line written during ringing.
         t_open = _time.monotonic()

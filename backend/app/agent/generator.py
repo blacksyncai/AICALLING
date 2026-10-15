@@ -85,8 +85,11 @@ class InvalidOutput(ValueError):
 
 
 def section_order(agent_or_builder) -> list[tuple[str, str]]:
-    """(key, heading) pairs for an agent's sections: production-generator agents ("v2") or the original twelve."""
+    """(key, heading) pairs for an agent's sections: production-generator agents ("v3", "v2") or the original twelve."""
     b = agent_or_builder if isinstance(agent_or_builder, dict) else (getattr(agent_or_builder, "builder", None) or {})
+    if b.get("schema") == "v3":
+        from app.agent.composer import SECTIONS_V3
+        return list(SECTIONS_V3)
     if b.get("schema") == "v2":
         from app.agent.composer import SECTIONS_V2
         return list(SECTIONS_V2)
@@ -631,7 +634,7 @@ async def improve_agent(agent, instruction: str, knowledge: str) -> dict:
     sections = (agent.builder or {}).get("sections") if agent.builder else None
     order = section_order(agent)
     keys = tuple(k for k, _ in order)
-    v2 = (agent.builder or {}).get("schema") == "v2"
+    v2 = (agent.builder or {}).get("schema") in ("v2", "v3")  # built by the production generator
     has_sections = isinstance(sections, dict) and all(isinstance(sections.get(k), str) for k in keys)
     rules = _WRITING_RULES + """
 You are editing an existing agent. Treat the user's instruction as their wish for how the agent should
@@ -674,7 +677,7 @@ Only include sections you actually changed. Valid keys: {', '.join(keys)}."""
             new_sections[k] = _keep_compliance(text, sections[k], agent) if k == "compliance" else text
         if v2:
             from app.agent.composer import assemble
-            prompt = assemble(new_sections)
+            prompt = assemble(new_sections, order)
         else:
             prompt = assemble_prompt(new_sections)
         return {

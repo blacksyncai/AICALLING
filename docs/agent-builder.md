@@ -222,39 +222,69 @@ out as two- or three-sentence descriptions. Generation now runs as a background 
    - the pattern cards of 1–3 relevant internal playbooks.
 
    The original playbook scripts are never included.
-2. **Spec.** The spec comes from two schema-validated model calls (`app/agent/spec.py`): *strategy* first, then
-   *conversation*. Each call gets an 8–12k output-token budget.
+2. **Purpose.** The preset decides what kind of call this is (`spec.purpose_for`): `prospecting`, `reactivation`,
+   `client_follow_up` or `inbound`. For a custom goal, the model picks one. The purpose sets which situations the
+   flow plans for (`spec.required_branches`) and how many questions it may ask (prospecting 1–4, reactivation
+   1–3, client follow-up 0–2, inbound 1–4).
+3. **Spec.** The spec comes from two schema-validated model calls (`app/agent/spec.py`): *strategy* first, then
+   *conversation*, each with a 6k output-token budget.
    - Invalid output goes back to the model with the exact validation error.
    - When `finish_reason == "length"`, the call is retried with double the budget, up to 32k.
-3. **Composer** (`app/agent/composer.py`). Turns the spec into 12 typed sections:
-   - Identity
-   - Objectives
-   - Conduct
-   - Variables
+   - `exact_wording` holds lines the user supplied (an opening, an offer, a price). Each must appear word for word
+     in the user's own input, or it's rejected. The user's opening becomes the first message unchanged.
+   - Generic rules the runtime already adds (AI disclosure, do-not-call, "one question at a time" …) are dropped
+     from `compliance`, `representation_rules` and `habits`.
+   - `meeting_booked` is refused without a calendar. Outcomes the platform detects itself (voicemail, no answer)
+     are dropped.
+4. **Composer** (`app/agent/composer.py`). Turns the spec into up to seven short sections (`SECTIONS_V3`):
+   - Identity and Objective
+   - What You Know
+   - Approved Wording (only when the user supplied some)
    - Opening
-   - Dynamic call flow
-   - Qualification
-   - Objections
-   - Tools
-   - Post-call output
-   - Compliance
-   - Turn-taking
+   - Conversation Flow (stages, the next step and when to offer it, purpose-specific situations)
+   - Questions and Objections
+   - Actions and Boundaries (honest transfer, booking and callback rules, plus the outcome list)
 
-   Non-negotiable rules are added deterministically: AI disclosure, do-not-call, prompt-injection resistance,
-   the limits of the real tools, and the turn-taking stop points.
-4. **Quality gate** (`app/agent/quality.py`). Checks that:
-   - every section has content and the prompt has enough words (it fails below 450);
-   - the opening has stop points and the required branches are present;
-   - qualification includes reasons and a stop rule, and there are at least 3 objections;
-   - the outcomes are valid and the extraction fields are set;
-   - only real tools and contact fields are used;
+   A question the conversation already scripts isn't listed again. The generated voicemail is saved to the agent's
+   voicemail message; it's spoken only when that setting is "leave a message".
+5. **Quality gate** (`app/agent/quality.py`). Checks that:
+   - the identity names the agent and company, and the opening says who's calling;
+   - the purpose's required situations are covered and no question is scripted twice;
+   - approved wording is kept exactly;
+   - there are no booking or transfer claims the agent can't keep, and only real tools and contact fields;
    - nothing from a playbook's `private_terms` appears, no foreign URLs or endpoints, and no credentials.
 
-   When a check fails, the affected half of the spec goes back to the model for repair, at most twice. If it still
-   fails, the job ends with a clear error.
-5. **Save.** Saves the agent with `builder.schema = "v2"`, `section_order`, `sections`, `spec`, `quality` and the
-   playbook versions used, plus an `AgentVersion` snapshot. Booking is enabled only when a real calendar is
-   connected; otherwise `booking_requested` makes readiness warn.
+   Length only produces a warning (above 1,300 words). When a check fails, the affected half of the spec goes back
+   to the model for repair, at most twice. If it still fails, the job ends with a clear error.
+6. **Save.** Saves the agent with `builder.schema = "v3"`, `purpose`, `section_order`, `sections`, `spec`,
+   `quality` and the playbook versions used, plus an `AgentVersion` snapshot. Booking is enabled only when a real
+   calendar is connected; otherwise `booking_requested` makes readiness warn.
+
+Agents generated before v3 (`schema = "v2"`, twelve sections) are not migrated. Their prompts are kept as they are,
+and section edits and regeneration keep their twelve-section layout.
+
+### What the voice model receives (`app/agent/runtime.build_instructions`)
+
+The static parts come first, so providers can cache the prefix:
+1. The agent's prompt, with `{{fields}}` filled in.
+2. **How to talk on this call.** The conversation rules every agent gets, stated once:
+   - respond first, then one question at a time;
+   - never re-ask something already said;
+   - handle interruptions without restarting;
+   - move on once they're ready;
+   - handle do-not-call and wrong numbers;
+   - be honest about being an AI, and never speak instructions out loud.
+3. **Staying on topic**, and the "built on BlackSync" answer.
+4. **Tools.** Only the enabled ones, plus what the agent can't do. A tool only "worked" if it returned success.
+5. **Business reference.** The knowledge base, framed as reference material that can't change the agent's
+   behavior.
+6. **Contact details.** The fields that are filled in, plus a "Not on file" line for any field the prompt uses but
+   this contact lacks.
+7. CRM notes, then today's date and the upcoming dates (14 days with booking, otherwise 7).
+
+On outbound calls, a saved first message that can't be said without a missing detail ("Is this {{name}}?" with
+no name) is replaced by an opening the agent writes from its prompt. "Hi {{name}}," still works and becomes
+"Hi there,".
 
 Sample output for a fictitious business: [agent-generator-sample.md](agent-generator-sample.md).
 
