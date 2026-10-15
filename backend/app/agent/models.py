@@ -64,7 +64,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "ministral-3b-latest",
-        "name": "BlackSync Flash Lite",
+        "name": "BSA Flashlight",
         "provider": "BlackSync",
         "description": "The fastest Flash — shortest pauses, best for simple, high-volume scripts.",
         "speed": "fast",
