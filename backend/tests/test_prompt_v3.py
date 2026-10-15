@@ -228,3 +228,16 @@ def test_outbound_method_only_for_calls_that_earn_the_next_step():
     assert not pipeline._outbound_method({"direction": "outbound"}, "client_follow_up")
     assert not pipeline._outbound_method({"direction": "inbound", "purpose": "inbound"})
     assert "Learn before you pitch" in pipeline._OUTBOUND_METHOD
+
+
+def test_objections_are_mini_flows_with_callback_flow_and_summary():
+    st = _strategy()
+    cv = {"objections": [{"objection": "I'm selling it myself", "say": "Totally get that. Is the fee the main reason?",
+                          "steps": [{"say": "Would you compare the numbers if you'd walk away with more?", "if": "If they agree"}],
+                          "if_again": "thank them and let them go"}]}
+    composed, report = _compose(st, cv, flags={"transfer": False})
+    sp = composed["system_prompt"]
+    assert '### "I\'m selling it myself"' in sp
+    assert '- If they agree: Ask: "Would you compare the numbers if you\'d walk away with more?" → wait' in sp
+    assert "Callback flow" in sp and "Never say it's booked" in sp
+    assert "Call summary" in sp

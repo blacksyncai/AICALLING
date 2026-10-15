@@ -221,6 +221,17 @@ def compose(spec: dict, ctx: dict) -> dict:
         f"- If no or not now: {no}",
         f'- Goodbye: "{c["goodbye"]}" Then end the call.',
     ])
+    if flags["callback"] and not flags["booking"] and direction != "inbound":
+        # Without a calendar, the next step is a callback the team confirms: same steps every time.
+        s["close"] += "\n\n" + "\n".join([
+            "Callback flow (when they agree to talk with the team, or ask to be called back):",
+            '- Ask: "What day would work best for you?" → wait',
+            '- Ask: "And what time is usually easiest?" → wait',
+            "- Confirm their time zone if it isn't clear from what they said or their details.",
+            '- Repeat it once naturally, e.g. "Okay, so Thursday afternoon around two?" → wait',
+            f'- Then: "Got it. I\'ll pass that along to the team at {company} so they can confirm with you." '
+            "Never say it's booked or confirmed.",
+        ])
 
     # 7. Situations and objections
     by_key = {b["key"]: b for b in cv["branches"]}
@@ -237,9 +248,15 @@ def compose(spec: dict, ctx: dict) -> dict:
         sit.append(line)
     parts = ["\n".join(sit)]
     if cv["objections"]:
-        parts.append("Objections — answer once, briefly, then move on or let them go:\n" + "\n".join(
-            f'- "{o["objection"]}" → "{o["say"]}"' + (f" If they push back again: {_lower_first(o['if_again'])}."
-                                                     if o["if_again"] else "") for o in cv["objections"]))
+        blocks = []
+        for o in cv["objections"]:
+            block = [f'### "{o["objection"]}"', _say({"say": o["say"], "wait": True, "if": "", "skip_if": ""}, exact)]
+            block += [_say(ln, exact) for ln in o.get("steps") or []]
+            if o["if_again"]:
+                block.append(f"- If they push back again: {_lower_first(o['if_again'])}.")
+            blocks.append("\n".join(block))
+        parts.append("Objections — one thoughtful answer each; respond to what they actually say, then move on or "
+                     "let them go politely:\n\n" + "\n\n".join(blocks))
     if cv["direct_answers"]:
         parts.append("Common questions:\n" + "\n".join(
             f'- "{a["question"]}" → "{a["answer"]}"' for a in cv["direct_answers"]))
@@ -284,9 +301,14 @@ def compose(spec: dict, ctx: dict) -> dict:
             rules = [r if (S._norm(x) in n and len(r) > len(x)) else x for x in rules]
             continue
         rules.append(r)
+    fields = st["outcomes"].get("extraction_fields") or []
+    summary = ("Call summary — record only what they actually said; mark anything not discussed as unknown:\n"
+               + "\n".join(f"- {f['name'].replace('_', ' ').capitalize()}: {_sentence(f['description'])}" for f in fields)) \
+        if fields else ""
     s["rules"] = "\n\n".join(x for x in [
         "\n".join(f"- {r}" for r in rules),
         "Outcome to pick when you end the call:\n" + "\n".join(f"- {d['outcome']}: {_sentence(d['when'])}" for d in disp),
+        summary,
     ] if x)
 
     return {"sections": s, "first_message": cv["first_message"], "system_prompt": assemble(s),

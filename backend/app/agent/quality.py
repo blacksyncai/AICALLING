@@ -13,7 +13,7 @@ import re
 from app.agent import spec as S
 
 # Length is a warning only: a full script needs room, but a prompt past this is usually repeating itself.
-MAX_WORDS_WARN = 2300
+MAX_WORDS_WARN = 3400
 
 _URL = re.compile(r"\b(?:https?://|www\.)[^\s\"'<>)]+", re.I)
 _DOMAIN = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|co|cloud|app|dev|us|si)\b", re.I)

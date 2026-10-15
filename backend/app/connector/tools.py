@@ -359,7 +359,7 @@ async def list_voices(s: Session, args: dict) -> dict:
 
 @tool("build_agent", "Build an AI agent",
       """Builds a complete AI calling agent from the user's description, the same way "Build with AI" does in the
-web app: it writes the call script, opening, questions, objection handling and closing. Runs in the background
+web app (to write the script yourself instead, use get_script_guide and create_agent): it writes the call script, opening, questions, objection handling and closing. Runs in the background
 (about a minute): poll get_agent_build_status with the returned build_id. Before calling, make sure you know what
 the agent should do (the mission), whether it makes or answers calls, and ideally who it talks to.""",
       {"mission": {"type": "string", "description": "What the agent should do on calls, in the user's words."},
@@ -433,6 +433,99 @@ async def get_agent_build_status(s: Session, args: dict) -> dict:
                    next_step="Show the user the agent (get_agent), offer a test call (call_with_agent) and "
                              "launch_agent when they're happy.")
     return out
+
+
+SCRIPT_GUIDE = """HOW A BLACKSYNC CALL SCRIPT IS WRITTEN (the structure our best agents use)
+
+Write the agent's instructions in markdown sections, in this order. Spoken lines go in quotes; put "Wait." after
+every question so the agent stops and listens. Lines are examples the agent adapts, unless marked "say exactly".
+
+# IDENTITY AND OBJECTIVE — who the agent is ("You are <name> from <company>, calling on behalf of <person/team>"),
+  who it's speaking with, and the one goal of the call (e.g. earn a 15-minute conversation). For outbound
+  prospecting: "Begin with a few natural questions about their situation before explaining why you're calling."
+# CALL DETAILS — the facts the agent can use: {{name}} and other contact fields, company, team, time zone.
+# PERSONALITY AND DELIVERY — tone; one or two short sentences per turn; one question at a time; acknowledge what
+  they said; don't repeat answered questions; how to handle "are you an AI?" (always honest if asked).
+# OPENING — the exact first lines with Wait. after each: confirm the person, say who's calling, ask for a quick
+  second, then 1-3 easy questions about their situation (skip any they already answered). If they ask why
+  you're calling, answer straight away.
+# REASON FOR CALL — one or two plain sentences, then the value only if they're curious, then an open question
+  ("would you consider some help if the numbers made sense?").
+# IF THEY'RE OPEN — timeline if unknown, then offer the next step (a call with the team).
+# ONE SECTION PER OBJECTION — heading = what they say; the first answer (often a question back: "Is X the main
+  reason?"), then "If they agree:" / "If they give another reason:" follow-ups with the words to say. One
+  thoughtful try, then thank them and end politely. Typical: "I'm doing it myself", price/fees, "already have
+  someone", "not interested", "send me something", "I'm busy", "how did you get my number?".
+# DIRECT QUESTIONS — "do you have a buyer/customer?", "what do you charge?", "are you a real company?", "what
+  would you do differently?": honest short answers; anything the agent can't know is for the team to explain.
+  Never invent prices, results, buyers, offers or guarantees.
+# CALLBACK FLOW — day → time → confirm time zone → repeat once ("So Thursday around two Central?") → "I'll pass
+  that along so the team can confirm." Never claim it's booked unless a booking tool confirmed it.
+# OTHER OUTCOMES — sold/not relevant anymore, wrong number, clear no, do-not-call (end immediately and flag it).
+# CONVERSATION RULES — a short bullet list of the musts and must-nots for this business.
+# INTERNAL CALL SUMMARY — the facts to record, only what they actually said; unknown otherwise.
+
+Platform facts: the agent can end calls; it can transfer only if the agent has a transfer number, and book only
+with a connected calendar — otherwise it takes a callback preference. Contact fields available as placeholders:
+{{name}}, {{full_name}}, {{company}}, {{phone}}, {{email}}, {{role}}, plus any custom contact columns (e.g.
+{{property_address}}; {{property_street}} is derived from it). BlackSync adds its own call-handling rules
+(interruptions, voicemail, do-not-call) at call time, so the script doesn't need them. A good script is usually
+1,500-3,000 words."""
+
+
+@tool("get_script_guide", "How to write a call script",
+      """Returns the structure BlackSync's best call scripts follow (sections, spoken lines, objection flows,
+callback flow, call summary) and the placeholders and tools agents have. Read it before writing a script for
+create_agent or rewriting one with update_agent.""")
+async def get_script_guide(s: Session, args: dict) -> dict:
+    return {"guide": SCRIPT_GUIDE}
+
+
+@tool("create_agent", "Create an agent from your own script",
+      """Creates an AI calling agent from a script you write (call get_script_guide first). Use this instead of
+build_agent when you've written the full script with the user. The agent starts paused: offer a test call
+(call_with_agent) and launch_agent when they're happy.""",
+      {"name": {"type": "string", "description": "Agent name shown in BlackSync, e.g. \"FSBO Prospecting · Maya\"."},
+       "system_prompt": {"type": "string", "description": "The complete call script/instructions (markdown)."},
+       "first_message": {"type": "string", "description": "The exact first line when the call connects, e.g. "
+                                                         "\"Hey, this is {{name}}, right?\""},
+       "description": {"type": "string", "description": "One line on what the agent does."},
+       "voice_id": {"type": "string", "description": "From list_voices (optional; a natural default is used)."},
+       "transfer_number": {"type": "string", "description": "Number to transfer interested people to (optional)."},
+       "voicemail_action": {"type": "string", "enum": ["hang_up", "leave_message", "ignore"]},
+       "voicemail_message": STR,
+       "ai_disclosure": {"type": "boolean", "description": "Say it's an AI up front (default true). Always honest "
+                                                           "when asked either way."},
+       "extraction_fields": {"type": "array", "maxItems": 12, "items": {
+           "type": "object", "required": ["name"], "additionalProperties": False,
+           "properties": {"name": {"type": "string", "description": "snake_case"}, "description": STR}},
+           "description": "What to record from each call (the call summary)."},
+       "success_criteria": {"type": "string", "description": "What counts as a successful call."}},
+      ["name", "system_prompt", "first_message"], read_only=False)
+async def create_agent(s: Session, args: dict) -> dict:
+    from app.routers.agents import AgentUpdate, new_agent_from_template, update_agent as ua
+
+    ctx = s.need_account()
+    script = str(args.get("system_prompt") or "")
+    if len(script.split()) < 80:
+        raise ToolError("That script is too short to run a call. Write the full script (get_script_guide shows the "
+                        "structure), then try again.")
+    agent = new_agent_from_template("blank", str(args.get("name") or "New agent")[:80])
+    agent.org_id, agent.status = ctx.org.id, "paused"
+    s.db.add(agent)
+    await s.db.commit()
+    fields = {k: args[k] for k in ("system_prompt", "first_message", "description", "voice_id", "transfer_number",
+                                   "voicemail_action", "voicemail_message", "ai_disclosure", "extraction_fields",
+                                   "success_criteria") if args.get(k) is not None}
+    try:
+        body = AgentUpdate(**fields)
+    except ValueError as exc:
+        await s.db.delete(agent)
+        await s.db.commit()
+        raise ToolError(f"Check the values: {exc}")
+    a = await ua(agent.id, body, ctx, s.db)
+    return {**_agent_brief(a), "words": len(script.split()),
+            "next_step": "Offer a test call to the user's own phone (call_with_agent), then launch_agent."}
 
 
 @tool("update_agent", "Edit an AI agent",

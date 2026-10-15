@@ -302,3 +302,21 @@ def test_chatgpt_client_metadata_document(client, make_client, monkeypatch):
                                               "redirect_uri": REDIRECT, "code_verifier": verifier})
     assert tok.status_code == 200, tok.text
     assert _rpc(anon, tok.json()["access_token"], "ping")["result"] == {}
+
+
+def test_create_agent_from_a_written_script(client, make_client):
+    anon = make_client()
+    token = _connect(client, anon)["access_token"]
+    guide, err = _tool(anon, token, "get_script_guide")
+    assert not err and "CALLBACK FLOW" in guide["guide"]
+    short, err = _tool(anon, token, "create_agent", {"name": "Tiny", "system_prompt": "Be nice.", "first_message": "Hi"})
+    assert err and "too short" in short["error"]
+    script = "# IDENTITY AND OBJECTIVE\n" + "You are Maya from Acme. Ask one question at a time. " * 30
+    made, err = _tool(anon, token, "create_agent", {
+        "name": "FSBO · Maya", "system_prompt": script, "first_message": "Hey, this is {{name}}, right?",
+        "voicemail_action": "hang_up", "ai_disclosure": False,
+        "extraction_fields": [{"name": "timeline", "description": "When they hope to sell"}]})
+    assert not err, made
+    a = client.get(f"/api/agents/{made['id']}").json()
+    assert a["status"] == "paused" and a["system_prompt"] == script and a["first_message"].startswith("Hey, this is")
+    assert a["ai_disclosure"] is False and a["extraction_fields"][0]["name"] == "timeline"

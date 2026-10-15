@@ -205,7 +205,7 @@ def validate_strategy(p: dict, *, allowed_vars: set[str], allowed_tools: set[str
         },
         "style": {
             "summary": _s(style.get("summary"), "style.summary", 300),
-            "habits": _specific(_strs(style.get("habits"), "style.habits", 6, 200))[:4],
+            "habits": _specific(_strs(style.get("habits"), "style.habits", 8, 200))[:6],
         },
     }
 
@@ -422,13 +422,15 @@ def validate_conversation(p: dict, *, allowed_vars: set[str], allowed_outcomes: 
     out["branches"] = branches
 
     objections = []
-    for o in _objs(p.get("objections"), "objections", 6):
+    for o in _objs(p.get("objections"), "objections", 8):
         objections.append({"objection": _s(o.get("objection"), "objections.objection", 150),
                            "say": _s(o.get("say") or o.get("response"), "objections.say", 300),
+                           # Follow-up turns for the likely answers ("If they agree: … → wait").
+                           "steps": _lines(o.get("steps"), "objections.steps", 4, min_items=0),
                            "if_again": _s(o.get("if_again"), "objections.if_again", 250, required=False)})
     out["objections"] = objections
     answers = []
-    for a in _objs(p.get("direct_answers"), "direct_answers", 6):
+    for a in _objs(p.get("direct_answers"), "direct_answers", 8):
         answers.append({"question": _s(a.get("question"), "direct_answers.question", 150),
                         "answer": _s(a.get("answer"), "direct_answers.answer", 300)})
     out["direct_answers"] = answers

@@ -35,7 +35,7 @@ log = structlog.get_logger(__name__)
 GEN_MODEL = generator.GEN_MODEL
 MAX_OUTPUT_TOKENS = 32000           # gpt-4.1's output ceiling
 STRATEGY_TOKENS = 6000
-CONVERSATION_TOKENS = 9000
+CONVERSATION_TOKENS = 12000
 MAX_REPAIRS = 2
 MAX_KNOWLEDGE_CHARS = 14000
 MAX_REFERENCE_CHARS = 24000
@@ -464,7 +464,9 @@ _CONVERSATION_SHAPE = """Return ONE JSON object with exactly these keys. A "line
            "goodbye": "a short goodbye line"},
  "branches": [{"key": "situation key", "reply": "what the AGENT says back when this happens (not the contact's words)",
                "then": "the next step, in plain words", "outcome": "outcome code if the call ends here, else ''"}],
- "objections": [{"objection": "what they say", "say": "short spoken answer", "if_again": "what to do if they push back again"}],
+ "objections": [{"objection": "what they say", "say": "first spoken answer (often a question back)",
+                 "steps": [line, ...  (1-3 follow-up turns for the likely answers, each with "if")],
+                 "if_again": "what to do if they push back again"}],
  "direct_answers": [{"question": "a question this audience asks", "answer": "short spoken answer from known facts only"}],
  "voicemail": "short spoken voicemail message ('' for inbound-only agents)"
 }
@@ -480,8 +482,11 @@ acknowledges naturally on its own). At most two questions per stage. Inbound cal
 respond to something (an "if"), not be recited regardless of what the caller said. Prospecting and reactivation calls connect the offer to
 what the contact said before the close. Actions ("then", "if_yes", "if_no") are plain words — never tool syntax
 like end_call(...) — and use only this agent's outcome codes. Situation keys you may use: """ + ", ".join(S.BRANCHES) + """
-(each once; only ones this call meets). 0-5 objections and 0-5 direct answers this audience really raises — only
-from known facts; where approved wording covers it, use it exactly. Never script the same question in two places:
+(each once; only ones this call meets). Objections and direct answers this audience really raises — outbound
+prospecting and reactivation: 4-8 objections and 4-8 direct answers; other calls: 0-5 each — only from known facts;
+where approved wording covers it, use it exactly. Each objection is a short mini-flow like a good rep's: the first
+answer, then 1-3 "steps" for the likely replies (e.g. "If they agree:" → the next line → wait; "If they give another
+reason:" → respond to that reason), so the agent knows what to say on the next turn too. Never script the same question in two places:
 the first message's question isn't asked again, and the next-step question lives only in close.ask (a branch that
 leads to it says "then go to the close")."""
 
