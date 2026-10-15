@@ -282,7 +282,7 @@ async def send_welcome(db, user_id: uuid.UUID, org_id: uuid.UUID) -> bool:
 
     booking = await settings_store.get(db, "expert_booking_url")
     subject, body = welcome_email(user, org.name, catalog.industry_label(org.industry or "") or None, booking)
-    ok = await send_email(user.email, subject, body)
+    ok = await send_email(user.email, subject, body, kind="welcome")
     log.info("welcome_email", user_id=str(user_id), sent=ok)
     return ok
 
@@ -326,7 +326,7 @@ async def send_due_followups(db, now: datetime | None = None) -> int:
         if not user:
             continue
         subject, body = followup_email(user, booking)
-        if await send_email(user.email, subject, body):
+        if await send_email(user.email, subject, body, kind="walkthrough"):
             sent += 1
         log.info("followup_email", user_id=str(uid))
     return sent
@@ -370,7 +370,7 @@ def alert_new_signup(user, org, industry_label: str, goal_labels: list[str], oth
 
     async def go():
         try:
-            await send_email(to, f"New signup: {org.name} ({industry_label})", body)
+            await send_email(to, f"New signup: {org.name} ({industry_label})", body, kind="signup_alert")
         except Exception as exc:  # an alert must never break signup
             log.warning("signup_alert_failed", error=str(exc)[:200])
 

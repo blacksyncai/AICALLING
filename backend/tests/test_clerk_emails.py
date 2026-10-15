@@ -28,7 +28,7 @@ def test_relays_clerk_emails_from_our_sender(client, monkeypatch):
 
     sent = []
 
-    async def fake_send(to, subject, html, sender=None):
+    async def fake_send(to, subject, html, sender=None, kind="other"):
         sent.append((to, subject, html))
         return True
 

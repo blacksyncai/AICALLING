@@ -206,7 +206,7 @@ def _email_staff(subject: str, text: str, *, conversation_id=None, ticket_id=Non
 
     async def go():
         try:
-            await send_email(to, f"[BlackSync Support] {subject}", body)
+            await send_email(to, f"[BlackSync Support] {subject}", body, kind="support")
         except Exception as exc:  # never let email break support
             log.warning("support_email_failed", error=str(exc)[:200])
 

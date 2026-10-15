@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Modal, Notice, Spinner } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
+import { EmailTrackingCard, TrackBadge, type Track } from "./EmailTracking";
 import { InvitesCard } from "./InvitesCard";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,7 @@ interface Row {
   last_login: string | null;
   superadmin: boolean;
   sent: Record<Kind, string | null>;
+  tracking?: Partial<Record<Kind, Track>>;
 }
 interface Overview {
   email_enabled: boolean;
@@ -100,6 +102,8 @@ export function EmailsTab() {
   return (
     <div className="space-y-4">
       {!data.email_enabled && <Notice tone="amber">Email isn&apos;t set up on the server, so nothing can be sent.</Notice>}
+
+      <EmailTrackingCard />
 
       <InvitesCard emailEnabled={data.email_enabled} />
 
@@ -184,8 +188,11 @@ export function EmailsTab() {
                     <td className="py-2.5 pr-3 text-zinc-600">{day(u.signed_up)}</td>
                     <td className="py-2.5 pr-3">
                       {u.sent[kind] ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
-                          <Check className="h-3.5 w-3.5" /> Sent {day(u.sent[kind])}
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                            <Check className="h-3.5 w-3.5" /> Sent {day(u.sent[kind])}
+                          </span>
+                          <TrackBadge t={u.tracking?.[kind]} />
                         </span>
                       ) : (
                         <span className="text-xs text-zinc-400">Not sent</span>

@@ -24,7 +24,7 @@ def test_admin_sends_catch_up_emails_once(client, monkeypatch):
 
     sent = []
 
-    async def fake_send(to, subject, html, sender=None):
+    async def fake_send(to, subject, html, sender=None, kind="other"):
         sent.append((to, subject, html))
         return True
 
@@ -66,7 +66,7 @@ def test_admin_invites_new_people(client, monkeypatch):
 
     sent = []
 
-    async def fake_send(to, subject, html, sender=None):
+    async def fake_send(to, subject, html, sender=None, kind="other"):
         sent.append((to, subject, html))
         return True
 

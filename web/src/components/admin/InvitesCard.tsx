@@ -19,6 +19,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
+import { TrackBadge, type Track } from "./EmailTracking";
 
 interface Invite {
   id: string;
@@ -28,6 +29,7 @@ interface Invite {
   sent_at: string | null;
   send_count: number;
   joined_at: string | null;
+  tracking?: Track | null;
 }
 interface Invites {
   default_inviter: string;
@@ -272,6 +274,7 @@ export function InvitesCard({ emailEnabled }: { emailEnabled: boolean }) {
                         {inv.send_count > 1 ? ` (${inv.send_count}×)` : ""}
                       </div>
                     </div>
+                    {!inv.joined_at && <TrackBadge t={inv.tracking} />}
                     {inv.joined_at ? (
                       <span className="inline-flex shrink-0 items-center gap-1 text-xs text-emerald-700">
                         <Check className="h-3.5 w-3.5" /> Joined{" "}

@@ -190,6 +190,8 @@ from app.routers import admin_emails  # noqa: E402
 app.include_router(admin_emails.router)
 from app.routers import bandwidth_hooks  # noqa: E402
 app.include_router(bandwidth_hooks.router)
+from app.routers import resend_hooks  # noqa: E402
+app.include_router(resend_hooks.router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

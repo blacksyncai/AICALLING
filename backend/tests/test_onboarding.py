@@ -65,7 +65,7 @@ def test_signup_sends_welcome_then_walkthrough_offer_a_day_later(client, make_cl
 
     sent: list[tuple[str, str, str]] = []
 
-    async def fake_send(to, subject, body):
+    async def fake_send(to, subject, body, kind="other"):
         sent.append((to, subject, body))
         return True
 

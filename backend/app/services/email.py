@@ -19,7 +19,7 @@ def email_enabled() -> bool:
     return bool(settings.resend_api_key)
 
 
-async def send_email(to: str, subject: str, html_body: str, sender: str | None = None) -> bool:
+async def send_email(to: str, subject: str, html_body: str, sender: str | None = None, kind: str = "other") -> bool:
     if not email_enabled():
         return False
     try:
@@ -32,10 +32,30 @@ async def send_email(to: str, subject: str, html_body: str, sender: str | None =
         if resp.status_code >= 400:
             log.warning("email_send_failed", status=resp.status_code, body=resp.text[:200])
             return False
-        return True
     except Exception as exc:
         log.warning("email_send_error", error=str(exc))
         return False
+    try:
+        resend_id = (resp.json() or {}).get("id")
+    except Exception:
+        resend_id = None
+    if resend_id:
+        await _record(resend_id, to, subject, kind)
+    return True
+
+
+async def _record(resend_id: str, to: str, subject: str, kind: str) -> None:
+    """Remember the message so Resend's delivered / opened / clicked events can be matched to it."""
+    from app.database import AsyncSessionLocal
+    from app.models.email_message import EmailMessage
+
+    try:
+        async with AsyncSessionLocal() as db:
+            db.add(EmailMessage(resend_id=resend_id, to_email=to.strip().lower()[:320], subject=subject[:300],
+                                kind=kind[:32]))
+            await db.commit()
+    except Exception as exc:  # tracking must never break sending
+        log.warning("email_record_failed", error=str(exc)[:200])
 
 
 async def send_invite_email(to: str, org_name: str, inviter: str, link: str) -> bool:
@@ -52,4 +72,4 @@ async def send_invite_email(to: str, org_name: str, inviter: str, link: str) -> 
         + t.p("This invite expires in 7 days. Not expecting it? You can ignore this email.", size=12, margin="0"),
     )
     return await send_email(to, f"{inviter} invited you to {org_name} on BlackSync", body,
-                            sender=settings.email_from_invites or None)
+                            sender=settings.email_from_invites or None, kind="team_invite")

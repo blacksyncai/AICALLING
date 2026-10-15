@@ -227,7 +227,7 @@ async def clerk_email_webhook(request: Request):
     msg = clerk_emails.to_send(json.loads(body or b"{}"))
     if msg is None:
         return {"sent": False}
-    ok = await send_email(*msg)
+    ok = await send_email(*msg, kind="auth")
     log.info("clerk_email_relayed", sent=ok, slug=(json.loads(body).get("data") or {}).get("slug"))
     if not ok:
         raise HTTPException(status_code=502, detail="Email provider error")  # Clerk/Svix retries

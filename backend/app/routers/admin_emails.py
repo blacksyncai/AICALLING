@@ -57,6 +57,25 @@ async def _render(db, kind: str, user: User) -> tuple[str, str]:
     return oe.followup_email(user, booking or "")
 
 
+def _track(m) -> dict:
+    """What happened to one sent email (from Resend's webhook events)."""
+    return {"status": m.status, "sent_at": _iso(m.sent_at), "delivered_at": _iso(m.delivered_at),
+            "opened_at": _iso(m.opened_at), "open_count": m.open_count, "clicked_at": _iso(m.clicked_at),
+            "click_count": m.click_count, "bounced_at": _iso(m.bounced_at), "complained_at": _iso(m.complained_at)}
+
+
+async def _latest_status(db, emails: list[str], kinds: list[str]) -> dict:
+    """{(email, kind): tracking} for the most recent message of each kind to each address."""
+    from app.models.email_message import EmailMessage
+
+    emails = [e.lower() for e in emails if e]
+    if not emails:
+        return {}
+    rows = (await db.execute(select(EmailMessage).where(EmailMessage.to_email.in_(emails), EmailMessage.kind.in_(kinds))
+                             .order_by(EmailMessage.sent_at))).scalars().all()
+    return {(m.to_email, m.kind): _track(m) for m in rows}  # later rows overwrite earlier ones
+
+
 def _iso(d: datetime | None) -> str | None:
     if d is None:
         return None
@@ -72,6 +91,7 @@ async def overview(_: AdminDep, db: DbDep):
     first_org = {}
     for m in (await db.execute(select(Membership))).scalars().all():
         first_org.setdefault(m.user_id, m.org_id)
+    tracked = await _latest_status(db, [u.email for u in users], list(KINDS))
     return {
         "email_enabled": email_enabled(),
         "kinds": [{"key": k, "name": v["name"], "description": v["description"]} for k, v in KINDS.items()],
@@ -80,6 +100,7 @@ async def overview(_: AdminDep, db: DbDep):
             "account": orgs.get(u.active_org_id or first_org.get(u.id)), "signed_up": _iso(u.created_at),
             "last_login": _iso(u.last_login_at), "superadmin": bool(u.is_superadmin),
             "sent": {k: _iso(getattr(u, v["field"])) for k, v in KINDS.items()},
+            "tracking": {k: tracked[(u.email.lower(), k)] for k in KINDS if (u.email.lower(), k) in tracked},
         } for u in users],
     }
 
@@ -119,7 +140,7 @@ async def send(body: SendBody, admin: AdminDep, db: DbDep):
             skipped.append(user.email)
             continue
         subject, html = await _render(db, body.kind, user)
-        if await send_email(user.email, subject, html):
+        if await send_email(user.email, subject, html, kind=body.kind):
             setattr(user, field, datetime.now(timezone.utc))
             await db.commit()
             sent.append(user.email)
@@ -158,6 +179,7 @@ async def invites(admin: AdminDep, db: DbDep):
 
     rows = (await db.execute(select(PlatformInvite).order_by(PlatformInvite.sent_at.desc()).limit(500))).scalars().all()
     emails = [r.email for r in rows]
+    tracked = await _latest_status(db, emails, ["platform_invite"])
     joined = {}
     if emails:
         for u in (await db.execute(select(User).where(func.lower(User.email).in_(emails)))).scalars().all():
@@ -165,7 +187,8 @@ async def invites(admin: AdminDep, db: DbDep):
     return {
         "default_inviter": _inviter(admin, ""),
         "items": [{"id": str(r.id), "email": r.email, "first_name": r.first_name, "inviter": r.inviter_name,
-                   "sent_at": _iso(r.sent_at), "send_count": r.send_count, "joined_at": joined.get(r.email)}
+                   "sent_at": _iso(r.sent_at), "send_count": r.send_count, "joined_at": joined.get(r.email),
+                   "tracking": tracked.get((r.email, "platform_invite"))}
                   for r in rows],
     }
 
@@ -207,7 +230,7 @@ async def send_invites(body: InviteBody, admin: AdminDep, db: DbDep):
             continue
         first = p.first_name.strip() or (row.first_name if row else "")
         subject, html = platform_invite_email(first, email, inviter, body.note)
-        if not await send_email(email, subject, html):
+        if not await send_email(email, subject, html, kind="platform_invite"):
             failed.append(email)
             continue
         now = datetime.now(timezone.utc)
@@ -221,3 +244,59 @@ async def send_invites(body: InviteBody, admin: AdminDep, db: DbDep):
         sent.append(email)
     log.info("platform_invites_sent", by=str(admin.id), sent=len(sent), skipped=len(skipped), failed=len(failed))
     return {"sent": sent, "skipped": skipped, "failed": failed, "invalid": invalid}
+
+
+# ── Open / click tracking (Resend webhook) ───────────────────────────────────
+
+
+@router.get("/tracking")
+async def tracking(_: AdminDep, db: DbDep):
+    from datetime import timedelta
+
+    from app.config import settings
+    from app.models.email_message import EmailMessage
+    from app.routers.resend_hooks import webhook_secret
+
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    rows = (await db.execute(select(EmailMessage).where(EmailMessage.sent_at >= since))).scalars().all()
+    last_event = max((m.updated_at for m in rows if m.status != "sent" or m.delivered_at), default=None)
+    return {
+        "configured": bool(webhook_secret()),
+        "webhook_url": f"{(settings.app_url or '').rstrip('/')}/api/webhooks/resend",
+        "events": ["email.delivered", "email.opened", "email.clicked", "email.bounced", "email.complained"],
+        "last_event_at": _iso(last_event),
+        "last_30_days": {
+            "sent": len(rows),
+            "delivered": sum(1 for m in rows if m.delivered_at),
+            "opened": sum(1 for m in rows if m.opened_at),
+            "clicked": sum(1 for m in rows if m.clicked_at),
+            "bounced": sum(1 for m in rows if m.bounced_at),
+        },
+    }
+
+
+class TrackingSecret(BaseModel):
+    secret: str = Field(min_length=10, max_length=200)
+
+
+@router.put("/tracking")
+async def save_tracking_secret(body: TrackingSecret, admin: AdminDep, db: DbDep):
+    from app.services import secret_store
+
+    secret = body.secret.strip()
+    if not secret.startswith("whsec_"):
+        raise HTTPException(status_code=400, detail="That doesn't look like a Resend signing secret (it starts with whsec_).")
+    if not secret_store.available():
+        raise HTTPException(status_code=409, detail="Secret storage isn't available on the server.")
+    await secret_store.put(db, "resend_webhook_secret", secret)
+    await db.commit()
+    log.info("resend_webhook_secret_saved", by=str(admin.id))
+    return await tracking(admin, db)
+
+
+@router.get("/activity")
+async def activity(_: AdminDep, db: DbDep, limit: int = 100):
+    from app.models.email_message import EmailMessage
+
+    rows = (await db.execute(select(EmailMessage).order_by(EmailMessage.sent_at.desc()).limit(min(max(limit, 1), 300)))).scalars().all()
+    return {"items": [{"id": str(m.id), "to": m.to_email, "subject": m.subject, "kind": m.kind, **_track(m)} for m in rows]}

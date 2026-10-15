@@ -174,6 +174,8 @@ class Settings(BaseSettings):
     # ── Email (team invites) ──────────────────────────────────────────────────
     # Without a Resend key, invites still work — the UI shows a link to share.
     resend_api_key: str = ""
+    # Signing secret of the Resend webhook (whsec_…); can also be saved from Admin → Emails.
+    resend_webhook_secret: str = ""
     # Senders (the blacksync.ai domain is verified in Resend): account and product emails come from
     # notifications@, team invites from invites@.
     email_from: str = "BlackSync <notifications@blacksync.ai>"
