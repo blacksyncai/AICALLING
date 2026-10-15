@@ -93,3 +93,72 @@ async def playback_url(key: str) -> str | None:
     if not await asyncio.to_thread(_exists, key):
         return None
     return await asyncio.to_thread(_presign, key)
+
+
+# ── Download as MP3 ──────────────────────────────────────────────────────────
+
+
+def mp3_key(key: str) -> str:
+    return key if key.endswith(".mp3") else key.rsplit(".", 1)[0] + ".mp3"
+
+
+def _to_mp3(data: bytes) -> bytes:
+    """Any recording (OGG/Opus from browser tests or older egress files) → MP3, keeping its channels."""
+    import io
+
+    import av
+
+    src = av.open(io.BytesIO(data))
+    ain = src.streams.audio[0]
+    out_buf = io.BytesIO()
+    dst = av.open(out_buf, mode="w", format="mp3")
+    layout = "stereo" if (ain.codec_context.channels or 1) > 1 else "mono"
+    aout = dst.add_stream("libmp3lame", rate=44100, layout=layout)
+    aout.bit_rate = 96_000
+    resampler = av.AudioResampler(format=aout.codec_context.format, layout=layout, rate=44100)
+    for frame in src.decode(ain):
+        for rf in resampler.resample(frame):
+            for pkt in aout.encode(rf):
+                dst.mux(pkt)
+    for rf in resampler.resample(None):
+        for pkt in aout.encode(rf):
+            dst.mux(pkt)
+    for pkt in aout.encode(None):
+        dst.mux(pkt)
+    dst.close()
+    src.close()
+    return out_buf.getvalue()
+
+
+def _ensure_mp3(key: str) -> str | None:
+    """The MP3 copy of a recording (converted and stored next to it the first time). None if there's no file."""
+    target = mp3_key(key)
+    if _exists(target):
+        return target
+    if target == key:
+        return None
+    try:
+        body = _s3().get_object(Bucket=settings.recordings_s3_bucket, Key=key)["Body"].read()
+    except Exception:
+        return None
+    _s3().put_object(Bucket=settings.recordings_s3_bucket, Key=target, Body=_to_mp3(body), ContentType="audio/mpeg")
+    return target
+
+
+def _presign_download(key: str, filename: str) -> str:
+    return _s3().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": settings.recordings_s3_bucket, "Key": key, "ResponseContentType": "audio/mpeg",
+                "ResponseContentDisposition": f'attachment; filename="{filename}"'},
+        ExpiresIn=URL_TTL_SECONDS,
+    )
+
+
+async def download_url(key: str, filename: str) -> str | None:
+    """A short-lived link that downloads the recording as an MP3 file (None while it's still processing)."""
+    if not settings.recordings_ready or not key:
+        return None
+    target = await asyncio.to_thread(_ensure_mp3, key)
+    if not target:
+        return None
+    return await asyncio.to_thread(_presign_download, target, filename)

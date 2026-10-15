@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { useToast } from "@/components/toast";
 import { fetcher } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { DownloadRecording } from "./DownloadRecording";
 
 type Track = { id: string; label: string };
 type Ctx = { current: Track | null; playing: boolean; loading: string | null; toggle: (t: Track) => void };
@@ -107,6 +108,7 @@ export function CallAudioProvider({ children }: { children: ReactNode }) {
               <span>{clock(time.len)}</span>
             </div>
           </div>
+          <DownloadRecording callId={current.id} label="MP3" className="rounded-md px-1.5 py-1 text-zinc-300 hover:bg-white/10 hover:text-white" />
           <button type="button" onClick={stop} aria-label="Stop" className="rounded-md p-1.5 text-zinc-400 hover:bg-white/10 hover:text-white">
             <X className="h-4 w-4" />
           </button>

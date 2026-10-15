@@ -311,3 +311,58 @@ def test_browser_test_is_recorded_only_when_asked(client, agent_id, monkeypatch)
 
 async def _noop():
     return None
+
+
+def test_recording_downloads_as_mp3(client, agent_id, monkeypatch):
+    import io
+    import uuid as _uuid
+
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.services import recordings
+
+    for k, v in {"recordings_s3_bucket": "b", "recordings_s3_access_key": "a", "recordings_s3_secret_key": "z"}.items():
+        monkeypatch.setattr(settings, k, v)
+    store, converted = {}, []
+
+    class FakeS3:
+        def head_object(self, Bucket, Key):
+            if Key not in store:
+                raise KeyError(Key)
+        def get_object(self, Bucket, Key):
+            return {"Body": io.BytesIO(store[Key])}
+        def put_object(self, Bucket, Key, Body, ContentType):
+            store[Key] = Body
+        def generate_presigned_url(self, op, Params, ExpiresIn):
+            return f"https://bucket.test/{Params['Key']}?cd={Params.get('ResponseContentDisposition', '')}"
+
+    monkeypatch.setattr(recordings, "_s3", lambda: FakeS3())
+    monkeypatch.setattr(recordings, "_to_mp3", lambda data: converted.append(data) or b"MP3" + data)
+
+    import asyncio
+
+    async def make(key):
+        async with AsyncSessionLocal() as db:
+            from app.models.agent import Agent
+            agent = await db.get(Agent, _uuid.UUID(agent_id))
+            c = CallLog(id=_uuid.uuid4(), org_id=agent.org_id, agent_id=agent.id, call_type="web", status="completed",
+                        livekit_room_name=f"web-{_uuid.uuid4().hex[:6]}",
+                        recording_key=key.format(org=agent.org_id))
+            db.add(c)
+            await db.commit()
+            return c
+    web = asyncio.run(make("recordings/{org}/web.ogg"))
+    store[web.recording_key] = b"OGG"
+    r = client.get(f"/api/calls/{web.id}/recording/download").json()
+    assert r["status"] == "ready" and r["filename"].startswith("browser-test_") and r["filename"].endswith(".mp3")
+    assert "web.mp3" in r["url"] and "attachment" in r["url"]
+    assert store[web.recording_key[:-4] + ".mp3"] == b"MP3OGG"
+    client.get(f"/api/calls/{web.id}/recording/download")
+    assert len(converted) == 1  # converted once, then reused
+
+    phone = asyncio.run(make("recordings/{org}/phone.mp3"))
+    store[phone.recording_key] = b"ID3"
+    assert "phone.mp3" in client.get(f"/api/calls/{phone.id}/recording/download").json()["url"] and len(converted) == 1
+    missing = asyncio.run(make("recordings/{org}/later.ogg"))
+    assert client.get(f"/api/calls/{missing.id}/recording/download").json()["status"] == "processing"

@@ -272,6 +272,30 @@ async def get_recording(call_id: uuid.UUID, ctx: CtxDep, db: DbDep):
             "expires_in": recordings.URL_TTL_SECONDS if url else None}
 
 
+@router.get("/{call_id}/recording/download")
+async def download_recording(call_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    """A short-lived link that downloads the call's audio as an MP3 file."""
+    import re
+
+    from app.models.lead import Lead
+    from app.services import recordings
+
+    call = await db.get(CallLog, call_id)
+    if not call or call.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if not call.recording_key:
+        raise HTTPException(status_code=404, detail="This call has no recording.")
+    lead = await db.get(Lead, call.lead_id) if call.lead_id else None
+    other = call.from_phone if call.call_type == "inbound" else call.to_phone
+    who = (lead.name if lead and lead.name else "") or other or ("browser-test" if call.call_type == "web" else "call")
+    when = call.started_at.strftime("%Y-%m-%d_%H%M") if call.started_at else ""
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{who}_{when}").strip("-") + ".mp3"
+    url = await recordings.download_url(call.recording_key, filename)
+    if not url:
+        return {"status": "processing", "url": None}
+    return {"status": "ready", "url": url, "filename": filename}
+
+
 @router.post("/{call_id}/analyze")
 async def reanalyze_call(call_id: uuid.UUID, background_tasks: BackgroundTasks,
                          ctx: CtxDep, db: DbDep):

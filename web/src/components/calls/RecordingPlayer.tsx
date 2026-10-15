@@ -1,9 +1,9 @@
 "use client";
 
-import { Download } from "lucide-react";
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
 import { Card, CardHeader, Spinner } from "../ui";
+import { DownloadRecording } from "./DownloadRecording";
 
 interface Recording {
   status: "none" | "processing" | "ready";
@@ -23,11 +23,7 @@ export function RecordingPlayer({ callId, live }: { callId: string; live: boolea
       <CardHeader
         title="Recording"
         action={
-          data.url ? (
-            <a href={data.url} download className="inline-flex items-center gap-1 text-xs font-medium text-zinc-600 hover:text-zinc-900">
-              <Download className="h-3.5 w-3.5" /> Download
-            </a>
-          ) : undefined
+data.url ? <DownloadRecording callId={callId} /> : undefined
         }
       />
       <div className="p-5">
