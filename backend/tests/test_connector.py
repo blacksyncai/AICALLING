@@ -289,7 +289,7 @@ def test_create_agent_from_a_written_script(client, make_client):
     anon = make_client()
     token = _connect(client, anon)["access_token"]
     guide, err = _tool(anon, token, "get_script_guide")
-    assert not err and "CALLBACK FLOW" in guide["guide"]
+    assert not err and "callback flow" in guide["guide"] and "situations (Situations and Objections)" in guide["guide"]
     short, err = _tool(anon, token, "create_agent", {"name": "Tiny", "system_prompt": "Be nice.", "first_message": "Hi"})
     assert err and "too short" in short["error"]
     script = "# IDENTITY AND OBJECTIVE\n" + "You are Maya from Acme. Ask one question at a time. " * 30
@@ -301,3 +301,23 @@ def test_create_agent_from_a_written_script(client, make_client):
     a = client.get(f"/api/agents/{made['id']}").json()
     assert a["status"] == "paused" and a["system_prompt"] == script and a["first_message"].startswith("Hey, this is")
     assert a["ai_disclosure"] is False and a["extraction_fields"][0]["name"] == "timeline"
+
+    # In sections: the agent page shows and edits them one by one, like Build with AI agents.
+    long = "Ask one short question, then wait for the answer. " * 12
+    sections = {"identity": "You are Maya from Acme. " + long, "opening": '"Hey, this is {{name}}, right?" Wait.',
+                "flow": long, "close": long, "situations": '### "Not interested"\n' + long, "rules": long}
+    made, err = _tool(anon, token, "create_agent", {"name": "Sectioned · Maya", "sections": sections,
+                                                    "first_message": "Hey, this is {{name}}, right?"})
+    assert not err, made
+    a = client.get(f"/api/agents/{made['id']}").json()
+    assert a["builder"]["schema"] == "v4" and a["builder"]["sections"]["identity"].startswith("You are Maya")
+    assert a["system_prompt"].startswith("## Identity and Objective") and "## Situations and Objections" in a["system_prompt"]
+    upd, err = _tool(anon, token, "update_agent", {"agent_id": made["id"], "sections": {"rules": "Never quote prices. " + long}})
+    assert not err and "sections" in upd["updated"]
+    a = client.get(f"/api/agents/{made['id']}").json()
+    assert a["builder"]["sections"]["rules"].startswith("Never quote prices") and "Never quote prices" in a["system_prompt"]
+    assert a["builder"]["sections"]["identity"].startswith("You are Maya")  # untouched sections stay
+
+    # An assistant with an old tool list is told how to refresh instead of failing silently.
+    old = _rpc(anon, token, "tools/call", {"name": "build_agent", "arguments": {}})["result"]
+    assert old["isError"] and "create_agent" in old["structuredContent"]["error"]

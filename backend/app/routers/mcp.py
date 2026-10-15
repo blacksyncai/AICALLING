@@ -39,6 +39,11 @@ INSTRUCTIONS = (
     "anything that places calls or changes the account, and confirm phone numbers before calling them. Never invent "
     "results: read calls with list_calls / get_call."
 )
+# Tools an assistant may still have in an old, cached tool list.
+RETIRED = {name: ("This BlackSync tool was replaced. Write the script yourself and save it with create_agent "
+                  "(get_script_guide shows the structure). If create_agent isn't in your tool list, ask the user to "
+                  "refresh the BlackSync connector (ChatGPT: Settings → Apps & Connectors → BlackSync → Refresh).")
+           for name in ("build_agent", "get_agent_build_status")}
 RATE_LIMIT = 120  # tool calls per connection per minute
 _recent: dict[str, deque] = defaultdict(deque)
 
@@ -91,6 +96,8 @@ async def _call_tool(db, token, params: dict) -> dict:
     name = params.get("name")
     args = params.get("arguments") or {}
     t = TOOLS.get(name)
+    if t is None and name in RETIRED:
+        return {**_content({"error": RETIRED[name]}), "isError": True}
     if t is None:
         raise KeyError(name)
     if not isinstance(args, dict):

@@ -359,35 +359,78 @@ async def list_voices(s: Session, args: dict) -> dict:
     return {"voices": [{k: v.get(k) for k in keep if v.get(k) is not None} for v in voices[:60]]}
 
 
+SECTION_KEYS = ("identity", "context", "approved", "opening", "flow", "close", "situations", "rules")
+SECTIONS_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "description": "The script in BlackSync's 8 sections (see get_script_guide). Markdown text for each.",
+    "properties": {
+        "identity": {"type": "string", "description": "Identity and Objective (with personality and delivery)."},
+        "context": {"type": "string", "description": "What You Know: call details and business facts."},
+        "approved": {"type": "string", "description": "Approved Wording: lines said word for word ('' if none)."},
+        "opening": {"type": "string", "description": "Opening: first lines and discovery questions, Wait. after each."},
+        "flow": {"type": "string", "description": "Conversation Flow: reason for the call and the stages."},
+        "close": {"type": "string", "description": "Next Step and Close, including the callback flow."},
+        "situations": {"type": "string", "description": "Situations and Objections: ### per objection, then direct "
+                                                         "questions and other outcomes."},
+        "rules": {"type": "string", "description": "Rules and Boundaries, then the internal call summary."},
+    },
+}
+
+
+def _sections(raw) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+    return {k: str(raw[k]).strip()[:20000] for k in SECTION_KEYS if isinstance(raw.get(k), str)}
+
+
+def _assemble(sections: dict) -> str:
+    from app.agent.composer import assemble
+
+    return assemble(sections)
+
+
+def _sectioned_builder(sections: dict) -> dict:
+    """The builder data the agent editor uses to show and edit the script section by section."""
+    from app.agent.composer import SECTIONS_V4
+
+    return {"schema": "v4", "sections": {k: sections.get(k, "") for k in SECTION_KEYS},
+            "section_order": [list(x) for x in SECTIONS_V4], "source": "assistant"}
+
+
 SCRIPT_GUIDE = """HOW A BLACKSYNC CALL SCRIPT IS WRITTEN (the structure our best agents use)
 
-Write the agent's instructions in markdown sections, in this order. Spoken lines go in quotes; put "Wait." after
+Write the script as these 8 sections (pass them to create_agent as "sections"; each shows as its own editable
+section in BlackSync). What goes in each is below, in order. Spoken lines go in quotes; put "Wait." after
 every question so the agent stops and listens. Lines are examples the agent adapts, unless marked "say exactly".
 
-# IDENTITY AND OBJECTIVE — who the agent is ("You are <name> from <company>, calling on behalf of <person/team>"),
+identity (Identity and Objective) — who the agent is ("You are <name> from <company>, calling on behalf of <person/team>"),
   who it's speaking with, and the one goal of the call (e.g. earn a 15-minute conversation). For outbound
   prospecting: "Begin with a few natural questions about their situation before explaining why you're calling."
-# CALL DETAILS — the facts the agent can use: {{name}} and other contact fields, company, team, time zone.
-# PERSONALITY AND DELIVERY — tone; one or two short sentences per turn; one question at a time; acknowledge what
+  Also personality and delivery: tone; one or two short sentences per turn; one question at a time; acknowledge what
   they said; don't repeat answered questions; how to handle "are you an AI?" (always honest if asked).
-# OPENING — the exact first lines with Wait. after each: confirm the person, say who's calling, ask for a quick
+context (What You Know) — call details and facts: {{name}} and other contact fields, company, team, time zone,
+  what the business offers. Only real facts.
+approved (Approved Wording) — lines the user wants said word for word (prices, offers, disclaimers); "" if none.
+opening (Opening) — the exact first lines with Wait. after each: confirm the person, say who's calling, ask for a quick
   second, then 1-3 easy questions about their situation (skip any they already answered). If they ask why
   you're calling, answer straight away.
-# REASON FOR CALL — one or two plain sentences, then the value only if they're curious, then an open question
+flow (Conversation Flow) — the reason for the call: one or two plain sentences, then the value only if they're curious, then an open question
   ("would you consider some help if the numbers made sense?").
-# IF THEY'RE OPEN — timeline if unknown, then offer the next step (a call with the team).
-# ONE SECTION PER OBJECTION — heading = what they say; the first answer (often a question back: "Is X the main
+  If they're open: timeline if unknown, then offer the next step (a call with the team).
+close (Next Step and Close) — the ask, what to say if yes / not now, the goodbye, and the callback flow:
+  day → time → confirm time zone → repeat once ("So Thursday around two Central?") → "I'll pass that along so
+  the team can confirm." Never claim it's booked unless a booking tool confirmed it.
+situations (Situations and Objections) —
+ one ### subsection per objection — heading = what they say; the first answer (often a question back: "Is X the main
   reason?"), then "If they agree:" / "If they give another reason:" follow-ups with the words to say. One
   thoughtful try, then thank them and end politely. Typical: "I'm doing it myself", price/fees, "already have
   someone", "not interested", "send me something", "I'm busy", "how did you get my number?".
-# DIRECT QUESTIONS — "do you have a buyer/customer?", "what do you charge?", "are you a real company?", "what
+  Then direct questions — "do you have a buyer/customer?", "what do you charge?", "are you a real company?", "what
   would you do differently?": honest short answers; anything the agent can't know is for the team to explain.
   Never invent prices, results, buyers, offers or guarantees.
-# CALLBACK FLOW — day → time → confirm time zone → repeat once ("So Thursday around two Central?") → "I'll pass
-  that along so the team can confirm." Never claim it's booked unless a booking tool confirmed it.
-# OTHER OUTCOMES — sold/not relevant anymore, wrong number, clear no, do-not-call (end immediately and flag it).
-# CONVERSATION RULES — a short bullet list of the musts and must-nots for this business.
-# INTERNAL CALL SUMMARY — the facts to record, only what they actually said; unknown otherwise.
+  Then other outcomes — sold/not relevant anymore, wrong number, clear no, do-not-call (end immediately and flag it).
+rules (Rules and Boundaries) — the musts and must-nots for this business, then the internal call summary: the facts
+  to record, only what they actually said; unknown otherwise.
 
 Platform facts: the agent can end calls; it can transfer only if the agent has a transfer number, and book only
 with a connected calendar — otherwise it takes a callback preference. Contact fields available as placeholders:
@@ -410,7 +453,8 @@ async def get_script_guide(s: Session, args: dict) -> dict:
 its structure; write the full script, not a summary). The agent starts paused: offer a test call
 (call_with_agent) and launch_agent when they're happy.""",
       {"name": {"type": "string", "description": "Agent name shown in BlackSync, e.g. \"FSBO Prospecting · Maya\"."},
-       "system_prompt": {"type": "string", "description": "The complete call script/instructions (markdown)."},
+       "sections": SECTIONS_SCHEMA,
+       "system_prompt": {"type": "string", "description": "Only if you can't split it into sections: the whole script."},
        "first_message": {"type": "string", "description": "The exact first line when the call connects, e.g. "
                                                          "\"Hey, this is {{name}}, right?\""},
        "description": {"type": "string", "description": "One line on what the agent does."},
@@ -425,12 +469,13 @@ its structure; write the full script, not a summary). The agent starts paused: o
            "properties": {"name": {"type": "string", "description": "snake_case"}, "description": STR}},
            "description": "What to record from each call (the call summary)."},
        "success_criteria": {"type": "string", "description": "What counts as a successful call."}},
-      ["name", "system_prompt", "first_message"], read_only=False)
+      ["name", "first_message"], read_only=False)
 async def create_agent(s: Session, args: dict) -> dict:
     from app.routers.agents import AgentUpdate, new_agent_from_template, update_agent as ua
 
     ctx = s.need_account()
-    script = str(args.get("system_prompt") or "")
+    sections = _sections(args.get("sections"))
+    script = _assemble(sections) if sections else str(args.get("system_prompt") or "")
     if len(script.split()) < 80:
         raise ToolError("That script is too short to run a call. Write the full script (get_script_guide shows the "
                         "structure), then try again.")
@@ -438,9 +483,12 @@ async def create_agent(s: Session, args: dict) -> dict:
     agent.org_id, agent.status = ctx.org.id, "paused"
     s.db.add(agent)
     await s.db.commit()
-    fields = {k: args[k] for k in ("system_prompt", "first_message", "description", "voice_id", "transfer_number",
+    fields = {k: args[k] for k in ("first_message", "description", "voice_id", "transfer_number",
                                    "voicemail_action", "voicemail_message", "ai_disclosure", "extraction_fields",
                                    "success_criteria") if args.get(k) is not None}
+    fields["system_prompt"] = script
+    if sections:
+        fields["builder"] = _sectioned_builder(sections)
     try:
         body = AgentUpdate(**fields)
     except ValueError as exc:
@@ -448,7 +496,7 @@ async def create_agent(s: Session, args: dict) -> dict:
         await s.db.commit()
         raise ToolError(f"Check the values: {exc}")
     a = await ua(agent.id, body, ctx, s.db)
-    return {**_agent_brief(a), "words": len(script.split()),
+    return {**_agent_brief(a), "words": len(script.split()), "sections": list(sections) if sections else None,
             "next_step": "Offer a test call to the user's own phone (call_with_agent), then launch_agent."}
 
 
@@ -456,6 +504,8 @@ async def create_agent(s: Session, args: dict) -> dict:
       """Changes an agent's settings. Only pass what should change. system_prompt replaces the whole call script, so
 read it with get_agent first and keep everything that isn't meant to change.""",
       {"agent_id": ID, "name": STR, "first_message": {"type": "string", "description": "What it says first."},
+       "sections": {**SECTIONS_SCHEMA, "description": "Sections to replace (only the ones that change); the rest "
+                                                      "stay. Works on agents built in sections."},
        "system_prompt": {"type": "string", "description": "The full call script/instructions."},
        "voice_id": STR, "transfer_number": {"type": "string", "description": "\"\" removes it."},
        "voicemail_action": {"type": "string", "enum": ["hang_up", "leave_message", "ignore"]},
@@ -465,7 +515,18 @@ read it with get_agent first and keep everything that isn't meant to change.""",
 async def update_agent(s: Session, args: dict) -> dict:
     from app.routers.agents import AgentUpdate, update_agent as ua
 
-    fields = {k: v for k, v in args.items() if k != "agent_id" and v is not None}
+    fields = {k: v for k, v in args.items() if k not in ("agent_id", "sections") and v is not None}
+    changed = _sections(args.get("sections"))
+    if changed:
+        from app.routers.agents import get_agent as ga
+
+        current = await ga(_uuid(args, "agent_id"), s.need_account(), s.db)
+        b = current.get("builder") or {}
+        if b.get("schema") != "v4" or not b.get("sections"):
+            raise ToolError("This agent's script isn't split into sections. Send the whole script as system_prompt.")
+        merged = {**b["sections"], **changed}
+        fields["system_prompt"] = _assemble(merged)
+        fields["builder"] = {**b, **_sectioned_builder(merged)}
     if not fields:
         raise ToolError("Nothing to change.")
     try:
@@ -473,7 +534,7 @@ async def update_agent(s: Session, args: dict) -> dict:
     except ValueError as exc:
         raise ToolError(f"Check the values: {exc}")
     a = await ua(_uuid(args, "agent_id"), body, s.need_account(), s.db)
-    return {"updated": sorted(fields), **_agent_brief(a)}
+    return {"updated": sorted(set(fields) - {"builder"} | ({"sections"} if changed else set())), **_agent_brief(a)}
 
 
 @tool("launch_agent", "Turn an agent on",
