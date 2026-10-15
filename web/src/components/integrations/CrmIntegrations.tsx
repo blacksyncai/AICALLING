@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
+import { AssistantRows } from "./AssistantRows";
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Toggle } from "@/components/ui";
 import { del, fetcher, post, put } from "@/lib/api";
 import { cn, timeAgo } from "@/lib/utils";
@@ -254,6 +255,8 @@ export function CrmIntegrations() {
             ))}
           </Group>
         )}
+
+        <AssistantRows />
 
         {/* Don't see yours: API + webhooks, and our team can wire it up. */}
         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-brand-50 via-orange-50 to-amber-50 p-5 ring-1 ring-brand-200/70">
