@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_all_tables
 from app.routers import (
-    account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, internal, lead_finder, meetings, phone_numbers, speech,
+    account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, radar_automations, internal, lead_finder, meetings, phone_numbers, speech,
     public_api, search, support,
     settings as settings_router,
 )
@@ -62,6 +62,8 @@ async def lifespan(app: FastAPI):
     refresh_task = start_refresh_loop()
     from app.services.crm.sync import start_poll_loop
     crm_task = start_poll_loop()
+    from app.services.crm.automations import start_worker
+    radar_task = start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.outbound_call import fix_mislabeled_outcomes
     repair_task = asyncio.create_task(fix_mislabeled_outcomes() if settings.run_startup_jobs else asyncio.sleep(0))
     if settings.run_startup_jobs:
@@ -127,6 +129,7 @@ async def lifespan(app: FastAPI):
     sweeper_task.cancel()
     refresh_task.cancel()
     crm_task.cancel()
+    radar_task.cancel()
     repair_task.cancel()
     log.info("pounce_shutting_down")
 
@@ -180,7 +183,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-for r in (auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, integrations, public_api, search, support,
+for r in (auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, radar_automations, integrations, public_api, search, support,
           settings_router, internal):
     app.include_router(r.router)
 app.include_router(phone_numbers.admin_router)

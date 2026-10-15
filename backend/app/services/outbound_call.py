@@ -588,6 +588,16 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             lead = await db.get(Lead, call_log.lead_id)
             if lead:
                 lead.do_not_call = True
+        # Save evidence and enqueue durable Radar work in the same analysis transaction.
+        from app.services.crm.automations import on_analyzed_call
+        await db.flush()
+        try:
+            async with db.begin_nested():
+                await on_analyzed_call(db, call_log)
+        except Exception as exc:
+            # A Radar failure must not discard the existing call analysis or DNC update.
+            # The worker recovers eligible analyzed calls after this transaction commits.
+            log.warning("radar_enqueue_failed", call_log_id=call_log_id, error=str(exc)[:200])
         await db.commit()
         log.info("call_analyzed", call_log_id=call_log_id, outcome=call_log.outcome)
 

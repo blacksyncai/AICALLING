@@ -40,30 +40,39 @@ _LIVE = {"meeting_booked", "qualified", "not_qualified", "interested", "not_inte
 
 async def _blacksync_status(db, org_id, provider: str) -> dict[str, dict]:
     """What BlackSync already did with each CRM contact: campaign, calls, voicemails, verified (a live talk)."""
-    leads = (await db.execute(select(Lead.id, Lead.crm_refs, Lead.campaign_id, Lead.do_not_call).where(
+    leads = (await db.execute(select(Lead.id, Lead.crm_refs, Lead.campaign_id, Lead.do_not_call, Lead.name, Lead.phone).where(
         Lead.org_id == org_id, Lead.crm_refs.is_not(None)))).all()
     by_lead = {}
-    for lead_id, refs, campaign_id, dnc in leads:
+    for lead_id, refs, campaign_id, dnc, name, phone in leads:
         ref = (refs or {}).get(provider)
         if ref:
-            by_lead[lead_id] = {"ext": str(ref), "campaign_id": campaign_id, "dnc": bool(dnc)}
+            by_lead[lead_id] = {"ext": str(ref), "campaign_id": campaign_id, "dnc": bool(dnc), "name": name, "phone": phone}
     if not by_lead:
         return {}
     names = dict((await db.execute(select(Campaign.id, Campaign.name).where(Campaign.org_id == org_id))).all())
-    calls = (await db.execute(select(CallLog.lead_id, CallLog.outcome, CallLog.status, CallLog.started_at).where(
+    calls = (await db.execute(select(CallLog.lead_id, CallLog.outcome, CallLog.status, CallLog.started_at, CallLog.transcript, CallLog.to_phone, CallLog.call_type, CallLog.id).where(
         CallLog.org_id == org_id, CallLog.lead_id.in_(list(by_lead))).order_by(CallLog.started_at))).all()
     out: dict[str, dict] = {}
     for lead_id, info in by_lead.items():
         cid = info["campaign_id"]
         out[info["ext"]] = {"campaign": names.get(cid) if cid else None, "campaign_id": str(cid) if cid in names else None,
                             "calls": 0, "voicemails": 0, "verified": False, "wrong_number": False,
-                            "last_outcome": None, "dnc": info["dnc"]}
-    for lead_id, outcome, status, _ in calls:
+                            "last_outcome": None, "dnc": info["dnc"], "verification_status": "unverified", "verification_evidence": [], "verification_call_id": None}
+    for lead_id, outcome, status, _, transcript, to_phone, call_type, call_id in calls:
         st = out[by_lead[lead_id]["ext"]]
         st["calls"] += 1
         st["voicemails"] += outcome == "voicemail"
-        st["verified"] = st["verified"] or outcome in _LIVE
-        st["wrong_number"] = st["wrong_number"] or outcome == "wrong_number"
+        from app.services.crm.verification import classify
+        info = by_lead[lead_id]
+        if call_type in ("outbound", "inbound") and normalize_phone(to_phone or info["phone"]) == normalize_phone(info["phone"]):
+            evidence = classify(transcript, info["name"], outcome or "")
+            if evidence["status"] in ("name_confirmed", "wrong_number") or (evidence["status"] == "named_voicemail" and not st["verified"]):
+                st["verification_status"], st["verification_evidence"] = evidence["status"], evidence["evidence"]
+                st["verification_call_id"] = str(call_id)
+                st["verified"] = evidence["status"] == "name_confirmed"
+                st["wrong_number"] = evidence["status"] == "wrong_number"
+            if outcome == "wrong_number":
+                st["verified"], st["wrong_number"], st["verification_status"] = False, True, "wrong_number"
         st["last_outcome"] = outcome or status
     return out
 

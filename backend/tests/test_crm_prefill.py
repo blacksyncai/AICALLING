@@ -56,4 +56,4 @@ def test_radar_status_tags_campaign_calls_and_verified(client):
 
     st = asyncio.run(scenario())
     assert st["7"]["campaign"] == "Old leads" and st["7"]["calls"] == 2 and st["7"]["voicemails"] == 1
-    assert st["7"]["verified"] and not st["8"]["verified"] and st["8"]["last_outcome"] == "no_answer"
+    assert not st["7"]["verified"] and not st["8"]["verified"] and st["8"]["last_outcome"] == "no_answer"
