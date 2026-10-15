@@ -10,7 +10,6 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: { default: "BlackSync", template: "%s · BlackSync" },
   description: "Build, test and launch BlackSync AI voice agents that call your leads.",
-  icons: { icon: "/favicon.svg", apple: "/favicon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -95,6 +95,7 @@ def _protected_resource() -> dict:
         "scopes_supported": [SCOPE],
         "bearer_methods_supported": ["header"],
         "resource_name": "BlackSync AI",
+        "logo_uri": f"{base_url()}/blacksync-icon.png",
         "resource_documentation": f"{base_url()}/connect/help",
     }
 

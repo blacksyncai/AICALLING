@@ -27,7 +27,9 @@ from app.services.auth import Context, resolve_org
 log = structlog.get_logger(__name__)
 router = APIRouter(tags=["mcp"])
 
-SERVER_INFO = {"name": "blacksync", "title": "BlackSync AI", "version": "1.0.0"}
+SERVER_INFO = {"name": "blacksync", "title": "BlackSync AI", "version": "1.0.0",
+               "websiteUrl": "https://blacksync.si",
+               "icons": [{"src": "https://blacksync.si/blacksync-icon.png", "mimeType": "image/png", "sizes": ["512x512"]}]}
 PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
     "BlackSync AI runs AI phone agents that call leads and answer calls for businesses. Use get_started first: it "
