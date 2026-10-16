@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     livekit_sip_outbound_trunk_id: str = ""
     livekit_sip_inbound_trunk_id: str = ""
     signalwire_sip_outbound_trunk_id: str = ""
+    signalwire_outbound_script_id: str = ""
     signalwire_space: str = ""
     signalwire_project_id: str = ""
     signalwire_api_token: str = ""

@@ -1,5 +1,7 @@
 """Inventory and outbound trunk management; never purchases or releases numbers."""
 import re
+import copy
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -24,7 +26,7 @@ async def list_numbers() -> list[dict]:
     if not re.fullmatch(r"[a-zA-Z0-9-]+", settings.signalwire_project_id):
         raise SignalWireError("Invalid SignalWire project ID.")
     base = f"https://{space}"
-    path = f"/api/laml/2010-04-01/Accounts/{settings.signalwire_project_id}/IncomingPhoneNumbers.json"
+    path = "/api/relay/rest/phone_numbers"
     result = []
     async with httpx.AsyncClient(auth=(settings.signalwire_project_id, settings.signalwire_api_token),
                                  timeout=20, follow_redirects=False) as client:
@@ -40,18 +42,21 @@ async def list_numbers() -> list[dict]:
                 raise SignalWireError(f"SignalWire number lookup failed (HTTP {status}).") from None
             except (httpx.HTTPError, ValueError):
                 raise SignalWireError("Couldn't load SignalWire numbers. Check the API credentials and number-read permission.") from None
-            for number in data.get("incoming_phone_numbers", []):
+            for number in data.get("data", []):
                 if number.get("capabilities", {}).get("voice") is False:
                     continue
-                result.append({"sid": number["sid"], "number": number["phone_number"],
-                               "friendly": number.get("friendly_name") or "SignalWire",
+                result.append({"sid": number["id"], "number": number["number"],
+                               "friendly": number.get("name") or "SignalWire",
                                "carrier": "signalwire", "trunk_sid": ""})
-            path = data.get("next_page_uri")
+            path = (data.get("links") or {}).get("next")
             if not path:
                 return result
             # Do not forward API credentials to a pagination URL on another host.
-            if not path.startswith("/api/laml/") or "://" in path:
+            parsed = urlparse(urljoin(base, path))
+            if (parsed.scheme != "https" or parsed.netloc != space
+                    or parsed.path != "/api/relay/rest/phone_numbers" or parsed.fragment):
                 raise SignalWireError("SignalWire returned an unexpected pagination URL.")
+            path = parsed.path + ("?" + parsed.query if parsed.query else "")
     raise SignalWireError("Too many SignalWire numbers to load safely.")
 
 
@@ -87,6 +92,7 @@ async def allow_number(number: str) -> None:
 
     if not settings.signalwire_sip_outbound_trunk_id:
         raise SignalWireError("Configure the SignalWire LiveKit outbound trunk first.")
+    await ensure_dynamic_routing()
     lk = _lk()
     try:
         await lk.sip.update_outbound_trunk_fields(
@@ -95,3 +101,56 @@ async def allow_number(number: str) -> None:
         raise SignalWireError("Couldn't add the caller ID to the SignalWire trunk. Try again.") from None
     finally:
         await lk.aclose()
+
+
+DYNAMIC_CALLER_ID = "%{call.sip_data.sip_from_user}"
+DYNAMIC_DESTINATION = "%{call.to.replace(/^sip:/i, '').replace(/@.*/, '')}"
+
+
+def dynamic_script(contents: dict) -> dict:
+    """Patch only the known one-connect outbound script; refuse arbitrary custom call flows."""
+    expected = {"version": "1.0.0", "sections": {"main": [{"connect": {
+        "answer_on_bridge": True, "from": "", "to": DYNAMIC_DESTINATION}}]}}
+    if not isinstance(contents, dict):
+        raise SignalWireError("Review the outbound SWML script before enabling multiple caller IDs.")
+    candidate = copy.deepcopy(contents)
+    try:
+        caller = candidate["sections"]["main"][0]["connect"]["from"]
+        candidate["sections"]["main"][0]["connect"]["from"] = ""
+    except (KeyError, TypeError, IndexError):
+        raise SignalWireError("Review the outbound SWML script before enabling multiple caller IDs.") from None
+    if candidate != expected or not (caller == DYNAMIC_CALLER_ID or
+                                    isinstance(caller, str) and re.fullmatch(r"\+[1-9]\d{7,14}", caller)):
+        raise SignalWireError("Custom outbound script detected. Review caller-ID routing before assigning a new number.")
+    candidate["sections"]["main"][0]["connect"]["from"] = DYNAMIC_CALLER_ID
+    return candidate
+
+
+async def ensure_dynamic_routing() -> None:
+    resource = settings.signalwire_outbound_script_id
+    if not resource:
+        raise SignalWireError("Configure the shared SignalWire outbound script before assigning more numbers.")
+    if not re.fullmatch(r"[a-zA-Z0-9-]+", resource):
+        raise SignalWireError("Invalid SignalWire outbound script ID.")
+    space = settings.signalwire_space.strip().lower()
+    if not re.fullmatch(r"[a-z0-9-]+\.signalwire\.com", space):
+        raise SignalWireError("Invalid SignalWire space hostname.")
+    url = f"https://{space}/api/fabric/resources/swml_scripts/{resource}"
+    async with httpx.AsyncClient(auth=(settings.signalwire_project_id, settings.signalwire_api_token),
+                                 timeout=20, follow_redirects=False) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            old = response.json()["swml_script"]["contents"]
+            updated = dynamic_script(old)
+            if updated == old:
+                return
+            response = await client.put(url, json={"contents": updated})
+            response.raise_for_status()
+            # Do not claim repair based only on HTTP success; verify the saved document.
+            response = await client.get(url)
+            response.raise_for_status()
+            if response.json()["swml_script"]["contents"] != updated:
+                raise SignalWireError("SignalWire routing update could not be verified.")
+        except (httpx.HTTPError, ValueError, KeyError):
+            raise SignalWireError("Couldn't verify shared SignalWire caller-ID routing. Check the API token and Voice permission.") from None

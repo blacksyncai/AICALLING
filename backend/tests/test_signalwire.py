@@ -2,6 +2,8 @@ import uuid
 from types import SimpleNamespace
 import httpx
 import pytest
+REAL_ASYNC_CLIENT = httpx.AsyncClient
+
 from app.config import settings
 from app.services import signalwire
 from tests.test_accounts import _new_account
@@ -13,8 +15,8 @@ def sw(monkeypatch):
     state = SimpleNamespace(number='+1415'+str(uuid.uuid4().int % 10000000).zfill(7), allowed=[], response=None)
     def handler(request):
         assert request.url.host == 'example.signalwire.com'
-        return httpx.Response(200, json=state.response or {'incoming_phone_numbers':[{'sid':'PN_sw','phone_number':state.number,'capabilities':{'voice':True}}]})
-    real = httpx.AsyncClient
+        return httpx.Response(200, json=state.response or {'data':[{'id':'PN_sw','number':state.number,'capabilities':{'voice':True}}], 'links':{}})
+    real = REAL_ASYNC_CLIENT
     monkeypatch.setattr(signalwire.httpx,'AsyncClient',lambda **kw: real(transport=httpx.MockTransport(handler),**kw))
     async def allow(n): state.allowed.append(n)
     monkeypatch.setattr(signalwire,'allow_number',allow)
@@ -35,7 +37,7 @@ def test_assign_without_twilio_and_reject_duplicate(client,sw):
 
 @pytest.mark.asyncio
 async def test_inventory_rejects_foreign_pagination(sw):
-    sw.response={'incoming_phone_numbers':[],'next_page_uri':'https://attacker.test/steal'}
+    sw.response={'data':[],'links':{'next':'https://attacker.test/steal'}}
     with pytest.raises(signalwire.SignalWireError,match='pagination'): await signalwire.list_numbers()
 
 @pytest.mark.asyncio
@@ -172,3 +174,54 @@ def test_unanswered_signalwire_call_clears_pending_recording(client,make_client,
         time.sleep(.02)
     assert call['status']=='no_answer'
     assert not call['has_recording']
+
+@pytest.mark.asyncio
+async def test_rest_inventory_pagination_returns_every_number(sw,monkeypatch):
+    calls=[]
+    real=REAL_ASYNC_CLIENT
+    def handler(request):
+        calls.append(str(request.url))
+        assert request.url.path=='/api/relay/rest/phone_numbers'
+        if not request.url.query:
+            return httpx.Response(200,json={'data':[{'id':'one','number':'+14155550101','name':'First','capabilities':{'voice':True}}],
+                                          'links':{'next':'https://example.signalwire.com/api/relay/rest/phone_numbers?page_number=1'}})
+        return httpx.Response(200,json={'data':[{'id':'two','number':'+14155550102','name':'Second','capabilities':{'voice':True}},
+                                                     {'id':'fax','number':'+14155550103','capabilities':{'voice':False}}],'links':{}})
+    monkeypatch.setattr(signalwire.httpx,'AsyncClient',lambda **kw:real(transport=httpx.MockTransport(handler),**kw))
+    numbers=await signalwire.list_numbers()
+    assert [n['number'] for n in numbers]==['+14155550101','+14155550102']
+    assert len(calls)==2
+
+
+def test_dynamic_script_preserves_destination_and_refuses_custom_flow():
+    import copy
+    original={'version':'1.0.0','sections':{'main':[{'connect':{'answer_on_bridge':True,'from':'+14154800324','to':signalwire.DYNAMIC_DESTINATION}}]}}
+    patched=signalwire.dynamic_script(original)
+    assert patched['sections']['main'][0]['connect']['from']==signalwire.DYNAMIC_CALLER_ID
+    assert original['sections']['main'][0]['connect']['from']=='+14154800324'
+    assert signalwire.dynamic_script(patched)==patched
+    custom=copy.deepcopy(original)
+    custom['sections']['main'].append({'record_call':{'format':'mp3'}})
+    with pytest.raises(signalwire.SignalWireError,match='Custom'):
+        signalwire.dynamic_script(custom)
+
+
+@pytest.mark.asyncio
+async def test_shared_routing_update_read_back_and_idempotent(sw,monkeypatch):
+    import copy
+    monkeypatch.setattr(settings,'signalwire_outbound_script_id','script-test')
+    contents={'version':'1.0.0','sections':{'main':[{'connect':{'answer_on_bridge':True,'from':'+14154800324','to':signalwire.DYNAMIC_DESTINATION}}]}}
+    calls=[]; real=REAL_ASYNC_CLIENT
+    def handler(request):
+        import json
+        nonlocal contents
+        calls.append(request.method)
+        if request.method=='PUT':
+            contents=json.loads(request.content)['contents']
+            return httpx.Response(200,json={})
+        return httpx.Response(200,json={'swml_script':{'contents':copy.deepcopy(contents)}})
+    monkeypatch.setattr(signalwire.httpx,'AsyncClient',lambda **kw:real(transport=httpx.MockTransport(handler),**kw))
+    await signalwire.ensure_dynamic_routing()
+    await signalwire.ensure_dynamic_routing()
+    assert calls==['GET','PUT','GET','GET']
+    assert contents['sections']['main'][0]['connect']['from']==signalwire.DYNAMIC_CALLER_ID
