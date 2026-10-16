@@ -75,3 +75,31 @@ def test_signalwire_dials_own_trunk_with_precreated_room(client,make_client,sw,m
     assert sip.sip_trunk_id=='ST_signalwire'
     assert sip.sip_number==sw.number
     assert [kind for kind,_ in log].index('dispatch') < [kind for kind,_ in log].index('sip')
+
+def test_inventory_error_shows_configured_trunk_number_and_warning(client,sw,monkeypatch):
+    async def rejected():
+        raise signalwire.SignalWireError('SignalWire rejected number access (HTTP 401).')
+    async def configured():
+        return [{'sid':'sw:test','number':sw.number,'friendly':'Configured SignalWire SIP caller ID','carrier':'signalwire','trunk_sid':'','inventory_source':'livekit'}]
+    monkeypatch.setattr(signalwire,'list_numbers',rejected)
+    monkeypatch.setattr(signalwire,'configured_numbers',configured)
+    response=client.get('/api/admin/telephony')
+    assert response.status_code==200
+    data=response.json()
+    assert any(n['number']==sw.number and n['inventory_source']=='livekit' for n in data['owned'])
+    assert data['owned_error']==''
+    assert 'HTTP 401' in data['owned_warnings'][0]
+    org,_=_new_account(client,name='SignalWire fallback assignment')
+    assigned=client.post(f"/api/admin/orgs/{org['id']}/phone-numbers",json={'number':sw.number,'mode':'import'})
+    assert assigned.status_code==201,assigned.text
+    assert assigned.json()['carrier']=='signalwire'
+
+@pytest.mark.asyncio
+async def test_fallback_reads_only_selected_trunk(sw,monkeypatch):
+    from app.services import outbound_call
+    async def listing(req):
+        assert list(req.trunk_ids)==['ST_signalwire']
+        return SimpleNamespace(items=[SimpleNamespace(sip_trunk_id='ST_wrong',numbers=['+15551111111']),SimpleNamespace(sip_trunk_id='ST_signalwire',numbers=[sw.number])])
+    async def close(): pass
+    monkeypatch.setattr(outbound_call,'_lk',lambda:SimpleNamespace(sip=SimpleNamespace(list_outbound_trunk=listing),aclose=close))
+    assert [n['number'] for n in await signalwire.configured_numbers()]==[sw.number]

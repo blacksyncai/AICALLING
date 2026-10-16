@@ -206,7 +206,7 @@ async def telephony_status(_: AdminDep, db: DbDep):
     """Twilio + recording setup, and every number in the Twilio account with who has it."""
     out: dict = {
         "twilio_ready": settings.twilio_ready, "recordings_ready": settings.recordings_ready,
-        "trunk_sid": "", "trunk_error": "", "owned": [], "owned_error": "",
+        "trunk_sid": "", "trunk_error": "", "owned": [], "owned_error": "", "owned_warnings": [],
         "settings": {k: v for k, v in (await settings_store.get_all(db)).items()
                      if k in ("self_serve_numbers", "max_numbers_per_org")},
         "open_requests": [],
@@ -222,7 +222,7 @@ async def telephony_status(_: AdminDep, db: DbDep):
     except Exception as exc:
         out["trunk_error"] = str(exc)
     try:
-        owned = await telephony.list_owned()
+        owned = await telephony.list_owned(warnings=out["owned_warnings"])
         assigned = {n.number: (n, name) for n, name in (await db.execute(
             select(PhoneNumber, Organization.name).join(Organization, Organization.id == PhoneNumber.org_id)
             .where(PhoneNumber.status == "active"))).all()}

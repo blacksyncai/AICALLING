@@ -128,7 +128,7 @@ async def search_available(area_code: str = "", contains: str = "", country: str
     ]
 
 
-async def list_owned() -> list[dict]:
+async def list_owned(warnings: list[str] | None = None) -> list[dict]:
     """Every number in the Twilio account (first 1000), plus the Bandwidth account's numbers."""
     out = []
     if settings.twilio_ready:
@@ -151,7 +151,18 @@ async def list_owned() -> list[dict]:
         try:
             out += await signalwire.list_numbers()
         except signalwire.SignalWireError as exc:
-            raise TelephonyError(str(exc)) from exc
+            warning = str(exc)
+            try:
+                configured = await signalwire.configured_numbers()
+                out += configured
+                if configured:
+                    warning += " Showing caller IDs already configured on the SignalWire SIP trunk. Other purchased numbers may be missing."
+            except signalwire.SignalWireError as fallback_exc:
+                warning += " " + str(fallback_exc)
+            if warnings is not None:
+                warnings.append(warning)
+            elif not out:
+                raise TelephonyError(warning) from exc
     return out
 
 

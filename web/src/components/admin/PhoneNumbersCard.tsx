@@ -43,7 +43,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   const [results, setResults] = useState<Available[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const { data: telephony } = useSWR<{ owned: Owned[]; owned_error: string }>(mode === "import" ? "/api/admin/telephony" : null, fetcher);
+  const { data: telephony } = useSWR<{ owned: Owned[]; owned_error: string; owned_warnings?: string[] }>(mode === "import" ? "/api/admin/telephony" : null, fetcher);
 
   const openRequest = data?.requests[0];
 
@@ -154,6 +154,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
                   { value: "import", label: "Assign existing" },
                 ]}
               />
+              {mode === "import" && telephony?.owned_warnings?.map((warning) => <Notice key={warning}>{warning}</Notice>)}
               {mode === "import" && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-zinc-500">Assign numbers already owned in Twilio, Bandwidth or SignalWire. SignalWire currently supports outbound calls.</p><Button size="sm" onClick={() => void refreshSWR("/api/admin/telephony")}>Refresh numbers</Button></div>}
               {mode === "buy" && !data.twilio_ready ? <Notice>Twilio must be configured to buy numbers. Use Assign existing for SignalWire and Bandwidth.</Notice> : mode === "buy" ? (
                 <>

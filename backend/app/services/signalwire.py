@@ -33,6 +33,11 @@ async def list_numbers() -> list[dict]:
                 response = await client.get(base + path)
                 response.raise_for_status()
                 data = response.json()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status in (401, 403):
+                    raise SignalWireError(f"SignalWire rejected number access (HTTP {status}). Check the API token, project ID and number-read permission.") from None
+                raise SignalWireError(f"SignalWire number lookup failed (HTTP {status}).") from None
             except (httpx.HTTPError, ValueError):
                 raise SignalWireError("Couldn't load SignalWire numbers. Check the API credentials and number-read permission.") from None
             for number in data.get("incoming_phone_numbers", []):
@@ -48,6 +53,32 @@ async def list_numbers() -> list[dict]:
             if not path.startswith("/api/laml/") or "://" in path:
                 raise SignalWireError("SignalWire returned an unexpected pagination URL.")
     raise SignalWireError("Too many SignalWire numbers to load safely.")
+
+
+async def configured_numbers() -> list[dict]:
+    """Fallback inventory from the explicitly configured, authenticated LiveKit trunk."""
+    from livekit import api
+    from app.services.outbound_call import _lk
+
+    if not settings.signalwire_sip_outbound_trunk_id:
+        return []
+    lk = _lk()
+    try:
+        response = await lk.sip.list_outbound_trunk(api.ListSIPOutboundTrunkRequest(
+            trunk_ids=[settings.signalwire_sip_outbound_trunk_id]))
+        trunk = next((t for t in response.items
+                      if t.sip_trunk_id == settings.signalwire_sip_outbound_trunk_id), None)
+        if trunk is None:
+            raise SignalWireError("The configured SignalWire LiveKit trunk wasn't found.")
+        return [{"sid": f"sw:{n}", "number": n, "friendly": "Configured SignalWire SIP caller ID",
+                 "carrier": "signalwire", "trunk_sid": "", "inventory_source": "livekit"}
+                for n in trunk.numbers]
+    except SignalWireError:
+        raise
+    except Exception:
+        raise SignalWireError("Couldn't read configured SignalWire caller IDs from LiveKit.") from None
+    finally:
+        await lk.aclose()
 
 
 async def allow_number(number: str) -> None:
