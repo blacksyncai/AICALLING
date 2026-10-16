@@ -1,7 +1,7 @@
 "use client";
 import { BellRing, CheckCircle2, Mail, Send } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import {
   Badge,
@@ -149,7 +149,7 @@ function AlertPreferences({ orgId }: { orgId?: string }) {
         </fieldset>
         <fieldset>
           <legend className="mb-2 text-sm font-medium">
-            Send to workspace members
+            Default notification recipients
           </legend>
           <div className="grid gap-2 sm:grid-cols-2">
             {draft.members.map((u) => (
@@ -276,6 +276,30 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const { data: prefs } = useSWR<Preferences>(base, fetcher);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [outcome, setOutcome] = useState("");
+  const [browse, setBrowse] = useState(false);
+  const recipientsEdited = useRef(false);
+  useEffect(() => {
+    if (prefs && !recipientsEdited.current) {
+      setUsers(
+        prefs.user_ids.filter((id) => prefs.members.some((u) => u.id === id)),
+      );
+    }
+  }, [prefs]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setQuery(search.trim());
+      setPage(1);
+      setCalls([]);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const showResults = !!query || browse;
+  const historyUrl = `${base}/calls?page=${page}&q=${encodeURIComponent(query)}&outcome=${encodeURIComponent(outcome)}`;
+
   const { data, error, mutate } = useSWR<{
     items: {
       id: string;
@@ -285,7 +309,7 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
       started_at: string;
       alerts: { id: string; user: string; status: string; error: string }[];
     }[];
-  }>(`${base}/calls?page=${page}`, fetcher, { refreshInterval: 10000 });
+  }>(showResults ? historyUrl : null, fetcher, { refreshInterval: 10000 });
   const selected = { call_ids: calls, user_ids: users };
   return (
     <Card className="overflow-hidden">
@@ -296,36 +320,118 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
             past call
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Select up to 10 calls, choose account members, then review before
-            sending.
+            Find a contact by name or phone, choose their call, and review the
+            notification before sending.
           </p>
         </div>
         <Badge tone="gray">Admin</Badge>
       </div>
       <div className="space-y-4 p-5">
         {error && <Notice tone="red">{error.message}</Notice>}
+        <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <Field label="Find a contact's calls">
+            <Input
+              type="search"
+              aria-label="Search calls by contact name or phone"
+              placeholder="Type a name or phone number…"
+              value={search}
+              maxLength={120}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setCalls([]);
+              }}
+            />
+          </Field>
+          <Field label="Call result">
+            <select
+              aria-label="Filter call result"
+              className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm"
+              value={outcome}
+              onChange={(e) => {
+                setOutcome(e.target.value);
+                setBrowse(true);
+                setPage(1);
+                setCalls([]);
+              }}
+            >
+              <option value="">All results</option>
+              {Object.entries(prefs?.available_outcomes || {}).map(
+                ([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ),
+              )}
+              <option value="completed">Completed</option>
+              <option value="voicemail">Voicemail</option>
+              <option value="no_answer">No answer</option>
+              <option value="failed">Failed</option>
+            </select>
+          </Field>
+        </div>
+        {!showResults && (
+          <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-center">
+            <p className="text-sm font-medium">
+              Who would you like to look up?
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Search all completed phone calls in this account, including older
+              calls.
+            </p>
+            <Button size="sm" className="mt-3" onClick={() => setBrowse(true)}>
+              Browse recent calls instead
+            </Button>
+          </div>
+        )}
         <fieldset>
           <legend className="mb-2 text-sm font-medium">Notify</legend>
+          <p className="mb-2 text-xs text-zinc-500">
+            Saved notification recipients are selected by default. Change the
+            defaults in Call alert settings above.
+          </p>
+          <Input
+            type="search"
+            aria-label="Search notification recipients"
+            placeholder="Find a recipient by name or email…"
+            value={recipientSearch}
+            onChange={(e) => setRecipientSearch(e.target.value)}
+            className="mb-3"
+          />
           <div className="flex flex-wrap gap-3">
-            {prefs?.members.map((u) => (
-              <label key={u.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={users.includes(u.id)}
-                  onChange={() => setUsers(flip(users, u.id))}
-                />
-                {u.name}
-              </label>
-            ))}
+            {prefs?.members
+              .filter((u) =>
+                `${u.name} ${u.email}`
+                  .toLowerCase()
+                  .includes(recipientSearch.trim().toLowerCase()),
+              )
+              .map((u) => (
+                <label key={u.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={users.includes(u.id)}
+                    onChange={() => {
+                      recipientsEdited.current = true;
+                      setUsers(flip(users, u.id));
+                    }}
+                  />
+                  {u.name}
+                </label>
+              ))}
           </div>
         </fieldset>
-        {!data && !error && <Spinner />}
+        {showResults && !data && !error && <Spinner />}
         {data?.items.length === 0 && (
           <p className="text-sm text-zinc-500">
-            No completed phone calls in this account yet.
+            No calls found. Try a different name, phone number, or call result.
           </p>
         )}
-        <div className="divide-y rounded-xl border border-zinc-200">
+        <div
+          className={
+            showResults
+              ? "divide-y rounded-xl border border-zinc-200"
+              : "hidden"
+          }
+        >
           {data?.items.map((c) => (
             <div key={c.id} className="p-4">
               <label className="flex items-start gap-3">
@@ -388,7 +494,7 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              disabled={page === 1}
+              disabled={!showResults || page === 1}
               onClick={() => {
                 setPage(page - 1);
                 setCalls([]);
@@ -411,7 +517,9 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
           <Button
             variant="primary"
             loading={busy}
-            disabled={!calls.length || !users.length}
+            disabled={
+              !calls.length || !users.length || search.trim() !== query || !data
+            }
             onClick={async () => {
               setBusy(true);
               setMessage("");

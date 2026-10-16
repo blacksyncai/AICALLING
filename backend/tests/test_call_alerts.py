@@ -182,3 +182,22 @@ def test_email_service_passes_resend_idempotency_header(setup,monkeypatch):
     monkeypatch.setattr(email,'_record',record)
     assert asyncio.run(email.send_email('recipient@example.test','Test','<p>Test</p>',idempotency_key='stable-key'))
     assert captured[0].headers['Idempotency-Key']=='stable-key'
+
+
+def test_admin_call_search_filters_before_pagination_and_scopes_account(client,setup):
+    org,_,_,base=setup
+    good=add_call(org,outcome='qualified')
+    other,_=_new_account(client)
+    add_call(other,outcome='qualified')
+    for _ in range(31):
+        cid=add_call(org,outcome='completed')
+        async def rename():
+            async with AsyncSessionLocal() as db:
+                c=await db.get(CallLog,uuid.UUID(cid));lead=await db.get(Lead,c.lead_id)
+                lead.name='Different Contact';await db.commit()
+        asyncio.run(rename())
+    rows=client.get(base+'/calls',params={'q':'jAmEs','outcome':'qualified'}).json()['items']
+    assert [r['id'] for r in rows]==[good]
+    assert client.get(base+'/calls',params={'q':'not found'}).json()['items']==[]
+    assert client.get(base+'/calls',params={'q':'%'}).json()['items']==[]
+    assert any(r['id']==good for r in client.get(base+'/calls',params={'q':'0123','outcome':'qualified'}).json()['items'])

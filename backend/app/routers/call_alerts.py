@@ -2,7 +2,7 @@
 import uuid
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from app.config import settings
 from app.models.account import Organization
 from app.models.agent import Agent
@@ -72,11 +72,22 @@ async def save_settings(db, org_id, body):
     await db.commit()
     return await get_settings(db, org_id)
 
-async def history(db, org_id, page):
+async def history(db, org_id, page, search='', outcome=''):
     await org_for(db, org_id)
-    rows = (await db.execute(select(CallLog, Lead.name).outerjoin(Lead, Lead.id == CallLog.lead_id)
-        .where(CallLog.org_id == org_id, CallLog.ended_at.is_not(None), CallLog.call_type.in_(('outbound','inbound')))
-        .order_by(CallLog.started_at.desc(), CallLog.id).offset((page-1)*30).limit(30))).all()
+    stmt = select(CallLog, Lead.name).outerjoin(Lead, Lead.id == CallLog.lead_id).where(
+        CallLog.org_id == org_id, CallLog.ended_at.is_not(None), CallLog.call_type.in_(('outbound','inbound')))
+    if search.strip():
+        term=search.strip().lower()
+        phone_term=''.join(c for c in term if c.isdigit()) if all(c.isdigit() or c in '+()- . ' for c in term) else term
+        stmt=stmt.where(or_(func.lower(Lead.name).contains(term, autoescape=True),
+                           func.lower(CallLog.to_phone).contains(phone_term or term, autoescape=True),
+                           func.lower(Lead.phone).contains(phone_term or term, autoescape=True)))
+    if outcome:
+        from app.models.call_log import CALL_OUTCOMES
+        if outcome not in CALL_OUTCOMES:
+            raise HTTPException(400,'Choose a supported call outcome.')
+        stmt=stmt.where(CallLog.outcome==outcome)
+    rows=(await db.execute(stmt.order_by(CallLog.started_at.desc(), CallLog.id).offset((page-1)*30).limit(30))).all()
     notifications = (await db.execute(select(CallAlert).where(CallAlert.org_id == org_id,
         CallAlert.call_id.in_([c.id for c,_ in rows])))).scalars().all() if rows else []
     users = {str(u.id): u.full_name or u.email for u in await alerts.members(db, org_id)}
@@ -129,8 +140,8 @@ async def admin_save(org_id: uuid.UUID, body: SettingsIn, _: AdminDep, db: DbDep
     return await save_settings(db,org_id,body)
 
 @admin_router.get('/calls')
-async def admin_history(org_id: uuid.UUID, _: AdminDep, db: DbDep, page: int=Query(default=1,ge=1)):
-    return await history(db,org_id,page)
+async def admin_history(org_id: uuid.UUID, _: AdminDep, db: DbDep, page: int=Query(default=1,ge=1), q: str=Query(default="",max_length=120), outcome: str=""):
+    return await history(db,org_id,page,q,outcome)
 
 @admin_router.post('/preview')
 async def admin_preview(org_id: uuid.UUID, body: NotifyIn, _: AdminDep, db: DbDep):
