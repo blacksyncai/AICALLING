@@ -443,6 +443,16 @@ function PushCalls({ p, c, isCrm, onSaved }: { p: Provider; c: Connection; isCrm
             />
           </Card>
         )}
+        {p.key === "followupboss" && (
+          <Card className="p-5">
+            <Toggle
+              checked={!!s.csv_create_fields}
+              onChange={(v) => void save({ csv_create_fields: v })}
+              label="Create missing custom fields for CSV data"
+              description="Radar reuses existing fields and script-variable mappings when sending CSV data to Follow Up Boss. Turn this on to create missing text fields too (requires an account-owner API key). Existing values are preserved. A full source-data snapshot is also retained in the contact background."
+            />
+          </Card>
+        )}
         {err && <Notice tone="red">{err}</Notice>}
       </div>
 

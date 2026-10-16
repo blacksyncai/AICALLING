@@ -61,7 +61,7 @@ export interface Connection {
   last_error: string | null;
   last_synced_at: string | null;
   settings: {
-    log_calls: boolean; create_contacts: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null;
+    log_calls: boolean; create_contacts: boolean; csv_create_fields?: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null;
     activity_agent_id: string | null;
     min_seconds: number;
     skip_outcomes: string[];

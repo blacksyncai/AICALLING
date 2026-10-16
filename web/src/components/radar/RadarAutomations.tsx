@@ -1726,6 +1726,15 @@ function AutomationActivity() {
       result: {
         reason?: string;
         contact?: { id: string; status: string; name?: string };
+        csv_data?: {
+          synced: string[];
+          unchanged: string[];
+          conflicts: string[];
+          unmapped: string[];
+          created_fields: string[];
+          warnings: string[];
+          snapshot: boolean;
+        };
         actions?: Record<
           string,
           | string
@@ -1814,6 +1823,37 @@ function AutomationActivity() {
                   : `Deal ${v.id || ""} · ${v.reason || (v.unchanged ? "already at or beyond this stage" : `stage ${v.stage_id || "confirmed"}`)}`}
               </p>
             ))}
+            {i.result.csv_data && (
+              <div className="my-2 rounded-xl bg-zinc-50 p-3 text-xs leading-6">
+                <p>
+                  CSV data: {i.result.csv_data.synced.length} fields filled ·{" "}
+                  {i.result.csv_data.created_fields.length} custom fields
+                  created.
+                </p>
+                {i.result.csv_data.snapshot && (
+                  <p>
+                    Full source data preserved in the FUB contact background.
+                  </p>
+                )}
+                {!!i.result.csv_data.conflicts.length && (
+                  <p className="text-amber-700">
+                    Existing FUB values preserved:{" "}
+                    {i.result.csv_data.conflicts.join(", ")}
+                  </p>
+                )}
+                {!!i.result.csv_data.unmapped.length && (
+                  <p className="text-amber-700">
+                    Retained in the CSV snapshot:{" "}
+                    {i.result.csv_data.unmapped.join(", ")}
+                  </p>
+                )}
+                {i.result.csv_data.warnings.map((warning, index) => (
+                  <p key={index} className="text-amber-700">
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            )}
             {i.error && <p className="text-red-600">{i.error}</p>}
             {i.next_at && (
               <p>Retry scheduled: {new Date(i.next_at).toLocaleString()}</p>
@@ -1825,6 +1865,22 @@ function AutomationActivity() {
               View call →
             </Link>
           </div>
+          {i.status === "succeeded" && i.result.contact && (
+            <Button
+              size="sm"
+              onClick={async () => {
+                setRetryErr("");
+                try {
+                  await post(`${BASE}/activity/${i.id}/sync-data`);
+                  void mutate();
+                } catch (e) {
+                  setRetryErr(errorText(e));
+                }
+              }}
+            >
+              Sync CSV data
+            </Button>
+          )}
           {["retry", "failed"].includes(i.status) && (
             <Button
               size="sm"

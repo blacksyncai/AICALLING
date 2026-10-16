@@ -247,6 +247,9 @@ async def run_execution(execution_id):
                 return
             if any(a.kind != "blacksync_pond" for a in spec.actions):
                 await radar_contacts.resolve(db, job, conn, lead)
+                if conn.provider == "followupboss":
+                    from app.services.crm.csv_export import export
+                    await export(db, job, conn, call, lead)
             done = dict((job.result or {}).get("actions") or {})
             for index, action in enumerate(spec.actions):
                 if str(index) in done:
@@ -270,7 +273,7 @@ async def run_execution(execution_id):
             # State-setting actions reconcile their target before retrying. Persist partial progress.
             await db.rollback()
             job = await db.get(RadarExecution, execution_id)
-            job.status = "failed" if isinstance(exc, radar_contacts.ContactReviewRequired) or job.attempts >= 5 or (job.result or {}).get("pending_deal") is not None or (job.result or {}).get("pending_contact") is not None else "retry"
+            job.status = "failed" if isinstance(exc, radar_contacts.ContactReviewRequired) or job.attempts >= 5 or (job.result or {}).get("pending_deal") is not None or (job.result or {}).get("pending_contact") is not None or (job.result or {}).get("pending_csv_field") is not None else "retry"
             job.error = str(exc)[:600]
             job.next_at = now() + dt.timedelta(seconds=min(3600, 30 * 2 ** job.attempts))
         job.lease_until, job.updated_at = None, now()

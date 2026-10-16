@@ -72,7 +72,7 @@ def conn_to_dict(c: CrmConnection) -> dict:
     return {
         "provider": c.provider, "method": c.method, "account_label": c.account_label, "status": c.status,
         "last_error": c.last_error, "last_synced_at": _iso(c.last_synced_at), "created_at": _iso(c.created_at),
-        "settings": {k: s.get(k) for k in ("log_calls", "create_contacts", "only_connected", "speed_to_lead_agent_id",
+        "settings": {k: s.get(k) for k in ("log_calls", "create_contacts", "csv_create_fields", "only_connected", "speed_to_lead_agent_id",
                                              "activity_agent_id", "min_seconds", "skip_outcomes", "only_outcomes",
                                              "only_sentiments", "note_summary",
                                              "note_details", "note_link")},
@@ -384,6 +384,7 @@ async def uninstall(key: str, agent_id: str, ctx: ManagerDep, db: DbDep):
 class SettingsIn(BaseModel):
     log_calls: bool | None = None
     create_contacts: bool | None = None
+    csv_create_fields: bool | None = None
     only_connected: bool | None = None
     min_seconds: int | None = Field(default=None, ge=0, le=3600)
     skip_outcomes: list[str] | None = None
@@ -404,7 +405,7 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
     conn = await _require_conn(db, ctx.org.id, key)
     s = sync.conn_settings(conn)
     data = body.model_dump(exclude_unset=True)
-    for k in ("log_calls", "create_contacts", "only_connected", "note_summary", "note_details", "note_link", "min_seconds"):
+    for k in ("log_calls", "create_contacts", "csv_create_fields", "only_connected", "note_summary", "note_details", "note_link", "min_seconds"):
         if data.get(k) is not None:
             s[k] = data[k]
     if data.get("skip_outcomes") is not None:

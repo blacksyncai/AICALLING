@@ -8,14 +8,17 @@ from app.services.crm.http import CrmError
 from app.services.crm.providers import PROVIDERS
 
 
-async def fub_collection(http, resource: str) -> list[dict]:
+async def fub_collection(http, resource: str, *, response_key: str | None = None, strict_response=False) -> list[dict]:
     # Follow only this endpoint's continuation cursor, never a provider-supplied arbitrary URL.
     from urllib.parse import parse_qsl, urlparse
     path = f"/v1/{resource}"
     params, rows, seen = {"limit": 100}, [], set()
     for _ in range(30):
         page = await http.request("GET", path, params=params)
-        rows.extend(x for x in page.get(resource, []) if isinstance(x, dict))
+        key = response_key or resource
+        if strict_response and (not isinstance(page,dict) or not isinstance(page.get(key),list) or any(not isinstance(x,dict) for x in page[key])):
+            raise CrmError("The CRM did not return a valid resource catalog. No custom fields were created.")
+        rows.extend(x for x in page.get(key, []) if isinstance(x, dict))
         link = (page.get("_metadata") or {}).get("nextLink")
         if not link:
             return rows

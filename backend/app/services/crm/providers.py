@@ -723,18 +723,24 @@ class FollowUpBoss(Provider):
 
     _cf_cache: dict = {}  # account → (fetched at, custom fields); they rarely change
 
-    async def _custom_fields(self, http) -> list[dict]:
+    async def _custom_fields(self, http, *, fresh=False, strict=False) -> list[dict]:
         import time
 
         key = str(getattr(http, "basic", None) or getattr(http, "connection_id", "") or id(http))
         hit = self._cf_cache.get(key)
-        if hit and time.monotonic() - hit[0] < 600:
+        if hit and not fresh and time.monotonic() - hit[0] < 600:
             return hit[1]
         try:
-            rows = (await http.request("GET", "/v1/customFields", params={"limit": 100})).get("customfields") or []
+            from app.services.crm.automation_resources import fub_collection
+            rows = await fub_collection(http, "customFields", response_key="customfields", strict_response=strict)
         except CrmError:
+            if strict:
+                raise
             return []
-        out = [{"name": r["name"], "label": r.get("label") or r["name"]} for r in rows if r.get("name")]
+        if strict and any(not r.get("name") or not r.get("label") for r in rows):
+            raise CrmError("The CRM returned incomplete custom-field definitions. Review the catalog before syncing.")
+        out = [{"name": r["name"], "label": r.get("label") or r["name"],
+                "type": r.get("type") or "text", "choices": r.get("choices") or []} for r in rows if r.get("name")]
         if out:
             self._cf_cache[key] = (time.monotonic(), out)
         return out

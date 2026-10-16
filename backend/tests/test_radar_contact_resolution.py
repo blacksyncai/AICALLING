@@ -31,6 +31,7 @@ def remote(client,crm,monkeypatch):
                 return httpx.Response(201,json=person)
             if path.startswith('/v1/people/'):
                 person=next((p for p in state['people'] if str(p['id'])==path.rsplit('/',1)[-1]),None)
+                if person and method=='PUT':person.update(body)
                 return httpx.Response(200 if person else 404,json=person or {'message':'Unknown person'})
             if path=='/v1/deals' and method=='GET':
                 return httpx.Response(200,json={'deals':[d for d in state['deals'] if int(req.url.params['personId']) in d['peopleIds']]})
