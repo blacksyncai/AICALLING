@@ -51,6 +51,13 @@ class SpeechGuard:
             self.sent = cut
             return out
         safe = max(self.sent, len(self.buffer) - _HOLD)
+        # A completed sentence cannot be the unfinished prefix of any of the
+        # protected internal markers. Release it now instead of waiting for
+        # another 24 characters (or the end of the model's reply). Retain full
+        # text for cross-chunk seam detection such as "Question?We need...".
+        boundaries = list(re.finditer(r"[.!?][\"']?(?=\s)|[!?][\"']?$", self.buffer[self.sent:]))
+        if boundaries:
+            safe = max(safe, self.sent + boundaries[-1].end())
         out = self.buffer[self.sent:safe]
         self.sent = safe
         return out

@@ -683,18 +683,25 @@ class _CallRun:
         self.last_found: list[dict] = []  # the times offered most recently ("the first one")
         self.post_task: asyncio.Task | None = None  # an outcome report in flight (awaited at shutdown)
         self.lat: dict[str, list[float]] = {"eou": [], "llm": [], "tts": []}
+        from app.agent.turn_latency import TurnLatency
+        self.turn_latency = TurnLatency()
 
     def latency_summary(self) -> dict | None:
         avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
         eou, llm, tts = avg(self.lat["eou"]), avg(self.lat["llm"]), avg(self.lat["tts"])
-        if eou is None and llm is None:
+        observed = self.turn_latency.summary()
+        if eou is None and llm is None and not observed.get("response_gap_samples"):
             return None
+        estimate = round(sum(v for v in (eou, llm, tts) if v), 3)
         return {
+            **observed,
+            "pipeline_sum_estimate": estimate,
+            "response_metric": "session_state_gap" if observed.get("response_gap_samples") else "pipeline_sum_estimate",
             "turns": len(self.lat["llm"]),
             "avg_eou": eou,
             "avg_llm_ttft": llm,
             "avg_tts_ttfb": tts,
-            "avg_response": round(sum(v for v in (eou, llm, tts) if v), 3),
+            "avg_response": observed.get("avg_turn_gap", estimate),
         }
 
 
@@ -986,7 +993,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         try:
             from livekit.plugins.turn_detector.multilingual import MultilingualModel
             turn_detector = MultilingualModel()
-        except Exception:
+        except Exception as exc:
+            log.warning("turn_detector_unavailable", error=type(exc).__name__)
             turn_detector = None
 
     language = cfg.get("language") or "en"
@@ -1053,6 +1061,17 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             pass
 
     session.on("metrics_collected", _on_metrics)
+
+    def _track_user_gap(ev):
+        run.turn_latency.user_state(getattr(ev, "old_state", ""), getattr(ev, "new_state", ""), _time.monotonic())
+
+    def _track_agent_gap(ev):
+        observed = run.turn_latency.agent_state(getattr(ev, "old_state", ""), getattr(ev, "new_state", ""), _time.monotonic())
+        if observed:
+            log.info("turn_response_gap", room=ctx.room.name, model=model, **observed)
+
+    session.on("user_state_changed", _track_user_gap)
+    session.on("agent_state_changed", _track_agent_gap)
     channel = "web" if call_type == "web" else "phone"
 
     # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
@@ -1201,7 +1220,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     session.on("conversation_item_added", _on_item)
     log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,
              has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
-             background_audio=bool(cfg.get("background_audio")), tuning={k: v for k, v in tuning.items() if k != "pronunciations"})
+             background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
+             preemptive_generation=True, preemptive_tts=True,
+             tuning={k: v for k, v in tuning.items() if k != "pronunciations"})
     session.on("agent_state_changed", lambda ev: log.info("agent_state", room=ctx.room.name,
                                                            state=getattr(ev, "new_state", "")))
     session.on("error", lambda ev: log.warning("session_error", room=ctx.room.name,
