@@ -146,6 +146,12 @@ async def list_owned() -> list[dict]:
                     for n in await bandwidth.list_numbers()]
         except bandwidth.BandwidthError as exc:
             log.warning("bandwidth_numbers_failed", error=str(exc))
+    from app.services import signalwire
+    if signalwire.ready():
+        try:
+            out += await signalwire.list_numbers()
+        except signalwire.SignalWireError as exc:
+            raise TelephonyError(str(exc)) from exc
     return out
 
 
@@ -201,7 +207,7 @@ async def sync_inbound_numbers() -> int:
     async with AsyncSessionLocal() as db:
         nums = (await db.execute(select(PhoneNumber.number).where(
             PhoneNumber.status == "active",
-            (PhoneNumber.carrier.is_(None)) | (PhoneNumber.carrier != "bandwidth")))).scalars().all()  # Bandwidth: own trunk
+            (PhoneNumber.carrier.is_(None)) | (PhoneNumber.carrier == "twilio")))).scalars().all()  # Bandwidth: own trunk
     for n in nums:
         await _inbound_ready(n)
     return len(nums)
@@ -267,10 +273,17 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
     number = normalize(number)
     owned = {n["number"]: n for n in await list_owned()}
     if number not in owned:
-        raise TelephonyError("That number isn't in the Twilio or Bandwidth account.")
+        raise TelephonyError("That number isn't in a configured carrier account.")
+    carrier = owned[number].get("carrier")
+    if carrier == "signalwire":
+        from app.services import signalwire
+        try:
+            await signalwire.allow_number(number)
+        except signalwire.SignalWireError as exc:
+            raise TelephonyError(str(exc)) from exc
     row = await _claim_row(db, org_id, number)
     row.provider_sid, row.source, row.label = owned[number]["sid"], "imported", label.strip()[:100]
-    row.carrier = "bandwidth" if owned[number].get("carrier") == "bandwidth" else None
+    row.carrier = carrier if carrier in ("bandwidth", "signalwire") else None
     await db.flush()
     await _make_default_if_first(db, row)
     await db.commit()
@@ -278,7 +291,7 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
         from app.services import bandwidth
 
         await bandwidth.ensure_bridge_trunk([number])
-    else:
+    elif row.carrier != "signalwire":
         await _livekit_numbers(add=[number])
         await _inbound_ready(number)
     log.info("phone_number_imported", org_id=str(org_id), number=number)
@@ -301,7 +314,8 @@ async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool)
         if rest:
             rest[0].is_default = True
     await db.commit()
-    await _livekit_numbers(remove=[row.number])
+    if row.carrier not in ("signalwire", "bandwidth"):
+        await _livekit_numbers(remove=[row.number])
     log.info("phone_number_released", org_id=str(row.org_id), number=row.number, returned=return_to_twilio)
 
 
@@ -329,7 +343,7 @@ async def carrier_of(db: AsyncSession, org_id: uuid.UUID, number: str) -> str:
         return "twilio"
     row = (await db.execute(select(PhoneNumber).where(PhoneNumber.org_id == org_id, PhoneNumber.number == number,
                                                       PhoneNumber.status == "active"))).scalar_one_or_none()
-    return "bandwidth" if row is not None and row.carrier == "bandwidth" else "twilio"
+    return row.carrier if row is not None and row.carrier in ("bandwidth", "signalwire") else "twilio"
 
 
 def number_to_dict(n: PhoneNumber) -> dict:

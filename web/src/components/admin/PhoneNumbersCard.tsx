@@ -2,7 +2,7 @@
 
 import { Phone, Search, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import useSWR from "swr";
+import useSWR, { mutate as refreshSWR } from "swr";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Spinner, Tabs } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, del, fetcher, post } from "@/lib/api";
@@ -22,6 +22,7 @@ interface Available {
 }
 
 interface Owned {
+  carrier?: string;
   sid: string;
   number: string;
   friendly: string;
@@ -37,7 +38,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   const toast = useToast();
   const url = `/api/admin/orgs/${orgId}/phone-numbers`;
   const { data, mutate } = useSWR<OrgNumbers>(url, fetcher);
-  const [mode, setMode] = useState<Mode>("buy");
+  const [mode, setMode] = useState<Mode>("import");
   const [area, setArea] = useState("");
   const [results, setResults] = useState<Available[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -118,6 +119,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
                   <Phone className="h-3.5 w-3.5 text-zinc-400" />
                   <span className="font-mono text-sm tabular-nums">{n.number}</span>
                   {n.is_default && <Badge tone="violet">Default</Badge>}
+                  <Badge tone="gray">{n.carrier || "twilio"}</Badge>
                   <Badge tone="gray">{n.source}</Badge>
                   <button
                     type="button"
@@ -142,19 +144,18 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
             </Notice>
           ))}
 
-          {!data.twilio_ready ? (
-            <Notice>Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN on the server to buy and assign numbers.</Notice>
-          ) : (
+          {(
             <>
               <Tabs<Mode>
                 value={mode}
                 onChange={setMode}
                 tabs={[
                   { value: "buy", label: "Buy new" },
-                  { value: "import", label: "From Twilio" },
+                  { value: "import", label: "Assign existing" },
                 ]}
               />
-              {mode === "buy" ? (
+              {mode === "import" && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-zinc-500">Assign numbers already owned in Twilio, Bandwidth or SignalWire. SignalWire currently supports outbound calls.</p><Button size="sm" onClick={() => void refreshSWR("/api/admin/telephony")}>Refresh numbers</Button></div>}
+              {mode === "buy" && !data.twilio_ready ? <Notice>Twilio must be configured to buy numbers. Use Assign existing for SignalWire and Bandwidth.</Notice> : mode === "buy" ? (
                 <>
                   <form onSubmit={search} className="flex items-end gap-2">
                     <Field label="Area code" className="flex-1">
@@ -193,13 +194,14 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
               ) : telephony.owned_error ? (
                 <Notice tone="red">{telephony.owned_error}</Notice>
               ) : unassigned.length === 0 ? (
-                <p className="text-sm text-zinc-500">Every number in the Twilio account is already assigned.</p>
+                <p className="text-sm text-zinc-500">No unassigned numbers found. Purchase numbers in your carrier dashboard, then refresh. SignalWire requires API credentials and a LiveKit trunk configured on the server.</p>
               ) : (
                 <ul className="max-h-64 divide-y divide-zinc-100 overflow-y-auto rounded-lg border border-zinc-200">
                   {unassigned.map((o) => (
                     <li key={o.sid} className="flex items-center justify-between gap-2 px-3 py-2">
                       <span className="min-w-0">
                         <span className="font-mono text-sm tabular-nums">{o.number}</span>
+                        <Badge tone="gray">{o.carrier || "twilio"}</Badge>
                         {o.friendly && <span className="ml-2 text-xs text-zinc-500">{o.friendly}</span>}
                       </span>
                       <Button size="sm" onClick={() => void assign(o.number, "import")} loading={busy === o.number} disabled={!!busy}>

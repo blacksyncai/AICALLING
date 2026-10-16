@@ -300,7 +300,7 @@ class CallService:
                         to_phone: str | None = None, campaign_id: uuid.UUID | None = None,
                         from_number: str | None = None) -> CallLog:
         """Dial a phone number via LiveKit SIP outbound with the given agent."""
-        if not settings.livekit_sip_outbound_trunk_id:
+        if not (settings.livekit_sip_outbound_trunk_id or settings.signalwire_sip_outbound_trunk_id):
             raise CallSetupError(
                 "Phone calling isn't configured — set LIVEKIT_SIP_OUTBOUND_TRUNK_ID "
                 "(a LiveKit outbound SIP trunk, e.g. via Twilio Elastic SIP)."
@@ -362,8 +362,12 @@ class CallService:
             started_at=datetime.now(timezone.utc),
         )
         carrier = await telephony.carrier_of(db, org.id, from_number)
+        trunk_id = (settings.signalwire_sip_outbound_trunk_id if carrier == "signalwire"
+                    else settings.livekit_sip_outbound_trunk_id)
+        if carrier != "bandwidth" and not trunk_id:
+            raise CallSetupError("The selected carrier outbound trunk isn't configured.")
         record = recordings.enabled_for(agent)
-        if record and settings.recording_via_twilio and carrier != "bandwidth":
+        if record and settings.recording_via_twilio and carrier == "twilio":
             # The Twilio trunk records the call; it's copied into the bucket after the call ends.
             from app.services import twilio_recordings
 
@@ -417,7 +421,7 @@ class CallService:
         # (403, busy, no answer…) is recorded on the call instead of it looking
         # "in progress" forever.
         sip_req = api.CreateSIPParticipantRequest(
-            sip_trunk_id=settings.livekit_sip_outbound_trunk_id,
+            sip_trunk_id=trunk_id,
             sip_call_to=phone,
             sip_number=from_number,
             room_name=room_name,
@@ -429,10 +433,10 @@ class CallService:
             krisp_enabled=True,
         )
         log.info("livekit_sip_dialing", room=room_name, to=phone, from_number=from_number or "trunk default",
-                 trunk=settings.livekit_sip_outbound_trunk_id)
+                 trunk=trunk_id)
         # LiveKit egress only when Twilio isn't recording (egress is capped by concurrency and monthly minutes).
         recording_key = (recordings.key_for(org.id, call_log.id)
-                         if record and not settings.recording_via_twilio else None)
+                         if record and (carrier == "signalwire" or not settings.recording_via_twilio) else None)
         task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name,
                                                    recording_key))
         _BACKGROUND.add(task)

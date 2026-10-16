@@ -92,6 +92,8 @@ async def activate(db: AsyncSession, campaign: Campaign) -> PhoneNumber:
     row = await campaign_number(db, campaign)
     if not row:
         raise InboundError("Pick one of your phone numbers for this inbound campaign.")
+    if row.carrier == "signalwire":
+        raise InboundError("SignalWire inbound routing is not configured yet. This number supports outbound calls only.")
     if not campaign.agent_id:
         raise InboundError("Pick the agent that answers.")
     if row.inbound_campaign_id and row.inbound_campaign_id != campaign.id:

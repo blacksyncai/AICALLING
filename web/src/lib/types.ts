@@ -55,6 +55,7 @@ export interface VoiceTuning {
 }
 
 export interface PhoneNumberItem {
+  carrier?: "twilio" | "bandwidth" | "signalwire";
   id: string;
   number: string;
   label: string;

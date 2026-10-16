@@ -216,10 +216,9 @@ async def telephony_status(_: AdminDep, db: DbDep):
         .where(PhoneNumberRequest.status == "open").order_by(PhoneNumberRequest.created_at)
     )).all()
     out["open_requests"] = [{**_request_to_dict(r), "org_id": str(r.org_id), "org_name": name} for r, name in reqs]
-    if not settings.twilio_ready:
-        return out
     try:
-        out["trunk_sid"] = await telephony.trunk_sid()
+        if settings.twilio_ready:
+            out["trunk_sid"] = await telephony.trunk_sid()
     except Exception as exc:
         out["trunk_error"] = str(exc)
     try:
@@ -228,7 +227,7 @@ async def telephony_status(_: AdminDep, db: DbDep):
             select(PhoneNumber, Organization.name).join(Organization, Organization.id == PhoneNumber.org_id)
             .where(PhoneNumber.status == "active"))).all()}
         out["owned"] = [{
-            **o, "on_trunk": o.get("carrier") == "bandwidth" or (bool(out["trunk_sid"]) and o["trunk_sid"] == out["trunk_sid"]),
+            **o, "on_trunk": o.get("carrier") in ("bandwidth", "signalwire") or (bool(out["trunk_sid"]) and o["trunk_sid"] == out["trunk_sid"]),
             "org_id": str(assigned[o["number"]][0].org_id) if o["number"] in assigned else None,
             "org_name": assigned[o["number"]][1] if o["number"] in assigned else None,
         } for o in owned]
