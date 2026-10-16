@@ -291,7 +291,8 @@ async def execute_command(command_id: uuid.UUID, body: ConfirmCommand, ctx: Mana
 
 
 def conversation_out(row):
-    return {"id": str(row.id), "title": row.title, "messages": row.messages, "drafts": row.drafts,
+    return {"id": str(row.id), "title": row.title, "messages": [{"role": x["role"], "text": x["text"]} for x in row.messages], "drafts": row.drafts,
+            "selected_source": next((x["selected_source"] for x in reversed(row.messages) if x.get("selected_source") is not None), None),
             "updated_at": row.updated_at.isoformat()}
 
 
@@ -314,6 +315,7 @@ class DraftIn(BaseModel):
     provider: str = Field(max_length=32)
     message: str = Field(min_length=3, max_length=4000)
     conversation_id: uuid.UUID | None = None
+    selected_source: Source | None = None
     history: list[str | ChatTurn] = Field(default_factory=list, max_length=12)
 
 
@@ -351,6 +353,7 @@ async def generate_draft(body: DraftIn, ctx: ManagerDep, db: DbDep):
     agents = [{"id": str(x.id), "name": x.name} for x in (await db.execute(select(Agent).where(Agent.org_id == ctx.org.id))).scalars()]
     campaigns = [{"id": str(x.id), "name": x.name} for x in (await db.execute(select(Campaign).where(Campaign.org_id == ctx.org.id))).scalars()]
     prompt = """You are BlackSync's CRM assistant and automation builder. BlackSync can execute supported CRM tools after the user approves a confirmation dialog. Produce typed proposals; the platform executes them. Never report a change completed without its execution receipt.
+The UI provides a source picker. If source selection is needed, return needs_source:true and ask the user to choose in the picker. If selected_source is supplied, use it exactly for every rule; do not ask about adding optional campaign/pond filters, do not ask to confirm it again, and proceed to draft the requested rules. Never interpret a selected agent as a campaign. It remains authoritative until changed in the picker.
 Current assistant_tools are authoritative; earlier assistant messages may contain outdated capability claims. Do not say you can only draft or cannot create a resource when its tool is supported.
 For one-time CRM requests, return commands: [{"action": "a supported action", ...its arguments from command_schema}]. At most four commands.
 Only propose tools present in assistant_tools. Use exact supplied IDs or IDs from recent successful read results; never invent IDs.
@@ -378,7 +381,7 @@ Default to drafting verification/name_confirmed if the customer explicitly asks 
         CrmCommand.status == "succeeded").order_by(CrmCommand.created_at.desc()).limit(4))).all()
     saved_rules = (await db.scalars(select(RadarAutomation).where(RadarAutomation.org_id == ctx.org.id,
         RadarAutomation.connection_id == conn.id).order_by(RadarAutomation.created_at.desc()).limit(30))).all()
-    context = {"saved_rules": [rule_out(row, conn.provider) for row in saved_rules], "assistant_tools": assistant.capabilities(conn.provider), "command_schema": CommandSpec.model_json_schema(),
+    context = {"selected_source": body.selected_source.model_dump(mode="json") if body.selected_source is not None else None, "saved_rules": [rule_out(row, conn.provider) for row in saved_rules], "assistant_tools": assistant.capabilities(conn.provider), "command_schema": CommandSpec.model_json_schema(),
                "recent_tool_results": [{"action": r.spec["action"], "result": json.dumps(r.result)[:10000]} for r in recent],
                "resources": catalog, "agents": agents[:80], "campaigns": campaigns[:80], "conversation": [{"role": "user", "text": x[:4000]} if isinstance(x, str) else x.model_dump() for x in body.history]}
     try:
@@ -387,13 +390,21 @@ Default to drafting verification/name_confirmed if the customer explicitly asks 
             "messages": [{"role": "system", "content": prompt},
                          {"role": "user", "content": json.dumps(context)}, {"role": "user", "content": body.message}]})
         generated = json.loads(response["choices"][0]["message"]["content"])
+        if generated.get("needs_source") and body.selected_source is None:
+            return {"message": str(generated.get("message") or "Choose an existing call source to continue.")[:1800],
+                    "needs_source": True, "drafts": [], "commands": [], "resource_requests": [], "writes_performed": False}
         drafts = []
         for item in generated.get("drafts", [])[:4]:
-            source = Source.model_validate(item.get("source") or {})
+            # A user-picked scope is authoritative. Ignore ALL model-generated scope fields,
+            # including malformed IDs or an invented campaign for an existing agent.
+            try:
+                source = body.selected_source if body.selected_source is not None else Source.model_validate(item.get("source") or {})
+            except ValueError:
+                return {"message": "Choose an existing agent, campaign or source pond to continue.", "needs_source": True, "drafts": [], "commands": [], "resource_requests": [], "writes_performed": False}
             if source.agent_id and str(source.agent_id) not in {a["id"] for a in agents}:
-                raise ValueError("The assistant selected an unknown source agent; choose the agent explicitly.")
+                return {"message": "Choose an existing agent, campaign or source pond to continue.", "needs_source": True, "drafts": [], "commands": [], "resource_requests": [], "writes_performed": False}
             if source.campaign_id and str(source.campaign_id) not in {a["id"] for a in campaigns}:
-                raise ValueError("The assistant selected an unknown campaign; choose the campaign explicitly.")
+                return {"message": "Choose an existing agent, campaign or source pond to continue.", "needs_source": True, "drafts": [], "commands": [], "resource_requests": [], "writes_performed": False}
             if source.pond_id and source.pond_id not in {p["id"] for p in catalog["crm_ponds"]}:
                 raise ValueError("The assistant selected an unknown source pond; choose it explicitly.")
             condition = Condition.model_validate(item.get("condition") or {})
@@ -422,7 +433,7 @@ Default to drafting verification/name_confirmed if the customer explicitly asks 
         await db.flush()
         return {"commands": [assistant.command_out(row, body.provider) for row in proposed_commands],
                 "message": ("Your CRM action is ready to review. Check the details in the confirmation window and press Confirm and continue to apply it." if proposed_commands else str(generated.get("message") or "Review these drafts before saving or activating.")[:1800]),
-                "drafts": drafts, "resource_requests": requests, "writes_performed": False}
+                "drafts": drafts, "resource_requests": requests, "needs_source": bool(generated.get("needs_source")) and body.selected_source is None, "writes_performed": False}
     except (ValueError, KeyError, TypeError, CrmError) as exc:
         raise HTTPException(422, f"Couldn't produce a valid automation draft: {str(exc)[:300]}") from exc
     except Exception as exc:
@@ -441,13 +452,33 @@ async def draft(body: DraftIn, ctx: ManagerDep, db: DbDep):
         if row is None:
             raise HTTPException(404, "Conversation not found in this account.")
         body.history = [ChatTurn.model_validate(turn) for turn in row.messages[-12:]]
+        if body.selected_source is None:
+            stored_source = next((x["selected_source"] for x in reversed(row.messages) if x.get("selected_source") is not None), None)
+            if stored_source is not None:
+                body.selected_source = Source.model_validate(stored_source)
     else:
         row = RadarConversation(org_id=ctx.org.id, connection_id=conn.id, created_by=ctx.user.id,
                                 title=body.message[:120], connection_fingerprint=assistant.fingerprint(conn), messages=[], drafts=[])
         db.add(row)
         await db.flush()
+    if body.selected_source is not None:
+        source = body.selected_source
+        for model, key in ((Agent, source.agent_id), (Campaign, source.campaign_id), (RadarPond, source.blacksync_pond_id)):
+            if key:
+                obj = await db.get(model, key)
+                if obj is None or obj.org_id != ctx.org.id:
+                    raise HTTPException(400, "The selected source is no longer available in this workspace. Choose it again.")
+        if source.pond_id:
+            try:
+                catalog = await resource_service.resources(db, conn)
+            except CrmError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if source.pond_id not in {p["id"] for p in catalog["crm_ponds"]}:
+                raise HTTPException(400, "Choose a source pond in this connected CRM account.")
+        if not any((source.agent_id, source.campaign_id, source.blacksync_pond_id, source.pond_id, source.lead_source)):
+            raise HTTPException(400, "Choose at least one source; the picker cannot select all calls implicitly.")
     result = await generate_draft(body, ctx, db)
-    row.messages = [*row.messages, {"role": "user", "text": body.message},
+    row.messages = [*row.messages, {"role": "user", "text": body.message, **({"selected_source": body.selected_source.model_dump(mode="json")} if body.selected_source is not None else {})},
                     {"role": "assistant", "text": result["message"]}][-200:]
     if result.get("drafts"):
         row.drafts = result["drafts"]

@@ -269,7 +269,9 @@ def test_assistant_only_drafts_validated_rules_and_never_creates_resources(clien
         return {'choices':[{'message':{'content':json.dumps({'drafts':[{'source':{'agent_id':str(uuid.uuid4())}}]})}}]}
     monkeypatch.setattr(llm, '_chat', bad)
     r = client.post('/api/radar/automations/draft', json={'provider':'followupboss','message':'Route those people'})
-    assert r.status_code == 422
+    assert r.status_code == 200
+    assert r.json()['needs_source'] and not r.json()['drafts'] and not r.json()['commands']
+    assert not any(m in ('POST', 'PUT') for m, _, _ in crm['calls'][before:])
 
 
 def test_recovery_queues_only_calls_since_activation_and_is_idempotent(client, crm):

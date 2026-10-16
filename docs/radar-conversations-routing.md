@@ -38,3 +38,11 @@ Before a deal action the execution commits a pending marker, then locks the cont
 Conversations, saved-rule context and verification improvements apply to all connected CRMs. Shared adapters remain authoritative for available tools and routing targets. This update adds native deal routing and lead-source controls for FUB; it does not claim equivalent native resources exist in every other CRM. Native FUB Smart List and Lead Flow configuration remain in Follow Up Boss; unsupported actions are described honestly and are not simulated.
 
 Tests use mocked CRM HTTP responses. No live customer contact, deal, Lead Flow, production database or Stripe object is modified during validation. A live test with an explicitly selected test contact remains necessary before enabling a customer's routing rule.
+
+## Explicit source picker
+
+The chat composer offers a searchable existing-agent dialog. Agent selection alone is sufficient; campaign, BlackSync pond and CRM pond are optional cumulative filters. Selecting only a campaign/pond is also supported. The picker requires at least one scope filter, supports Cancel/Escape, traps focus and restores the prior focus, and is responsive on phones.
+
+The draft API accepts `selected_source` using the existing typed `Source` schema. Every picked resource is checked against the current workspace/account before invoking the model. Picked scope overrides the model's entire generated source, preventing an agent name from becoming a fabricated campaign ID. Missing or malformed model-selected sources return `needs_source: true` with no drafts or commands, allowing the client to open the dialog instead of rendering a hard error. The model can also request the dialog with `needs_source: true`.
+
+The selection is stored as metadata on the existing conversation's user turns. It is restored on reopen and reused server-side for subsequent messages, without a schema migration. Starting a new chat clears the selection. The public message list exposes role/text only, with the current selection provided separately. Choosing a source never saves, activates or executes a rule. Continue drafting submits the selected scope to create reviewable drafts.

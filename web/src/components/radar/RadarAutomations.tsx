@@ -6,6 +6,7 @@ import {
   toolName,
   type CrmCommand,
 } from "./CrmAssistantCommands";
+import { RadarSourcePicker, type RadarSource } from "./RadarSourcePicker";
 import { FollowUpBossTools } from "./FollowUpBossTools";
 import AiMascotInput from "@/components/ui/ai-mascot-input";
 import { useState, useEffect } from "react";
@@ -95,6 +96,7 @@ export function RadarAutomations() {
     id: string;
     title: string;
     drafts?: Rule[];
+    selected_source?: RadarSource | null;
     messages: { role: string; text: string }[];
   };
   const [conversationIds, setConversationIds] = useState<
@@ -111,7 +113,17 @@ export function RadarAutomations() {
   } = useSWR<{
     items: Conversation[];
   }>(provider ? `${BASE}/conversations/${provider}` : null, fetcher);
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const [continueAfterSource, setContinueAfterSource] = useState(false);
+  const [selectedSources, setSelectedSources] = useState<
+    Record<string, RadarSource | undefined>
+  >({});
+  const selectedSource = selectedSources[provider];
   const openConversation = (chat: Conversation) => {
+    setSelectedSources((old) => ({
+      ...old,
+      [provider]: chat.selected_source || undefined,
+    }));
     setConversationIds((old) => ({ ...old, [provider]: chat.id }));
     setNewChatProviders((old) => ({ ...old, [provider]: false }));
     setMessages((old) => [
@@ -138,6 +150,10 @@ export function RadarAutomations() {
     )
       return;
     const chat = conversations.items[0];
+    setSelectedSources((old) => ({
+      ...old,
+      [provider]: chat.selected_source || undefined,
+    }));
     setDrafts(
       (chat.drafts || []).map((r) => ({
         ...r,
@@ -152,6 +168,29 @@ export function RadarAutomations() {
       ...chat.messages.map((m) => ({ ...m, provider })),
     ]);
   }, [provider, conversations, conversationIds, newChatProviders]);
+  const sourceLabel = selectedSource
+    ? [
+        selectedSource.agent_id
+          ? data?.agents.find((a) => a.id === selectedSource.agent_id)?.name ||
+            "Selected agent"
+          : "",
+        selectedSource.campaign_id
+          ? data?.campaigns.find((c) => c.id === selectedSource.campaign_id)
+              ?.name || "Selected campaign"
+          : "",
+        selectedSource.blacksync_pond_id
+          ? resources?.blacksync_ponds.find(
+              (p) => p.id === selectedSource.blacksync_pond_id,
+            )?.name || "BlackSync pond"
+          : "",
+        selectedSource.pond_id
+          ? resources?.crm_ponds.find((p) => p.id === selectedSource.pond_id)
+              ?.name || "CRM pond"
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
   const connection = data?.connections.find((c) => c.provider === provider);
   const edit = (r: Rule) => {
     setPicked(r.provider);
@@ -182,9 +221,12 @@ export function RadarAutomations() {
     await refreshCommands();
     if (!command.writes) setView("commands");
   };
-  const ask = async () => {
-    if (!request.trim() || !provider) return;
-    const text = request.trim();
+  const ask = async (
+    sourceOverride?: RadarSource,
+    messageOverride?: string,
+  ) => {
+    const text = (messageOverride || request).trim();
+    if (!text || !provider || busy) return;
     setBusy(true);
     setErr("");
     setMessages((m) => [...m, { role: "user", text, provider }]);
@@ -193,12 +235,14 @@ export function RadarAutomations() {
       const result = await post<{
         message: string;
         conversation_id?: string;
+        needs_source?: boolean;
         commands?: CrmCommand[];
         drafts: Rule[];
         resource_requests: ResourceRequest[];
       }>(`${BASE}/draft`, {
         provider,
         message: text,
+        selected_source: sourceOverride || selectedSource || null,
         conversation_id: conversationIds[provider] || null,
         history: messages
           .filter((m) => m.provider === provider)
@@ -243,9 +287,21 @@ export function RadarAutomations() {
       if (review) setReviewRequest({ id: review.id, token: Date.now() });
       void refreshCommands();
       setSuggestions(result.resource_requests);
+      if (result.needs_source) {
+        setContinueAfterSource(true);
+        setSourcePickerOpen(true);
+      }
     } catch (e) {
       setRequest(text);
       setErr(errorText(e));
+      if (
+        /unknown (?:source agent|campaign)|choose (?:the campaign|it explicitly|a source)/i.test(
+          errorText(e),
+        )
+      ) {
+        setContinueAfterSource(true);
+        setSourcePickerOpen(true);
+      }
     } finally {
       setBusy(false);
     }
@@ -392,6 +448,10 @@ export function RadarAutomations() {
                   disabled={busy}
                   onClick={() => {
                     setConversationIds((old) => ({ ...old, [provider]: "" }));
+                    setSelectedSources((old) => ({
+                      ...old,
+                      [provider]: undefined,
+                    }));
                     setNewChatProviders((old) => ({
                       ...old,
                       [provider]: true,
@@ -443,6 +503,48 @@ export function RadarAutomations() {
                 )}
               </div>
               <div className="p-4 sm:p-5">
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setContinueAfterSource(false);
+                      setSourcePickerOpen(true);
+                    }}
+                  >
+                    <Bot size={15} />
+                    {selectedSource
+                      ? "Change call source"
+                      : "Choose call source"}
+                  </Button>
+                  {sourceLabel && (
+                    <span className="min-w-0 break-words text-xs text-zinc-500">
+                      {sourceLabel}
+                    </span>
+                  )}
+                </div>
+                <RadarSourcePicker
+                  open={sourcePickerOpen}
+                  onClose={() => setSourcePickerOpen(false)}
+                  selected={selectedSource}
+                  overview={data}
+                  resources={resources}
+                  continueDrafting={continueAfterSource}
+                  onSelect={(source) => {
+                    setSelectedSources((old) => ({
+                      ...old,
+                      [provider]: source,
+                    }));
+                    setSourcePickerOpen(false);
+                    setErr("");
+                    if (continueAfterSource)
+                      void ask(
+                        source,
+                        request.trim() ||
+                          "Use the selected source to continue drafting the automation rules we discussed.",
+                      );
+                  }}
+                />
                 <AiMascotInput
                   title="What can Radar do for you?"
                   subtitle="Work with your CRM, or build a reusable automation."
