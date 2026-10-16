@@ -64,6 +64,8 @@ async def lifespan(app: FastAPI):
     crm_task = start_poll_loop()
     from app.services.crm.automations import start_worker
     radar_task = start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services.call_alerts import start_worker as start_alerts
+    alert_task = start_alerts() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.outbound_call import fix_mislabeled_outcomes
     repair_task = asyncio.create_task(fix_mislabeled_outcomes() if settings.run_startup_jobs else asyncio.sleep(0))
     if settings.run_startup_jobs:
@@ -130,6 +132,7 @@ async def lifespan(app: FastAPI):
     refresh_task.cancel()
     crm_task.cancel()
     radar_task.cancel()
+    alert_task.cancel()
     repair_task.cancel()
     log.info("pounce_shutting_down")
 
@@ -219,3 +222,7 @@ async def health():
 @app.get("/", tags=["infra"])
 async def root():
     return {"message": "BlackSync API — AI voice agents", "docs": "/docs"}
+
+from app.routers import call_alerts  # noqa: E402
+app.include_router(call_alerts.router)
+app.include_router(call_alerts.admin_router)

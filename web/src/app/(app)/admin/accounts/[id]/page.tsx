@@ -1,5 +1,6 @@
 "use client";
 
+import { AdminCallNotifications, CallAlertSettings } from "@/components/notifications/CallAlerts";
 import { ArrowLeft, Building2, LogIn } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -102,6 +103,8 @@ function AccountDetail() {
         <StatTile label="Agents / Campaigns / Contacts" value={`${fmt(org.agents)} / ${fmt(org.campaigns)} / ${fmt(org.contacts)}`} />
       </div>
 
+      <CallAlertSettings orgId={org.id} />
+      <AdminCallNotifications orgId={org.id} />
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="flex min-w-0 flex-col gap-6">
           <ManagePlanCard orgId={org.id} />

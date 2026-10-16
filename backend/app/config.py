@@ -179,6 +179,7 @@ class Settings(BaseSettings):
     # Senders (the blacksync.ai domain is verified in Resend): account and product emails come from
     # notifications@, team invites from invites@.
     email_from: str = "BlackSync <notifications@blacksync.ai>"
+    email_from_calls: str = "BlackSync Campaigns <campaigns@blacksync.ai>"
     email_from_invites: str = "BlackSync <invites@blacksync.ai>"
 
     # ── Support (in-app help widget) ──────────────────────────────────────────
