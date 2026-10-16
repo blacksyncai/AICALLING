@@ -1726,6 +1726,7 @@ function AutomationActivity() {
       result: {
         reason?: string;
         contact?: { id: string; status: string; name?: string };
+        transcript?: {status: string; parts?: number; message?: string};
         csv_data?: {
           synced: string[];
           unchanged: string[];
@@ -1854,6 +1855,9 @@ function AutomationActivity() {
                 ))}
               </div>
             )}
+            {i.result.transcript && <p className={i.result.transcript.status === "error" ? "text-red-600" : "text-zinc-600"}>
+              {i.result.transcript.status === "sent" ? `Transcript sent to FUB (${i.result.transcript.parts} parts).` : i.result.transcript.message || `Transcript: ${i.result.transcript.status}`}
+            </p>}
             {i.error && <p className="text-red-600">{i.error}</p>}
             {i.next_at && (
               <p>Retry scheduled: {new Date(i.next_at).toLocaleString()}</p>
@@ -1865,6 +1869,16 @@ function AutomationActivity() {
               View call →
             </Link>
           </div>
+          {i.status === "succeeded" && i.result.contact && (
+            <Button size="sm" onClick={async () => {
+              setRetryErr("");
+              try {
+                const response = await post<{result: {transcript: {status: string; message?: string}}}>(`${BASE}/activity/${i.id}/sync-transcript`);
+                if (response.result.transcript.status !== "sent") setRetryErr(response.result.transcript.message || `Transcript ${response.result.transcript.status}. Check Push calls settings.`);
+                void mutate();
+              } catch (e) { setRetryErr(errorText(e)); }
+            }}>Sync transcript</Button>
+          )}
           {i.status === "succeeded" && i.result.contact && (
             <Button
               size="sm"

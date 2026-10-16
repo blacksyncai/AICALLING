@@ -509,3 +509,29 @@ async def sync_csv_data(execution_id: uuid.UUID, ctx: ManagerDep, db: DbDep):
         return {"result": row.result}
     except CrmError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/activity/{execution_id}/sync-transcript")
+async def sync_call_transcript(execution_id: uuid.UUID, ctx: ManagerDep, db: DbDep):
+    """Send transcript notes only; never dial or rerun a routing action."""
+    await require(ctx, db)
+    row = await db.get(RadarExecution, execution_id)
+    if not row or row.org_id != ctx.org.id or row.status != "succeeded":
+        raise HTTPException(404, "Completed routing action not found.")
+    rule = await owned_rule(db, ctx.org.id, row.automation_id)
+    conn = await db.get(CrmConnection, rule.connection_id)
+    call = await db.get(CallLog, row.call_id)
+    lead = await db.get(Lead, call.lead_id) if call and call.org_id == ctx.org.id else None
+    if not conn or conn.org_id != ctx.org.id or conn.provider != "followupboss" or not lead or lead.org_id != ctx.org.id:
+        raise HTTPException(400, "This action has no linked Follow Up Boss contact in this workspace.")
+    contact_id = str(((row.result or {}).get("contact") or {}).get("id") or "")
+    if not contact_id or contact_id != str((lead.crm_refs or {}).get(conn.provider) or ""):
+        raise HTTPException(409, "The FUB contact link changed. Review the contact before sending its transcript.")
+    try:
+        from app.services.crm.fub_transcripts import send
+        receipt = await send(db, conn, call, contact_id)
+        row.result = {**(row.result or {}), "transcript": receipt}
+        await db.commit()
+        return {"result": row.result}
+    except CrmError as exc:
+        raise HTTPException(400, str(exc)) from exc

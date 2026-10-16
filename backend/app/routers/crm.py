@@ -75,7 +75,7 @@ def conn_to_dict(c: CrmConnection) -> dict:
         "settings": {k: s.get(k) for k in ("log_calls", "create_contacts", "csv_create_fields", "only_connected", "speed_to_lead_agent_id",
                                              "activity_agent_id", "min_seconds", "skip_outcomes", "only_outcomes",
                                              "only_sentiments", "note_summary",
-                                             "note_details", "note_link")},
+                                             "note_details", "note_link", "note_transcript")},
         "auto_imports": [{k: r.get(k) for k in ("id", "name", "filters", "skip_contacted", "campaign_id", "list_tag",
                                                  "every_minutes", "enabled", "last_run_at", "last_result", "runs", "summary")}
                          for r in s.get("auto_imports") or []],
@@ -393,6 +393,7 @@ class SettingsIn(BaseModel):
     note_summary: bool | None = None
     note_details: bool | None = None
     note_link: bool | None = None
+    note_transcript: bool | None = None
     speed_to_lead_agent_id: str | None = None  # "" turns it off
     activity_agent_id: str | None = None  # "" turns it off
     location_id: str | None = Field(default=None, max_length=100)
@@ -405,7 +406,7 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
     conn = await _require_conn(db, ctx.org.id, key)
     s = sync.conn_settings(conn)
     data = body.model_dump(exclude_unset=True)
-    for k in ("log_calls", "create_contacts", "csv_create_fields", "only_connected", "note_summary", "note_details", "note_link", "min_seconds"):
+    for k in ("log_calls", "create_contacts", "csv_create_fields", "only_connected", "note_summary", "note_details", "note_link", "note_transcript", "min_seconds"):
         if data.get(k) is not None:
             s[k] = data[k]
     if data.get("skip_outcomes") is not None:

@@ -267,6 +267,13 @@ async def run_execution(execution_id):
                 job.result = {k: v for k, v in {**job.result, "actions": dict(done)}.items() if k != "pending_deal"}
                 job.lease_until = now() + dt.timedelta(minutes=5)
                 await db.commit()
+            if conn.provider == "followupboss" and any(a.kind != "blacksync_pond" for a in spec.actions):
+                from app.services.crm.fub_transcripts import send
+                try:
+                    receipt = await send(db, conn, call, str((lead.crm_refs or {}).get(conn.provider) or ""))
+                except CrmError as exc:
+                    receipt = {"status": "error", "message": str(exc)[:500]}
+                job.result = {**(job.result or {}), "transcript": receipt}
             job.status, job.error = "succeeded", ""
             await sync.add_log(db, conn, "radar", "ok", f"Radar automation “{rule.name}” applied.", call_id=call.id)
         except Exception as exc:

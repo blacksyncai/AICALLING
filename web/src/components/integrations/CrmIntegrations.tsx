@@ -70,6 +70,7 @@ export interface Connection {
     note_summary: boolean;
     note_details: boolean;
     note_link: boolean;
+    note_transcript?: boolean;
   };
   auto_imports: AutoRule[];
   pending_calls: number;

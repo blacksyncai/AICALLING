@@ -42,7 +42,7 @@ def defaults() -> dict:
             "speed_to_lead_agent_id": None, "speed_to_lead_since": None, "activity_agent_id": None,
             # Which calls get logged, and what goes in the CRM note.
             "min_seconds": 0, "skip_outcomes": [], "only_outcomes": [], "only_sentiments": [],
-            "note_summary": True, "note_details": True, "note_link": True}
+            "note_summary": True, "note_details": True, "note_link": True, "note_transcript": True}
 
 
 def conn_settings(conn: CrmConnection) -> dict:
@@ -157,6 +157,15 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
         await add_log(db, conn, "call", "ok", f"Logged {call.outcome_label.lower()} call with {c.name or c.phone}."
                       + (f" {moved}." if moved else ""),
                       call_id=uuid.UUID(call.call_id) if call.call_id else None, external_id=ref)
+        if conn.provider == "followupboss" and call.call_id:
+            from app.models.call_log import CallLog
+            from app.services.crm.fub_transcripts import send
+            stored = await db.get(CallLog, uuid.UUID(call.call_id))
+            if stored:
+                receipt = await send(db, conn, stored, str(ref))
+                if receipt["status"] == "sent":
+                    await add_log(db, conn, "transcript", "ok", f"Sent transcript to FUB ({receipt['parts']} parts).",
+                                  call_id=stored.id, external_id=str(ref))
     except (CrmError, KeyError, ValueError, TypeError) as exc:
         log.warning("crm_push_failed", provider=conn.provider, error=str(exc))
         await add_log(db, conn, "call", "error", f"Couldn't log the call with {c.name or c.phone}: {exc}",

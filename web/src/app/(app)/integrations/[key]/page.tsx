@@ -430,6 +430,7 @@ function PushCalls({ p, c, isCrm, onSaved }: { p: Provider; c: Connection; isCrm
             <Toggle checked={s.note_summary} onChange={(v) => void save({ note_summary: v })} label="AI summary" />
             <Toggle checked={s.note_details} onChange={(v) => void save({ note_details: v })} label="Extracted details" />
             <Toggle checked={s.note_link} onChange={(v) => void save({ note_link: v })} label="Recording link" />
+            {p.key === "followupboss" && <Toggle checked={s.note_transcript !== false} onChange={(v) => void save({ note_transcript: v })} label="Full transcript" description="Send the spoken conversation as FUB notes. Long calls are split into numbered parts." />}
           </div>
         </Card>
 
