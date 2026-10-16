@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import AiMascotInput from "@/components/ui/ai-mascot-input";
 import { useState } from "react";
 import useSWR from "swr";
 import {
@@ -121,6 +122,7 @@ export function RadarAutomations() {
       ]);
       setSuggestions(result.resource_requests);
     } catch (e) {
+      setRequest(text);
       setErr(errorText(e));
     } finally {
       setBusy(false);
@@ -221,20 +223,7 @@ export function RadarAutomations() {
                 </div>
                 <Badge tone="gray">Draft mode</Badge>
               </div>
-              <div className={styles.messages} aria-live="polite">
-                {!messages.some((m) => m.provider === provider) && (
-                  <div className={styles.welcome}>
-                    <h4>Turn a request into a rule.</h4>
-                    <p>
-                      “When someone confirms their name, move them to my
-                      Verified Contacts pond. Put named voicemails in Needs
-                      Review.”
-                    </p>
-                    <span>
-                      Name confirmation and named voicemail stay separate.
-                    </span>
-                  </div>
-                )}
+              <div className={styles.messages} aria-live="polite" style={{ display: messages.some((m) => m.provider === provider) ? undefined : "none" }}>
                 {messages
                   .filter((m) => m.provider === provider)
                   .map((m, i) => (
@@ -257,6 +246,17 @@ export function RadarAutomations() {
                   </p>
                 )}
               </div>
+              <div className="p-4 sm:p-5">
+                <AiMascotInput
+                  value={request}
+                  onChange={setRequest}
+                  onSubmit={() => ask()}
+                  isProcessing={busy}
+                  disabled={!provider}
+                  showWelcome={!messages.some((m) => m.provider === provider)}
+                  placeholder={`Tell Radar what to do in ${connection?.name ?? "your CRM"}…`}
+                />
+              </div>
               <div className="px-4 pb-3">
               <Button
                 onClick={() => {
@@ -270,34 +270,6 @@ export function RadarAutomations() {
                 Build manually
               </Button>
               </div>
-              <form
-                className={styles.composer}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void ask();
-                }}
-              >
-                <Textarea
-                  aria-label="Describe your automation"
-                  value={request}
-                  onChange={(e) => setRequest(e.target.value)}
-                  maxLength={4000}
-                  rows={3}
-                  placeholder={`Tell Radar what to do in ${connection?.name ?? "your CRM"}…`}
-                />
-                <div>
-                  <span>Drafting does not move contacts or place calls.</span>
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    loading={busy}
-                    disabled={!request.trim()}
-                  >
-                    <Send size={14} />
-                    Draft workflow
-                  </Button>
-                </div>
-              </form>
               {err && (
                 <div className="px-4 pb-4">
                   <Notice tone="red">{err}</Notice>

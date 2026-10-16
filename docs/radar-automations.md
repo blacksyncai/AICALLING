@@ -75,3 +75,27 @@ in tests. No new keys, Stripe products, or billing terms are introduced.
 
 Deploy backend and frontend together after review. Leave all new rules as drafts;
 activate one narrowly scoped test rule only after reviewing its evidence and destination.
+
+## Mascot composer
+
+The Radar chat uses `web/src/components/ui/ai-mascot-input.tsx`. The frontend already
+has TypeScript, Tailwind 4 (styles in `web/src/app/globals.css`), the `@/*` alias,
+and shared components under `web/src/components`. The `ui/` directory keeps reusable
+components separate from feature-specific screens; the existing `ui.tsx` exports
+remain intact. No shadcn initialization or global CSS reset is needed.
+
+The design adapts the supplied mascot input using the installed `motion/react`
+and `lucide-react` packages. It needs no new dependency or external image/font.
+Radar passes controlled request text, busy state, and its existing draft callback.
+Enter submits; Shift+Enter inserts a line; IME composition does not submit. The
+component honors reduced motion, blocks duplicate sends, and preserves failed
+requests. There is no simulated dictation or fake processing delay.
+
+The microphone uses the browser's SpeechRecognition service when available;
+a browser may send audio to its speech provider. Unsupported browsers disable the
+control; permission denial shows an error and preserves the prompt. Speech input
+is optional and never auto-submits. Unmounting/stopping aborts recognition.
+Model/reasoning selection, attachments, and web search are omitted because the
+Radar draft endpoint does not accept those options. The existing server-side LLM
+configuration remains unchanged. Browser tests exercise speech callbacks with a
+mock; real microphone capture depends on browser support and user permission.
