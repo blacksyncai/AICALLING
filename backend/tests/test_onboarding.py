@@ -123,3 +123,29 @@ def test_funeral_home_onboarding(client, make_client):
     assert r.json()["org"]["industry"] == "funeral_services"
     demo = c.get(f"/api/agents/{c.get('/api/agents/').json()[0]['id']}").json()
     assert "Funeral Homes" in demo["system_prompt"] and "24/7 First Call Answering" in demo["system_prompt"]
+
+
+def test_onboarding_phone_is_normalized_saved_and_available_to_signup_alert(client, make_client, monkeypatch):
+    from app.services import onboarding_emails
+
+    captured = []
+    monkeypatch.setattr(onboarding_emails, 'alert_new_signup', lambda user, *args: captured.append(user.phone))
+    c = _orphan_login(client, make_client)
+    r = c.post('/api/onboarding/start', json={'company': 'Connected Co', 'industry': 'other',
+                                            'phone': '(415) 555-0123'})
+    assert r.status_code == 201, r.text
+    assert r.json()['user']['phone'] == '+14155550123'
+    assert c.get('/api/auth/me').json()['user']['phone'] == '+14155550123'
+    assert captured == ['+14155550123']
+
+
+def test_onboarding_rejects_bad_phone_without_creating_workspace(client, make_client):
+    c = _orphan_login(client, make_client)
+    for phone in ['', '123', 'not a number', '+9991234567890']:
+        r = c.post('/api/onboarding/start', json={'company': 'Invalid Co', 'industry': 'other', 'phone': phone})
+        assert r.status_code == 422, r.text
+    assert c.get('/api/auth/me').json()['org'] is None
+    r = c.post('/api/onboarding/start', json={'company': 'International Co', 'industry': 'other',
+                                            'phone': '+44 20 7946 0958'})
+    assert r.status_code == 201, r.text
+    assert r.json()['user']['phone'] == '+442079460958'
