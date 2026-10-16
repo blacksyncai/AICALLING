@@ -3,10 +3,12 @@ import Link from "next/link";
 import {
   CrmCommandCard,
   TOOL_NAMES,
+  toolName,
   type CrmCommand,
 } from "./CrmAssistantCommands";
+import { FollowUpBossTools } from "./FollowUpBossTools";
 import AiMascotInput from "@/components/ui/ai-mascot-input";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import useSWR from "swr";
 import {
   ArrowDown,
@@ -89,6 +91,67 @@ export function RadarAutomations() {
     provider ? `${BASE}/resources/${provider}` : null,
     fetcher,
   );
+  type Conversation = {
+    id: string;
+    title: string;
+    drafts?: Rule[];
+    messages: { role: string; text: string }[];
+  };
+  const [conversationIds, setConversationIds] = useState<
+    Record<string, string>
+  >({});
+  const [newChatProviders, setNewChatProviders] = useState<
+    Record<string, boolean>
+  >({});
+  const {
+    data: conversations,
+    mutate: refreshConversations,
+    error: conversationError,
+    isLoading: conversationsLoading,
+  } = useSWR<{
+    items: Conversation[];
+  }>(provider ? `${BASE}/conversations/${provider}` : null, fetcher);
+  const openConversation = (chat: Conversation) => {
+    setConversationIds((old) => ({ ...old, [provider]: chat.id }));
+    setNewChatProviders((old) => ({ ...old, [provider]: false }));
+    setMessages((old) => [
+      ...old.filter((m) => m.provider !== provider),
+      ...chat.messages.map((m) => ({ ...m, provider })),
+    ]);
+    setDrafts(
+      (chat.drafts || []).map((r) => ({
+        ...r,
+        key: crypto.randomUUID(),
+        dirty: true,
+        status: "draft",
+      })),
+    );
+    setSuggestions([]);
+    setRequest("");
+  };
+  useEffect(() => {
+    if (
+      !provider ||
+      newChatProviders[provider] ||
+      conversationIds[provider] ||
+      !conversations?.items.length
+    )
+      return;
+    const chat = conversations.items[0];
+    setDrafts(
+      (chat.drafts || []).map((r) => ({
+        ...r,
+        key: crypto.randomUUID(),
+        dirty: true,
+        status: "draft",
+      })),
+    );
+    setConversationIds((old) => ({ ...old, [provider]: chat.id }));
+    setMessages((old) => [
+      ...old.filter((m) => m.provider !== provider),
+      ...chat.messages.map((m) => ({ ...m, provider })),
+    ]);
+  }, [provider, conversations, conversationIds, newChatProviders]);
   const connection = data?.connections.find((c) => c.provider === provider);
   const edit = (r: Rule) => {
     setPicked(r.provider);
@@ -97,6 +160,27 @@ export function RadarAutomations() {
       ...old,
     ]);
     setView("build");
+  };
+  const prepareFubTool = async (spec: Record<string, unknown>) => {
+    let command = await post<CrmCommand>(`${BASE}/commands`, {
+      provider: "followupboss",
+      spec,
+    });
+    if (!command.writes) {
+      command = await post<CrmCommand>(
+        `${BASE}/commands/${command.id}/execute`,
+        { confirmed: true },
+      );
+      if (command.status !== "succeeded")
+        throw new Error(command.error || "Could not read Follow Up Boss.");
+    }
+    setCommands((old) => [command, ...old.filter((c) => c.id !== command.id)]);
+    if (command.writes) {
+      setReviewRequest({ id: command.id, token: Date.now() });
+      setView("build");
+    }
+    await refreshCommands();
+    if (!command.writes) setView("commands");
   };
   const ask = async () => {
     if (!request.trim() || !provider) return;
@@ -108,17 +192,27 @@ export function RadarAutomations() {
     try {
       const result = await post<{
         message: string;
+        conversation_id?: string;
         commands?: CrmCommand[];
         drafts: Rule[];
         resource_requests: ResourceRequest[];
       }>(`${BASE}/draft`, {
         provider,
         message: text,
+        conversation_id: conversationIds[provider] || null,
         history: messages
           .filter((m) => m.provider === provider)
           .slice(-12)
           .map((m) => ({ role: m.role, text: m.text.slice(0, 4000) })),
       });
+      if (result.conversation_id) {
+        setConversationIds((old) => ({
+          ...old,
+          [provider]: result.conversation_id!,
+        }));
+        setNewChatProviders((old) => ({ ...old, [provider]: false }));
+      }
+      void refreshConversations();
       setMessages((m) => [
         ...m,
         { role: "assistant", text: result.message, provider },
@@ -130,7 +224,15 @@ export function RadarAutomations() {
           dirty: true,
           status: "draft" as const,
         })),
-        ...old,
+        ...old.filter(
+          (previous) =>
+            !result.drafts.some(
+              (next) =>
+                next.provider === previous.provider &&
+                ((next.id && next.id === previous.id) ||
+                  next.name === previous.name),
+            ),
+        ),
       ]);
       const incoming = result.commands ?? [];
       setCommands((old) => [
@@ -209,7 +311,14 @@ export function RadarAutomations() {
             label: `Saved rules (${data.rules.length})`,
             icon: Workflow,
           },
-          { key: "resources", label: "Ponds & stages", icon: Layers },
+          {
+            key: "resources",
+            label:
+              provider === "followupboss"
+                ? "Deal boards & ponds"
+                : "Ponds & stages",
+            icon: Layers,
+          },
           { key: "activity", label: "Activity", icon: Clock3 },
           { key: "commands", label: "CRM actions", icon: Database },
         ].map(({ key, label, icon: Icon }) => (
@@ -232,6 +341,9 @@ export function RadarAutomations() {
       ))}
       {view === "build" && (
         <>
+          {provider === "followupboss" && (
+            <FollowUpBossTools onPrepare={prepareFubTool} />
+          )}
           <div className={styles.buildGrid}>
             <Card className={styles.chat}>
               <div className={styles.chatHeading}>
@@ -243,6 +355,61 @@ export function RadarAutomations() {
                   <p>Build around your team’s workflow.</p>
                 </div>
                 <Badge tone="gray">Draft mode</Badge>
+              </div>
+              {conversationError && (
+                <Notice tone="red">
+                  Saved conversations could not be loaded.{" "}
+                  <button
+                    type="button"
+                    onClick={() => void refreshConversations()}
+                  >
+                    Retry
+                  </button>
+                </Notice>
+              )}
+              <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 p-4">
+                <Select
+                  aria-label="Saved Radar conversations"
+                  disabled={busy}
+                  value={conversationIds[provider] || ""}
+                  onChange={(e) => {
+                    const chat = conversations?.items.find(
+                      (c) => c.id === e.target.value,
+                    );
+                    if (chat) openConversation(chat);
+                  }}
+                  className="min-w-0 flex-1"
+                >
+                  <option value="">New conversation</option>
+                  {conversations?.items.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setConversationIds((old) => ({ ...old, [provider]: "" }));
+                    setNewChatProviders((old) => ({
+                      ...old,
+                      [provider]: true,
+                    }));
+                    setMessages((old) =>
+                      old.filter((m) => m.provider !== provider),
+                    );
+                    setDrafts([]);
+                    setSuggestions([]);
+                    setRequest("");
+                  }}
+                >
+                  New chat
+                </Button>
+                <p className="w-full text-xs text-zinc-500">
+                  Conversations are saved privately to your workspace and
+                  connected CRM. Saved rules remain in Saved rules.
+                </p>
               </div>
               <div
                 className={styles.messages}
@@ -283,7 +450,7 @@ export function RadarAutomations() {
                   onChange={setRequest}
                   onSubmit={() => ask()}
                   isProcessing={busy}
-                  disabled={!provider}
+                  disabled={!provider || conversationsLoading}
                   showWelcome={!messages.some((m) => m.provider === provider)}
                   placeholder={`Tell Radar what to do in ${connection?.name ?? "your CRM"}…`}
                 />
@@ -319,9 +486,7 @@ export function RadarAutomations() {
                     key={tool.action}
                     className="flex items-center justify-between gap-3"
                   >
-                    <span>
-                      {TOOL_NAMES[tool.action] ?? humanize(tool.action)}
-                    </span>
+                    <span>{toolName(tool.action, provider)}</span>
                     <Badge tone="gray">
                       {tool.writes ? "Review first" : "Read only"}
                     </Badge>
@@ -397,7 +562,7 @@ export function RadarAutomations() {
                         | { name: string; stages: { label: string }[] }
                         | undefined;
                       const receipt = pipe
-                        ? `${pipe.name} is ready. Stages: ${pipe.stages.map((s) => s.label).join(", ")}.`
+                        ? `${pipe.name} is ready${next.provider === "followupboss" ? " in Follow Up Boss → Deals / Deal Tracking" : ""}. Stages: ${pipe.stages.map((s) => s.label).join(", ")}.`
                         : String(
                             next.result.message ??
                               `${TOOL_NAMES[next.spec.action] ?? "CRM action"} completed.`,
@@ -450,7 +615,7 @@ export function RadarAutomations() {
             <ul className="mt-4 space-y-2 text-xs">
               {resources?.assistant_tools?.map((t) => (
                 <li key={t.action}>
-                  {TOOL_NAMES[t.action] ?? humanize(t.action)} ·{" "}
+                  {toolName(t.action, provider)} ·{" "}
                   {t.writes ? "Review required" : "Read only"}
                 </li>
               ))}
@@ -740,6 +905,43 @@ function DraftEditor({
                   ))}
                 </Select>
               </Field>
+              {!!resources?.blacksync_ponds.length && (
+                <Field label="Source BlackSync pond">
+                  <Select
+                    aria-label="Source BlackSync pond"
+                    value={draft.spec.source.blacksync_pond_id || ""}
+                    onChange={(e) =>
+                      changeSource({
+                        blacksync_pond_id: e.target.value || null,
+                      })
+                    }
+                  >
+                    <option value="">Any BlackSync pond</option>
+                    {resources.blacksync_ponds.map((pond) => (
+                      <option key={pond.id} value={pond.id}>
+                        {pond.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {draft.provider === "followupboss" && (
+                <Field label="Follow Up Boss lead source (optional)">
+                  <Input
+                    aria-label="Source lead source"
+                    value={draft.spec.source.lead_source || ""}
+                    maxLength={120}
+                    placeholder="For example: BlackSync AI"
+                    onChange={(e) =>
+                      changeSource({ lead_source: e.target.value })
+                    }
+                  />
+                  <p className="text-xs text-zinc-500">
+                    Matches the linked contact’s existing source. Leave blank
+                    for any source; this does not create Lead Flow.
+                  </p>
+                </Field>
+              )}
               {resources?.capabilities.route_pond && (
                 <Field label="Source CRM pond">
                   <Select
@@ -871,6 +1073,14 @@ function DraftEditor({
           <span className={styles.stepNumber}>03</span>
           <div className="min-w-0 flex-1">
             <h4>Then take these actions</h4>
+            {draft.spec.actions.some((a) => a.kind === "crm_deal_stage") && (
+              <Notice tone="amber">
+                This routes a linked contact into a deal on the selected board,
+                creating a deal if needed. It preserves later or closed stages
+                and stops for review when multiple deals match. Contact stages
+                and ponds are separate.
+              </Notice>
+            )}
             {draft.requested_destination && !draft.spec.actions.length && (
               <p>Choose or create “{draft.requested_destination}”.</p>
             )}
@@ -1149,7 +1359,10 @@ function ResourceManager({
       ? [
           {
             key: "crm_pipeline",
-            label: `${resources.provider_name} deal pipeline`,
+            label:
+              provider === "followupboss"
+                ? "Follow Up Boss deal board (Deals)"
+                : `${resources.provider_name} deal pipeline`,
           },
         ]
       : []),

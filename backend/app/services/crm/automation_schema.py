@@ -14,6 +14,8 @@ class StrictModel(BaseModel):
 class Source(StrictModel):
     agent_id: UUID | None = None
     campaign_id: UUID | None = None
+    blacksync_pond_id: UUID | None = None
+    lead_source: str = Field(default="", max_length=120)
     pond_id: str = Field(default="", max_length=128)
 
 
@@ -35,7 +37,7 @@ class Condition(StrictModel):
 
 
 class Action(StrictModel):
-    kind: Literal["blacksync_pond", "crm_pond", "crm_stage", "crm_tag"]
+    kind: Literal["blacksync_pond", "crm_pond", "crm_stage", "crm_tag", "crm_deal_stage"]
     target_id: str = Field(min_length=1, max_length=200)
     pipeline_id: str = Field(default="", max_length=128)
 

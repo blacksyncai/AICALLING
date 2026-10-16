@@ -119,3 +119,41 @@ def test_confirmation_without_pending_plan_does_not_claim_execution(client,crm):
     r=client.post('/api/radar/automations/draft',json={'provider':'followupboss','message':'yes'})
     assert r.status_code==200 and not r.json()['commands']
     assert 'no current action' in r.json()['message']
+
+
+def test_live_receipt_verification_reads_existing_board_without_creating(client,crm):
+    cmd=prepare(client,'create_pipeline',name='Verified contacts check',stages=STAGES)
+    run(client,cmd)
+    before=len([1 for m,p,_ in crm['calls'] if m in ('POST','PUT')])
+    result=client.get(f"/api/radar/automations/commands/{cmd['id']}/verify")
+    assert result.status_code==200,result.text
+    assert result.json()['exists'] and result.json()['matches_receipt']
+    assert 'Deals / Deal Tracking' in result.json()['location']
+    assert len([1 for m,p,_ in crm['calls'] if m in ('POST','PUT')])==before
+
+
+def test_i_dont_see_it_checks_current_crm_instead_of_generating_creation(client,crm,monkeypatch):
+    from app.services import llm
+    async def forbidden(*args,**kwargs):raise AssertionError('Status checks must not generate a new creation')
+    monkeypatch.setattr(llm,'_chat',forbidden)
+    cmd=prepare(client,'create_pipeline',name='Find my board',stages=STAGES);run(client,cmd)
+    before=len([1 for m,p,_ in crm['calls'] if m in ('POST','PUT')])
+    r=client.post('/api/radar/automations/draft',json={'provider':'followupboss','message':"I don't see it?"})
+    assert r.status_code==200,r.text
+    assert not r.json()['commands'] and r.json()['verification']['exists']
+    assert 'Find my board' in r.json()['message'] and 'Deals / Deal Tracking' in r.json()['message']
+    assert len([1 for m,p,_ in crm['calls'] if m in ('POST','PUT')])==before
+
+
+def test_verification_reports_missing_or_changed_board_without_recreation(client,crm):
+    cmd=prepare(client,'create_pipeline',name='Changed board',stages=STAGES);receipt=run(client,cmd)
+    key=int(receipt['result']['pipeline']['id'])
+    current=next(p for p in crm['pipelines'] if p['id']==key)
+    current['name']='Renamed in CRM'
+    result=client.get(f"/api/radar/automations/commands/{cmd['id']}/verify").json()
+    assert result['exists'] and not result['matches_receipt']
+    crm['pipelines']=[p for p in crm['pipelines'] if p['id']!=key]
+    before=len([1 for m,p,_ in crm['calls'] if m in ('POST','PUT')])
+    result=client.get(f"/api/radar/automations/commands/{cmd['id']}/verify").json()
+    assert result['exists'] is False
+    assert len([1 for m,p,_ in crm['calls'] if m in ('POST','PUT')])==before

@@ -48,6 +48,10 @@ def classify(transcript, expected_name: str, outcome: str = "") -> dict:
         affirmative = asks_name and re.fullmatch(
             r"(?:yes|yeah|yep|yup|speaking|correct|that's me|that is me|this is (?:him|her)|you(?:'ve| have) got (?:him|her))"
             r"(?:[, .!]*(?:this is|i am|i'm) " + re.escape(first) + r")?[.! ,]*", text)
+        if asks_name and re.fullmatch(
+            r"(?:yes|yeah|yep|correct)(?:[, .!]+(?:it is|that's me|that is me))?"
+            r"(?:[,.!? ]+(?:who(?:'s| is) (?:speaking|calling)|who is this))?[?.! ]*", text):
+            affirmative = True
         if self_id or affirmative:
             evidence = [{"turn": i, "role": "user", "text": turn["text"][:600]}]
             if affirmative:

@@ -19,7 +19,7 @@ def capabilities(provider):
     if p.can_map_fields: tools += ["field_catalog", "contact_fields"]
     if provider in NOTES: tools += ["add_note"]
     if type(p).mark_dnc is not Provider.mark_dnc: tools += ["mark_dnc"]
-    if provider == "followupboss": tools += ["create_task", "create_pond", "create_stage", "create_pipeline", "add_stages"]
+    if provider == "followupboss": tools += ["create_task", "create_pond", "create_stage", "create_pipeline", "add_stages", "list_sources", "set_contact_source"]
     return [{"action": t, "writes": t not in READS} for t in tools]
 
 
@@ -101,6 +101,20 @@ async def perform(db, conn, spec):
     check_supported(conn, spec)
     p, http = sync.http_for(conn); cfg = conn.config or {}
     action = spec.action
+    if action == "list_sources":
+        from app.services.crm.automation_resources import fub_collection
+        return {"sources": await fub_collection(http, "sources"), "scope": "Existing lead sources; native Lead Flow configuration is separate."}
+    if action == "set_contact_source":
+        person = await http.request("GET", f"/v1/people/{int(spec.external_id)}")
+        if person.get("source") == spec.name:
+            return {"id": spec.external_id, "source": spec.name, "unchanged": True}
+        if person.get("source"):
+            raise CrmError("This contact already has a lead source. Preserve original attribution; use a BlackSync tag instead.")
+        await http.request("PUT", f"/v1/people/{int(spec.external_id)}", json={"source": spec.name})
+        person = await http.request("GET", f"/v1/people/{int(spec.external_id)}")
+        if person.get("source") != spec.name:
+            raise CrmError("The CRM did not confirm the contact's source. Review it before retrying.")
+        return {"id": spec.external_id, "source": spec.name, "message": "Contact source confirmed. This does not configure native Lead Flow."}
     if action == "list_contacts":
         contacts = await p.list_contacts(http, cfg, limit=spec.limit)
         contacts = contacts[:spec.limit]
@@ -192,3 +206,31 @@ async def execute(db, row, conn, org):
         row.updated_at = now()
         await db.commit()
     return row
+
+
+async def verify_deal_board(row, conn):
+    """Read current CRM state for a saved receipt. This function never creates/retries a resource."""
+    if conn.provider != 'followupboss' or row.spec.get('action') not in ('create_pipeline', 'add_stages'):
+        raise CrmError('Live deal-board verification is available for Follow Up Boss deal actions.')
+    if row.status != 'succeeded': raise CrmError('This action has no completed creation receipt to verify.')
+    if row.org_id != conn.org_id or row.connection_id != conn.id or row.connection_fingerprint != fingerprint(conn):
+        raise CrmError('The CRM account changed. This receipt cannot verify the newly connected account.')
+    saved = (row.result or {}).get('pipeline') or {}
+    key = saved.get('id')
+    if not key: raise CrmError('This receipt does not contain a deal-board ID.')
+    from app.services.crm.fub_pipelines import get_pipeline, catalog
+    _, http = sync.http_for(conn)
+    try:
+        current = catalog(await get_pipeline(http, key))
+    except CrmError as exc:
+        if exc.status != 404: raise
+        return {'exists': False, 'id': str(key), 'checked_at': now().isoformat(),
+                'location': 'Follow Up Boss → Deals / Deal Tracking',
+                'message': 'The saved action completed, but this deal board was not found in the connected CRM now.'}
+    by_id = {str(s['id']): s for s in current['stages']}
+    matches = current['name'] == saved.get('name') and all(
+        str(s.get('id')) in by_id and by_id[str(s['id'])]['label'] == s.get('label') for s in saved.get('stages') or [])
+    return {'exists': True, 'matches_receipt': matches, 'pipeline': current, 'checked_at': now().isoformat(),
+            'location': 'Follow Up Boss → Deals / Deal Tracking',
+            'message': f"Follow Up Boss returned deal board '{current['name']}' (ID {current['id']}) with {len(current['stages'])} stages. Find it under Deals / Deal Tracking." +
+                       ('' if matches else ' Its current details differ from the saved receipt.')}

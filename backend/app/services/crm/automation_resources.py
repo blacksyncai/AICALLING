@@ -120,7 +120,13 @@ async def validate_spec(db, conn, spec, *, catalog=None):
             obj = await db.get(model, key)
             if obj is None or obj.org_id != conn.org_id:
                 raise CrmError("The source agent or campaign is not in this workspace.")
+    if spec.source.blacksync_pond_id:
+        source_pond = await db.get(RadarPond, spec.source.blacksync_pond_id)
+        if not source_pond or source_pond.org_id != conn.org_id:
+            raise CrmError("Choose a BlackSync source pond in this workspace.")
     data = catalog if catalog is not None else await resources(db, conn)
+    if spec.source.lead_source and conn.provider != "followupboss":
+        raise CrmError("Lead-source filtering is not supported for this CRM yet; choose an agent or campaign.")
     ponds = {r["id"] for r in data["crm_ponds"]}
     if spec.source.pond_id and spec.source.pond_id not in ponds:
         raise CrmError("Choose a source pond from this CRM connection.")
@@ -135,6 +141,10 @@ async def validate_spec(db, conn, spec, *, catalog=None):
         elif action.kind == "crm_pond":
             if not data["capabilities"]["route_pond"] or action.target_id not in ponds:
                 raise CrmError("Choose an available CRM pond.")
+        elif action.kind == "crm_deal_stage":
+            pipe = next((p for p in data["deal_pipelines"] if p["id"] == action.pipeline_id), None)
+            if conn.provider != "followupboss" or not pipe or action.target_id not in {s["id"] for s in pipe.get("stages", [])}:
+                raise CrmError("Choose a Follow Up Boss deal stage from this account.")
         elif action.kind == "crm_stage":
             pipe = next((p for p in data["pipelines"] if p["id"] == action.pipeline_id), None)
             if not pipe or action.target_id not in {s["id"] for s in pipe.get("stages", [])}:

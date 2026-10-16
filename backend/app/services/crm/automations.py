@@ -57,6 +57,20 @@ async def inspect_call(db, conn, spec, call, lead, *, read_source=True):
         return False, "Do not call / suppressed", evidence
     if call.call_type not in ("outbound", "inbound"):
         return False, "Browser and text tests are excluded", evidence
+    if spec.source.blacksync_pond_id:
+        member = await db.scalar(select(RadarPondMember.id).where(
+            RadarPondMember.org_id == conn.org_id, RadarPondMember.pond_id == spec.source.blacksync_pond_id,
+            RadarPondMember.lead_id == lead.id, RadarPondMember.phone == normalize_phone(call.to_phone or lead.phone)))
+        if not member:
+            return False, "Outside the selected BlackSync pond", evidence
+    if spec.source.lead_source:
+        ref = (lead.crm_refs or {}).get(conn.provider)
+        if conn.provider != "followupboss" or not ref:
+            return False, "No linked Follow Up Boss source contact", evidence
+        _, http = sync.http_for(conn)
+        person = await http.request("GET", f"/v1/people/{int(ref)}", params={"fields": "id,source"})
+        if str(person.get("source") or "").casefold() != spec.source.lead_source.casefold():
+            return False, "Outside the selected lead source", evidence
     if spec.source.pond_id:
         ref = (lead.crm_refs or {}).get(conn.provider)
         if conn.provider != "followupboss" or not ref:
@@ -138,6 +152,9 @@ async def perform_action(db, conn, action, call, lead, catalog):
     if not ref:
         raise CrmError("This contact isn't linked to the selected CRM. Import/link it before routing.")
     p, http = sync.http_for(conn)
+    if action.kind == "crm_deal_stage":
+        from app.services.crm.fub_deals import route
+        return await route(http, ref, action.pipeline_id, action.target_id, lead.name)
     if action.kind == "crm_stage":
         pipe = next(x for x in catalog["pipelines"] if x["id"] == action.pipeline_id)
         result = await p.set_stage(http, conn.config or {}, ref, pipe, action.target_id,
@@ -220,8 +237,17 @@ async def run_execution(execution_id):
             for index, action in enumerate(spec.actions):
                 if str(index) in done:
                     continue
+                if action.kind == "crm_deal_stage":
+                    if (job.result or {}).get("pending_deal") is not None:
+                        job.status, job.error = "failed", "A previous deal request may have reached the CRM. Review its receipt and deal before retrying."
+                        await db.commit()
+                        return
+                    job.result = {**job.result, "pending_deal": index}
+                    await db.commit()
+                    # Serialize deal reconciliation for this contact across workers/rules.
+                    await db.execute(select(Lead).where(Lead.id == lead.id).with_for_update())
                 done[str(index)] = await perform_action(db, conn, action, call, lead, catalog)
-                job.result = {**job.result, "actions": dict(done)}
+                job.result = {k: v for k, v in {**job.result, "actions": dict(done)}.items() if k != "pending_deal"}
                 job.lease_until = now() + dt.timedelta(minutes=5)
                 await db.commit()
             job.status, job.error = "succeeded", ""
@@ -230,7 +256,7 @@ async def run_execution(execution_id):
             # State-setting actions reconcile their target before retrying. Persist partial progress.
             await db.rollback()
             job = await db.get(RadarExecution, execution_id)
-            job.status = "failed" if job.attempts >= 5 else "retry"
+            job.status = "failed" if job.attempts >= 5 or (job.result or {}).get("pending_deal") is not None else "retry"
             job.error = str(exc)[:600]
             job.next_at = now() + dt.timedelta(seconds=min(3600, 30 * 2 ** job.attempts))
         job.lease_until, job.updated_at = None, now()

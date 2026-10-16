@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Database, Play, ShieldCheck } from "lucide-react";
 import { Button, Card, Notice, Badge, Modal } from "@/components/ui";
-import { post } from "@/lib/api";
+import { api, post } from "@/lib/api";
 
 export interface CrmCommand {
   id: string;
@@ -29,9 +29,31 @@ export const TOOL_NAMES: Record<string, string> = {
   add_note: "Add a note",
   mark_dnc: "Mark a contact do not call",
   create_task: "Create a follow-up task",
+  list_sources: "View lead sources",
+  set_contact_source:
+    "Set contact lead source (preserves existing attribution)",
   create_pond: "Create a Follow Up Boss pond",
   create_stage: "Create a Follow Up Boss person stage",
 };
+const FUB_TOOL_NAMES: Record<string, string> = {
+  create_pipeline: "Create deal board",
+  list_pipelines: "View deal boards",
+  add_stages: "Add deal stages",
+  move_stage: "Change a person’s stage",
+  create_stage: "Create person stage",
+  create_pond: "Create pond",
+};
+export const toolName = (action: string, provider?: string) =>
+  (provider === "followupboss" ? FUB_TOOL_NAMES[action] : undefined) ??
+  TOOL_NAMES[action] ??
+  action;
+interface BoardCheck {
+  exists: boolean | null;
+  matches_receipt?: boolean;
+  message: string;
+  checked_at?: string;
+  pipeline?: Record<string, unknown>;
+}
 const LABELS: Record<string, string> = {
   name: "Name / title",
   phone: "Phone",
@@ -110,6 +132,28 @@ function Result({ result }: { result: Record<string, unknown> }) {
         ))}
       </div>
     );
+  if (Array.isArray(result.sources))
+    return (
+      <div className="mt-4 rounded-xl border border-zinc-200 p-4">
+        <h4 className="text-sm font-semibold">Lead sources in this account</h4>
+        <ul className="mt-3 space-y-2 text-xs">
+          {result.sources.map(
+            (source: { id?: string; name?: string }, i: number) => (
+              <li key={source.id || i}>{source.name || source.id}</li>
+            ),
+          )}
+        </ul>
+        {!result.sources.length && (
+          <p className="mt-2 text-xs text-zinc-500">
+            No lead sources were returned.
+          </p>
+        )}
+        <p className="mt-3 text-xs text-zinc-500">
+          A contact’s source records its origin. Native Lead Flow assignment is
+          configured separately in Follow Up Boss.
+        </p>
+      </div>
+    );
   const fields = result.fields;
   const entries =
     fields && typeof fields === "object" && !Array.isArray(fields)
@@ -135,7 +179,13 @@ function CommandDetails({ row }: { row: CrmCommand }) {
         .filter(([key]) => key !== "action")
         .map(([key, value]) => (
           <div key={key} className="min-w-0">
-            <dt className="text-xs text-zinc-500">{LABELS[key] ?? key}</dt>
+            <dt className="text-xs text-zinc-500">
+              {row.provider === "followupboss" &&
+              key === "pipeline_id" &&
+              row.spec.action !== "move_stage"
+                ? "Deal board ID"
+                : (LABELS[key] ?? key)}
+            </dt>
             <dd className="mt-1 break-words whitespace-pre-wrap text-sm">
               {key === "stages" && Array.isArray(value)
                 ? value
@@ -167,6 +217,28 @@ export function CrmCommandCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [verification, setVerification] = useState<BoardCheck | null>(null);
+  const checkInCrm = async () => {
+    setChecking(true);
+    setError("");
+    try {
+      setVerification(
+        await api<BoardCheck>(
+          `/api/radar/automations/commands/${row.id}/verify`,
+          { cache: "no-store" },
+        ),
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Could not check the current CRM state.",
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
   const dialogBody = useRef<HTMLDivElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const executing = useRef(false);
@@ -239,7 +311,7 @@ export function CrmCommandCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <Database size={17} />
-          {TOOL_NAMES[row.spec.action] ?? row.spec.action}
+          {toolName(row.spec.action, row.provider)}
         </h3>
         <Badge tone={row.status === "succeeded" ? "green" : "gray"}>
           {row.status}
@@ -285,7 +357,7 @@ export function CrmCommandCard({
             .
           </p>
           <h3 className="mt-4 text-base font-semibold">
-            {TOOL_NAMES[row.spec.action] ?? row.spec.action}
+            {toolName(row.spec.action, row.provider)}
           </h3>
           <CommandDetails row={row} />
           {row.provider === "followupboss" &&
@@ -333,6 +405,36 @@ export function CrmCommandCard({
             Completed
           </p>
           <Result result={row.result} />
+          {row.provider === "followupboss" &&
+            ["create_pipeline", "add_stages"].includes(row.spec.action) && (
+              <div className="mt-4 space-y-3">
+                <p className="text-xs leading-6 text-zinc-500">
+                  Find this board in Follow Up Boss → Deals / Deal Tracking.
+                  This receipt records structure creation; it does not mean
+                  contacts were added.
+                </p>
+                <Button loading={checking} onClick={() => void checkInCrm()}>
+                  Check in Follow Up Boss
+                </Button>
+                {verification && (
+                  <Notice
+                    tone={
+                      verification.exists && verification.matches_receipt
+                        ? "green"
+                        : "amber"
+                    }
+                  >
+                    <p>{verification.message}</p>
+                    {verification.checked_at && (
+                      <p className="mt-2 text-xs">
+                        Checked{" "}
+                        {new Date(verification.checked_at).toLocaleString()}
+                      </p>
+                    )}
+                  </Notice>
+                )}
+              </div>
+            )}
         </>
       )}
       {(row.status === "uncertain" || row.status === "running") && (

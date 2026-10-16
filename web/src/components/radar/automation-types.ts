@@ -5,7 +5,8 @@ export interface Condition {
   operator: "equals" | "contains" | "exists";
 }
 export interface Action {
-  kind: "blacksync_pond" | "crm_pond" | "crm_stage" | "crm_tag";
+  kind:
+    "blacksync_pond" | "crm_pond" | "crm_stage" | "crm_tag" | "crm_deal_stage";
   target_id: string;
   pipeline_id: string;
 }
@@ -13,6 +14,8 @@ export interface Spec {
   source: {
     agent_id: string | null;
     campaign_id: string | null;
+    blacksync_pond_id?: string | null;
+    lead_source?: string;
     pond_id: string;
   };
   condition: Condition;
@@ -45,7 +48,9 @@ export interface Resources {
     name: string;
     stages: { id: string; label: string; kind?: string }[];
   }[];
-  deal_pipelines: Choice[];
+  deal_pipelines: (Choice & {
+    stages?: { id: string; label: string; kind?: string }[];
+  })[];
   warnings: string[];
   capabilities: {
     create_blacksync_pond: boolean;
@@ -145,6 +150,20 @@ export function destinations(
             pipeline_id: "",
           },
         }))
+      : []),
+    ...(r.provider === "followupboss"
+      ? r.deal_pipelines.flatMap((p) =>
+          (p.stages || [])
+            .filter((s) => s.kind !== "closed")
+            .map((s) => ({
+              label: `Deals · ${p.name} · ${s.label}`,
+              action: {
+                kind: "crm_deal_stage" as const,
+                target_id: s.id,
+                pipeline_id: p.id,
+              },
+            })),
+        )
       : []),
     ...r.pipelines.flatMap((p) =>
       p.stages.map((s) => ({
