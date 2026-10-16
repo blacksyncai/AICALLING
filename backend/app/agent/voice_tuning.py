@@ -50,28 +50,44 @@ BUILT_IN_PRONUNCIATIONS: list[tuple[str, str]] = [
 ]
 
 
-def apply_pronunciations(text: str, pairs: list[tuple[str, str]]) -> str:
+def apply_pronunciations(text: str, pairs: list[tuple[str, str]], *, preceding: str = "") -> str:
     for word, say in pairs:
-        text = re.sub(rf"(?<!\w){re.escape(word)}(?!\w)", lambda _m, s=say: s, text, flags=re.IGNORECASE)
+        def replace(match, replacement=say):
+            # A streaming segment can start inside a word emitted earlier.
+            if match.start() == 0 and preceding and re.match(r"\w", preceding):
+                return match.group(0)
+            return replacement
+        text = re.sub(rf"(?<!\w){re.escape(word)}(?!\w)", replace, text, flags=re.IGNORECASE)
     return text
 
 
 def pronounce(pairs: list[tuple[str, str]]):
-    """Streaming TTS text transform: swaps whole words/phrases, never splitting one across chunks."""
-    hold = max((len(w) for w, _ in pairs), default=0)
+    """Stream immediately; retain only suffixes that could be pronunciation phrases."""
+    pairs = [(word, say) for word, say in pairs if word]
 
     async def _transform(text: AsyncIterable[str]) -> AsyncIterable[str]:
         buffer = ""
+        preceding = ""
+        for_match = [word for word, _ in pairs]
         async for chunk in text:
             buffer += chunk
-            # Emit up to a space that's far enough back that no phrase can straddle it.
-            safe = buffer[: max(0, len(buffer) - hold)]
-            cut = max(safe.rfind(" "), safe.rfind("\n"))
-            if cut <= 0:
-                continue
-            ready, buffer = buffer[:cut], buffer[cut:]
-            yield apply_pronunciations(ready, pairs)
+            cut = len(buffer)
+            for word in for_match:
+                # A prefix starting at a word boundary might continue in the next
+                # chunk. Complete matches at the end also need their right boundary.
+                for start in range(max(0, len(buffer) - len(word)), len(buffer)):
+                    previous = buffer[start - 1] if start else preceding
+                    if previous and re.match(r"\w", previous):
+                        continue
+                    suffix = buffer[start:]
+                    if re.fullmatch(re.escape(word[:len(suffix)]), suffix, re.IGNORECASE):
+                        cut = min(cut, start)
+                        break
+            if cut:
+                ready, buffer = buffer[:cut], buffer[cut:]
+                yield apply_pronunciations(ready, pairs, preceding=preceding)
+                preceding = ready[-1]
         if buffer:
-            yield apply_pronunciations(buffer, pairs)
+            yield apply_pronunciations(buffer, pairs, preceding=preceding)
 
     return _transform
