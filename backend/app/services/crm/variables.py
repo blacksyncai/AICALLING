@@ -66,8 +66,15 @@ def resolve(script_vars: list[str], fields: dict[str, str], mapping: dict[str, s
     return out
 
 
+
+def should_use_crm(var: str, current, mapping: dict, derived: dict) -> bool:
+    """Automatic CRM fill must not replace populated CSV/contact values (including zero/False)."""
+    explicit = mapping.get(var, "") not in ("", "-")
+    return explicit or current is None or current == "" or (var in derived and current == derived[var])
+
+
 def apply(variables: dict, lead, agent, conns: list) -> dict:
-    """Variables for a call: the lead's own, then CRM values for every {{variable}} the script uses."""
+    """Keep populated contact/CSV values; explicit CRM mappings override, automatic ones fill gaps."""
     if lead is None or agent is None:
         return variables
     stored = (getattr(lead, "custom_fields", None) or {}).get("crm_fields") or {}
@@ -80,14 +87,14 @@ def apply(variables: dict, lead, agent, conns: list) -> dict:
         if not fields:
             continue
         mapping = ((conn.settings or {}).get("var_maps") or {}).get(str(agent.id)) or {}
+        derived = ((getattr(lead, "custom_fields", None) or {}).get("crm_variable_values") or {}).get(conn.provider) or {}
         for var, value in resolve(script_vars, fields, mapping).items():
-            # The CRM wins for script variables it maps; contact basics stay if the CRM has nothing.
-            if var not in BUILT_IN or mapping.get(var) or not out.get(var):
+            if should_use_crm(var, out.get(var), mapping, derived):
                 out[var] = value
     return out
 
 
-_INTERNAL_KEYS = {"crm", "crm_context", "crm_context_at", "crm_fields"}
+_INTERNAL_KEYS = {"crm", "crm_context", "crm_context_at", "crm_fields", "crm_variable_values"}
 
 
 def visible_fields(custom_fields: dict | None) -> dict:

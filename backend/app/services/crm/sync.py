@@ -498,12 +498,21 @@ async def prefill_fields(conn: CrmConnection, agent, leads: list[Lead], budget: 
         cf = dict(lead.custom_fields or {})
         cf["crm_fields"] = {**(cf.get("crm_fields") or {}), conn.provider: fields}
         cf["crm_context_at"] = cf.get("crm_context_at") or now
+        provenance = dict(cf.get("crm_variable_values") or {})
+        derived = dict(provenance.get(conn.provider) or {})
         for var, value in crm_vars.resolve(script_vars, fields, mapping).items():
             if var not in crm_vars.BUILT_IN:
-                cf[var] = value
+                if crm_vars.should_use_crm(var, cf.get(var), mapping, derived):
+                    cf[var] = value
+                    derived[var] = value
+                else:
+                    derived.pop(var, None)  # a CSV import/user edit now owns this value
         for key in crm_vars.SHOWN:  # the columns a CSV export would usually carry
-            if fields.get(key) and not cf.get(key):
+            if fields.get(key) and (cf.get(key) is None or cf.get(key) == ""):
                 cf[key] = fields[key]
+                derived[key] = fields[key]
+        provenance[conn.provider] = derived
+        cf["crm_variable_values"] = provenance
         lead.custom_fields = cf
         filled += 1
     return filled
