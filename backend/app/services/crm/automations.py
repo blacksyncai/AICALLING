@@ -13,7 +13,7 @@ from app.models.radar_automation import RadarAutomation, RadarExecution, RadarPo
 from app.services.contacts import normalize_phone
 from app.services.crm.automation_schema import RuleSpec
 from app.services.crm.http import CrmError
-from app.services.crm import sync, verification
+from app.services.crm import sync, verification, radar_contacts
 from app.services.crm.automation_resources import validate_spec
 
 log = structlog.get_logger(__name__)
@@ -97,9 +97,12 @@ async def preview(db, conn, spec, limit=40):
         out.append({"call_id": str(call.id), "lead_id": str(lead.id), "name": lead.name,
                     "phone": normalize_phone(call.to_phone or lead.phone), "outcome": call.outcome,
                     "status": data["status"], "evidence": data["evidence"], "matches": hit, "reason": reason,
-                    "started_at": call.started_at.isoformat()})
+                    "started_at": call.started_at.isoformat(),
+                    "contact_linked": bool((lead.crm_refs or {}).get(conn.provider))})
     return {"items": out, "matched": sum(x["matches"] for x in out), "checked": len(out),
-            "limit": limit, "historical_preview": True, "writes_performed": False}
+            "limit": limit, "historical_preview": True, "writes_performed": False,
+            "contact_resolution": conn.provider == "followupboss",
+            "create_missing_contacts": bool(sync.conn_settings(conn)["create_contacts"]) if conn.provider == "followupboss" else False}
 
 
 async def add_job(db, rule, call):
@@ -233,6 +236,17 @@ async def run_execution(execution_id):
                 await db.commit()
                 return
             catalog = await validate_spec(db, conn, spec)
+            # Old versions marked a deal pending before discovering that no contact was linked.
+            # That exact error happened before any CRM write, so it is safe to resume.
+            if (job.result or {}).get("pending_deal") is not None and job.error == radar_contacts.LEGACY_UNLINKED:
+                job.result = {k: v for k, v in job.result.items() if k != "pending_deal"}
+                await db.commit()
+            if (job.result or {}).get("pending_deal") is not None:
+                job.status, job.error = "failed", "A previous deal request may have reached the CRM. Review its receipt and deal before retrying."
+                await db.commit()
+                return
+            if any(a.kind != "blacksync_pond" for a in spec.actions):
+                await radar_contacts.resolve(db, job, conn, lead)
             done = dict((job.result or {}).get("actions") or {})
             for index, action in enumerate(spec.actions):
                 if str(index) in done:
@@ -256,7 +270,7 @@ async def run_execution(execution_id):
             # State-setting actions reconcile their target before retrying. Persist partial progress.
             await db.rollback()
             job = await db.get(RadarExecution, execution_id)
-            job.status = "failed" if job.attempts >= 5 or (job.result or {}).get("pending_deal") is not None else "retry"
+            job.status = "failed" if isinstance(exc, radar_contacts.ContactReviewRequired) or job.attempts >= 5 or (job.result or {}).get("pending_deal") is not None or (job.result or {}).get("pending_contact") is not None else "retry"
             job.error = str(exc)[:600]
             job.next_at = now() + dt.timedelta(seconds=min(3600, 30 * 2 ** job.attempts))
         job.lease_until, job.updated_at = None, now()

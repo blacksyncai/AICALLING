@@ -1322,6 +1322,16 @@ function DraftEditor({
         </div>
         {preview && (
           <div className={styles.preview}>
+            {preview.contact_resolution && (
+              <Notice tone="amber">
+                Before routing, Radar looks for an existing Follow Up Boss
+                person and saves the link.{" "}
+                {preview.create_missing_contacts
+                  ? "If none exists, your integration setting allows creating a contact with source BlackSync AI."
+                  : "Creating missing contacts is off. Enable it in Integrations → Follow Up Boss if needed; existing matches can still be linked."}{" "}
+                This preview creates no contacts.
+              </Notice>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h4>
@@ -1713,7 +1723,20 @@ function AutomationActivity() {
       status: string;
       attempts: number;
       error: string;
-      result: { reason?: string; actions?: Record<string, string> };
+      result: {
+        reason?: string;
+        contact?: { id: string; status: string; name?: string };
+        actions?: Record<
+          string,
+          | string
+          | {
+              id?: string;
+              stage_id?: string;
+              unchanged?: boolean;
+              reason?: string;
+            }
+        >;
+      };
       created_at: string;
       next_at?: string | null;
     }[];
@@ -1773,10 +1796,22 @@ function AutomationActivity() {
               {i.attempts === 1 ? "" : "s"}
             </p>
             {i.result.reason && <p>{i.result.reason}</p>}
+            {i.result.contact && (
+              <p className="text-emerald-700">
+                Follow Up Boss contact {i.result.contact.id}:{" "}
+                {i.result.contact.status === "created_or_deduplicated"
+                  ? "created or matched by FUB"
+                  : i.result.contact.status === "linked_existing"
+                    ? "found and linked"
+                    : "link confirmed"}
+              </p>
+            )}
             {Object.entries(i.result.actions ?? {}).map(([k, v]) => (
               <p key={k} className="flex items-center gap-1">
                 <CheckCircle2 size={12} />
-                {v}
+                {typeof v === "string"
+                  ? v
+                  : `Deal ${v.id || ""} · ${v.reason || (v.unchanged ? "already at or beyond this stage" : `stage ${v.stage_id || "confirmed"}`)}`}
               </p>
             ))}
             {i.error && <p className="text-red-600">{i.error}</p>}

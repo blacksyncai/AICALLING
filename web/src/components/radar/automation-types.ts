@@ -82,9 +82,12 @@ export interface PreviewItem {
   status: string;
   evidence: Evidence[];
   matches: boolean;
+  contact_linked?: boolean;
   reason: string;
 }
 export interface Preview {
+  contact_resolution?: boolean;
+  create_missing_contacts?: boolean;
   items: PreviewItem[];
   matched: number;
   checked: number;
