@@ -51,6 +51,8 @@ FEATURED_VOICES: list[dict] = [
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "mistral:01a13477-ce35-7031-84e8-71a1f7a51cbd", "name": "Leena · Version 2", "family": "Leena", "tone": "Version 2",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
+    {"id": "378695da-44e9-4fc7-a9cb-efcb0d2037cc", "name": "Macco · Deep Voice", "family": "Macco", "tone": "Deep Voice",
+     "description": "Deep voice clone.", "clone": True},
     # Mistral preset voices — one entry per mood (Mistral exposes each mood as its own voice).
     {"id": "mistral:e3596645-b1af-469e-b857-f18ddedc7652", "name": "Oliver · Neutral", "family": "Oliver", "tone": "Neutral", "gender": "masculine", "accent": "British",
      "description": "Slight British accent. Calm and even.", "provider": "mistral", "language": "en"},
