@@ -185,8 +185,8 @@ async def test_rest_inventory_pagination_returns_every_number(sw,monkeypatch):
         if not request.url.query:
             return httpx.Response(200,json={'data':[{'id':'one','number':'+14155550101','name':'First','capabilities':{'voice':True}}],
                                           'links':{'next':'https://example.signalwire.com/api/relay/rest/phone_numbers?page_number=1'}})
-        return httpx.Response(200,json={'data':[{'id':'two','number':'+14155550102','name':'Second','capabilities':{'voice':True}},
-                                                     {'id':'fax','number':'+14155550103','capabilities':{'voice':False}}],'links':{}})
+        return httpx.Response(200,json={'data':[{'id':'two','number':'+14155550102','name':'Second','capabilities':['voice','fax']},
+                                                     {'id':'fax','number':'+14155550103','capabilities':['fax']}],'links':{}})
     monkeypatch.setattr(signalwire.httpx,'AsyncClient',lambda **kw:real(transport=httpx.MockTransport(handler),**kw))
     numbers=await signalwire.list_numbers()
     assert [n['number'] for n in numbers]==['+14155550101','+14155550102']

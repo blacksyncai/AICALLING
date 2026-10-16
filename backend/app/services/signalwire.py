@@ -43,7 +43,10 @@ async def list_numbers() -> list[dict]:
             except (httpx.HTTPError, ValueError):
                 raise SignalWireError("Couldn't load SignalWire numbers. Check the API credentials and number-read permission.") from None
             for number in data.get("data", []):
-                if number.get("capabilities", {}).get("voice") is False:
+                capabilities = number.get("capabilities")
+                if isinstance(capabilities, list) and "voice" not in capabilities:
+                    continue
+                if isinstance(capabilities, dict) and capabilities.get("voice") is False:
                     continue
                 result.append({"sid": number["id"], "number": number["number"],
                                "friendly": number.get("name") or "SignalWire",
