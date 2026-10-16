@@ -26,3 +26,11 @@ def test_slow_tail_is_visible_instead_of_just_an_average():
         t.user_state('listening','speaking',i*10+1);t.user_state('speaking','listening',i*10+2)
         t.agent_state('thinking','speaking',i*10+2+gap)
     s=t.summary();assert s['response_gap_samples']==4 and s['p95_turn_gap']==4. and s['p50_turn_gap']==.5
+
+
+def test_sdk_stage_timings_filter_private_and_invalid_values():
+    from app.agent.turn_latency import stage_timings
+    assert stage_timings({'llm_node_ttft':1.23456,'tts_node_ttfb':0,'e2e_latency':float('nan'),
+                          'transcription_delay':-1,'end_of_turn_delay':True,'text':'private',
+                          'llm_metadata':{'api_key':'secret'}})=={'llm_node_ttft':1.235,'tts_node_ttfb':0.0}
+    assert stage_timings(None)=={}

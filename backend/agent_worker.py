@@ -33,6 +33,8 @@ from livekit.agents import (
     function_tool,
 )
 from livekit.plugins import cartesia, deepgram, openai, silero
+# Register downloads and inference runners before CLI/worker initialization, on the main thread.
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
@@ -50,6 +52,38 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(message)s",
 )
+
+
+def _prewarm_process(proc) -> None:
+    """Load shared VAD before an idle worker accepts its first call."""
+    proc.userdata["vad"] = silero.VAD.load()
+    proc.userdata["vad_prewarmed"] = True
+
+
+def _job_vad(ctx):
+    # LiveKit VAD instances support independent streams for each session.
+    vad = ctx.proc.userdata.get("vad")
+    if vad is None:
+        vad = silero.VAD.load()
+        ctx.proc.userdata["vad"] = vad
+        ctx.proc.userdata["vad_prewarmed"] = False
+    return vad
+
+
+def _prewarm_tts(tts, ctx) -> bool:
+    warm = getattr(tts, "prewarm", None)
+    if not callable(warm):
+        return False
+    try:
+        # Register cleanup before opening a socket: no-answer jobs also need to close it.
+        close = getattr(tts, "aclose", None)
+        if callable(close):
+            ctx.add_shutdown_callback(close)
+        warm()
+        return True
+    except Exception as exc:
+        log.warning("tts_prewarm_failed", error=type(exc).__name__)
+        return False
 
 
 # ── Deepgram keyterm boosting for SDR calls (nova-3 uses keyterms, not keywords)
@@ -983,18 +1017,13 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if call_type == "outbound" and not render_vars(fixed_opening, variables).strip():
         opening_task = asyncio.create_task(_draft_opening(cfg, variables))
 
-    if call_type == "outbound":
-        await _wait_for_sip_answer(ctx)
-    else:
-        await ctx.wait_for_participant()
-
+    prepare_started = _time.monotonic()
     turn_detector = None
     if not settings.low_resource_mode:
         try:
-            from livekit.plugins.turn_detector.multilingual import MultilingualModel
             turn_detector = MultilingualModel()
         except Exception as exc:
-            log.warning("turn_detector_unavailable", error=type(exc).__name__)
+            log.warning("turn_detector_unavailable", error=type(exc).__name__, reason=str(exc)[:240])
             turn_detector = None
 
     language = cfg.get("language") or "en"
@@ -1023,7 +1052,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             volume=tuning["volume"] if tuning["volume"] != 1.0 else None,
             api_key=settings.cartesia_api_key,
         ),
-        vad=silero.VAD.load(),
+        vad=_job_vad(ctx),
         turn_handling={
             "interruption": {
                 "min_duration": tuning["min_duration"],
@@ -1174,8 +1203,21 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session.on("user_input_transcribed", _on_transcribed)
         session.on("user_state_changed", _on_user_state)
 
+    instructions = build_instructions(cfg, variables, channel=channel)
+    tts_prewarmed = False
+    if call_type == "outbound":
+        tts_prewarmed = _prewarm_tts(session_kwargs["tts"], ctx)
+    log.info("voice_resources_ready", room=ctx.room.name,
+             seconds=round(_time.monotonic() - prepare_started, 3),
+             vad_prewarmed=bool(ctx.proc.userdata.get("vad_prewarmed")), tts_prewarm_started=tts_prewarmed)
+    # Construct providers and warm the voice socket during ringing, but do not listen or speak before answer.
+    if call_type == "outbound":
+        await _wait_for_sip_answer(ctx)
+    else:
+        await ctx.wait_for_participant()
+
     agent = _CallAgent(
-        instructions=build_instructions(cfg, variables, channel=channel),
+        instructions=instructions,
         tools=_build_tools(cfg, run, ctx, session_ref, variables),
     )
 
@@ -1203,6 +1245,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         try:
             item = getattr(ev, "item", None)
             role = getattr(item, "role", None)
+            from app.agent.turn_latency import stage_timings
+            timings = stage_timings(getattr(item, "metrics", None))
+            if timings:
+                log.info("turn_stage_latency", room=ctx.room.name, model=model, role=role, **timings)
             text = (getattr(item, "text_content", None) or "").strip()
             if role not in ("user", "assistant") or not text or text == CALL_CONNECTED_CUE:
                 return
@@ -1229,7 +1275,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                                                error=str(getattr(ev, "error", ev))[:300]))
     session.on("close", lambda ev: log.info("session_closed", room=ctx.room.name,
                                             reason=str(getattr(ev, "reason", "")), error=str(getattr(ev, "error", "") or "")[:300]))
+    session_started = _time.monotonic()
     await session.start(agent, room=ctx.room)
+    log.info("voice_session_ready", room=ctx.room.name,
+             after_answer_seconds=round(_time.monotonic() - session_started, 3))
 
     # "Record this call" on a browser test: the worker records both sides itself (see app/agent/call_recorder.py).
     recorder = None
@@ -1565,7 +1614,6 @@ async def entrypoint(ctx: JobContext) -> None:
     turn_detector = None
     if not settings.low_resource_mode:
         try:
-            from livekit.plugins.turn_detector.multilingual import MultilingualModel
             turn_detector = MultilingualModel()
         except Exception:
             turn_detector = None
@@ -1595,7 +1643,7 @@ async def entrypoint(ctx: JobContext) -> None:
             text_pacing=True,       # keep Cartesia's natural phrase pauses
             api_key=settings.cartesia_api_key,
         ),
-        vad=silero.VAD.load(),
+        vad=_job_vad(ctx),
         user_away_timeout=5.0,
         turn_handling={
             "interruption": {
@@ -1772,6 +1820,7 @@ if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            prewarm_fnc=_prewarm_process,
             agent_name=settings.livekit_agent_name or "closer",
             **extra,
         )

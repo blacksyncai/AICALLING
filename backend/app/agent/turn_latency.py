@@ -43,3 +43,14 @@ class TurnLatency:
                 max_turn_gap=round(max(values),3))
         if self.recoveries:out['avg_interruption_recovery']=round(sum(self.recoveries)/len(self.recoveries),3)
         return out
+
+
+def stage_timings(metrics):
+    """Only numeric SDK timings; never log message text or provider credentials."""
+    if not isinstance(metrics, dict):
+        return {}
+    allowed = ('transcription_delay', 'end_of_turn_delay', 'on_user_turn_completed_delay',
+               'llm_node_ttft', 'tts_node_ttfb', 'playback_latency', 'e2e_latency')
+    return {key: round(float(metrics[key]), 3) for key in allowed
+            if isinstance(metrics.get(key), (int, float)) and not isinstance(metrics[key], bool)
+            and math.isfinite(metrics[key]) and metrics[key] >= 0}
