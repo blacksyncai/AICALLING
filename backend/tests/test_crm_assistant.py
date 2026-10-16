@@ -96,7 +96,7 @@ def test_unsupported_and_arbitrary_tools_are_rejected(client,crm):
                  {'action':'list_contacts','limit':10000}, {'action':'create_contact','name':'Nobody'},
                  {'action':'list_contacts','url':'https://example.com'}, {'action':'list_contacts','text':'unused'}]:
         assert client.post('/api/radar/automations/commands',json={'provider':'followupboss','spec':spec}).status_code==422
-    r=client.post('/api/radar/automations/commands',json={'provider':'followupboss','spec':{'action':'create_pipeline','name':'Test','stages':[{'label':'New'}]}})
+    r=client.post('/api/radar/automations/commands',json={'provider':'followupboss','spec':{'action':'add_stages','pipeline_id':'9999','stages':[{'label':'New'}]}})
     assert r.status_code==400
 
 

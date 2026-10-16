@@ -65,6 +65,7 @@ export function RadarAutomations() {
     items: CrmCommand[];
   }>(`${BASE}/commands`, fetcher);
   const [commands, setCommands] = useState<CrmCommand[]>([]);
+  const [reviewRequest, setReviewRequest] = useState({ id: "", token: 0 });
   const [picked, setPicked] = useState("");
   const [view, setView] = useState("build");
   const [request, setRequest] = useState("");
@@ -114,9 +115,9 @@ export function RadarAutomations() {
         provider,
         message: text,
         history: messages
-          .filter((m) => m.provider === provider && m.role === "user")
-          .slice(-6)
-          .map((m) => m.text),
+          .filter((m) => m.provider === provider)
+          .slice(-12)
+          .map((m) => ({ role: m.role, text: m.text.slice(0, 4000) })),
       });
       setMessages((m) => [
         ...m,
@@ -131,7 +132,13 @@ export function RadarAutomations() {
         })),
         ...old,
       ]);
-      setCommands((old) => [...(result.commands ?? []), ...old]);
+      const incoming = result.commands ?? [];
+      setCommands((old) => [
+        ...incoming,
+        ...old.filter((c) => !incoming.some((next) => next.id === c.id)),
+      ]);
+      const review = incoming.find((c) => c.writes && c.status === "draft");
+      if (review) setReviewRequest({ id: review.id, token: Date.now() });
       void refreshCommands();
       setSuggestions(result.resource_requests);
     } catch (e) {
@@ -375,11 +382,35 @@ export function RadarAutomations() {
                 <CrmCommandCard
                   key={c.id}
                   command={c}
+                  reviewRequest={
+                    reviewRequest.id === c.id ? reviewRequest.token : 0
+                  }
+                  onReviewOpened={() => setReviewRequest({ id: "", token: 0 })}
                   onUpdated={(next) => {
                     setCommands((old) =>
                       old.map((x) => (x.id === next.id ? next : x)),
                     );
                     void refreshCommands();
+                    void refreshResources();
+                    if (next.status === "succeeded") {
+                      const pipe = next.result.pipeline as
+                        | { name: string; stages: { label: string }[] }
+                        | undefined;
+                      const receipt = pipe
+                        ? `${pipe.name} is ready. Stages: ${pipe.stages.map((s) => s.label).join(", ")}.`
+                        : String(
+                            next.result.message ??
+                              `${TOOL_NAMES[next.spec.action] ?? "CRM action"} completed.`,
+                          );
+                      setMessages((old) => [
+                        ...old,
+                        {
+                          role: "assistant",
+                          provider: next.provider,
+                          text: receipt,
+                        },
+                      ]);
+                    }
                   }}
                 />
               ))}
@@ -1147,7 +1178,7 @@ function ResourceManager({
                 {
                   kind,
                   name,
-                  ...(kind === "crm_pipeline" && provider !== "followupboss"
+                  ...(kind === "crm_pipeline"
                     ? {
                         stages: stageNames
                           .split("\n")
@@ -1191,7 +1222,7 @@ function ResourceManager({
               required
             />
           </Field>
-          {kind === "crm_pipeline" && provider !== "followupboss" && (
+          {kind === "crm_pipeline" && (
             <Field label="Stages (one per line)">
               <Textarea
                 aria-label="Pipeline stages"

@@ -17,7 +17,7 @@ not claim exhaustive search results. A create request may reuse an existing reco
 | Close | Yes | Yes / yes | Yes | — |
 | HubSpot | Yes | Yes / yes | — | — |
 | Pipedrive | Yes | Yes / yes | — | — |
-| Follow Up Boss | Person stages | Deal pipeline creation; custom deal stages unavailable | Yes | Ponds, person stages, follow-up tasks, DNC, mapped fields |
+| Follow Up Boss | Person stages | Deal pipelines with embedded stages / yes | Yes | Ponds, person stages, follow-up tasks, DNC, mapped fields |
 | GoHighLevel | Yes | — | Yes | DNC |
 | Salesforce | — | — | — | DNC |
 | Zoho CRM | — | — | Yes | — |
@@ -38,8 +38,10 @@ access. Slack and Google Sheets remain separate notification/sheet integrations.
    the organization's CRM-action history and are available as bounded chat context.
 3. The chat produces immutable, typed proposal cards. No CRM write occurs during
    drafting. Each proposal lists the provider, action, and exact arguments.
-4. Read tools have an explicit Run action. Writes have Review, Cancel, and Confirm
-   and apply. Confirmation is required by the backend, not just by the button.
+4. New write proposals open a confirmation dialog automatically with Cancel and
+   Confirm and continue. Read tools have an explicit Run action. Confirmation is
+   required by the backend, not just by the button. Typing yes reopens the pending
+   proposal's dialog without generating or executing another command.
 5. Successful results are cached against that command ID. Repeated execution of
    the same ID returns its receipt without issuing the write again.
 
@@ -102,3 +104,7 @@ and exercise claim contention on PostgreSQL. Existing FUB resource endpoints hav
 not yet been live-validated (see radar-automations.md). Additional CRM actions can
 be added as typed tools with provider-specific payloads and tests; providers do
 not automatically gain every action another CRM supports.
+
+Follow Up Boss embedded-stage details and validation limits are documented in
+[fub-pipelines.md](fub-pipelines.md). Chat requests now preserve both user and
+assistant turns so names/stages supplied in later messages retain context.

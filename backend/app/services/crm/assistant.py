@@ -19,7 +19,7 @@ def capabilities(provider):
     if p.can_map_fields: tools += ["field_catalog", "contact_fields"]
     if provider in NOTES: tools += ["add_note"]
     if type(p).mark_dnc is not Provider.mark_dnc: tools += ["mark_dnc"]
-    if provider == "followupboss": tools += ["create_task", "create_pond", "create_stage", "create_pipeline"]
+    if provider == "followupboss": tools += ["create_task", "create_pond", "create_stage", "create_pipeline", "add_stages"]
     return [{"action": t, "writes": t not in READS} for t in tools]
 
 
@@ -41,8 +41,6 @@ def check_supported(conn, spec):
     if spec.external_id and conn.provider in {"followupboss", "pipedrive", "lofty"} and (not spec.external_id.isascii() or not spec.external_id.isdigit() or int(spec.external_id) < 1):
         raise CrmError("Choose a valid numeric contact ID from this CRM.")
     if spec.action == "create_pipeline":
-        if conn.provider == "followupboss" and spec.stages:
-            raise CrmError("Custom deal-pipeline stages are not exposed for Follow Up Boss yet. Create the pipeline without stages or manage them in the CRM.")
         if conn.provider != "followupboss" and not spec.stages:
             raise CrmError("Specify the pipeline stages for review before creating it.")
     if spec.action not in {t["action"] for t in capabilities(conn.provider)}:
@@ -51,6 +49,9 @@ def check_supported(conn, spec):
 
 async def checked_pipeline(conn, spec):
     p, http = sync.http_for(conn)
+    if conn.provider == "followupboss" and spec.action == "add_stages":
+        from app.services.crm.fub_pipelines import get_pipeline, catalog
+        return catalog(await get_pipeline(http, spec.pipeline_id))
     pipelines = await p.pipelines(http, conn.config or {})
     selected = next((x for x in pipelines if str(x["id"]) == spec.pipeline_id), None)
     if selected is None: raise CrmError("Choose an existing pipeline in this CRM account.")
@@ -112,10 +113,17 @@ async def perform(db, conn, spec):
         external_id = await p.find_or_create(http, cfg, c, create=action == "create_contact")
         if not external_id: return {"found": False, "message": "No exact match returned by the provider."}
         return {"id": str(external_id), "found": True, "message": "Contact found or created" if action == "create_contact" else "Contact found"}
-    if action == "list_pipelines": return {"pipelines": (await p.pipelines(http, cfg))[:100], "limit": 100}
-    if action == "create_pipeline" and conn.provider == "followupboss":
-        from app.services.crm.automation_resources import create_resource
-        return await create_resource(db, conn, "crm_pipeline", spec.name)
+    if action == "list_pipelines":
+        if conn.provider == "followupboss":
+            from app.services.crm.fub_pipelines import catalog
+            from app.services.crm.automation_resources import fub_collection
+            return {"pipelines": [catalog(row) for row in (await fub_collection(http, "pipelines"))[:100]],
+                    "person_stages": await p.pipelines(http, cfg), "limit": 100}
+        return {"pipelines": (await p.pipelines(http, cfg))[:100], "limit": 100}
+    if action in ("create_pipeline", "add_stages") and conn.provider == "followupboss":
+        from app.services.crm.fub_pipelines import ensure_pipeline, add_stages
+        result = await ensure_pipeline(http, spec.name, spec.stages) if action == "create_pipeline" else await add_stages(http, spec.pipeline_id, spec.stages)
+        return {"pipeline": result, "message": "Follow Up Boss confirmed the pipeline and requested stages."}
     if action in ("create_pipeline", "add_stages"):
         name = spec.name if action == "create_pipeline" else (await checked_pipeline(conn, spec))["name"]
         stages = [{"key": f"stage_{i}", "label": s.label, "kind": s.kind} for i,s in enumerate(spec.stages)]

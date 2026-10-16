@@ -44,7 +44,7 @@ def crm(client, monkeypatch):
     from app.config import settings
     from app.services.crm.http import BaseHttp
     monkeypatch.setattr(settings, "secrets_encryption_key", Fernet.generate_key().decode())
-    state = {"calls": [], "ponds": [{"id": 7, "name": "Verified Contacts"}, {"id": 8, "name": "Needs Review"}],
+    state = {"pipelines": [{"id":1,"name":"Sales","stages":[{"id":101,"name":"New","orderWeight":10,"closedStage":False}]}], "calls": [], "ponds": [{"id": 7, "name": "Verified Contacts"}, {"id": 8, "name": "Needs Review"}],
              "person": {"id": 91, "stage": "Lead", "tags": ["Original"], "assignedPondId": 4}, "fail": False}
     def handler(request):
         path, method = request.url.path, request.method
@@ -60,11 +60,22 @@ def crm(client, monkeypatch):
                 state["ponds"].append(row)
                 return httpx.Response(201, json=row)
             return httpx.Response(200, json={"ponds": list(state["ponds"])})
-        if path in ("/v1/stages", "/v1/pipelines"):
-            key = path.rsplit("/", 1)[1]
+        if path == "/v1/stages":
+            if method == "POST": return httpx.Response(201, json={"id":120,"name":body["name"]})
+            return httpx.Response(200,json={"stages":[{"id":1,"name":"Lead"},{"id":2,"name":"Qualified"}]})
+        if path == "/v1/pipelines":
             if method == "POST":
-                return httpx.Response(201, json={"id": 120, "name": body["name"]})
-            return httpx.Response(200, json={key: [{"id": 1, "name": "Lead"}, {"id": 2, "name": "Qualified"}]})
+                row={"id":120+len(state['pipelines']),"name":body['name'],"stages":[
+                    {**stage,"id":1000+i} for i,stage in enumerate(body.get('stages',[]))]}
+                state['pipelines'].append(row)
+                return httpx.Response(201,json=row)
+            return httpx.Response(200,json={"pipelines":state['pipelines']})
+        if path.startswith('/v1/pipelines/'):
+            key=int(path.rsplit('/',1)[-1]);row=next((p for p in state['pipelines'] if p['id']==key),None)
+            if not row:return httpx.Response(404,json={'message':'Unknown pipeline'})
+            if method=='PUT':
+                row['stages']=[{**stage,'id':stage.get('id') or 2000+i} for i,stage in enumerate(body['stages'])]
+            return httpx.Response(200,json=row)
         if path == "/v1/people/91":
             if method == "PUT":
                 state["person"].update(body)

@@ -50,8 +50,8 @@ async def resources(db, conn) -> dict:
         except CrmError as exc:
             out["warnings"].append(f"Couldn't load ponds: {exc}")
         try:
-            out["deal_pipelines"] = [{"id": str(x["id"]), "name": x.get("name") or str(x["id"])}
-                                     for x in await fub_collection(http, "pipelines") if x.get("id")]
+            from app.services.crm.fub_pipelines import catalog
+            out["deal_pipelines"] = [catalog(x) for x in await fub_collection(http, "pipelines") if x.get("id")]
             out["capabilities"]["create_pipeline"] = True
         except CrmError as exc:
             out["warnings"].append(f"Couldn't load deal pipelines: {exc}")
@@ -92,8 +92,13 @@ async def create_resource(db, conn, kind: str, name: str, stages=None) -> dict:
         return {"id": str(result["id"]), "name": result.get("name") or name, "kind": kind, "location": p.name}
     if conn.provider != "followupboss" or kind not in ("crm_pond", "crm_stage", "crm_pipeline"):
         raise CrmError("This CRM does not expose that resource-creation action in Radar.")
-    if stages:
-        raise CrmError("Custom stages cannot be specified for this Follow Up Boss resource action.")
+    if kind == "crm_pipeline":
+        from app.services.crm.fub_pipelines import ensure_pipeline
+        _, http = sync.http_for(conn)
+        result = await ensure_pipeline(http, name, stages or [])
+        await sync.add_log(db, conn, "radar", "ok", f"Radar pipeline ready: {name}.")
+        return {**result, "kind": kind, "location": "Follow Up Boss"}
+    if stages: raise CrmError("Only deal pipelines accept embedded deal stages.")
     resource = {"crm_pond": "ponds", "crm_stage": "stages", "crm_pipeline": "pipelines"}[kind]
     _, http = sync.http_for(conn)
     existing = await fub_collection(http, resource)

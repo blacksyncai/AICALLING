@@ -1,7 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Database, Play, ShieldCheck } from "lucide-react";
-import { Button, Card, Notice, Badge } from "@/components/ui";
+import { Button, Card, Notice, Badge, Modal } from "@/components/ui";
 import { post } from "@/lib/api";
 
 export interface CrmCommand {
@@ -128,18 +128,95 @@ function Result({ result }: { result: Record<string, unknown> }) {
     </dl>
   );
 }
+function CommandDetails({ row }: { row: CrmCommand }) {
+  return (
+    <dl className="my-4 space-y-3">
+      {Object.entries(row.spec)
+        .filter(([key]) => key !== "action")
+        .map(([key, value]) => (
+          <div key={key} className="min-w-0">
+            <dt className="text-xs text-zinc-500">{LABELS[key] ?? key}</dt>
+            <dd className="mt-1 break-words whitespace-pre-wrap text-sm">
+              {key === "stages" && Array.isArray(value)
+                ? value
+                    .map(
+                      (s: { label: string; kind: string }) =>
+                        `${s.label} (${s.kind})`,
+                    )
+                    .join(" → ")
+                : String(value)}
+            </dd>
+          </div>
+        ))}
+    </dl>
+  );
+}
+
 export function CrmCommandCard({
   command,
   onUpdated,
+  reviewRequest = 0,
+  onReviewOpened,
 }: {
   command: CrmCommand;
   onUpdated?: (next: CrmCommand) => void;
+  reviewRequest?: number;
+  onReviewOpened?: () => void;
 }) {
   const [row, setRow] = useState(command);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const dialogBody = useRef<HTMLDivElement>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const executing = useRef(false);
+  useEffect(() => setRow(command), [command]);
+  useEffect(() => {
+    if (reviewRequest > 0 && command.writes && command.status === "draft") {
+      setConfirm(true);
+      onReviewOpened?.();
+    }
+  }, [reviewRequest, command.writes, command.status, onReviewOpened]);
+  useEffect(() => {
+    if (!confirm) return;
+    const dialog = dialogBody.current?.closest<HTMLElement>('[role="dialog"]');
+    if (!dialog) return;
+    dialog.setAttribute("aria-label", "Confirm CRM change");
+    const previous = document.activeElement as HTMLElement | null;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    cancelButton.current?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const elements = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]',
+        ),
+      ).filter((el) => el.offsetParent !== null);
+      const first = elements[0],
+        last = elements.at(-1);
+      if (!first) {
+        event.preventDefault();
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener("keydown", trap);
+    return () => {
+      dialog.removeEventListener("keydown", trap);
+      document.body.style.overflow = oldOverflow;
+      previous?.focus();
+    };
+  }, [confirm]);
   const execute = async () => {
+    if (executing.current) return;
+    executing.current = true;
     setBusy(true);
     setError("");
     try {
@@ -153,6 +230,7 @@ export function CrmCommandCard({
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't run this action.");
     } finally {
+      executing.current = false;
       setBusy(false);
     }
   };
@@ -174,25 +252,7 @@ export function CrmCommandCard({
         · {row.provider_name ?? row.provider}
         {row.account_label ? ` · ${row.account_label}` : ""}
       </p>
-      <dl className="my-4 space-y-3">
-        {Object.entries(row.spec)
-          .filter(([key]) => key !== "action")
-          .map(([key, value]) => (
-            <div key={key} className="min-w-0">
-              <dt className="text-xs text-zinc-500">{LABELS[key] ?? key}</dt>
-              <dd className="mt-1 break-words whitespace-pre-wrap text-sm">
-                {key === "stages" && Array.isArray(value)
-                  ? value
-                      .map(
-                        (s: { label: string; kind: string }) =>
-                          `${s.label} (${s.kind})`,
-                      )
-                      .join(" → ")
-                  : String(value)}
-              </dd>
-            </div>
-          ))}
-      </dl>
+      <CommandDetails row={row} />
       {row.spec.action === "move_stage" && (
         <p className="mb-4 text-xs text-zinc-500">
           Existing records only. Forward-only and closed-stage protections still
@@ -208,29 +268,64 @@ export function CrmCommandCard({
           {row.writes ? "Review change" : "Run read-only query"}
         </Button>
       )}
-      {confirm && (
-        <Notice tone="amber">
-          <p>
-            This applies the change shown above to{" "}
-            {row.provider_name ?? row.provider}
-            {row.account_label ? ` · ${row.account_label}` : ""}. No calls or
-            messages will be sent.
+      <Modal
+        open={confirm}
+        onClose={() => {
+          if (!busy) setConfirm(false);
+        }}
+        title="Confirm CRM change"
+      >
+        <div ref={dialogBody}>
+          <p className="text-sm leading-6 text-zinc-600">
+            Review this action for{" "}
+            <strong>
+              {row.provider_name ?? row.provider}
+              {row.account_label ? ` · ${row.account_label}` : ""}
+            </strong>
+            .
           </p>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <h3 className="mt-4 text-base font-semibold">
+            {TOOL_NAMES[row.spec.action] ?? row.spec.action}
+          </h3>
+          <CommandDetails row={row} />
+          {row.provider === "followupboss" &&
+            row.spec.action === "create_pipeline" && (
+              <p className="mb-4 text-xs leading-5 text-zinc-500">
+                This creates a deal pipeline or reuses the same name and adds
+                missing stages. Person stages and ponds are separate. Existing
+                stages are kept. Follow Up Boss stores won/lost selections as
+                closed stages.
+              </p>
+            )}
+          <p className="text-xs text-zinc-500">
+            No phone calls or messages will be sent.
+          </p>
+          {error && (
+            <div className="mt-3">
+              <Notice tone="red">{error}</Notice>
+            </div>
+          )}
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <button
+              ref={cancelButton}
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirm(false)}
+              className="min-h-10 rounded-lg border border-zinc-200 px-4 text-sm font-medium disabled:opacity-50"
+            >
+              Cancel
+            </button>
             <Button
               variant="primary"
               loading={busy}
               onClick={() => void execute()}
             >
               <ShieldCheck size={14} />
-              Confirm and apply
-            </Button>
-            <Button disabled={busy} onClick={() => setConfirm(false)}>
-              Cancel
+              Confirm and continue
             </Button>
           </div>
-        </Notice>
-      )}
+        </div>
+      </Modal>
       {row.status === "succeeded" && (
         <>
           <p className="flex items-center gap-2 text-xs text-emerald-700">
