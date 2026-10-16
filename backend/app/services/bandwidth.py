@@ -229,10 +229,13 @@ async def ensure_bridge_trunk(numbers: list[str]) -> None:
             log.info("bandwidth_bridge_trunk_created", trunk=trunk.sip_trunk_id)
         else:
             missing = [n for n in numbers if n not in trunk.numbers]
-            if missing or trunk.auth_username != settings.bandwidth_sip_username:
-                await lk.sip.update_inbound_trunk_fields(
-                    trunk.sip_trunk_id, numbers=api.ListUpdate(add=missing) if missing else None,
-                    auth_username=settings.bandwidth_sip_username, auth_password=settings.bandwidth_sip_password)
+            # Reapply credentials even when the username/numbers are unchanged.
+            # A rotated password was previously ignored, and provider reads may
+            # redact passwords, so comparing the returned password is unreliable.
+            await lk.sip.update_inbound_trunk_fields(
+                trunk.sip_trunk_id, numbers=api.ListUpdate(add=missing) if missing else None,
+                auth_username=settings.bandwidth_sip_username, auth_password=settings.bandwidth_sip_password)
+            log.info("bandwidth_bridge_credentials_synced", trunk=trunk.sip_trunk_id)
         agent_name = settings.livekit_agent_name or "closer"
         rules = (await lk.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())).items
         if any(trunk.sip_trunk_id in r.trunk_ids for r in rules):
