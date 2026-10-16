@@ -111,7 +111,7 @@ def _add_missing_columns(sync_conn) -> None:
 async def create_all_tables() -> None:
     """Create tables (and add new columns) on startup."""
     # Import models so metadata is populated
-    from app.models import account, agent, billing, builder, calendar, call_log, campaign, crm, radar_automation, email_message, invite, lead, lead_finder, messaging, oauth, playbook, support  # noqa: F401
+    from app.models import account, agent, billing, builder, calendar, call_log, campaign, crm, crm_command, radar_automation, email_message, invite, lead, lead_finder, messaging, oauth, playbook, support  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_missing_columns)

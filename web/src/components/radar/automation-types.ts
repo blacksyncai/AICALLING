@@ -37,6 +37,7 @@ export interface Choice {
 export interface Resources {
   provider: string;
   provider_name: string;
+  assistant_tools?: { action: string; writes: boolean }[];
   blacksync_ponds: Choice[];
   crm_ponds: Choice[];
   pipelines: {

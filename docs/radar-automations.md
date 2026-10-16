@@ -1,5 +1,7 @@
 # Radar custom automations
 
+For the expanded shared CRM tools and current provider capability matrix, see [CRM assistant](crm-assistant.md).
+
 Radar now has Discover and Automations views. Existing scan plays remain available.
 Owners/admins with the existing Radar entitlement can draft bounded rules in chat,
 edit rules manually, preview transcript evidence, save drafts, and activate them.
@@ -15,8 +17,9 @@ or active rule execution changes CRM data. Nothing launches a call.
   add a FUB tag preserving existing tags; or use an existing CRM stage adapter.
 - Resource creation: internal BlackSync ponds; FUB ponds, person stages, and
   deal pipelines. A deal pipeline is a separate CRM object, not a person stage.
-- Other CRMs reuse the existing supported stage adapters. New generic CRM
-  resource-creation APIs and arbitrary executable integrations are not provided.
+- Close, HubSpot and Pipedrive also expose their existing native pipeline/stage
+  creation adapters through the CRM assistant. Other CRMs reuse supported stage
+  adapters. Arbitrary executable integrations are not provided.
 
 ## Verification
 

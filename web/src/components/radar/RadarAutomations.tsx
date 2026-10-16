@@ -1,10 +1,16 @@
 "use client";
 import Link from "next/link";
+import {
+  CrmCommandCard,
+  TOOL_NAMES,
+  type CrmCommand,
+} from "./CrmAssistantCommands";
 import AiMascotInput from "@/components/ui/ai-mascot-input";
 import { useState } from "react";
 import useSWR from "swr";
 import {
   ArrowDown,
+  Database,
   ArrowRight,
   Bot,
   CheckCircle2,
@@ -55,6 +61,10 @@ type ResourceRequest = { kind: string; name: string };
 
 export function RadarAutomations() {
   const { data, error, mutate } = useSWR<Overview>(BASE, fetcher);
+  const { data: commandHistory, mutate: refreshCommands } = useSWR<{
+    items: CrmCommand[];
+  }>(`${BASE}/commands`, fetcher);
+  const [commands, setCommands] = useState<CrmCommand[]>([]);
   const [picked, setPicked] = useState("");
   const [view, setView] = useState("build");
   const [request, setRequest] = useState("");
@@ -97,6 +107,7 @@ export function RadarAutomations() {
     try {
       const result = await post<{
         message: string;
+        commands?: CrmCommand[];
         drafts: Rule[];
         resource_requests: ResourceRequest[];
       }>(`${BASE}/draft`, {
@@ -120,6 +131,8 @@ export function RadarAutomations() {
         })),
         ...old,
       ]);
+      setCommands((old) => [...(result.commands ?? []), ...old]);
+      void refreshCommands();
       setSuggestions(result.resource_requests);
     } catch (e) {
       setRequest(text);
@@ -191,6 +204,7 @@ export function RadarAutomations() {
           },
           { key: "resources", label: "Ponds & stages", icon: Layers },
           { key: "activity", label: "Activity", icon: Clock3 },
+          { key: "commands", label: "CRM actions", icon: Database },
         ].map(({ key, label, icon: Icon }) => (
           <button
             type="button"
@@ -223,7 +237,15 @@ export function RadarAutomations() {
                 </div>
                 <Badge tone="gray">Draft mode</Badge>
               </div>
-              <div className={styles.messages} aria-live="polite" style={{ display: messages.some((m) => m.provider === provider) ? undefined : "none" }}>
+              <div
+                className={styles.messages}
+                aria-live="polite"
+                style={{
+                  display: messages.some((m) => m.provider === provider)
+                    ? undefined
+                    : "none",
+                }}
+              >
                 {messages
                   .filter((m) => m.provider === provider)
                   .map((m, i) => (
@@ -248,6 +270,8 @@ export function RadarAutomations() {
               </div>
               <div className="p-4 sm:p-5">
                 <AiMascotInput
+                  title="What can Radar do for you?"
+                  subtitle="Work with your CRM, or build a reusable automation."
                   value={request}
                   onChange={setRequest}
                   onSubmit={() => ask()}
@@ -258,17 +282,17 @@ export function RadarAutomations() {
                 />
               </div>
               <div className="px-4 pb-3">
-              <Button
-                onClick={() => {
-                  setDrafts((d) => [
-                    { ...blankRule(provider), key: crypto.randomUUID() },
-                    ...d,
-                  ]);
-                }}
-              >
-                <Plus size={14} />
-                Build manually
-              </Button>
+                <Button
+                  onClick={() => {
+                    setDrafts((d) => [
+                      { ...blankRule(provider), key: crypto.randomUUID() },
+                      ...d,
+                    ]);
+                  }}
+                >
+                  <Plus size={14} />
+                  Build manually
+                </Button>
               </div>
               {err && (
                 <div className="px-4 pb-4">
@@ -277,7 +301,27 @@ export function RadarAutomations() {
               )}
             </Card>
             <aside className={styles.guide}>
-              <span className={styles.eyebrow}>YOUR WORKFLOW, EXPLAINED</span>
+              <span className={styles.eyebrow}>AVAILABLE CRM TOOLS</span>
+              <p className="text-xs leading-6 text-zinc-500">
+                Actions depend on this CRM’s API and your connected account’s
+                permissions. Ask in chat, then review the proposed action.
+              </p>
+              <ul className="space-y-2 text-xs">
+                {resources?.assistant_tools?.map((tool) => (
+                  <li
+                    key={tool.action}
+                    className="flex items-center justify-between gap-3"
+                  >
+                    <span>
+                      {TOOL_NAMES[tool.action] ?? humanize(tool.action)}
+                    </span>
+                    <Badge tone="gray">
+                      {tool.writes ? "Review first" : "Read only"}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+              <span className={styles.eyebrow}>AUTOMATION WORKFLOWS</span>
               <div>
                 <span>01</span>
                 <h3>Choose the source</h3>
@@ -299,7 +343,6 @@ export function RadarAutomations() {
                   tag when available.
                 </p>
               </div>
-
             </aside>
           </div>
           {suggestions.length > 0 && (
@@ -325,6 +368,22 @@ export function RadarAutomations() {
               </div>
             </Card>
           )}
+          <div className="mt-5 space-y-4">
+            {commands
+              .filter((c) => c.provider === provider)
+              .map((c) => (
+                <CrmCommandCard
+                  key={c.id}
+                  command={c}
+                  onUpdated={(next) => {
+                    setCommands((old) =>
+                      old.map((x) => (x.id === next.id ? next : x)),
+                    );
+                    void refreshCommands();
+                  }}
+                />
+              ))}
+          </div>
           <div className={styles.drafts}>
             {drafts
               .filter((d) => d.provider === provider)
@@ -350,6 +409,42 @@ export function RadarAutomations() {
               ))}
           </div>
         </>
+      )}
+      {view === "commands" && (
+        <div className="space-y-4">
+          <details className="rounded-xl border border-zinc-200 bg-white p-4">
+            <summary className="cursor-pointer text-sm font-semibold">
+              Available actions for {connection?.name}
+            </summary>
+            <ul className="mt-4 space-y-2 text-xs">
+              {resources?.assistant_tools?.map((t) => (
+                <li key={t.action}>
+                  {TOOL_NAMES[t.action] ?? humanize(t.action)} ·{" "}
+                  {t.writes ? "Review required" : "Read only"}
+                </li>
+              ))}
+            </ul>
+          </details>
+          <p className="text-xs leading-6 text-zinc-500">
+            One-time CRM requests from chat. Proposals expire after 30 minutes.
+            Completed results remain here for review.
+          </p>
+          {commandHistory?.items
+            .filter((c) => c.provider === provider)
+            .map((c) => (
+              <CrmCommandCard
+                key={`${c.id}-${c.status}`}
+                command={c}
+                onUpdated={() => void refreshCommands()}
+              />
+            ))}
+          {!commandHistory?.items.some((c) => c.provider === provider) && (
+            <Card className="p-6 text-sm text-zinc-500">
+              No CRM actions yet. Ask the assistant to find a contact or create
+              a pipeline.
+            </Card>
+          )}
+        </div>
       )}
       {view === "rules" && (
         <div className={styles.savedRules}>
@@ -403,7 +498,7 @@ export function RadarAutomations() {
       {view === "resources" &&
         (resources ? (
           <ResourceManager
-          key={provider}
+            key={provider}
             provider={provider}
             resources={resources}
             suggestions={suggestions}
@@ -997,6 +1092,7 @@ function ResourceManager({
 }) {
   const [kind, setKind] = useState("blacksync_pond");
   const [name, setName] = useState("");
+  const [stageNames, setStageNames] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -1048,7 +1144,19 @@ function ResourceManager({
             try {
               const result = await post<{ name: string; location: string }>(
                 `${BASE}/resources/${provider}`,
-                { kind, name },
+                {
+                  kind,
+                  name,
+                  ...(kind === "crm_pipeline" && provider !== "followupboss"
+                    ? {
+                        stages: stageNames
+                          .split("\n")
+                          .map((x) => x.trim())
+                          .filter(Boolean)
+                          .map((label) => ({ label, kind: "active" })),
+                      }
+                    : {}),
+                },
               );
               setNotice(`“${result.name}” is ready in ${result.location}.`);
               setName("");
@@ -1083,6 +1191,22 @@ function ResourceManager({
               required
             />
           </Field>
+          {kind === "crm_pipeline" && provider !== "followupboss" && (
+            <Field label="Stages (one per line)">
+              <Textarea
+                aria-label="Pipeline stages"
+                rows={4}
+                required
+                value={stageNames}
+                onChange={(e) => setStageNames(e.target.value)}
+                placeholder={"New\nIn progress"}
+              />
+              <p className="mt-1 text-xs text-zinc-500">
+                These stages are active. Ask the assistant to include won/lost
+                stages or add stages to an existing pipeline.
+              </p>
+            </Field>
+          )}
           {kind === "crm_pipeline" && (
             <Notice tone="amber">
               This creates a CRM deal pipeline. It is separate from lead-stage

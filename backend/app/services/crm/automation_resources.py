@@ -55,10 +55,15 @@ async def resources(db, conn) -> dict:
             out["capabilities"]["create_pipeline"] = True
         except CrmError as exc:
             out["warnings"].append(f"Couldn't load deal pipelines: {exc}")
+    if p.can_install and p.install_style == "pipeline":
+        out["capabilities"]["create_pipeline"] = True
+        out["deal_pipelines"] = [{"id": str(x["id"]), "name": x["name"]} for x in out["pipelines"]]
+    from app.services.crm.assistant import capabilities
+    out["assistant_tools"] = capabilities(conn.provider)
     return out
 
 
-async def create_resource(db, conn, kind: str, name: str) -> dict:
+async def create_resource(db, conn, kind: str, name: str, stages=None) -> dict:
     name = name.strip()
     if not name or len(name) > 120:
         raise CrmError("Use a resource name between 1 and 120 characters.")
@@ -76,8 +81,19 @@ async def create_resource(db, conn, kind: str, name: str) -> dict:
                 row = (await db.execute(select(RadarPond).where(
                     RadarPond.org_id == conn.org_id, RadarPond.name == name))).scalar_one()
         return {"id": str(row.id), "name": row.name, "kind": kind, "location": "BlackSync"}
+    p = PROVIDERS[conn.provider]
+    if kind == "crm_pipeline" and p.can_install and p.install_style == "pipeline":
+        if not stages:
+            raise CrmError("Specify the pipeline stages before creating it.")
+        _, http = sync.http_for(conn)
+        result = await p.install_pipeline(http, conn.config or {}, name, [
+            {"key": f"stage_{i}", "label": stage.label, "kind": stage.kind} for i, stage in enumerate(stages)])
+        if not result.get("id"): raise CrmError("The CRM did not confirm the pipeline result.")
+        return {"id": str(result["id"]), "name": result.get("name") or name, "kind": kind, "location": p.name}
     if conn.provider != "followupboss" or kind not in ("crm_pond", "crm_stage", "crm_pipeline"):
         raise CrmError("This CRM does not expose that resource-creation action in Radar.")
+    if stages:
+        raise CrmError("Custom stages cannot be specified for this Follow Up Boss resource action.")
     resource = {"crm_pond": "ponds", "crm_stage": "stages", "crm_pipeline": "pipelines"}[kind]
     _, http = sync.http_for(conn)
     existing = await fub_collection(http, resource)
