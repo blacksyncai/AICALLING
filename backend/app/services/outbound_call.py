@@ -146,6 +146,9 @@ async def _mark_call_failed(call_id: uuid.UUID, lead_id: uuid.UUID | None, outco
             status="no_answer" if outcome == "no_answer" else "failed",
             outcome=outcome, summary=reason, duration_seconds=0, ended_at=now,
         ))
+        await db.execute(update(CallLog).where(CallLog.id == call_id,
+                                               CallLog.recording_status == "worker_pending")
+                         .values(recording_key=None, recording_status="worker_failed"))
         if lead_id:
             await db.execute(update(Lead).where(Lead.id == lead_id).values(status=outcome, updated_at=now))
         await db.commit()
@@ -384,6 +387,12 @@ class CallService:
             conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == org.id))).scalars().all()
             variables = crm_vars.apply(variables, lead, agent, list(conns))
         metadata = _build_metadata(call_log, agent, variables, "outbound", lead, max_seconds=max_seconds)
+        if record and carrier == "signalwire":
+            # Record the session in our worker; carrier-native calls must not depend on egress quota.
+            call_log.recording_key = recordings.key_for(org.id, call_log.id)
+            call_log.recording_status = "worker_pending"
+            metadata = json.dumps({**json.loads(metadata), "record_key": call_log.recording_key,
+                                   "worker_recording": True})
 
         if lead:
             now = datetime.now(timezone.utc)
@@ -436,7 +445,7 @@ class CallService:
                  trunk=trunk_id)
         # LiveKit egress only when Twilio isn't recording (egress is capped by concurrency and monthly minutes).
         recording_key = (recordings.key_for(org.id, call_log.id)
-                         if record and (carrier == "signalwire" or not settings.recording_via_twilio) else None)
+                         if record and carrier != "signalwire" and not settings.recording_via_twilio else None)
         task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name,
                                                    recording_key))
         _BACKGROUND.add(task)

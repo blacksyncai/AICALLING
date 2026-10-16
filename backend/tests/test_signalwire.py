@@ -103,3 +103,72 @@ async def test_fallback_reads_only_selected_trunk(sw,monkeypatch):
     async def close(): pass
     monkeypatch.setattr(outbound_call,'_lk',lambda:SimpleNamespace(sip=SimpleNamespace(list_outbound_trunk=listing),aclose=close))
     assert [n['number'] for n in await signalwire.configured_numbers()]==[sw.number]
+
+def test_signalwire_records_in_worker_and_never_requests_egress(client,make_client,sw,monkeypatch):
+    import json,time
+    from app.services import outbound_call
+    from tests.test_accounts import _login
+    from tests.test_phone_numbers import _FakeLK
+    org,email=_new_account(client,name='SignalWire recorder',credits=50)
+    owner=_login(make_client,email)
+    client.post(f"/api/admin/orgs/{org['id']}/phone-numbers",json={'number':sw.number,'mode':'import'})
+    for key,value in {'recordings_s3_bucket':'test','recordings_s3_access_key':'test','recordings_s3_secret_key':'test','recording_provider':'twilio'}.items():
+        monkeypatch.setattr(settings,key,value)
+    log=[]; egress=[]
+    monkeypatch.setattr(outbound_call,'_lk',lambda:_FakeLK(log))
+    async def forbidden(*args): egress.append(args)
+    monkeypatch.setattr(outbound_call,'_start_recording',forbidden)
+    agent=owner.post('/api/agents/',json={'template':'sales_sdr'}).json()
+    owner.patch(f"/api/agents/{agent['id']}",json={'record_calls':True})
+    result=owner.post(f"/api/agents/{agent['id']}/phone-call",json={'to_phone':'+15551234567'})
+    assert result.status_code==200,result.text
+    call_id=result.json()['call_id']
+    for _ in range(50):
+        if any(kind=='sip' for kind,_ in log):break
+        time.sleep(.02)
+    meta=json.loads(next(req for kind,req in log if kind=='room').metadata)
+    assert meta['worker_recording'] is True
+    assert meta['record_key']==f"recordings/{org['id']}/{call_id}.ogg"
+    assert not egress
+    assert owner.get(f'/api/calls/{call_id}').json()['has_recording']
+    monkeypatch.setattr(settings,'internal_token','recording-test-key')
+    endpoint=f'/internal/calls/{call_id}/recording-state'
+    body={'room_name':'wrong-room','state':'ready'}
+    assert client.post(endpoint,json=body).status_code==403
+    headers={'x-internal-token':'recording-test-key'}
+    assert client.post(endpoint,json=body,headers=headers).status_code==404
+    body['room_name']=next(req for kind,req in log if kind=='room').name
+    body['state']='failed'
+    assert client.post(endpoint,json=body,headers=headers).status_code==200
+    assert not owner.get(f'/api/calls/{call_id}').json()['has_recording']
+    # A delayed duplicate cannot revive a failed recording with no file.
+    body['state']='ready'
+    assert client.post(endpoint,json=body,headers=headers).status_code==200
+    assert not owner.get(f'/api/calls/{call_id}').json()['has_recording']
+
+def test_unanswered_signalwire_call_clears_pending_recording(client,make_client,sw,monkeypatch):
+    import time
+    from app.services import outbound_call
+    from tests.test_accounts import _login
+    from tests.test_phone_numbers import _FakeLK
+    org,email=_new_account(client,name='SignalWire unanswered recorder',credits=50)
+    owner=_login(make_client,email)
+    client.post(f"/api/admin/orgs/{org['id']}/phone-numbers",json={'number':sw.number,'mode':'import'})
+    for key in ['recordings_s3_bucket','recordings_s3_access_key','recordings_s3_secret_key']:
+        monkeypatch.setattr(settings,key,'test')
+    async def no_answer(*args,**kwargs): raise RuntimeError('timed out')
+    def lk():
+        obj=_FakeLK([])
+        obj.sip.create_sip_participant=no_answer
+        return obj
+    monkeypatch.setattr(outbound_call,'_lk',lk)
+    agent=owner.post('/api/agents/',json={'template':'sales_sdr'}).json()
+    owner.patch(f"/api/agents/{agent['id']}",json={'record_calls':True})
+    result=owner.post(f"/api/agents/{agent['id']}/phone-call",json={'to_phone':'+15551234567'})
+    assert result.status_code==200,result.text
+    for _ in range(50):
+        call=owner.get(f"/api/calls/{result.json()['call_id']}").json()
+        if call['status']=='no_answer': break
+        time.sleep(.02)
+    assert call['status']=='no_answer'
+    assert not call['has_recording']

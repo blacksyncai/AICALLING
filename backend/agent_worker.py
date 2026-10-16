@@ -950,6 +950,37 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     return tools
 
 
+async def _recording_state(metadata: dict, room_name: str, state: str) -> None:
+    import httpx
+    if not metadata.get("worker_recording") or not metadata.get("call_log_id"):
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                f"{settings.api_base_url}/internal/calls/{metadata['call_log_id']}/recording-state",
+                headers=settings.internal_headers, json={"room_name": room_name, "state": state})
+            response.raise_for_status()
+    except Exception as exc:
+        log.warning("recording_state_update_failed", state=state, error=type(exc).__name__)
+
+
+async def _start_worker_recording(ctx, session, metadata):
+    if not metadata.get("record_key") or not (metadata.get("call_type") == "web" or metadata.get("worker_recording")):
+        return None
+    from app.agent.call_recorder import CallRecorder
+    recorder = CallRecorder(session, metadata["record_key"])
+    try:
+        if await recorder.start():
+            log.info("worker_recording_started", room=ctx.room.name)
+            asyncio.create_task(_recording_state(metadata, ctx.room.name, "recording"))
+            return recorder
+    except Exception as exc:
+        log.warning("call_recording_start_failed", room=ctx.room.name, error=type(exc).__name__)
+    await recorder.finish()
+    asyncio.create_task(_recording_state(metadata, ctx.room.name, "failed"))
+    return None
+
+
 async def _draft_opening(cfg: dict, variables: dict) -> str:
     """The agent's first line for an outbound call, written ahead of pickup (empty on any failure)."""
     from openai import AsyncOpenAI
@@ -1280,18 +1311,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     log.info("voice_session_ready", room=ctx.room.name,
              after_answer_seconds=round(_time.monotonic() - session_started, 3))
 
-    # "Record this call" on a browser test: the worker records both sides itself (see app/agent/call_recorder.py).
-    recorder = None
-    if call_type == "web" and metadata.get("record_key"):
-        from app.agent.call_recorder import CallRecorder
-
-        try:
-            recorder = CallRecorder(session, metadata["record_key"])
-            if not await recorder.start():
-                recorder = None
-        except Exception as exc:  # a recording problem must never affect the call
-            log.warning("call_recording_start_failed", room=ctx.room.name, error=str(exc)[:200])
-            recorder = None
+    recorder = await _start_worker_recording(ctx, session, metadata)
 
     # Answering-machine detection: LiveKit's AMD classifies the first seconds after pickup (human / voicemail /
     # IVR / mailbox full) and holds the agent's opening line until it decides. Phrase matching stays as backup.
@@ -1440,7 +1460,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             outcome = "no_answer"
         await _post_run_outcome(run, outcome)  # first: it's what matters if the job is cut short
         if recorder is not None:
-            await recorder.finish()
+            saved = await recorder.finish()
+            if metadata.get("worker_recording"):
+                await _recording_state(metadata, ctx.room.name, "ready" if saved else "failed")
         await _push_live_event(run.call_log_id, {
             "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
             "duration_sec": round((run.ended_wall or _time.time()) - wall_t0), "ts": str(_time.time()),
@@ -1740,6 +1762,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session.on("conversation_item_added", _on_conversation_item)
 
     await session.start(agent, room=ctx.room)
+    recorder = await _start_worker_recording(ctx, session, metadata)
 
     # Announce call_started to Live Monitor
     import time as _ts
@@ -1788,9 +1811,12 @@ async def entrypoint(ctx: JobContext) -> None:
             "duration_sec": round(_tf.monotonic() - _call_t0),
             "ts": str(_tf.time()),
         })
-        if state.outcome_posted:
-            return
-        await _post_call_outcome(state, outcome)
+        if not state.outcome_posted:
+            await _post_call_outcome(state, outcome)
+        if recorder is not None:
+            saved = await recorder.finish()
+            if metadata.get("worker_recording"):
+                await _recording_state(metadata, ctx.room.name, "ready" if saved else "failed")
 
     ctx.add_shutdown_callback(_finalize_call)
 
@@ -1821,6 +1847,7 @@ if __name__ == "__main__":
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=_prewarm_process,
+            shutdown_process_timeout=90.0,
             agent_name=settings.livekit_agent_name or "closer",
             **extra,
         )
