@@ -1,12 +1,12 @@
 "use client";
 
-import { ChevronDown, Plus, X } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, Plus, SlidersHorizontal, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { Field, Input, Select, Toggle } from "@/components/ui";
+import { createPortal } from "react-dom";
+import { Field, Input, Modal, Select, Toggle } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import type { Agent, ModelCatalog, VoiceCatalog, VoiceTuning } from "@/lib/types";
-import { cn } from "@/lib/utils";
 import { ModelPicker } from "./ModelPicker";
 import { VoicePicker } from "./VoicePicker";
 
@@ -25,136 +25,118 @@ const FALLBACK_LANGUAGES = [
   { code: "ja", label: "Japanese" },
 ];
 
-/** The agent editor's "Voice & Model" tab. Edits the draft only; saving stays with the page. */
-export function VoiceModelSettings({
-  draft,
-  set,
-  voices,
-}: {
+const LANGUAGE_FLAGS: Record<string, string> = {
+  en: "🇺🇸", es: "🇪🇸", fr: "🇫🇷", de: "🇩🇪", pt: "🇵🇹", it: "🇮🇹", nl: "🇳🇱",
+  hi: "🇮🇳", ja: "🇯🇵", zh: "🇨🇳", ko: "🇰🇷", ru: "🇷🇺", ar: "🇸🇦", tr: "🇹🇷",
+  sv: "🇸🇪", pl: "🇵🇱", uk: "🇺🇦", multi: "🌐",
+};
+
+/** Separate Voice and Model / Brain tabs share the existing saved draft. */
+export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
   draft: Agent;
   set: <K extends keyof Agent>(key: K, value: Agent[K]) => void;
   voices: VoiceCatalog | undefined;
+  view?: "voice" | "model";
 }) {
   const { data: models, error: modelsError, isLoading: modelsLoading } = useSWR<ModelCatalog>("/api/settings/models", fetcher, {
-    revalidateOnFocus: false,
-    shouldRetryOnError: false,
+    revalidateOnFocus: false, shouldRetryOnError: false,
   });
-  const [advanced, setAdvanced] = useState(false);
-
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const settingsContent = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const frame = requestAnimationFrame(() => settingsContent.current?.querySelector<HTMLInputElement>("input")?.focus());
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const dialog = settingsContent.current?.closest('[role="dialog"]');
+      const controls = dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]');
+      if (!controls?.length) return;
+      const first = controls[0], last = controls[controls.length - 1];
+      if (!dialog?.contains(document.activeElement) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault(); first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", trapFocus);
+      settingsButton.current?.focus();
+    };
+  }, [settingsOpen]);
   const languages = models?.languages?.length ? models.languages : FALLBACK_LANGUAGES;
   const langOptions = languages.some((l) => l.code === draft.language) ? languages : [{ code: draft.language, label: draft.language }, ...languages];
   const traits = [draft.enable_booking && "booking", draft.transfer_number && "transfer"].filter(Boolean) as string[];
 
-  return (
-    <div className="space-y-5">
+  if (view === "model") return (
+    <div className="space-y-6">
       <div>
-        <div className="mb-1.5 text-xs font-medium text-zinc-700">Voice</div>
-        <VoicePicker
-          voices={voices?.voices ?? []}
-          featured={voices?.featured ?? []}
-          categories={voices?.categories}
-          message={voices?.message}
-          loading={!voices}
-          source={voices?.source}
-          value={draft.voice_id}
-          speed={draft.voice_speed}
-          language={draft.language}
-          agentLanguage={draft.language}
-          onChange={(id) => set("voice_id", id)}
-        />
+        <h3 className="text-base font-semibold text-zinc-900">Your agent’s brain</h3>
+        <p className="mt-1 text-sm text-zinc-500">Choose the intelligence behind the conversation.</p>
       </div>
-
-      <div className="grid gap-5 sm:grid-cols-2">
-        <Field label="Language" hint={draft.language === "multi" ? "Understands and replies in the caller's language." : undefined}>
-          <Select value={draft.language} onChange={(e) => set("language", e.target.value)}>
-            {langOptions.map((l) => (
-              <option key={l.code} value={l.code}>
-                {l.label}
-              </option>
-            ))}
-          </Select>
+      <div>
+        <div className="mb-1.5 text-xs font-medium text-zinc-700">AI model</div>
+        <ModelPicker catalog={models} loading={modelsLoading} error={!!modelsError} fallbackIds={FALLBACK_MODEL_IDS}
+          value={draft.llm_model} onChange={(id) => set("llm_model", id)} traits={traits.length ? traits : ["general"]} />
+        <CallCost model={draft.llm_model} voiceId={draft.voice_id} voices={voices} />
+      </div>
+      <div className="grid gap-5 rounded-xl border border-zinc-200 p-4 sm:grid-cols-2">
+        <Field label={`Creativity (temperature) · ${draft.temperature.toFixed(1)}`}
+          hint={draft.llm_model.startsWith("claude-") ? "This model sets its own creativity level." : "Lower = more consistent, higher = more varied."}>
+          <input type="range" min={0} max={1.2} step={0.1} value={draft.temperature}
+            onChange={(e) => set("temperature", Number(e.target.value))} className="w-full accent-brand-600" />
         </Field>
-        <div>
-          <div className="mb-1.5 text-xs font-medium text-zinc-700">AI model</div>
-          <ModelPicker
-            catalog={models}
-            loading={modelsLoading}
-            error={!!modelsError}
-            fallbackIds={FALLBACK_MODEL_IDS}
-            value={draft.llm_model}
-            onChange={(id) => set("llm_model", id)}
-            traits={traits.length ? traits : ["general"]}
-          />
-          <CallCost model={draft.llm_model} voiceId={draft.voice_id} voices={voices} />
-        </div>
-        <Field label={`Speaking speed · ${draft.voice_speed.toFixed(2)}x`} className="sm:col-span-2">
-          <input
-            type="range"
-            min={draft.voice_id.startsWith("elevenlabs:") ? 0.8 : 0.7}
-            max={draft.voice_id.startsWith("elevenlabs:") ? 1.2 : 1.3}
-            step={0.01}
-            value={draft.voice_speed}
-            onChange={(e) => set("voice_speed", Number(e.target.value))}
-            className="w-full accent-brand-600"
-          />
+        <Field label="Max call length (minutes)">
+          <Input type="number" min={1} max={60} value={Math.round(draft.max_duration_seconds / 60)}
+            onChange={(e) => set("max_duration_seconds", Math.min(60, Math.max(1, Number(e.target.value) || 1)) * 60)} />
         </Field>
       </div>
+    </div>
+  );
 
-      <VoiceTuningSettings value={draft.voice_tuning ?? {}} onChange={(v) => set("voice_tuning", v)} />
-
-      <div className="rounded-xl border border-zinc-200">
-        <button
-          type="button"
-          onClick={() => setAdvanced((v) => !v)}
-          aria-expanded={advanced}
-          aria-controls="voice-advanced"
-          className="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-left text-sm font-medium text-zinc-800 hover:bg-zinc-50"
-        >
-          <span>
-            Advanced settings
-            <span className="ml-2 text-xs font-normal text-zinc-500">
-              Temperature {draft.temperature.toFixed(1)} · {Math.round(draft.max_duration_seconds / 60)} min max
-              {draft.background_audio ? " · Ambience on" : ""}
-            </span>
-          </span>
-          <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-400 transition", advanced && "rotate-180")} />
-        </button>
-        {advanced && (
-          <div id="voice-advanced" className="grid gap-5 border-t border-zinc-100 p-4 sm:grid-cols-2">
-            <Field
-              label={`Creativity (temperature) · ${draft.temperature.toFixed(1)}`}
-              hint={draft.llm_model.startsWith("claude-") ? "This model sets its own creativity level." : "Lower = more consistent, higher = more varied."}
-            >
-              <input
-                type="range"
-                min={0}
-                max={1.2}
-                step={0.1}
-                value={draft.temperature}
-                onChange={(e) => set("temperature", Number(e.target.value))}
-                className="w-full accent-brand-600"
-              />
-            </Field>
-            <Field label="Max call length (minutes)">
-              <Input
-                type="number"
-                min={1}
-                max={60}
-                value={Math.round(draft.max_duration_seconds / 60)}
-                onChange={(e) => set("max_duration_seconds", Math.min(60, Math.max(1, Number(e.target.value) || 1)) * 60)}
-              />
-            </Field>
-            <div className="sm:col-span-2">
-              <Toggle
-                checked={draft.background_audio}
-                onChange={(v) => set("background_audio", v)}
-                label="Office background ambience"
-                description="Plays subtle call-center noise on phone calls so the agent sounds like it's on a sales floor."
-              />
+  return (
+    <div className="space-y-4">
+      <div className="mb-1.5 text-xs font-medium text-zinc-700">Voice</div>
+      <VoicePicker voices={voices?.voices ?? []} featured={voices?.featured ?? []} categories={voices?.categories}
+        message={voices?.message} loading={!voices} source={voices?.source} value={draft.voice_id}
+        speed={draft.voice_speed} language={draft.language} agentLanguage={draft.language}
+        onChange={(id) => set("voice_id", id)} inline defaultOpen keepOpen suspendDismiss={settingsOpen}
+        headerAccessory={
+          <div className="flex shrink-0 items-stretch gap-2">
+            <div className="relative flex w-14 items-center justify-center rounded-xl border border-zinc-200 bg-white px-2 focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100 sm:w-36"
+              title={`Agent language: ${langOptions.find((l) => l.code === draft.language)?.label || draft.language}`}>
+              <span aria-hidden="true" className="flex min-w-0 items-center gap-1.5 text-sm text-zinc-700">
+                <span className="text-lg">{LANGUAGE_FLAGS[draft.language] || "🌐"}</span>
+                <span className="hidden truncate sm:inline">{langOptions.find((l) => l.code === draft.language)?.label || draft.language}</span>
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              </span>
+              <Select aria-label="Agent language" value={draft.language} onChange={(e) => set("language", e.target.value)}
+                className="absolute inset-0 h-full! cursor-pointer opacity-0">
+                {langOptions.map((l) => <option key={l.code} value={l.code}>{LANGUAGE_FLAGS[l.code] || "🌐"} {l.label}</option>)}
+              </Select>
             </div>
+            <button ref={settingsButton} type="button" aria-label="Voice settings" title="Voice settings" onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-200 px-3 text-sm font-medium text-zinc-600 transition hover:border-brand-400 hover:text-brand-600 focus-visible:outline-2 focus-visible:outline-brand-500">
+              <SlidersHorizontal className="h-4 w-4" /><span className="hidden lg:inline">Voice settings</span>
+            </button>
           </div>
-        )}
-      </div>
+        } />
+      {draft.language === "multi" && <p className="text-xs text-zinc-500">Understands and replies in the caller’s language.</p>}
+      {settingsOpen && createPortal(<Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Voice settings" wide>
+        <div ref={settingsContent} className="space-y-5">
+          <p className="text-sm text-zinc-500">Fine-tune delivery. Changes save with your agent.</p>
+          <Field label={`Speaking speed · ${draft.voice_speed.toFixed(2)}x`}>
+            <input type="range" min={draft.voice_id.startsWith("elevenlabs:") ? 0.8 : 0.7}
+              max={draft.voice_id.startsWith("elevenlabs:") ? 1.2 : 1.3} step={0.01} value={draft.voice_speed}
+              onChange={(e) => set("voice_speed", Number(e.target.value))} className="w-full accent-brand-600" />
+          </Field>
+          <VoiceTuningSettings value={draft.voice_tuning ?? {}} onChange={(v) => set("voice_tuning", v)} />
+          <Toggle checked={draft.background_audio} onChange={(v) => set("background_audio", v)}
+            label="Office background ambience" description="Plays subtle call-center noise on phone calls so the agent sounds like it's on a sales floor." />
+        </div>
+      </Modal>, document.body)}
     </div>
   );
 }

@@ -26,12 +26,13 @@ import { fetcher, patch } from "@/lib/api";
 import type { Agent, SettingsStatus, Voice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type Section = "prompt" | "knowledge" | "voice" | "actions" | "analysis";
+type Section = "prompt" | "knowledge" | "voice" | "model" | "actions" | "analysis";
 type TestTab = "voice" | "chat" | "phone";
 
 const SECTIONS: { value: Section; label: string; icon: typeof Brain }[] = [
   { value: "prompt", label: "Prompt", icon: Brain },
-  { value: "voice", label: "Voice & Model", icon: Mic },
+  { value: "voice", label: "Voice", icon: Mic },
+  { value: "model", label: "Model / Brain", icon: Brain },
   { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "actions", label: "Actions", icon: Zap },
   { value: "analysis", label: "Post-call analysis", icon: Sparkles },
@@ -61,7 +62,7 @@ const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 const HASH_SECTION: Record<string, Section> = {
   prompt: "prompt", script: "prompt", first_message: "prompt", system_prompt: "prompt",
   knowledge: "knowledge", knowledge_base: "knowledge",
-  voice: "voice", model: "voice",
+  voice: "voice", model: "model",
   actions: "actions", booking: "actions", transfer: "actions", disclosure: "actions", ai_disclosure: "actions",
   analysis: "analysis",
 };
@@ -303,7 +304,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             onChange={setSection}
             variant="dark"
             layoutId="agent-editor-tab"
-            className="scroll-thin mb-5 flex-nowrap overflow-x-auto"
+            className="scroll-thin mb-5 flex-nowrap! overflow-x-auto"
           />
 
           <AnimatedTabPanel key={section}>
@@ -455,7 +456,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
 
-          {section === "voice" && <VoiceModelSettings draft={draft} set={set} voices={voices} />}
+          {section === "voice" && <VoiceModelSettings key="voice" draft={draft} set={set} voices={voices} view="voice" />}
+          {section === "model" && <VoiceModelSettings key="model" draft={draft} set={set} voices={voices} view="model" />}
 
           {section === "actions" && (
             <div className="space-y-5">

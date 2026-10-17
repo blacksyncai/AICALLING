@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Open/close state for a trigger + popover: click outside and Esc close it, focus returns to the trigger. */
-export function usePopover<T extends HTMLElement = HTMLButtonElement>() {
-  const [open, setOpen] = useState(false);
+export function usePopover<T extends HTMLElement = HTMLButtonElement>({ defaultOpen = false, dismissOnOutside = true, dismissOnEscape = true }: { defaultOpen?: boolean; dismissOnOutside?: boolean; dismissOnEscape?: boolean } = {}) {
+  const [open, setOpen] = useState(defaultOpen);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<T>(null);
 
@@ -16,10 +16,10 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent | TouchEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close(false);
+      if (dismissOnOutside && rootRef.current && !rootRef.current.contains(e.target as Node)) close(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && dismissOnEscape) {
         e.stopPropagation();
         close();
       }
@@ -32,7 +32,7 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>() {
       document.removeEventListener("touchstart", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, close]);
+  }, [open, close, dismissOnOutside, dismissOnEscape]);
 
   return { open, setOpen, close, rootRef, triggerRef };
 }

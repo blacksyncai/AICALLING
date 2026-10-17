@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useId,
@@ -86,6 +87,10 @@ export function VoicePicker({
   categories,
   message,
   inline = false,
+  defaultOpen = false,
+  keepOpen = false,
+  suspendDismiss = false,
+  headerAccessory,
 }: {
   voices: Voice[];
   featured?: Voice[];
@@ -103,10 +108,14 @@ export function VoicePicker({
   message?: string | null;
   /** Open the list in the page flow instead of floating — for containers that clip overflow (the wizard card). */
   inline?: boolean;
+  defaultOpen?: boolean;
+  keepOpen?: boolean;
+  suspendDismiss?: boolean;
+  headerAccessory?: ReactNode;
 }) {
   const uid = useId();
   const { open, setOpen, close, rootRef, triggerRef } =
-    usePopover<HTMLButtonElement>();
+    usePopover<HTMLButtonElement>({ defaultOpen, dismissOnOutside: !keepOpen, dismissOnEscape: !suspendDismiss });
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const featuredIds = useMemo(
@@ -142,6 +151,12 @@ export function VoicePicker({
   };
 
   const [tab, setTab] = useState<Cat>("premium");
+  const initializedOpen = useRef(false);
+  useEffect(() => {
+    if (!defaultOpen || initializedOpen.current || listLoading) return;
+    initializedOpen.current = true;
+    setTab(selected ? catOf(selected) : counts.premium ? "premium" : "standard");
+  }, [defaultOpen, listLoading, selected, catOf, counts.premium]);
   const [q, setQ] = useState("");
   const [lang, setLang] = useState("");
   const [accent, setAccent] = useState("");
@@ -321,7 +336,7 @@ export function VoicePicker({
 
   function choose(id: string) {
     onChange(id);
-    close();
+    if (!keepOpen) close();
   }
 
   const onKeyDown = listKeyHandler(shown.length, active, setActive, (i) =>
@@ -355,6 +370,8 @@ export function VoicePicker({
 
   return (
     <div ref={rootRef} className={cn("relative", styles.picker)}>
+      <div className="flex items-stretch gap-2">
+      <div className="min-w-0 flex-1">
       <button
         ref={triggerRef}
         type="button"
@@ -406,6 +423,9 @@ export function VoicePicker({
           </>
         )}
       </button>
+      </div>
+      {headerAccessory}
+      </div>
 
       {mismatch && (
         <p
