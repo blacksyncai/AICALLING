@@ -32,7 +32,7 @@ from livekit.agents import (
     cli,
     function_tool,
 )
-from livekit.plugins import cartesia, deepgram, openai, silero
+from livekit.plugins import cartesia, deepgram, elevenlabs, openai, silero
 # Register downloads and inference runners before CLI/worker initialization, on the main thread.
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 

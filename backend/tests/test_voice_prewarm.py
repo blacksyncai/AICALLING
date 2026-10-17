@@ -21,6 +21,7 @@ print(json.dumps({'plugins':[p.package for p in Plugin.registered_plugins], 'run
     data = json.loads(result.stdout.strip().splitlines()[-1])
     assert 'lk_end_of_utterance_multilingual' in data['runners']
     assert any('turn_detector' in name for name in data['plugins'])
+    assert any('elevenlabs' in name for name in data['plugins'])
 
 
 def test_process_warms_vad_once_and_jobs_reuse_it(monkeypatch):
