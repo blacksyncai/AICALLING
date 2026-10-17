@@ -79,6 +79,7 @@ export function ModelPicker({
   value,
   onChange,
   traits = [],
+  inline = false,
 }: {
   catalog?: ModelCatalog;
   loading?: boolean;
@@ -88,13 +89,15 @@ export function ModelPicker({
   value: string;
   onChange: (id: string) => void;
   traits?: string[];
+  inline?: boolean;
 }) {
   const uid = useId();
-  const { open, setOpen, close, rootRef, triggerRef } = usePopover<HTMLButtonElement>();
+  const { open, setOpen, close, rootRef, triggerRef } = usePopover<HTMLButtonElement>({ defaultOpen: inline, dismissOnOutside: !inline });
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(-1);
+  const keyboardNavigation = useRef(false);
   // Same per-model credit rates billing uses (admin-editable).
   const { data: rates } = useSWR<{ model_rates: Record<string, number> }>("/api/billing/rates", fetcher, { revalidateOnFocus: false });
   const rateOf = (id: string) => rates?.model_rates[id];
@@ -120,8 +123,9 @@ export function ModelPicker({
   }, [open, needle]);
 
   useEffect(() => {
-    if (active >= 0) listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+    if (active >= 0 && (!inline || keyboardNavigation.current)) listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+    keyboardNavigation.current = false;
+  }, [active, inline]);
 
   function openPicker() {
     setQ("");
@@ -130,9 +134,9 @@ export function ModelPicker({
   }
   function choose(id: string) {
     onChange(id);
-    close();
+    if (!inline) close();
   }
-  const onKeyDown = listKeyHandler(flat.length, active, setActive, (i) => choose(flat[i].id));
+  const onKeyDown = listKeyHandler(flat.length, active, (i) => { keyboardNavigation.current = true; setActive(i); }, (i) => choose(flat[i].id));
   const optionId = (i: number) => `${uid}-m-${i}`;
 
   return (
@@ -151,13 +155,13 @@ export function ModelPicker({
         aria-expanded={open}
         aria-label={`Model: ${selected?.name ?? value}. Change model`}
         className={cn(
-          "flex h-9 w-full items-center gap-2 rounded-lg border bg-white px-3 text-left text-sm transition",
+          "flex min-h-11 w-full items-center gap-2 rounded-lg border bg-white px-3 py-2 text-left text-sm transition",
           "focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100",
           open ? "border-brand-500 ring-2 ring-brand-100" : "border-zinc-200 hover:border-zinc-300",
         )}
       >
-        <span className="min-w-0 flex-1 truncate">
-          <span className="inline-flex items-center gap-1.5 align-middle">
+        <span className="min-w-0 flex-1">
+          <span className="inline-flex max-w-full flex-wrap items-center gap-1.5 align-middle">
             <ModelName name={selected?.name ?? value} />
             <PremiumCrown rate={rateOf(value)} />
             <CostPill rate={rateOf(value)} compact />
@@ -177,7 +181,7 @@ export function ModelPicker({
           role="dialog"
           aria-label="Choose a model"
           data-solid
-          className="absolute right-0 top-full z-50 mt-2 flex max-h-[min(30rem,72vh)] w-[max(100%,min(26rem,calc(100vw-2rem)))] flex-col rounded-xl border border-zinc-200 bg-white shadow-xl"
+          className={cn("mt-2 flex flex-col rounded-xl border border-zinc-200 bg-white", inline ? "relative w-full" : "absolute right-0 top-full z-50 max-h-[min(30rem,72vh)] w-[max(100%,min(26rem,calc(100vw-2rem)))] shadow-xl")}
         >
           <div className="border-b border-zinc-100 p-2">
             <div className="relative">
@@ -198,7 +202,7 @@ export function ModelPicker({
               />
             </div>
           </div>
-          <div ref={listRef} id={`${uid}-models`} role="listbox" aria-label="Models" className="scroll-thin min-h-0 flex-1 overflow-y-auto py-1">
+          <div ref={listRef} id={`${uid}-models`} role="listbox" aria-label="Models" className={cn("min-h-0 flex-1 py-1", !inline && "scroll-thin overflow-y-auto")}>
             {flat.length === 0 && <p className="px-4 py-6 text-center text-sm text-zinc-500">No models match “{q.trim()}”.</p>}
             {GROUP_ORDER.map((g) => {
               const rows = flat.filter((m) => m.group === g);

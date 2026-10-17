@@ -78,7 +78,7 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
       </div>
       <div>
         <div className="mb-1.5 text-xs font-medium text-zinc-700">AI model</div>
-        <ModelPicker catalog={models} loading={modelsLoading} error={!!modelsError} fallbackIds={FALLBACK_MODEL_IDS}
+        <ModelPicker inline catalog={models} loading={modelsLoading} error={!!modelsError} fallbackIds={FALLBACK_MODEL_IDS}
           value={draft.llm_model} onChange={(id) => set("llm_model", id)} traits={traits.length ? traits : ["general"]} />
         <CallCost model={draft.llm_model} voiceId={draft.voice_id} voices={voices} />
       </div>

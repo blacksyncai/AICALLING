@@ -9,7 +9,7 @@ import {
 import { RadarSourcePicker, type RadarSource } from "./RadarSourcePicker";
 import { FollowUpBossTools } from "./FollowUpBossTools";
 import AiMascotInput from "@/components/ui/ai-mascot-input";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import useSWR from "swr";
 import {
   ArrowDown,
@@ -75,6 +75,9 @@ export function RadarAutomations() {
   const [messages, setMessages] = useState<
     { role: string; text: string; provider: string }[]
   >([]);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const followLatestRef = useRef(true);
+  const [showLatest, setShowLatest] = useState(false);
   const [drafts, setDrafts] = useState<(Rule & { key: string })[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -119,6 +122,22 @@ export function RadarAutomations() {
     Record<string, RadarSource | undefined>
   >({});
   const selectedSource = selectedSources[provider];
+  useEffect(() => {
+    followLatestRef.current = true;
+    setShowLatest(false);
+  }, [provider, conversationIds[provider], view]);
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (!list) return;
+    const last = messages.filter((m) => m.provider === provider).at(-1);
+    if (followLatestRef.current || last?.role === "user") {
+      list.scrollTop = list.scrollHeight;
+      followLatestRef.current = true;
+      setShowLatest(false);
+    } else {
+      setShowLatest(true);
+    }
+  }, [messages, busy, provider, conversationIds[provider], view]);
   const openConversation = (chat: Conversation) => {
     setSelectedSources((old) => ({
       ...old,
@@ -317,7 +336,7 @@ export function RadarAutomations() {
     return (
       <Card className="p-6">
         <h2 className="text-lg font-semibold">
-          Connect a CRM to build automations
+          Connect a CRM to use the CRM Assistant
         </h2>
         <p className="mt-2 text-sm text-zinc-500">
           Start with Follow Up Boss, or use your other connected CRM’s supported
@@ -335,14 +354,14 @@ export function RadarAutomations() {
     <div className={styles.root}>
       <div className={styles.topbar}>
         <div>
-          <span className={styles.eyebrow}>RADAR AUTOMATIONS</span>
+          <span className={styles.eyebrow}>RADAR CRM ASSISTANT</span>
           <h2>From a conversation to the next step.</h2>
           <p>Describe the workflow. Review the rule. Decide when it runs.</p>
         </div>
         <label className={styles.crmSelect}>
           Connected CRM
           <Select
-            aria-label="Automation CRM"
+            aria-label="Assistant CRM"
             value={provider}
             onChange={(e) => {
               setPicked(e.target.value);
@@ -361,7 +380,7 @@ export function RadarAutomations() {
       </div>
       <nav className={styles.views} aria-label="Automation sections">
         {[
-          { key: "build", label: "Build automation", icon: Sparkles },
+          { key: "build", label: "CRM Assistant", icon: Sparkles },
           {
             key: "rules",
             label: `Saved rules (${data.rules.length})`,
@@ -472,6 +491,14 @@ export function RadarAutomations() {
                 </p>
               </div>
               <div
+                ref={messageListRef}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  followLatestRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+                  setShowLatest(!followLatestRef.current);
+                }}
+                role="log"
+                aria-label="CRM Assistant conversation"
                 className={styles.messages}
                 aria-live="polite"
                 style={{
@@ -502,6 +529,12 @@ export function RadarAutomations() {
                   </p>
                 )}
               </div>
+              {showLatest && <button type="button" className="mx-auto my-2 flex items-center gap-2 rounded-full border border-zinc-200 px-3 py-2 text-xs" onClick={() => {
+                const list = messageListRef.current;
+                if (list) list.scrollTop = list.scrollHeight;
+                followLatestRef.current = true;
+                setShowLatest(false);
+              }}><ArrowDown size={14} /> Latest messages</button>}
               <div className="p-4 sm:p-5">
                 <div className="mb-4 flex flex-wrap items-center gap-2">
                   <Button
@@ -547,7 +580,7 @@ export function RadarAutomations() {
                 />
                 <AiMascotInput
                   title="What can Radar do for you?"
-                  subtitle="Work with your CRM, or build a reusable automation."
+                  subtitle="Ask Radar to update your CRM or set up what happens after calls."
                   value={request}
                   onChange={setRequest}
                   onSubmit={() => ask()}

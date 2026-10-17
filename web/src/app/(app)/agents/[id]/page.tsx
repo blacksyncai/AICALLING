@@ -33,8 +33,8 @@ const SECTIONS: { value: Section; label: string; icon: typeof Brain }[] = [
   { value: "prompt", label: "Prompt", icon: Brain },
   { value: "voice", label: "Voice", icon: Mic },
   { value: "model", label: "Model / Brain", icon: Brain },
-  { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "actions", label: "Actions", icon: Zap },
+  { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "analysis", label: "Post-call analysis", icon: Sparkles },
 ];
 
@@ -304,7 +304,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             onChange={setSection}
             variant="dark"
             layoutId="agent-editor-tab"
-            className="scroll-thin mb-5 flex-nowrap! overflow-x-auto"
+            className="mb-5 grid! grid-cols-3 [&>button]:min-w-0 [&>button]:justify-center [&>button]:px-2! [&>button]:text-xs! sm:flex! sm:flex-wrap! sm:[&>button]:text-sm!"
           />
 
           <AnimatedTabPanel key={section}>
@@ -461,6 +461,11 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
 
           {section === "actions" && (
             <div className="space-y-5">
+              <Link href="/radar#assistant" className="flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 p-4 hover:border-brand-400">
+                <div><div className="text-sm font-semibold">Tell your agent what to do after a call</div>
+                  <p className="mt-1 text-xs text-zinc-600">Open Radar’s CRM Assistant to set up notes, follow-ups and CRM updates.</p></div>
+                <ArrowUpRight className="h-4 w-4 shrink-0" />
+              </Link>
               <Toggle
                 checked={draft.ai_disclosure ?? false}
                 onChange={(v) => set("ai_disclosure", v)}

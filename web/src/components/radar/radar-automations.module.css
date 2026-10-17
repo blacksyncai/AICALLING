@@ -111,6 +111,8 @@
   color: #b93a14;
 }
 .messages {
+  overscroll-behavior-y: contain;
+  overflow-anchor: none;
   padding: 20px;
   max-height: 440px;
   min-height: 210px;

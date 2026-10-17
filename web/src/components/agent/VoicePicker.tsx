@@ -161,6 +161,7 @@ export function VoicePicker({
   const [lang, setLang] = useState("");
   const [accent, setAccent] = useState("");
   const [active, setActive] = useState(-1);
+  const keyboardNavigation = useRef(false);
   const [pasting, setPasting] = useState(false);
   const [pasted, setPasted] = useState("");
   // Tone picked per grouped row while the list is open (the row's play button previews it).
@@ -328,18 +329,19 @@ export function VoicePicker({
   }, [open, tab, q, effLang, effAccent, shown.length]);
 
   useEffect(() => {
-    if (active < 0) return;
+    if (active < 0 || (inline && !keyboardNavigation.current)) return;
+    keyboardNavigation.current = false;
     listRef.current
       ?.querySelector(`[data-index="${active}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+  }, [active, inline]);
 
   function choose(id: string) {
     onChange(id);
     if (!keepOpen) close();
   }
 
-  const onKeyDown = listKeyHandler(shown.length, active, setActive, (i) =>
+  const onKeyDown = listKeyHandler(shown.length, active, (i) => { keyboardNavigation.current = true; setActive(i); }, (i) =>
     choose(current(shown[i]).id),
   );
   const optionId = (i: number) => `${uid}-opt-${i}`;
@@ -459,7 +461,7 @@ export function VoicePicker({
             className={cn(
               styles.dialog,
               inline
-                ? "relative mt-2 flex max-h-[min(34rem,75vh)] flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
+                ? "relative mt-2 flex flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
                 : "fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 sm:max-h-[min(40rem,70vh)] sm:rounded-xl",
             )}
           >
@@ -599,7 +601,8 @@ export function VoicePicker({
               role="listbox"
               aria-label={labels[tab]}
               className={cn(
-                "scroll-thin min-h-0 flex-1 overflow-y-auto",
+                "min-h-0 flex-1",
+                !inline && "scroll-thin overflow-y-auto",
                 styles.voiceList,
               )}
             >
@@ -652,7 +655,7 @@ export function VoicePicker({
                     onClick={() => choose(v.id)}
                     onMouseMove={() => active !== i && setActive(i)}
                     className={cn(
-                      "flex cursor-pointer items-start gap-3 px-3 py-3",
+                      "flex cursor-pointer items-start gap-3 px-3 py-2.5",
                       styles.voiceRow,
                       i === active && "bg-zinc-50",
                       isSel && "bg-brand-50",

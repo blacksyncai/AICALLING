@@ -17,7 +17,7 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import type { Entitlements } from "@/components/billing/types";
 import { RadarAutomations } from "@/components/radar/RadarAutomations";
@@ -202,6 +202,12 @@ export default function RadarPage() {
   );
   const [crmKey, setCrmKey] = useState("");
   const [view, setView] = useState("discover");
+  useEffect(() => {
+    const syncView = () => setView(["#assistant", "#automations"].includes(window.location.hash) ? "automations" : "discover");
+    syncView();
+    window.addEventListener("hashchange", syncView);
+    return () => window.removeEventListener("hashchange", syncView);
+  }, []);
   const [scanning, setScanning] = useState(false);
   const [scanErr, setScanErr] = useState("");
   const [fresh, setFresh] = useState<Scan | null>(null);
@@ -264,22 +270,22 @@ export default function RadarPage() {
 
   const radarNavigation = (
     <nav
-      className="mb-6 flex gap-2 border-b border-zinc-200 pb-3"
+      className="mb-6 flex flex-wrap gap-2 border-b border-zinc-200 pb-3"
       aria-label="Radar tools"
     >
       <Button
         variant={view === "discover" ? "primary" : "secondary"}
-        onClick={() => setView("discover")}
+        onClick={() => { window.location.hash = "discover"; setView("discover"); }}
       >
         <RadarIcon className="h-4 w-4" />
         Discover leads
       </Button>
       <Button
         variant={view === "automations" ? "primary" : "secondary"}
-        onClick={() => setView("automations")}
+        onClick={() => { window.location.hash = "assistant"; setView("automations"); }}
       >
         <Zap className="h-4 w-4" />
-        Automations
+        CRM Assistant
       </Button>
     </nav>
   );
