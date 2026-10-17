@@ -120,7 +120,8 @@ CALL = CallInfo(call_id=str(uuid.uuid4()), outcome="meeting_booked", summary="Wa
                 extracted={"timeline": "this month"})
 
 
-@pytest.mark.parametrize("key", list(PROVIDERS))
+# Fixtures below cover the original providers; newer adapters have dedicated API contract tests.
+@pytest.mark.parametrize("key", list(RESPONSES))
 def test_every_provider_creates_contact_and_logs_call(key, http_mock, monkeypatch):
     state, calls = http_mock
     state["responses"] = RESPONSES[key]

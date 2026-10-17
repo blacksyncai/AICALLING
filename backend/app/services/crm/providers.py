@@ -2211,9 +2211,207 @@ class SierraInteractive(Provider):
         return {k: str(v)[:500] for k, v in out.items() if v not in (None, "")}
 
 
+class OracleSales(Provider):
+    key, name = "oracle_sales", "Oracle Sales / Fusion"
+    description = "Connect Oracle Sales contacts, import people to call, and save call notes on their records."
+    can_new_leads = False
+    docs_url = "https://docs.oracle.com/en/cloud/saas/sales/faaps/api-contacts.html"
+    auth_fields = [
+        AuthField("api_key", "API user password", help="Password for your Fusion REST API user; stored encrypted."),
+        AuthField("username", "API username", secret=False),
+        AuthField("instance_url", "Fusion instance URL", secret=False, placeholder="https://your-instance.fa.us2.oraclecloud.com"),
+    ]
+    root = "/crmRestApi/resources/11.13.18.05/contacts"
+
+    def native_http(self, secret, config):
+        from urllib.parse import urlsplit
+        try:
+            u = urlsplit(config.get("instance_url", ""))
+            port = u.port
+        except ValueError:
+            raise CrmError("Enter a valid Oracle Fusion instance URL.") from None
+        if (u.scheme != "https" or not u.hostname or not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.oraclecloud\.com", u.hostname)
+                or u.username or u.password or port or u.query or u.fragment or u.path not in ("", "/")):
+            raise CrmError("Enter your HTTPS Oracle Fusion instance URL, ending in .oraclecloud.com, without a path or port.")
+        user = config.get("username", "").strip()
+        if not user or ":" in user or any(c in user for c in "\r\n"):
+            raise CrmError("Enter a valid Fusion API username.")
+        return NativeHttp(f"https://{u.hostname}", basic=(user, secret))
+
+    @staticmethod
+    def _contact(r):
+        phone = r.get("RawPhoneNumber") or ""
+        if not phone:
+            phone = "".join(str(r.get(k) or "") for k in ("PhoneCountryCode", "PhoneAreaCode", "PhoneNumber"))
+        if not phone or not r.get("PartyNumber"):
+            return None
+        dnc = any(str(r.get(k, "")).lower() in ("true", "y", "1") for k in
+                  ("DoNotCallFlag", "DoNotCallPrimaryPhoneFlag"))
+        return Contact(name=r.get("ContactName") or " ".join(filter(None, [r.get("FirstName"), r.get("LastName")])),
+                       phone=normalize_phone(str(phone)), email=r.get("EmailAddress") or "",
+                       company=r.get("AccountName") or "", external_id=str(r["PartyNumber"]),
+                       created_at=_parse_time(r.get("CreationDate")), dnc=dnc)
+
+    async def verify(self, http, config):
+        data = await http.request("GET", self.root, params={"limit": 1, "onlyData": "true"})
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            raise CrmError("Oracle did not return a contacts collection. Check this API user's Sales permissions.")
+        return "Oracle Sales · " + config["username"]
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out, offset = [], 0
+        while len(out) < limit and offset < 10000:
+            data = await http.request("GET", self.root, params={"limit": min(100, limit-len(out)), "offset": offset, "onlyData": "true"})
+            rows = data.get("items") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                raise CrmError("Oracle returned an invalid contacts collection.")
+            for row in rows:
+                c = self._contact(row)
+                if c and not (since and c.created_at and c.created_at <= since):
+                    out.append(c)
+            if not rows or not data.get("hasMore"):
+                break
+            offset += len(rows)
+        return out[:limit]
+
+    async def find_or_create(self, http, config, c, create):
+        candidates = {}
+        queries = []
+        if c.email and re.fullmatch(r"[A-Za-z0-9._+@-]+", c.email):
+            queries.append("EmailAddress='" + c.email + "'")
+        if _digits(c.phone):
+            queries.extend("RawPhoneNumber='" + value + "'" for value in dict.fromkeys([normalize_phone(c.phone), _digits(c.phone)]))
+        for query in queries:
+            data = await http.request("GET", self.root, params={"q": query, "limit": 100, "onlyData": "true"})
+            if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+                raise CrmError("Oracle returned an invalid contacts collection; no contact was created.")
+            for raw in data["items"]:
+                found = self._contact(raw)
+                if not found and raw.get("PartyNumber") and c.email and str(raw.get("EmailAddress") or "").lower() == c.email.lower():
+                    found = Contact(email=c.email, external_id=str(raw["PartyNumber"]))
+                if found and ((_digits(found.phone) == _digits(c.phone) and _digits(c.phone)) or
+                              (c.email and found.email.lower() == c.email.lower())):
+                    candidates[found.external_id] = found
+        if len(candidates) > 1:
+            raise CrmError("More than one Oracle contact matches. Link the intended contact before retrying.")
+        if candidates:
+            return next(iter(candidates))
+        if not create:
+            return None
+        if not c.email or not re.fullmatch(r"[A-Za-z0-9._+@-]+", c.email):
+            raise CrmError("Import the existing Oracle contact first, or provide an email before creating one to reduce duplicate-contact risk.")
+        first, last = split_name(c.name)
+        row = await http.request("POST", self.root, json={"FirstName": first or c.phone, "LastName": last or first or c.phone,
+            "ContactPoint": [{"ContactPointType": "PHONE", "PhoneNumber": c.phone}, {"ContactPointType": "EMAIL", "EmailAddress": c.email}]})
+        if not isinstance(row, dict) or not row.get("PartyNumber"):
+            raise CrmError("Oracle did not confirm a contact number. Review the record before retrying.")
+        return str(row["PartyNumber"])
+
+    async def log_call(self, http, config, external_id, call):
+        from urllib.parse import quote
+        path = self.root + "/" + quote(str(external_id), safe="")
+        person = await http.request("GET", path)
+        if not isinstance(person, dict) or not person.get("PartyId"):
+            raise CrmError("Oracle did not return this contact's ID; no call note was written.")
+        note = await http.request("POST", path + "/child/Note", json={"NoteTxt": call.note(), "NoteTypeCode": "GENERAL",
+            "SourceObjectCode": "SALES_PARTY_CONTACT", "SourceObjectId": str(person["PartyId"]), "VisibilityCode": "INTERNAL"})
+        if not isinstance(note, dict) or not note.get("NoteId"):
+            raise CrmError("Oracle did not confirm the note. Review the contact before retrying.")
+
+    async def mark_dnc(self, http, config, external_id):
+        from urllib.parse import quote
+        await http.request("PATCH", self.root + "/" + quote(str(external_id), safe=""), json={"DoNotCallFlag": True})
+
+
+class RealGeeks(Provider):
+    key, name = "realgeeks", "Real Geeks"
+    description = "Create contacts and send call notes through the Real Geeks Incoming Leads API. Registered API access required."
+    can_import = False
+    can_new_leads = False
+    docs_url = "https://developers.realgeeks.com/incoming-leads-api/"
+    auth_fields = [
+        AuthField("api_key", "Integration API password", help="Use registered Incoming Leads API credentials, not your normal Real Geeks login."),
+        AuthField("username", "Integration API username", secret=False),
+        AuthField("site_uuid", "Site UUID", secret=False),
+        AuthField("verification_lead_id", "Existing lead UUID for connection test", secret=False, help="Read-only verification: use one existing lead on the authorized site. No test lead is created."),
+    ]
+
+    @staticmethod
+    def _uuid(value):
+        import uuid
+        try:
+            return str(uuid.UUID(str(value)))
+        except (ValueError, TypeError, AttributeError):
+            raise CrmError("Site and lead identifiers must be valid UUIDs.") from None
+
+    def native_http(self, secret, config):
+        self._uuid(config.get("site_uuid"))
+        self._uuid(config.get("verification_lead_id"))
+        if not config.get("username") or ":" in config["username"] or any(c in config["username"] for c in "\r\n"):
+            raise CrmError("Enter the registered integration API username.")
+        return NativeHttp("https://receivers.leadrouter.realgeeks.com/rest", basic=(config["username"], secret))
+
+    def _path(self, config, lead_id):
+        return f"/sites/{self._uuid(config['site_uuid'])}/leads/{self._uuid(lead_id)}"
+
+    async def verify(self, http, config):
+        lead_id = self._uuid(config["verification_lead_id"])
+        row = await http.request("GET", self._path(config, lead_id))
+        if not isinstance(row, dict) or str(row.get("id", "")) != lead_id:
+            raise CrmError("Real Geeks did not confirm this lead. Check the API credentials, site authorization and existing lead UUID.")
+        return "Real Geeks · " + self._uuid(config["site_uuid"])
+
+    async def find_or_create(self, http, config, c, create):
+        import uuid
+        if not _digits(c.phone):
+            raise CrmError("A valid contact phone number is required.")
+        existing = await http.request("GET", self._path(config, config["verification_lead_id"]))
+        if not isinstance(existing, dict) or not existing.get("id"):
+            raise CrmError("Real Geeks did not return the verification lead.")
+        if c.phone and _digits(existing.get("phone", "")) == _digits(c.phone):
+            return self._uuid(existing["id"])
+        lead_id = str(uuid.uuid5(uuid.UUID(self._uuid(config["site_uuid"])), normalize_phone(c.phone)))
+        try:
+            row = await http.request("GET", self._path(config, lead_id))
+            if not isinstance(row, dict) or str(row.get("id", "")) != lead_id:
+                raise CrmError("Real Geeks returned a different lead. Review the linked record.")
+            return lead_id
+        except CrmError as exc:
+            if exc.status != 404:
+                raise
+        if not create:
+            return None
+        first, last = split_name(c.name)
+        body = {"id": lead_id, "source": "BlackSync", "first_name": first, "last_name": last, "phone": c.phone}
+        if c.email:
+            body["email"] = c.email
+        await http.request("POST", f"/sites/{self._uuid(config['site_uuid'])}/leads", json=body)
+        row = await http.request("GET", self._path(config, lead_id))
+        if not isinstance(row, dict) or str(row.get("id", "")) != lead_id:
+            raise CrmError("Real Geeks did not confirm the created lead. Review the CRM before retrying.")
+        return lead_id
+
+    async def log_call(self, http, config, external_id, call):
+        await http.request("POST", self._path(config, external_id) + "/activities", json=[{"type": "note", "description": call.note()}])
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        raise CrmError("Real Geeks Incoming Leads API does not list your contacts. Existing lead imports need the separate outgoing webhook integration.")
+
+
+class BoomTown(Provider):
+    key, name = "boomtown", "BoomTown"
+    native = False
+    can_import = False
+    can_new_leads = False
+    description = "Direct account connection is awaiting verified BoomTown API documentation and provider access."
+    docs_url = "https://developers.boomtownroi.com/"
+    setup_required_reason = "BoomTown's API documentation is currently unavailable. This connector cannot be activated until the provider contract is verified."
+
+
+
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
-    BoldTrail(), Lofty(), SierraInteractive(), GoogleSheets(), Slack(),
+    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), BoomTown(), GoogleSheets(), Slack(),
 )}
 
 

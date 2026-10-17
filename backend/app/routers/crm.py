@@ -87,7 +87,7 @@ def conn_to_dict(c: CrmConnection) -> dict:
         "pipeline": ({"id": s["pipeline"]["id"], "name": (s["pipeline"].get("snapshot") or {}).get("name", ""),
                       "mapped": len(s["pipeline"].get("map") or {})} if s.get("pipeline") else None),
         # Non-secret details only.
-        "config": {k: v for k, v in cfg.items() if k in ("location_id", "spreadsheet")},
+        "config": {k: v for k, v in cfg.items() if k in ("location_id", "spreadsheet", "username", "instance_url", "site_uuid", "verification_lead_id")},
     }
 
 
@@ -110,7 +110,7 @@ async def overview(ctx: ManagerDep, db: DbDep):
     nango_providers = {it.get("provider") for it in nango_items}
     providers = [{
         "key": p.key, "name": p.name, "category": p.category, "description": p.description,
-        "native": p.native, "oauth": any(n in nango_providers for n in p.nango_providers),
+        "native": p.native, "setup_required_reason": getattr(p, "setup_required_reason", ""), "oauth": any(n in nango_providers for n in p.nango_providers),
         # Our own OAuth sign-in (no Nango): "Connect with …" sends the browser to the CRM's login page.
         "oauth_native": p.key == "salesforce" and sf_oauth.enabled(),
         "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
@@ -147,9 +147,13 @@ async def connect(key: str, body: ConnectIn, ctx: ManagerDep, db: DbDep):
     """Connect with an API key (verified against the CRM before it's saved)."""
     p = _provider(key)
     await entitlements.check_crm(db, ctx.org, key)
+    if getattr(p, "setup_required_reason", ""):
+        raise HTTPException(status_code=503, detail=p.setup_required_reason)
     if not p.native:
         raise HTTPException(status_code=400, detail=f"{p.name} connects with OAuth. Use Connect with {p.name}.")
-    secret = (body.fields.get("api_key") or "").strip()
+    secret = body.fields.get("api_key") or ""
+    if key not in ("oracle_sales", "realgeeks"):
+        secret = secret.strip()
     config = {f.name: (body.fields.get(f.name) or "").strip() for f in p.auth_fields if not f.secret}
     existing = await _get_conn(db, ctx.org.id, key)
     if not secret and existing and existing.method == "api_key" and existing.secret_enc:

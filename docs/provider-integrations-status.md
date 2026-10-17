@@ -1,33 +1,35 @@
-# Additional providers: scope and readiness
+# CRM connectors and lead-source readiness
 
-Oracle, Real Geeks and BoomTown are listed under Integrations. Vulcan7 and REDX are listed in Lead Finder → My lead sources.
+## Native CRM connections
 
-## Available
+Oracle Sales/Fusion (`oracle_sales`) and Real Geeks (`realgeeks`) are registered in the normal CRM connector catalog. The misleading Oracle/Real Geeks/BoomTown CSV cards have been removed from Integrations. No customer account is automatically connected.
 
-All five entries open the existing CSV contact importer, with an default `source:<provider>` tag added to any user-entered tags. Phone deduplication, organization scoping, custom fields and the import receipt use the existing `/api/contacts/import` route. No property lookup, campaign activation, external vendor request or account connection is performed by importing.
+Oracle uses a Fusion API username/password and a validated HTTPS Oracle Cloud instance hostname. Read-only contact access is verified before the encrypted password is persisted. The adapter supports paginated contact import, existing-record matching, confirmed contact creation, call-note creation and do-not-call updates. Imported contacts retain their Oracle PartyNumber so later calls log to that record. Phone-only automatic creation is refused when the contact cannot be matched, reducing duplicate risk.
 
-The parser additionally recognizes Phone1, Phone 1, Primary Phone, Owner First Name and Owner Last Name headers. These are tested supported headers, not a claim that every vendor export uses this schema. Other fields, including secondary phone columns, remain custom fields. Existing importer restrictions and phone validation still apply.
+Real Geeks uses registered Incoming Leads API credentials, a Site UUID, and an existing lead UUID for a read-only connection test. This is not the customer's normal website login. It supports call notes on linked contacts and creation/readback of new leads using a stable per-site phone-based UUID. A successful connection test never creates a test lead. The Incoming Leads API does not list all contacts, so bulk import and speed-to-lead are not advertised. Those require a separate Outgoing Leads webhook implementation, not CSV or guessed API endpoints.
 
-## Not enabled
+Passwords remain encrypted in the existing secret store. Authentication failures never mark a new connection connected, and failed reconnection does not replace the prior saved credential. Password whitespace is preserved for these providers.
 
-Direct login, OAuth/API credential verification, scheduled account sync, provider-backed property search, and post-call writeback for these five providers are not implemented. The UI explicitly says account sync is unavailable and does not solicit credentials or report a connected state.
+## BoomTown blocker
 
-The user confirmed Oracle Sales/Fusion CRM. No NetSuite or HCM adapter is substituted. The user has neither API access nor developer documentation for Vulcan7/REDX.
+BoomTown is represented as unavailable with “API verification pending”, not as a CSV integration or a live connector. Its official documentation host returned HTTP 503 at the root, /docs, /api and /swagger/index.html. No authentication flow or endpoint contract was invented. The backend explicitly refuses activation until that contract is verified. Provider API documentation/access is the remaining prerequisite.
 
-The documentation requests below were rejected by this environment's HTTP proxy (403). Access domains were saved to the environment draft; saving is not publication or proof of vendor API access:
+## Lead sources
 
-- developers.realgeeks.com
-- developers.boomtownroi.com
-- www.vulcan7.com
-- www.redx.com
-- docs.oracle.com
+Vulcan7 and REDX remain CSV contact import options in Lead Finder → My lead sources, with source tags and duplicate handling. The user confirmed they have no API access/documentation for these providers. These are not labeled connected accounts and do not run paid property lookups or place calls.
 
-Existing configured domains were retained. Read-only inspection of Nango's provider definitions found Oracle HCM/Identity, but no matching adapters for these requested CRM/data products; these Oracle products were not substituted for Oracle Sales or NetSuite.
+## API references inspected
 
-## Before enabling direct connections
+- https://docs.oracle.com/en/cloud/saas/sales/faaps/api-contacts.html
+- https://docs.oracle.com/en/cloud/saas/sales/faaps/op-contacts-get.html
+- https://docs.oracle.com/en/cloud/saas/sales/faaps/op-contacts-post.html
+- https://docs.oracle.com/en/cloud/saas/sales/faaps/op-contacts-partynumber-child-note-post.html
+- https://docs.oracle.com/en/cloud/saas/sales/faaps/Quick_Start.html
+- https://developers.realgeeks.com/incoming-leads-api/
+- https://developers.realgeeks.com/leads/
+- https://developers.realgeeks.com/activities/
+- https://developers.realgeeks.com/outgoing-leads-api/ (separate future webhook contract)
 
-For Oracle Sales/Fusion and the remaining providers, obtain official API/authentication specifications and appropriate account access for each provider, implement read-only verification before credential persistence, then add scoped import/pagination, DNC mapping and confirmed call-write receipts with contract tests. Treat any live property lookup pricing separately from contact imports. Never use regular account passwords with a guessed endpoint.
+Oracle and Real Geeks documentation became reachable during this correction. HTTP contract tests use mocks based on these documents; no customer credentials were available to verify a live customer connection or perform external writes. Do not describe those tests as live customer sync validation.
 
-## Validation
-
-Four backend tests cover export headers, quoted address data, missing numbers, source tags, duplicate import handling and no campaign assignment. Frontend build/type checks and mocked browser checks are recorded in the task artifacts. No real vendor accounts were linked and no real vendor data was imported.
+Rollback: revert the correction commit; avoid reverting the earlier CSV additions wholesale because that would also remove the requested Vulcan7/REDX import path and prior MCP link changes.

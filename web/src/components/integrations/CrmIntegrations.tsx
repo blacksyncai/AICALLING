@@ -25,6 +25,7 @@ export interface Provider {
   category: "crm" | "notify" | "sheet";
   description: string;
   native: boolean;
+  setup_required_reason?: string;
   oauth: boolean;
   /** Our own OAuth sign-in (no Nango): the browser goes to the CRM's login page and comes back connected. */
   oauth_native?: boolean;
@@ -104,7 +105,7 @@ const DOMAIN: Record<string, string> = {
   followupboss: "followupboss.com", close: "close.com", hubspot: "hubspot.com", highlevel: "gohighlevel.com",
   pipedrive: "pipedrive.com", salesforce: "salesforce.com", zoho: "zoho.com", attio: "attio.com",
   google_sheets: "sheets.google.com", slack: "slack.com", boldtrail: "kvcore.com", lofty: "lofty.com",
-  sierra: "sierrainteractive.com",
+  sierra: "sierrainteractive.com", oracle_sales: "oracle.com", realgeeks: "realgeeks.com", boomtown: "boomtownroi.com",
 };
 
 export function Logo({ p }: { p: Provider }) {
@@ -283,14 +284,14 @@ export function CrmIntegrations() {
         </div>
 
         <Group title="Coming soon">
-          {[...soon.map((p) => ({ key: p.key, name: p.name, description: p.description, domain: DOMAIN[p.key] })), ...UPCOMING].map((x) => (
+          {[...soon.map((p) => ({ key: p.key, name: p.name, description: p.description, domain: DOMAIN[p.key], pending: !!p.setup_required_reason })), ...UPCOMING.map((p) => ({ ...p, pending: false }))].map((x) => (
             <li key={x.key} className="relative flex items-center gap-4 px-4 py-3.5">
               <SoonLogo name={x.name} domain={x.domain} />
               <span className="min-w-0 flex-1">
                 <span className="block text-[15px] font-medium text-zinc-700">{x.name}</span>
                 <span className="block truncate text-xs text-zinc-500">{x.description}</span>
               </span>
-              <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">Coming soon</span>
+              <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">{x.pending ? "API verification pending" : "Coming soon"}</span>
             </li>
           ))}
         </Group>
@@ -407,7 +408,7 @@ export function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; ex
                   autoComplete="off"
                   value={values[f.name] ?? ""}
                   placeholder={existing?.method === "api_key" ? "Leave blank to keep the saved key" : f.placeholder}
-                  onChange={(e) => setValues({ ...values, [f.name]: e.target.value.trim() })}
+                  onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
                 />
               </Field>
             ))}
