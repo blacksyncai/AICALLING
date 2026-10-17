@@ -7,10 +7,10 @@ from __future__ import annotations
 import csv
 import io
 
-_PHONE_KEYS = ("phone", "phone_number", "mobile", "number", "phone number", "telephone", "cell")
+_PHONE_KEYS = ("phone", "phone_number", "mobile", "number", "phone number", "telephone", "cell", "phone1", "phone 1", "primary phone")
 _NAME_KEYS = ("name", "full_name", "full name", "contact", "contact_name")
-_FIRST_KEYS = ("first_name", "first name", "firstname")
-_LAST_KEYS = ("last_name", "last name", "lastname", "surname")
+_FIRST_KEYS = ("first_name", "first name", "firstname", "owner first name")
+_LAST_KEYS = ("last_name", "last name", "lastname", "surname", "owner last name")
 _KNOWN = {"company": ("company", "company_name", "organization", "business"),
           "email": ("email", "email_address", "e-mail"),
           "role": ("role", "title", "job_title", "position")}
@@ -72,7 +72,7 @@ def parse_contacts_csv(text: str) -> tuple[list[dict], int]:
             used.add(col)
         custom = {
             cols[c].replace(" ", "_"): (v or "").strip()
-            for c, v in row.items() if c and c not in used and (v or "").strip()
+            for c, v in row.items() if c and (c not in used or cols[c] in {"phone1", "phone 1", "primary phone", "owner first name", "owner last name"}) and (v or "").strip()
         }
         contacts.append({"name": name or phone, "phone": phone, **known, "custom_fields": custom or None})
     return contacts, skipped

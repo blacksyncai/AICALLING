@@ -3,6 +3,7 @@
 import { KeyRound, Webhook as WebhookIcon } from "lucide-react";
 import useSWR from "swr";
 import { ApiKeysCard } from "@/components/integrations/ApiKeysCard";
+import { ProviderConnections } from "@/components/integrations/ProviderConnections";
 import { CrmIntegrations } from "@/components/integrations/CrmIntegrations";
 import { ZapierCard } from "@/components/integrations/ZapierCard";
 import { WebhooksCard } from "@/components/integrations/WebhooksCard";
@@ -84,6 +85,7 @@ export default function IntegrationsPage() {
           </div>
 
           <CrmIntegrations />
+          <ProviderConnections kind="crm" />
           <WebhooksCard webhooks={data.webhooks} events={data.events} onChange={refresh} />
           <ApiKeysCard keys={data.api_keys} onChange={refresh} />
           <ZapierCard />

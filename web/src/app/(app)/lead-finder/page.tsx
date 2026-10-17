@@ -4,6 +4,7 @@ import { ClipboardPaste, Eye, FileSpreadsheet, Search, UserPlus, UserSearch } fr
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import useSWR from "swr";
+import { ProviderConnections } from "@/components/integrations/ProviderConnections";
 import { BulkLookup } from "@/components/lead-finder/BulkLookup";
 import { CreditsCard } from "@/components/lead-finder/CreditsCard";
 import { ResultPanel } from "@/components/lead-finder/ResultPanel";
@@ -16,7 +17,7 @@ import { cn } from "@/lib/utils";
 
 const EMPTY: LookupAddress = { street: "", city: "", state: "", zip: "" };
 
-type Mode = "single" | "bulk";
+type Mode = "single" | "bulk" | "sources";
 
 /** A full address: house number, then something that looks like a state and/or ZIP at the end. */
 function looksComplete(text: string) {
@@ -180,7 +181,7 @@ export default function LeadFinderPage() {
         )}
       </div>
 
-      {usage?.enabled && !usage.unlimited && (
+      {mode !== "sources" && usage?.enabled && !usage.unlimited && (
         <div className="mb-4 grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm sm:grid-cols-3">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Price</p>
@@ -200,18 +201,19 @@ export default function LeadFinderPage() {
         </div>
       )}
 
-      <div className="mb-4 w-full sm:w-72">
+      <div className="mb-4 w-full sm:max-w-lg [&_[role=tab]]:px-2">
         <Tabs<Mode>
           value={mode}
           onChange={setMode}
           tabs={[
             { value: "single", label: "Single address", icon: <Search className="h-3.5 w-3.5" /> },
             { value: "bulk", label: "Bulk CSV", icon: <FileSpreadsheet className="h-3.5 w-3.5" /> },
+            { value: "sources", label: "My lead sources", icon: <UserPlus className="h-3.5 w-3.5" /> },
           ]}
         />
       </div>
 
-      {mode === "bulk" ? (
+      {mode === "sources" ? <ProviderConnections kind="lead_source" /> : mode === "bulk" ? (
         <BulkLookup usage={usage} onUsage={() => refreshUsage()} />
       ) : (
       <>
