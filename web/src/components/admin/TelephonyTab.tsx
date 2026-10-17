@@ -10,6 +10,7 @@ import { timeAgo } from "@/lib/utils";
 
 interface Telephony {
   twilio_ready: boolean;
+  purchase_carriers?: string[];
   recordings_ready: boolean;
   trunk_sid: string;
   trunk_error: string;
@@ -58,7 +59,8 @@ export function TelephonyTab() {
         <Card>
           <CardHeader title="Setup" />
           <div className="flex flex-col gap-4 p-5">
-            <Status ok={data.twilio_ready} label="Twilio" detail={data.twilio_ready ? "Connected" : "Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN"} />
+            <Status ok={!!data.purchase_carriers?.includes("signalwire")} label="SignalWire · Primary" detail={data.purchase_carriers?.includes("signalwire") ? "Configured for number purchases and outbound calls" : "Configure SignalWire credentials and the outbound trunk"} />
+            <Status ok={data.twilio_ready} label="Twilio · Backup" detail={data.twilio_ready ? "Connected" : "Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN"} />
             {data.twilio_ready && (
               <Status ok={!!data.trunk_sid} label="SIP trunk" detail={data.trunk_sid ? `Numbers attach to ${data.trunk_sid}` : data.trunk_error || "Not found"} />
             )}
@@ -114,9 +116,9 @@ export function TelephonyTab() {
         </Card>
       </div>
       <Card className="min-w-0">
-        <CardHeader title="Numbers in Twilio" description="Assign or buy numbers from an account's page" />
-        {!data.twilio_ready ? (
-          <p className="px-5 py-4 text-sm text-zinc-500">Connect Twilio to see numbers.</p>
+        <CardHeader title="Provider numbers" description="Assign or buy numbers from an account's page" />
+        {!data.twilio_ready && !data.purchase_carriers?.length && !data.owned.length ? (
+          <p className="px-5 py-4 text-sm text-zinc-500">Connect a number provider to see numbers.</p>
         ) : data.owned_error ? (
           <div className="p-5">
             <Notice tone="red">{data.owned_error}</Notice>

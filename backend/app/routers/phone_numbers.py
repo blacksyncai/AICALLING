@@ -214,7 +214,8 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
 async def telephony_status(_: AdminDep, db: DbDep):
     """Twilio + recording setup, and every number in the Twilio account with who has it."""
     out: dict = {
-        "twilio_ready": settings.twilio_ready, "recordings_ready": settings.recordings_ready,
+        "twilio_ready": settings.twilio_ready, "purchase_carriers": telephony.purchase_carriers(),
+        "recordings_ready": settings.recordings_ready,
         "trunk_sid": "", "trunk_error": "", "owned": [], "owned_error": "", "owned_warnings": [],
         "settings": {k: v for k, v in (await settings_store.get_all(db)).items()
                      if k in ("self_serve_numbers", "max_numbers_per_org")},

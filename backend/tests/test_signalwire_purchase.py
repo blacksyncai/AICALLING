@@ -25,6 +25,8 @@ def purchase_api(monkeypatch):
         if state.status != 200:
             return httpx.Response(state.status, json={'error':'rejected'})
         if request.method == 'GET':
+            if not request.url.path.endswith('/search'):
+                return httpx.Response(200,json={'data':[], 'links':{}})
             assert request.url.params['areacode'] == '415'
             assert 'area_code' not in request.url.params
             return httpx.Response(200,json={'data':[
@@ -135,6 +137,7 @@ def test_customer_signalwire_without_twilio_keeps_checkout_choice(client, make_c
     from tests.test_accounts import _login
     monkeypatch.setattr(settings,'twilio_account_sid','')
     monkeypatch.setattr(settings,'twilio_auth_token','')
+    assert client.get('/api/admin/telephony').json()['purchase_carriers'] == ['signalwire']
     org,email = _new_account(client,name='SW customer checkout')
     owner = _login(make_client,email)
     captured = []
