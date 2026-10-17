@@ -74,6 +74,7 @@ export interface PhoneNumberRequestItem {
 }
 
 export interface MyPhoneNumbers {
+  purchase_carriers?: string[];
   numbers: PhoneNumberItem[];
   requests: PhoneNumberRequestItem[];
   self_serve: boolean;

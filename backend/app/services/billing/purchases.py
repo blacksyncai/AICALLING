@@ -209,25 +209,25 @@ def is_number_only(obj: dict | None) -> bool:
     return ((obj or {}).get("metadata") or {}).get("purchase_type") == "phone_number"
 
 
-async def checkout_phone_number(db: AsyncSession, org: Organization, user_id: uuid.UUID, number: str) -> str:
+async def checkout_phone_number(db: AsyncSession, org: Organization, user_id: uuid.UUID, number: str, *, carrier: str = "twilio") -> str:
     """No plan: buy one number on its own for the monthly add-on price (the number is bought once paid)."""
     try:
         price = await catalog.sellable_price(catalog.PHONE_ADDON["key"])
     except catalog.NotSellable as exc:
         raise BillingError(str(exc), 409)
     cid = await ensure_customer(db, org)
-    meta = {"org_id": str(org.id), "purchase_type": "phone_number", "number": number, "user_id": str(user_id)}
+    meta = {"org_id": str(org.id), "purchase_type": "phone_number", "number": number, "user_id": str(user_id), "carrier": carrier}
     session = await stripe_api.create_checkout_session(
         mode="subscription", customer=cid, line_items=[{"price": price, "quantity": 1}],
         metadata=meta, client_reference_id=str(org.id), subscription_data={"metadata": meta},
         success_url=app_url("/phone-numbers?checkout=success"), cancel_url=app_url("/phone-numbers?checkout=canceled"),
-        idempotency_key=f"bs-number-{org.id}-{number}-{int(_now().timestamp() // 600)}",
+        idempotency_key=f"bs-number-{org.id}-{carrier}-{number}-{int(_now().timestamp() // 600)}",
     )
     log.info("number_checkout_created", org_id=str(org.id), number=number)
     return session["url"]
 
 
-async def provision_number(db: AsyncSession, org_id: uuid.UUID, number: str, subscription_id: str) -> None:
+async def provision_number(db: AsyncSession, org_id: uuid.UUID, number: str, subscription_id: str, *, carrier: str = "twilio") -> None:
     """After payment: buy the chosen number (or another in the same area code if it was taken meanwhile)."""
     from app.models.billing import PhoneNumber
     from app.services import telephony
@@ -238,14 +238,17 @@ async def provision_number(db: AsyncSession, org_id: uuid.UUID, number: str, sub
     candidates = [number]
     digits = "".join(ch for ch in number if ch.isdigit())
     area = digits[1:4] if len(digits) == 11 else digits[:3]
-    try:
-        candidates += [n["number"] for n in await telephony.search_available(area)][:5]
-    except Exception:
-        pass
+    # A timeout may have succeeded remotely. Never buy a second SignalWire
+    # number as compensation or silently substitute a different selection.
+    if carrier != "signalwire":
+        try:
+            candidates += [n["number"] for n in await telephony.search_available(area, carrier=carrier)][:5]
+        except Exception:
+            pass
     last_error = None
     for cand in dict.fromkeys(candidates):
         try:
-            row = await telephony.purchase(db, org_id, cand)
+            row = await telephony.purchase(db, org_id, cand, carrier=carrier)
         except Exception as exc:
             last_error = exc
             continue

@@ -1,4 +1,4 @@
-"""Inventory and outbound trunk management; never purchases or releases numbers."""
+"""Number inventory, purchase, release and outbound trunk management."""
 import re
 import copy
 from urllib.parse import urljoin, urlparse
@@ -157,3 +157,55 @@ async def ensure_dynamic_routing() -> None:
                 raise SignalWireError("SignalWire routing update could not be verified.")
         except (httpx.HTTPError, ValueError, KeyError):
             raise SignalWireError("Couldn't verify shared SignalWire caller-ID routing. Check the API token and Voice permission.") from None
+
+
+async def _number_request(method: str, path: str, **kwargs):
+    if not ready():
+        raise SignalWireError("Number purchasing is not configured.")
+    space = settings.signalwire_space.strip().lower()
+    if not re.fullmatch(r"[a-z0-9-]+\.signalwire\.com", space):
+        raise SignalWireError("Invalid number service hostname.")
+    async with httpx.AsyncClient(auth=(settings.signalwire_project_id, settings.signalwire_api_token),
+                                 timeout=20, follow_redirects=False) as client:
+        try:
+            response = await client.request(method, f"https://{space}/api/relay/rest/phone_numbers{path}", **kwargs)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+        except httpx.HTTPStatusError as exc:
+            raise SignalWireError(f"Number service rejected the request (HTTP {exc.response.status_code}).") from None
+        except (httpx.HTTPError, ValueError):
+            # No automatic retry: a timed-out purchase may already have completed.
+            raise SignalWireError("Couldn't confirm the number request. Check owned numbers before retrying.") from None
+
+
+async def search_available(area_code="", contains="", limit=20):
+    if area_code and not re.fullmatch(r"\d{3}", area_code):
+        raise SignalWireError("Area code must be 3 digits.")
+    if contains and not re.fullmatch(r"\d{3,7}", contains):
+        raise SignalWireError("Number search must contain 3 to 7 digits.")
+    params = {"number_type": "local", "max_results": max(1, min(limit, 50))}
+    if area_code:
+        params["areacode"] = area_code
+    if contains:
+        params["contains"] = contains
+    data = await _number_request("GET", "/search", params=params)
+    return [{"number": n["e164"], "friendly": n.get("national_number_formatted") or n["e164"],
+             "locality": n.get("rate_center") or "", "region": n.get("region") or "",
+             "carrier": "signalwire"}
+            for n in data.get("data", []) if "voice" in n.get("capabilities", [])]
+
+
+async def buy(number: str):
+    if not re.fullmatch(r"\+1\d{10}", number):
+        raise SignalWireError("Choose a US local number from search results.")
+    await ensure_dynamic_routing()
+    data = await _number_request("POST", "", json={"number": number})
+    if not data.get("id") or data.get("number") != number:
+        raise SignalWireError("Couldn't confirm the purchased number. Check owned numbers before retrying.")
+    return {"sid": data["id"], "number": number}
+
+
+async def release(number_id: str):
+    if not re.fullmatch(r"[a-zA-Z0-9-]+", number_id):
+        raise SignalWireError("Invalid owned number identifier.")
+    await _number_request("DELETE", f"/{number_id}")

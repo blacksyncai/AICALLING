@@ -139,7 +139,8 @@ async def _checkout(db: AsyncSession, etype: str, session: dict) -> uuid.UUID | 
         number = (session.get("metadata") or {}).get("number") or ""
         if org_id and session.get("subscription") and etype == "checkout.session.completed" \
                 and session.get("payment_status") in ("paid", "no_payment_required"):
-            await purchases.provision_number(db, org_id, number, session["subscription"])
+            await purchases.provision_number(db, org_id, number, session["subscription"],
+                                             carrier=(session.get("metadata") or {}).get("carrier") or "twilio")
             await db.commit()
         return org_id
     if session.get("mode") == "subscription":

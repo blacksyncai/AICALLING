@@ -12,6 +12,7 @@ interface OrgNumbers {
   numbers: PhoneNumberItem[];
   requests: PhoneNumberRequestItem[];
   twilio_ready: boolean;
+  purchase_carriers?: string[];
 }
 
 interface Available {
@@ -38,6 +39,9 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   const toast = useToast();
   const url = `/api/admin/orgs/${orgId}/phone-numbers`;
   const { data, mutate } = useSWR<OrgNumbers>(url, fetcher);
+  const [chosenCarrier, setChosenCarrier] = useState<string | null>(null);
+  const carriers = data?.purchase_carriers || (data?.twilio_ready ? ["twilio"] : []);
+  const carrier = chosenCarrier || carriers[0] || "signalwire";
   const [mode, setMode] = useState<Mode>("import");
   const [area, setArea] = useState("");
   const [results, setResults] = useState<Available[] | null>(null);
@@ -51,7 +55,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
     e.preventDefault();
     setSearching(true);
     try {
-      const r = await api<{ numbers: Available[] }>(`/api/admin/phone-numbers/available?area_code=${encodeURIComponent(area)}`);
+      const r = await api<{ numbers: Available[] }>(`/api/admin/phone-numbers/available?area_code=${encodeURIComponent(area)}&carrier=${encodeURIComponent(carrier)}`);
       setResults(r.numbers);
     } catch (err) {
       toast((err as Error).message, "error");
@@ -61,10 +65,10 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   }
 
   async function assign(number: string, how: "purchase" | "import") {
-    if (how === "purchase" && !window.confirm(`Buy ${number} from Twilio for this account? Twilio bills the platform account monthly.`)) return;
+    if (how === "purchase" && !window.confirm(`Buy ${number} from ${carrier === "signalwire" ? "SignalWire" : "Twilio"} for this account? The provider bills the platform account monthly.`)) return;
     setBusy(number);
     try {
-      await post(url, { number, mode: how, request_id: openRequest?.id });
+      await post(url, { number, carrier, mode: how, request_id: openRequest?.id });
       setResults(null);
       await mutate();
       toast(`${number} assigned`);
@@ -76,13 +80,13 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   }
 
   async function release(n: PhoneNumberItem) {
-    const returnIt = n.source === "purchased" && window.confirm(`Release ${n.number} back to Twilio too? (OK = release and stop paying for it, Cancel = only remove it from this account)`);
+    const returnIt = n.source === "purchased" && window.confirm(`Release ${n.number} back to its carrier too? (OK = release and stop paying for it, Cancel = only remove it from this account)`);
     if (!returnIt && !window.confirm(`Remove ${n.number} from this account?`)) return;
     setBusy(n.id);
     try {
       await del(`/api/admin/phone-numbers/${n.id}?return_to_twilio=${returnIt}`);
       await mutate();
-      toast(returnIt ? `${n.number} released to Twilio` : `${n.number} removed`);
+      toast(returnIt ? `${n.number} released to carrier` : `${n.number} removed`);
     } catch (err) {
       toast((err as Error).message, "error");
     } finally {
@@ -156,8 +160,14 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
               />
               {mode === "import" && telephony?.owned_warnings?.map((warning) => <Notice key={warning}>{warning}</Notice>)}
               {mode === "import" && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-zinc-500">Assign numbers already owned in Twilio, Bandwidth or SignalWire. SignalWire currently supports outbound calls.</p><Button size="sm" onClick={() => void refreshSWR("/api/admin/telephony")}>Refresh numbers</Button></div>}
-              {mode === "buy" && !data.twilio_ready ? <Notice>Twilio must be configured to buy numbers. Use Assign existing for SignalWire and Bandwidth.</Notice> : mode === "buy" ? (
+              {mode === "buy" && !carriers.length ? <Notice>Number purchasing is not configured. Use Assign existing.</Notice> : mode === "buy" ? (
                 <>
+                  <label className="text-xs text-zinc-500">Number provider
+                    <select aria-label="Number provider" className="ml-3 rounded-lg border border-zinc-200 px-3 py-2" value={carrier} disabled={!!busy || searching} onChange={(e) => { setChosenCarrier(e.target.value); setResults(null); }}>
+                      {carriers.map((c) => <option key={c} value={c}>{c === "signalwire" ? "SignalWire · Primary" : "Twilio · Backup"}</option>)}
+                    </select>
+                  </label>
+                  {carrier === "signalwire" && <p className="text-xs text-zinc-500">Purchases support outbound calling. Inbound routing is not configured yet.</p>}
                   <form onSubmit={search} className="flex items-end gap-2">
                     <Field label="Area code" className="flex-1">
                       <Input
