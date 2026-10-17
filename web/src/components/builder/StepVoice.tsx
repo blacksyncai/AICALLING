@@ -3,6 +3,7 @@
 import { Cpu } from "lucide-react";
 import { VoicePicker } from "@/components/agent/VoicePicker";
 import { Field, Select } from "@/components/ui";
+import { HOUSE_VOICES } from "./VoiceCards";
 import { Chip, StepTitle } from "./parts";
 import { LANGUAGES, useModelName, type Behavior, type VoicesResponse } from "./StepPersonality";
 
@@ -21,7 +22,7 @@ export function StepVoice({
   const modelName = useModelName(behavior.llm_model);
   return (
     <div className="space-y-5">
-      <StepTitle title="Choose a voice (optional)" description="Preview voices and pick one, or keep the recommended voice. You can change it any time." />
+      <StepTitle title="Choose a voice (optional)" description="Preview voices and pick one, or keep Marissa, the default voice. You can change it any time." />
 
       <Field label="Language">
         <Select value={language} onChange={(e) => onChange({ language: e.target.value })} className="sm:w-60">
@@ -35,9 +36,9 @@ export function StepVoice({
 
       <div role="radiogroup" aria-label="Voice" className="flex flex-wrap gap-2">
         <Chip role="radio" selected={!choosing} onClick={() => onChange({ voice_id: "" })}>
-          Recommended voice
+          Default · Marissa
         </Chip>
-        <Chip role="radio" selected={choosing} onClick={() => !choosing && onChange({ voice_id: voices?.featured?.[0]?.id ?? voices?.voices?.[0]?.id ?? "" })}>
+        <Chip role="radio" selected={choosing} onClick={() => !choosing && onChange({ voice_id: HOUSE_VOICES[0] })}>
           Choose a voice
         </Chip>
       </div>

@@ -47,7 +47,7 @@ export function StepReview({
   const answered = (g.assistant ?? []).filter((i) => i.answer || i.delegated).length;
   const later = decidesLater(be);
   const allVoices = [...(voices?.featured ?? []), ...(voices?.voices ?? [])];
-  const voice = allVoices.find((v) => v.id === be.voice_id)?.name ?? (be.voice_id ? "Selected voice" : "Recommended voice");
+  const voice = allVoices.find((v) => v.id === be.voice_id)?.name ?? (be.voice_id ? "Selected voice" : "Marissa (default)");
   const language = LANGUAGES.find(([k]) => k === (be.language ?? "en"))?.[1];
   const style = be.style ? catalog?.styles.find((s) => s.key === be.style)?.label : "Matches your goal";
   const tools = (data.integrations?.selected ?? []).map((k) => catalog?.integrations.find((i) => i.key === k)?.label ?? k);

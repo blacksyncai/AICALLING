@@ -95,7 +95,7 @@ export function PersonalityFields({
               onChange({ voice_id: "" });
             }}
           >
-            Recommended voice
+            Default · Marissa
           </Chip>
           <Chip role="radio" selected={pickVoice} onClick={() => setPickVoice(true)}>
             Choose a voice
