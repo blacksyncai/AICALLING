@@ -719,6 +719,9 @@ class _CallRun:
         self.lat: dict[str, list[float]] = {"eou": [], "llm": [], "tts": []}
         from app.agent.turn_latency import TurnLatency
         self.turn_latency = TurnLatency()
+        from app.agent.committed_actions import CommittedActions
+        self.actions = CommittedActions()
+        self.trace = None  # attached by the configurable session
 
     def latency_summary(self) -> dict | None:
         avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
@@ -726,16 +729,14 @@ class _CallRun:
         observed = self.turn_latency.summary()
         if eou is None and llm is None and not observed.get("response_gap_samples"):
             return None
-        estimate = round(sum(v for v in (eou, llm, tts) if v), 3)
         return {
             **observed,
-            "pipeline_sum_estimate": estimate,
-            "response_metric": "session_state_gap" if observed.get("response_gap_samples") else "pipeline_sum_estimate",
+            "response_metric": "session_state_gap" if observed.get("response_gap_samples") else "unmeasured",
             "turns": len(self.lat["llm"]),
             "avg_eou": eou,
             "avg_llm_ttft": llm,
             "avg_tts_ttfb": tts,
-            "avg_response": observed.get("avg_turn_gap", estimate),
+            "avg_response": observed.get("avg_turn_gap"),
         }
 
 
@@ -797,10 +798,10 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     import time as _t
     from app.services import calendar as _cal
 
-    def _record(name: str, args: dict, output=None) -> None:
+    def _record(name: str, args: dict, output=None, *, success=True) -> None:
         run.transcript.append({
             "role": "tool", "tool": name, "args": args,
-            "result": {"output": output, "success": True},
+            "result": {"output": output, "success": success},
             "ts": round(_t.monotonic() - run.t0, 2) if run.t0 else 0.0,
         })
 
@@ -834,6 +835,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 interested, not_interested, callback, transferred, voicemail, no_answer, wrong_number,
                 do_not_call, completed.
         """
+        if context.speech_handle.interrupted:
+            return "Not ended: the caller interrupted. Respond to their latest turn."
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
         if outcome == "meeting_booked" and not run.meeting_time:
             return "Not ended: no meeting is booked yet. Finish booking first, or pick another outcome."
@@ -854,7 +857,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     tools = [function_tool(end_call)]
 
     if cfg.get("enable_booking"):
-        async def check_availability(preferred_date: str = "", time_of_day: str = "", time: str = "") -> str:
+        async def check_availability(context: RunContext, preferred_date: str = "", time_of_day: str = "", time: str = "") -> str:
             """Look up open appointment times. Only ever offer times this returns. Call it again whenever they want
             other options (another day, morning/afternoon/evening, or a specific time) — each call returns times
             not offered yet.
@@ -864,13 +867,24 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 time_of_day: "morning", "afternoon" or "evening" if they said so, else empty.
                 time: A specific time they asked about, 24h "HH:MM" (e.g. "15:00"), else empty.
             """
-            session = session_ref.get("session")
-            if session:
-                session.say("One sec, let me check the calendar.", allow_interruptions=True)
-            found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
+            if context.speech_handle.interrupted:
+                return "Lookup cancelled: the caller changed the turn."
+            if run.trace:
+                run.trace.mark("tool_request", speech=context.speech_handle, tool="check_availability")
+            try:
+                found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
                                            cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
                                            time_of_day=time_of_day, time=time,
-                                           exclude={s["start"] for s in run.slots})
+                                           exclude={s["start"] for s in run.slots}, count=2)
+            except _cal.CalendarUnavailable:
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="check_availability", status="unavailable")
+                _record("check_availability", {}, {"error": "calendar unavailable"}, success=False)
+                return "Availability is unavailable, not fully booked. Don't invent slots. Offer a teammate follow-up."
+            if run.trace:
+                run.trace.mark("tool_result", speech=context.speech_handle, tool="check_availability", status="ok")
+            if context.speech_handle.interrupted:
+                return "Lookup cancelled: don't offer these results after the caller changed their request."
             run.slots = _cal.remember_slots(run.slots, found)
             if found:
                 run.last_found = found
@@ -880,15 +894,18 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 return ("No new openings for that. Offer a different day or time of day"
                         + (", or one of the times already offered." if run.slots else "."))
             return ("Open: " + "; ".join(s["label"] for s in found)
-                    + ". Offer two or three of these naturally. All times offered so far can be booked.")
+                    + (". Offer both together naturally." if len(found) == 2 else ". Offer this verified time.")
+                    + " Availability will be rechecked before booking.")
 
-        async def book_appointment(slot: str, email: str) -> str:
+        async def book_appointment(slot: str, email: str, context: RunContext) -> str:
             """Book one of the slots from check_availability. Confirm the email spelling first.
 
             Args:
                 slot: The exact label of the slot they chose, as returned by check_availability.
                 email: The contact's email exactly as they said it. Never guess it.
             """
+            if run.meeting_time:
+                return f"Already booked for {run.meeting_time}. Do not create a second booking; changes need a teammate."
             if not run.slots:
                 return "No slots offered yet. Call check_availability first."
             chosen = _cal.pick_slot(run.slots, slot, cfg.get("calendar_timezone"), run.last_found)
@@ -901,21 +918,55 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             if not email_was_given(email, user_turns, (cfg_vars or {}).get("email", "")):
                 return ("Not booked: the contact hasn't given that email. Ask for their email "
                         "and have them spell it — never guess it.")
-            link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"),
-                                             cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
-            if not link:
-                _record("book_appointment", {"slot": slot, "email": email}, {"error": "booking failed"})
-                return ("Not booked: the calendar didn't accept it. Don't say it's booked — tell them "
-                        "the team will email a confirmation to set the time, then wrap up.")
-            run.meeting_link, run.meeting_time, run.email = link, chosen["label"], email
-            _record("book_appointment", {"slot": slot, "email": email}, {"booked": chosen["label"], "link": link})
-            return f"Booked for {chosen['label']}. Confirm exactly this time with them, then wrap up."
+            from app.agent.committed_actions import ActionUncertain, NoAction
+            async def _book():
+                if run.trace:
+                    run.trace.mark("tool_request", speech=context.speech_handle, tool="book_appointment")
+                # A previous offer is not a reservation. Recheck real availability.
+                from datetime import datetime
+                local_day = datetime.fromisoformat(chosen["start"].replace("Z", "+00:00")).astimezone(
+                    _cal._zone(cfg.get("calendar_timezone"))).date().isoformat()
+                try:
+                    fresh = await _cal.fetch_slots(local_day, cfg.get("calcom_event_type_id"),
+                        cfg.get("calcom_api_key"), cfg.get("calendar_timezone"), count=10000)
+                except _cal.CalendarUnavailable as exc:
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="read_unavailable_no_write")
+                    raise NoAction("Not booked: availability could not be verified. Try checking availability again or offer a teammate follow-up.") from exc
+                if context.speech_handle.interrupted:
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="cancelled_before_write")
+                    raise NoAction("Not booked: the caller interrupted before booking. Respond to their latest request.")
+                if chosen["start"] not in {s["start"] for s in fresh}:
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="stale")
+                    raise NoAction("Not booked: that slot is no longer available. Check availability again.")
+                link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"),
+                    cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
+                if not link:
+                    raise ActionUncertain("No booking receipt")
+                # Persist the authoritative result inside the shielded operation,
+                # even if caller interruption cancels the model's waiting tool.
+                run.meeting_link, run.meeting_time, run.email = link, chosen["label"], email
+                _record("book_appointment", {"slot": slot, "email": email}, {"booked": chosen["label"], "link": link})
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="confirmed")
+                return f"Booked for {chosen['label']}. Confirm exactly this time with them, then wrap up."
+            try:
+                return await run.actions.run(("booking",), _book, context=context)
+            except NoAction as exc:
+                return str(exc)
+            except ActionUncertain:
+                _record("book_appointment", {}, {"error": "confirmation unavailable"}, success=False)
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="unknown_no_retry")
+                return "Booking is not confirmed. Do not retry or promise confirmation; offer a teammate follow-up."
 
         tools += [function_tool(check_availability), function_tool(book_appointment)]
 
     transfer_to = (cfg.get("transfer_number") or "").strip()
     if transfer_to and run.call_type in ("outbound", "inbound"):  # the prompt offers it on every phone call
-        async def transfer_call() -> str:
+        async def transfer_call(context: RunContext) -> str:
             """Transfer the caller to a human teammate. Tell them you're connecting them first."""
             from livekit import api as _lkapi
             sip_identity = next(
@@ -924,26 +975,41 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             )
             if not sip_identity:
                 return "Transfer isn't possible on this call. Offer to take a message instead."
-            _record("transfer_call", {"to": transfer_to})
-            run.outcome = "transferred"
-            lk = _lkapi.LiveKitAPI(
-                url=settings.livekit_url, api_key=settings.livekit_api_key,
-                api_secret=settings.livekit_api_secret,
-            )
+            from app.agent.committed_actions import ActionUncertain, NoAction
+            async def _transfer():
+                # Await the actual handoff line, rather than adding 2.5 seconds.
+                try:
+                    await asyncio.wait_for(context.wait_for_playout(), timeout=12)
+                except asyncio.TimeoutError as exc:
+                    raise NoAction("Transfer not started: handoff speech did not finish. Check the caller's request before continuing.") from exc
+                if context.speech_handle.interrupted:
+                    raise NoAction("Transfer cancelled before connecting; respond to the caller's correction.")
+                lk = _lkapi.LiveKitAPI(url=settings.livekit_url, api_key=settings.livekit_api_key,
+                                       api_secret=settings.livekit_api_secret)
+                try:
+                    if run.trace:
+                        run.trace.mark("tool_request", speech=context.speech_handle, tool="transfer_call")
+                    await asyncio.wait_for(lk.sip.transfer_sip_participant(_lkapi.TransferSIPParticipantRequest(
+                        participant_identity=sip_identity, room_name=ctx.room.name,
+                        transfer_to=f"tel:{transfer_to}", play_dialtone=True,
+                    )), timeout=15)
+                    run.outcome = "transferred"
+                    _record("transfer_call", {"to": transfer_to})
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="accepted")
+                    run.post_task = asyncio.create_task(_post_run_outcome(run, "transferred"))
+                    return "Transfer request accepted. This does not confirm a human answered."
+                finally:
+                    await lk.aclose()
             try:
-                await asyncio.sleep(2.5)  # let the hand-off line finish
-                await lk.sip.transfer_sip_participant(_lkapi.TransferSIPParticipantRequest(
-                    participant_identity=sip_identity, room_name=ctx.room.name,
-                    transfer_to=f"tel:{transfer_to}", play_dialtone=True,
-                ))
-                run.post_task = asyncio.create_task(_post_run_outcome(run, "transferred"))
-                return "Transferred."
-            except Exception as exc:
-                log.warning("transfer_failed", error=str(exc))
-                run.outcome = None
-                return "The transfer failed. Apologize and offer to have someone call them back."
-            finally:
-                await lk.aclose()
+                return await run.actions.run(("transfer",), _transfer, context=context)
+            except NoAction as exc:
+                return str(exc)
+            except ActionUncertain:
+                _record("transfer_call", {}, {"error": "result unavailable"}, success=False)
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="unknown_no_retry")
+                return "Transfer is not confirmed. Do not retry automatically; offer a teammate callback."
 
         tools.append(function_tool(transfer_call))
 
@@ -1034,6 +1100,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     variables = metadata.get("variables") or {}
     call_type = metadata.get("call_type", "outbound")
     run = _CallRun(metadata.get("call_log_id", ""), call_type)
+    from app.agent.voice_trace import VoiceTrace, owning_speech, short_sentence_tokenizer
+    trace = VoiceTrace(lambda event, **fields: log.info(event, room=ctx.room.name, **fields),
+                       enabled=settings.voice_turn_trace)
+    run.trace = trace
 
     log.info("configurable_agent_started", room=ctx.room.name, agent=cfg.get("name"), call_type=call_type)
 
@@ -1082,6 +1152,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             speed=float(cfg.get("voice_speed") or 1.0),
             volume=tuning["volume"] if tuning["volume"] != 1.0 else None,
             api_key=settings.cartesia_api_key,
+            tokenizer=short_sentence_tokenizer(settings.voice_short_sentence_streaming),
         ),
         vad=_job_vad(ctx),
         turn_handling={
@@ -1110,6 +1181,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     def _on_metrics(ev) -> None:
         m = getattr(ev, "metrics", None)
         kind = getattr(m, "type", "")
+        if kind in ("llm_metrics", "tts_metrics", "stt_metrics", "eou_metrics"):
+            fields = {key: getattr(m, key) for key in (
+                "ttft", "ttfb", "duration", "cancelled", "completion_tokens", "prompt_tokens",
+                "audio_duration", "characters_count", "acquire_time", "connection_reused",
+                "end_of_utterance_delay", "transcription_delay", "on_user_turn_completed_delay")
+                if isinstance(getattr(m, key, None), (int, float, bool))}
+            trace.mark("provider_metrics", provider_metric=kind,
+                       provider_speech_id=getattr(m, "speech_id", None), **fields)
         try:
             if kind == "eou_metrics":
                 run.lat["eou"].append(float(m.end_of_utterance_delay))
@@ -1122,10 +1201,25 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     session.on("metrics_collected", _on_metrics)
 
+    def _speech_created(ev):
+        speech = ev.speech_handle
+        trace.mark("speech_created", speech=speech, source=ev.source, user_initiated=ev.user_initiated)
+        speech.add_done_callback(lambda handle: trace.mark("speech_done", speech=handle, interrupted=handle.interrupted))
+
+    session.on("speech_created", _speech_created)
+    session.on("user_input_transcribed", lambda ev: trace.mark(
+        "transcript_final" if ev.is_final else "transcript_interim"))
+    session.on("agent_false_interruption", lambda ev: trace.mark("false_interruption", resumed=ev.resumed))
+    session.on("eot_prediction", lambda ev: trace.mark("semantic_prediction", delay_seconds=ev.delay,
+                                                       inference_seconds=ev.inference_duration))
+
     def _track_user_gap(ev):
+        trace.mark("user_" + ev.new_state, observed_at="callback_receipt")
         run.turn_latency.user_state(getattr(ev, "old_state", ""), getattr(ev, "new_state", ""), _time.monotonic())
 
     def _track_agent_gap(ev):
+        trace.mark("agent_" + ev.new_state, speech=session.current_speech,
+                   observed_at="worker_output_state_not_caller_audibility")
         observed = run.turn_latency.agent_state(getattr(ev, "old_state", ""), getattr(ev, "new_state", ""), _time.monotonic())
         if observed:
             log.info("turn_response_gap", room=ctx.room.name, model=model, **observed)
@@ -1143,8 +1237,16 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     class _CallAgent(Agent):
         async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+            trace.mark("turn_committed", turn_key=trace.turn_key(new_message.text_content or ""))
             if vm["detected"]:
                 raise StopResponse()  # don't talk back to a voicemail greeting
+
+        async def tts_node(self, text, model_settings):
+            speech = owning_speech()
+            observed_text = trace.stream(text, "tts_input", speech=speech)
+            async for frame in trace.stream(Agent.default.tts_node(self, observed_text, model_settings),
+                                            "tts_audio", speech=speech, audio=True):
+                yield frame
 
         async def llm_node(self, chat_ctx, tools, model_settings):
             """The model's reply minus any leaked notes or imagined turns (see app/agent/speech_guard.py)."""
@@ -1158,14 +1260,25 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             from app.agent.repeat_guard import no_repeats, said_lines, with_nudge
 
             chat_ctx = contact_last(chat_ctx, needs_user_last=model in MISTRAL_MODELS)
+            speech = owning_speech()
+            user = next((item for item in reversed(chat_ctx.items)
+                         if getattr(item, "role", None) == "user"), None)
+            turn_key = trace.turn_key(getattr(user, "text_content", "") or "") if user else None
 
             def _attempt(nudged: bool):
-                return Agent.default.llm_node(self, with_nudge(chat_ctx) if nudged else chat_ctx, tools, model_settings)
+                trace.mark("llm_request", speech=speech, attempt=int(nudged), turn_key=turn_key)
+                return trace.stream(Agent.default.llm_node(self, with_nudge(chat_ctx) if nudged else chat_ctx,
+                                    tools, model_settings), "llm_chunk", speech=speech, attempt=int(nudged))
 
             def _repeat(dropped: str) -> None:
                 log.warning("llm_repeat_cut", room=ctx.room.name, model=model, dropped=dropped[:80])
 
+            first_text = True
             async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat), _cut):
+                text = chunk if isinstance(chunk, str) else getattr(getattr(chunk, "delta", None), "content", None)
+                if text and first_text:
+                    trace.mark("usable_text_first", speech=speech, turn_key=turn_key)
+                    first_text = False
                 yield chunk
 
     async def _handle_voicemail() -> None:
@@ -1280,6 +1393,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             timings = stage_timings(getattr(item, "metrics", None))
             if timings:
                 log.info("turn_stage_latency", room=ctx.room.name, model=model, role=role, **timings)
+                trace.mark("sdk_item_metrics", speech=owning_speech(), role=role,
+                           item_id=getattr(item, "id", None), **timings)
             text = (getattr(item, "text_content", None) or "").strip()
             if role not in ("user", "assistant") or not text or text == CALL_CONNECTED_CUE:
                 return
@@ -1299,6 +1414,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
              has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
              background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
              preemptive_generation=True, preemptive_tts=True,
+             short_sentence_streaming=settings.voice_short_sentence_streaming, trace_enabled=settings.voice_turn_trace,
              tuning={k: v for k, v in tuning.items() if k != "pronunciations"})
     session.on("agent_state_changed", lambda ev: log.info("agent_state", room=ctx.room.name,
                                                            state=getattr(ev, "new_state", "")))

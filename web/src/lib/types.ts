@@ -164,7 +164,7 @@ export interface Call {
   ended_at: string | null;
   transcript?: TranscriptTurn[];
   extracted_data?: Record<string, unknown>;
-  metrics?: { turns: number; avg_response: number; avg_eou: number | null; avg_llm_ttft: number | null; avg_tts_ttfb: number | null; response_metric?: string; response_gap_samples?: number; p50_turn_gap?: number; p95_turn_gap?: number; max_turn_gap?: number; avg_interruption_recovery?: number } | null;
+  metrics?: { turns: number; avg_response: number | null; avg_eou: number | null; avg_llm_ttft: number | null; avg_tts_ttfb: number | null; response_metric?: string; response_gap_samples?: number; p50_turn_gap?: number; p95_turn_gap?: number; max_turn_gap?: number; avg_interruption_recovery?: number } | null;
   from_phone?: string | null;
   has_recording?: boolean;
   prospect_email?: string | null;

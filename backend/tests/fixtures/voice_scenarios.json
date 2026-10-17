@@ -1,0 +1,402 @@
+[
+  {
+    "id": "V01-yes",
+    "split": "development",
+    "setup": "Agent asks if the caller owns the property.",
+    "input": "Yes.",
+    "expected": "Accept short complete answer; do not re-ask ownership.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V02-no",
+    "split": "development",
+    "setup": "Agent offers a meeting.",
+    "input": "No.",
+    "expected": "Respect refusal without repeating the offer.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V03-short-time",
+    "split": "development",
+    "setup": "Agent asks when to call.",
+    "input": "Tomorrow.",
+    "expected": "Use the volunteered preference; clarify only missing time.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V04-address-pause",
+    "split": "development",
+    "setup": "Agent asks for an address.",
+    "input": "Fourteen ... Main Street ... Oakland.",
+    "expected": "Keep the address together; do not answer during internal pauses.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V05-phone-pause",
+    "split": "development",
+    "setup": "Agent asks for a callback number.",
+    "input": "Four one five ... five five five ... zero one two three.",
+    "expected": "Capture the whole number and confirm uncertainty.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V06-unfinished",
+    "split": "development",
+    "setup": "Agent asks about timing.",
+    "input": "I was thinking ... maybe after ...",
+    "expected": "Wait for completion instead of prematurely committing.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V07-property-correction",
+    "split": "development",
+    "setup": "Caller previously said 14 Main Street.",
+    "input": "Sorry, I meant 40 Main Street.",
+    "expected": "Use corrected property; do not revert to old address.",
+    "mode": "text+audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V08-preference-change",
+    "split": "development",
+    "setup": "Caller asked for morning.",
+    "input": "Actually, afternoon is better.",
+    "expected": "Replace the previous preference.",
+    "mode": "text+audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V09-backchannel",
+    "split": "development",
+    "setup": "Agent is explaining one next step.",
+    "input": "Mm-hmm.",
+    "expected": "Avoid restarting the pitch or treating it as a new question.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V10-genuine-interruption",
+    "split": "development",
+    "setup": "Agent is mid-pitch.",
+    "input": "Wait, what does it cost?",
+    "expected": "Stop obsolete speech and answer the question.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V11-quick-overlap",
+    "split": "development",
+    "setup": "Agent finishes a yes/no question.",
+    "input": "Yes, that works.",
+    "expected": "Do not lose the answer because it overlaps the final audio.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V12-low-volume",
+    "split": "development",
+    "setup": "Agent asks a qualifying question.",
+    "input": "A softly spoken yes.",
+    "expected": "Detect or ask briefly; never assume a negative response.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V13-background-voice",
+    "split": "development",
+    "setup": "Caller has not answered; nearby person speaks.",
+    "input": "Background speaker says yes.",
+    "expected": "Do not treat background speech as confirmed caller intent.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V14-simultaneous",
+    "split": "development",
+    "setup": "Agent and caller start together.",
+    "input": "Can you hear me?",
+    "expected": "Yield, answer, and resume without repeating the intro.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V15-already-answered",
+    "split": "development",
+    "setup": "Caller already volunteered next spring.",
+    "input": "What happens next?",
+    "expected": "Answer next step without asking timeline again.",
+    "mode": "text+audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V16-read-timeout",
+    "split": "development",
+    "setup": "Calendar lookup times out.",
+    "input": "Do you have Tuesday?",
+    "expected": "Report unavailable lookup, not a fully booked calendar.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V17-stale-slot",
+    "split": "development",
+    "setup": "Previously offered 3 PM is no longer available.",
+    "input": "Book three.",
+    "expected": "Revalidate and reject stale slot without writing booking.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V18-booking-failure",
+    "split": "development",
+    "setup": "Booking POST fails without a receipt.",
+    "input": "Did it book?",
+    "expected": "Do not claim booking or promise a sent confirmation.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V19-duplicate-booking",
+    "split": "development",
+    "setup": "Two function requests select the same slot.",
+    "input": "Yes, book it.",
+    "expected": "Issue one write and reuse its receipt.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V20-cancel-during-write",
+    "split": "development",
+    "setup": "Caller interrupts after provider request starts.",
+    "input": "Wait, I have another question.",
+    "expected": "Preserve a completed authoritative result and avoid another write.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V21-opt-out",
+    "split": "development",
+    "setup": "Outbound prospect declines further contact.",
+    "input": "Take me off your list.",
+    "expected": "Use do_not_call, not ordinary not_interested.",
+    "mode": "text+audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V22-clean-ending",
+    "split": "development",
+    "setup": "Caller and agent have finished.",
+    "input": "Thanks, goodbye.",
+    "expected": "Finish audible goodbye, then hang up.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V23-missing-calendar",
+    "split": "development",
+    "setup": "Booking enabled but no valid key/event type.",
+    "input": "Tomorrow at three?",
+    "expected": "No simulated slots or simulated booking receipt.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V24-two-slots",
+    "split": "development",
+    "setup": "Calendar returns two verified slots in local timezone.",
+    "input": "What times are available?",
+    "expected": "Offer both together in the correct timezone.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V25-identity-correction",
+    "split": "held_out",
+    "setup": "Caller is not the CSV contact.",
+    "input": "This is Alex, not Jamie.",
+    "expected": "Use Alex; do not treat identity as verified Jamie.",
+    "mode": "text+audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V26-email-pause",
+    "split": "held_out",
+    "setup": "Caller dictates an email.",
+    "input": "Jamie ... dot ... Lee ... at example dot com.",
+    "expected": "Preserve spelling and confirm before booking.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V27-abbreviation",
+    "split": "held_out",
+    "setup": "Agent reads a property address.",
+    "input": "14 Main St. in San Francisco.",
+    "expected": "Do not break or mispronounce the abbreviation.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V28-decimal",
+    "split": "held_out",
+    "setup": "Agent gives a verified price.",
+    "input": "It costs 12.50 dollars.",
+    "expected": "Do not split the decimal into separate utterances.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V29-no-email",
+    "split": "held_out",
+    "setup": "Caller has never provided an email.",
+    "input": "Sure, book it.",
+    "expected": "Ask for an email; do not guess it.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V30-transfer-failure",
+    "split": "held_out",
+    "setup": "Transfer request times out.",
+    "input": "Are you connecting me?",
+    "expected": "Do not record completed transfer or retry an uncertain request.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V31-transfer-correction",
+    "split": "held_out",
+    "setup": "Caller interrupts the handoff line before SIP request.",
+    "input": "Wait, do not transfer me.",
+    "expected": "No transfer request is sent.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V32-two-different-slots",
+    "split": "held_out",
+    "setup": "Concurrent duplicate generation selects different slots.",
+    "input": "The first one.",
+    "expected": "At most one booking write; report its actual receipt.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V33-late-read",
+    "split": "held_out",
+    "setup": "Caller changes preference during availability lookup.",
+    "input": "Actually, Friday instead.",
+    "expected": "Discard stale lookup speech and use latest preference.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V34-spec-resumed",
+    "split": "held_out",
+    "setup": "Caller pauses then continues with corrected words.",
+    "input": "Yes ... actually no.",
+    "expected": "Cancel obsolete speculative output; commit the final intent.",
+    "mode": "audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V35-spec-tool",
+    "split": "held_out",
+    "setup": "Speculative LLM drafts a booking tool call before turn commitment.",
+    "input": "I might ...",
+    "expected": "No external action before SDK speech authorization.",
+    "mode": "audio+tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V36-short-first-sentence",
+    "split": "held_out",
+    "setup": "Agent has a verified direct answer.",
+    "input": "Tuesday works. Would morning suit you?",
+    "expected": "Release the useful first sentence before the later stream finishes.",
+    "mode": "stream",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V37-repeated-intro",
+    "split": "held_out",
+    "setup": "Caller asks a question after the introduction.",
+    "input": "Which property are you calling about?",
+    "expected": "Answer the question instead of repeating the entire introduction.",
+    "mode": "text+audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V38-wrong-number",
+    "split": "held_out",
+    "setup": "CSV contact does not own this number.",
+    "input": "Wrong number.",
+    "expected": "Apologize briefly and end with wrong_number.",
+    "mode": "text+audio",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V39-timezone",
+    "split": "held_out",
+    "setup": "Availability spans a daylight-saving transition.",
+    "input": "What time is that here?",
+    "expected": "Use calendar timezone and exact offset; clarify ambiguity.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  },
+  {
+    "id": "V40-unknown-action",
+    "split": "held_out",
+    "setup": "Provider may have accepted write but response is lost.",
+    "input": "Try booking again.",
+    "expected": "No automatic duplicate write; explain confirmation is unavailable.",
+    "mode": "tool",
+    "status": "not_run_end_to_end",
+    "provenance": "authored from reported failure classes and audit risks; not a historical recording"
+  }
+]

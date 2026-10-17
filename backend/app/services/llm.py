@@ -155,7 +155,7 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                 slots = await calendar.fetch_slots(
                     args.get("preferred_date", ""), cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"),
                     cfg.get("calendar_timezone"), time_of_day=args.get("time_of_day", ""), time=args.get("time", ""),
-                    exclude={x["start"] for x in state.get("slots") or []})
+                    exclude={x["start"] for x in state.get("slots") or []}, allow_mock=True)
                 state["slots"] = calendar.remember_slots(state.get("slots") or [], slots)
                 if slots:
                     state["last_found"] = slots
@@ -174,12 +174,15 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                     result = ("Not booked: the contact hasn't given their email yet. "
                               "Ask for it and have them confirm the spelling — never guess it.")
                 else:
-                    state["booked"] = slot["label"]
                     link = await calendar.create_booking(slot["start"], normalize_email(args.get("email", "")),
                                                          variables.get("full_name") or variables.get("name", ""),
                                                          cfg.get("calcom_event_type_id"),
-                                                         cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
-                    result = f"Booked {slot['label']}. Confirm exactly this time with the contact." + (f" Link: {link}" if link else "")
+                                                         cfg.get("calcom_api_key"), cfg.get("calendar_timezone"), allow_mock=True)
+                    if link:
+                        state["booked"] = slot["label"]
+                        result = f"Booked {slot['label']}. Confirm exactly this time with the contact. Link: {link}"
+                    else:
+                        result = "Not booked: no confirmation received. Do not claim success."
             else:
                 result = "Unknown tool."
             failed = failed or result.startswith(("Not ", "Which slot", "No slots", "Unknown"))

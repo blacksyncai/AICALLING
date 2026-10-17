@@ -133,9 +133,9 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
           </Card>
           {call.metrics && (
             <Card>
-              <CardHeader title="Response time" description={call.metrics.response_metric === "session_state_gap" ? `Observed speech gaps over ${call.metrics.response_gap_samples} turns · excludes carrier playback delay` : `Pipeline estimate over ${call.metrics.turns} agent turns · stages may overlap`} />
+              <CardHeader title="Response time" description={call.metrics.response_metric === "session_state_gap" ? `Observed speech gaps over ${call.metrics.response_gap_samples} turns · excludes carrier playback delay` : call.metrics.response_metric === "unmeasured" ? "No observed response gap available · stage timings below may overlap" : `Pipeline estimate over ${call.metrics.turns} agent turns · stages may overlap`} />
               <div className="p-5">
-                <div className="text-2xl font-semibold tabular-nums">{call.metrics.avg_response.toFixed(2)}s</div>
+                <div className="text-2xl font-semibold tabular-nums">{call.metrics.avg_response == null ? "Not measured" : `${call.metrics.avg_response.toFixed(2)}s`}</div>
                 <dl className="mt-3 space-y-1.5 text-xs">
                   {[
                     ...(call.metrics.response_metric === "session_state_gap" ? [
