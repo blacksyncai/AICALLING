@@ -85,7 +85,7 @@ def test_mishal_arabic_catalog_and_instructions(client, monkeypatch):
     voice = next(v for v in client.get('/api/settings/voices').json()['voices']
                  if v['id'] == 'elevenlabs:Ywuz3KyW2N5pqKNpwcCL')
     assert (voice['name'], voice['language'], voice['accent']) == ('Mishal', 'ar', 'Saudi')
-    assert voice['is_clone'] and voice['category'] == 'premium'
+    assert not voice['is_clone'] and voice['category'] == 'standard'
     assert any(l['code'] == 'ar' for l in client.get('/api/settings/models').json()['languages'])
     cfg = {'system_prompt': 'Qualify property owners and arrange a call.', 'language': 'ar'}
     prompt = build_instructions(cfg, {})
