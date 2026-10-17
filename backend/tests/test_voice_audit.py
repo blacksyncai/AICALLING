@@ -254,10 +254,11 @@ async def test_transfer_receipt_is_recorded_only_after_provider_accepts(monkeypa
     run, ts = tools({'transfer_number': '+14155550100'})
     entered, release = asyncio.Event(), asyncio.Event()
     requests = []
-    async def transfer(req):
+    async def transfer(req, *, timeout=None):
         requests.append(req)
         entered.set()
         await release.wait()
+        return api.TransferSIPParticipantResponse(status=api.SIPTransferStatus.STS_TRANSFER_SUCCESSFUL)
     async def close(): pass
     async def post(*a): pass
     monkeypatch.setattr(api, 'LiveKitAPI', lambda **kw: NS(sip=NS(transfer_sip_participant=transfer), aclose=close))
@@ -272,7 +273,7 @@ async def test_transfer_receipt_is_recorded_only_after_provider_accepts(monkeypa
     with pytest.raises(asyncio.CancelledError): await task
     release.set()
     result = await ts['transfer_call'](context_with_playout())
-    assert 'accepted' in result and run.outcome == 'transferred' and len(requests) == 1
+    assert 'completed' in result and run.outcome == 'transferred' and len(requests) == 1
     assert run.transcript[-1]['result']['success']
     await run.post_task
 
@@ -289,7 +290,7 @@ async def test_transfer_failure_never_records_transferred_or_retries(monkeypatch
     from livekit import api
     run, ts = tools({'transfer_number': '+14155550100'})
     writes = []
-    async def transfer(req):
+    async def transfer(req, *, timeout=None):
         writes.append(1)
         raise TimeoutError()
     async def close(): pass

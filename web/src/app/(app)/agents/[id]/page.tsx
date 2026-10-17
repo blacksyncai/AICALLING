@@ -474,7 +474,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               {draft.enable_booking && <CalcomSettings draft={draft} set={set} />}
               <VoicemailSettings draft={draft} set={set} />
               <CallFromSettings draft={draft} set={set} />
-              <Field label="Transfer to human (phone calls)" hint="If set, the agent can warm-transfer the caller to this number. E.164, e.g. +14155550123.">
+              <Field label="Transfer to human (phone calls)" hint="Direct transfer on phone calls only; browser tests cannot transfer. Enter a full number, e.g. +14155550123. The caller hears ringing while your teammate answers.">
                 <Input value={draft.transfer_number} onChange={(e) => set("transfer_number", e.target.value.trim())} placeholder="+14155550123" />
               </Field>
               <Card className="p-4">

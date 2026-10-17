@@ -57,10 +57,16 @@ def _is_connected(answered_at, duration_seconds) -> bool:
 
 
 def _is_real_transfer(transcript) -> bool:
-    """The worker records a transfer_call tool entry before handing the call over,
-    and resets the outcome if the phone system rejects the transfer."""
+    """Exclude explicit failed/unknown receipts; preserve legacy entries without results."""
     for t in transcript or []:
         if isinstance(t, dict) and t.get("role") == "tool" and t.get("tool") == "transfer_call":
+            result = t.get("result")
+            if isinstance(result, dict):
+                if result.get("success") is False:
+                    continue
+                output = result.get("output")
+                if isinstance(output, dict) and output.get("status") in ("failed", "unknown", "ongoing"):
+                    continue
             return True
     return False
 

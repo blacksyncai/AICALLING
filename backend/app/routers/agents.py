@@ -228,6 +228,12 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
     agent = await _get_agent(db, ctx, agent_id)
     before = _prompt_state(agent)
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "transfer_number" in changes:
+        from app.services.outbound_call import validate_e164
+        try:
+            changes["transfer_number"] = validate_e164(changes["transfer_number"]) if changes["transfer_number"].strip() else ""
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Enter a valid transfer phone number, for example +14155550123.") from None
     if {"voice_id", "voice_speed"} & changes.keys():
         from app.agent.elevenlabs_tts import is_elevenlabs_voice, provider_voice_id, voice_settings
         selected_voice = changes.get("voice_id", agent.voice_id)

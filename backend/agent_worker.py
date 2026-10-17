@@ -839,6 +839,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         if context.speech_handle.interrupted:
             return "Not ended: the caller interrupted. Respond to their latest turn."
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
+        if outcome == "transferred" and run.outcome != "transferred":
+            return "Not ended: no transfer has completed. Use the transfer tool first, or offer a callback; do not hang up as though the caller was connected."
         if outcome == "meeting_booked" and not run.meeting_time:
             return "Not ended: no meeting is booked yet. Finish booking first, or pick another outcome."
         last = _last_contact_turn(run.transcript)
@@ -970,14 +972,18 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         async def transfer_call(context: RunContext) -> str:
             """Transfer the caller to a human teammate. Tell them you're connecting them first."""
             from livekit import api as _lkapi
-            sip_identity = next(
-                (p.identity for p in ctx.room.remote_participants.values() if p.identity.startswith("sip_")),
-                None,
-            )
+            from app.agent import call_transfer
+            sip_identity = call_transfer.caller_identity(ctx.room.remote_participants.values())
             if not sip_identity:
+                log.warning("call_transfer_no_sip_caller", call_log_id=run.call_log_id,
+                            call_type=run.call_type, participant_count=len(ctx.room.remote_participants))
                 return "Transfer isn't possible on this call. Offer to take a message instead."
             from app.agent.committed_actions import ActionUncertain, NoAction
             async def _transfer():
+                try:
+                    transfer_request = call_transfer.request(ctx.room.name, sip_identity, transfer_to)
+                except ValueError:
+                    raise NoAction("Transfer destination is not a valid phone number. Offer a callback and ask the team to check its transfer setting.") from None
                 # Await the actual handoff line, rather than adding 2.5 seconds.
                 try:
                     await asyncio.wait_for(context.wait_for_playout(), timeout=12)
@@ -990,24 +996,37 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 try:
                     if run.trace:
                         run.trace.mark("tool_request", speech=context.speech_handle, tool="transfer_call")
-                    await asyncio.wait_for(lk.sip.transfer_sip_participant(_lkapi.TransferSIPParticipantRequest(
-                        participant_identity=sip_identity, room_name=ctx.room.name,
-                        transfer_to=f"tel:{transfer_to}", play_dialtone=True,
-                    )), timeout=15)
+                    response = await asyncio.wait_for(lk.sip.transfer_sip_participant(
+                        transfer_request, timeout=call_transfer.REQUEST_SECONDS), timeout=call_transfer.DEADLINE_SECONDS)
+                    result = call_transfer.receipt(response)
+                    log.info("call_transfer_result", call_log_id=run.call_log_id, **result)
+                    if result["status"] != "completed":
+                        _record("transfer_call", {}, result, success=False)
+                        if run.trace:
+                            run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", **result)
+                        return ("Transfer failed. Offer a teammate callback; do not claim a connection or retry automatically."
+                                if result["status"] == "failed" else
+                                "Transfer is not confirmed. Do not retry automatically or claim a human answered; offer a teammate callback if the caller is still here.")
                     run.outcome = "transferred"
-                    _record("transfer_call", {"to": transfer_to})
+                    _record("transfer_call", {"to": transfer_to}, result)
                     if run.trace:
-                        run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="accepted")
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="completed")
                     run.post_task = asyncio.create_task(_post_run_outcome(run, "transferred"))
-                    return "Transfer request accepted. This does not confirm a human answered."
+                    return "Transfer completed by the phone system. This does not verify which person answered."
                 finally:
-                    await lk.aclose()
+                    try:
+                        await lk.aclose()
+                    except Exception as exc:
+                        # Closing the HTTP client cannot undo a confirmed handoff.
+                        log.warning("call_transfer_client_cleanup_failed", error_type=type(exc).__name__)
             try:
                 return await run.actions.run(("transfer",), _transfer, context=context)
             except NoAction as exc:
                 return str(exc)
-            except ActionUncertain:
-                _record("transfer_call", {}, {"error": "result unavailable"}, success=False)
+            except ActionUncertain as exc:
+                details = call_transfer.error_details(exc.__cause__ or exc)
+                log.warning("call_transfer_unconfirmed", call_log_id=run.call_log_id, **details)
+                _record("transfer_call", {}, {"error": "result unavailable", **details}, success=False)
                 if run.trace:
                     run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="unknown_no_retry")
                 return "Transfer is not confirmed. Do not retry automatically; offer a teammate callback."
