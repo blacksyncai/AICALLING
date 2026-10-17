@@ -13,12 +13,25 @@ Language/accent come from the live Cartesia catalog; nothing here is a guess abo
 VOICE_MODELS = ["sonic-3"]  # the Cartesia TTS model the voice worker uses
 
 FEATURED_VOICES: list[dict] = [
+    # Premium families in picker order; keep each family's versions together.
+    {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True},
+    {"id": "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
+    {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza · Version 1", "family": "Hamza", "tone": "Version 1",
+     "gender": "masculine", "description": "Live voice clone.", "clone": True},
+    {"id": "mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
+     "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "elevenlabs:WkIfOTQgqfIPfV7X7nND", "name": "Sally", "provider": "elevenlabs",
      "clone": True, "description": "Live voice clone.", "language": "en"},
+    {"id": "378695da-44e9-4fc7-a9cb-efcb0d2037cc", "name": "Macco · Deep Voice", "family": "Macco", "tone": "Deep Voice",
+     "description": "Deep voice clone.", "clone": True},
     {"id": "elevenlabs:iRh44YCGcZyLpQjPFMsh", "name": "Matt", "provider": "elevenlabs",
      "clone": True, "description": "Live voice clone.", "language": "en"},
-    # Shown in this order in the voice picker. Gender, language and description for entries without
-    # them come from the live Cartesia catalog.
+    {"id": "mistral:01a1346d-b155-75a6-a670-b9924b477fbf", "name": "Leena · Version 1", "family": "Leena", "tone": "Version 1",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
+    {"id": "mistral:01a13477-ce35-7031-84e8-71a1f7a51cbd", "name": "Leena · Version 2", "family": "Leena", "tone": "Version 2",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "name": "Jena"},
     {"id": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", "name": "Sarah"},
     {"id": "f786b574-daa5-4673-aa0c-cbe3e8534c02", "name": "Kate"},
@@ -40,24 +53,6 @@ FEATURED_VOICES: list[dict] = [
      "description": "The original Paul — thoughtful, steady and confident. Built for sales calls."},
     {"id": "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc", "name": "Ava"},
     {"id": "710feaa3-b550-42f3-b3eb-6f37f2a7cc0a", "name": "Jake"},
-    # House clones (Marissa M first, then Hamza). Both come in two versions (Cartesia = Version 1, Mistral = Version 2);
-    # Leena's two versions are both Mistral clones ("linaaa" = Version 1, "leena" = Version 2),
-    # shown as one row each with version chips; Version 1 is listed first.
-    {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True},
-    {"id": "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
-    {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Hamza · Version 1", "family": "Hamza", "tone": "Version 1",
-     "gender": "masculine", "description": "Live voice clone.", "clone": True},
-    {"id": "mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
-     "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
-    {"id": "mistral:01a1346d-b155-75a6-a670-b9924b477fbf", "name": "Leena · Version 1", "family": "Leena", "tone": "Version 1",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
-    {"id": "mistral:01a13477-ce35-7031-84e8-71a1f7a51cbd", "name": "Leena · Version 2", "family": "Leena", "tone": "Version 2",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
-    {"id": "378695da-44e9-4fc7-a9cb-efcb0d2037cc", "name": "Macco · Deep Voice", "family": "Macco", "tone": "Deep Voice",
-     "description": "Deep voice clone.", "clone": True},
-    # Mistral preset voices — one entry per mood (Mistral exposes each mood as its own voice).
     {"id": "mistral:e3596645-b1af-469e-b857-f18ddedc7652", "name": "Oliver · Neutral", "family": "Oliver", "tone": "Neutral", "gender": "masculine", "accent": "British",
      "description": "Slight British accent. Calm and even.", "provider": "mistral", "language": "en"},
     {"id": "mistral:8169ab87-bc99-4669-a5ec-6855860ace24", "name": "Oliver · Confident", "family": "Oliver", "tone": "Confident", "gender": "masculine", "accent": "British",
