@@ -1124,6 +1124,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if not settings.low_resource_mode:
         try:
             turn_detector = MultilingualModel()
+            if settings.voice_fast_identity_turns:
+                from app.agent.opening_turns import OpeningTurnDetector
+                turn_detector = OpeningTurnDetector(
+                    turn_detector, variables.get("full_name") or variables.get("name") or variables.get("first_name"),
+                    on_fast=lambda: trace.mark("identity_turn_complete", source="closed_opening_answer"))
         except Exception as exc:
             log.warning("turn_detector_unavailable", error=type(exc).__name__, reason=str(exc)[:240])
             turn_detector = None
@@ -1418,6 +1423,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
              background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
              preemptive_generation=True, preemptive_tts=True,
              short_sentence_streaming=settings.voice_short_sentence_streaming, trace_enabled=settings.voice_turn_trace,
+             fast_identity_turns=settings.voice_fast_identity_turns,
              tuning={k: v for k, v in tuning.items() if k != "pronunciations"})
     session.on("agent_state_changed", lambda ev: log.info("agent_state", room=ctx.room.name,
                                                            state=getattr(ev, "new_state", "")))

@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     cartesia_api_key: str = ""
     elevenlabs_api_key: str = ""
     voice_turn_trace: bool = True
+    voice_fast_identity_turns: bool = True
     # Canary only; changes sentence aggregation, never the selected voice/model.
     voice_short_sentence_streaming: bool = False
     # Voice picker categories. Premium = the featured house voices + voices
