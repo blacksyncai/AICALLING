@@ -13,9 +13,6 @@ def _words(text):
 
 
 def complete_identity_answer(chat_ctx, expected_name):
-    name = _words(str(expected_name or ""))
-    if not name or name[0] in {"there", "unknown", "contact", "firstname", "name"}:
-        return False
     messages = [m for m in chat_ctx.items if getattr(m, "role", None) in ("user", "assistant")
                 and getattr(m, "text_content", "")]
     if not messages or messages[-1].role != "user":
@@ -26,6 +23,19 @@ def complete_identity_answer(chat_ctx, expected_name):
     question = next((m.text_content for m in reversed(messages[:-1]) if m.role == "assistant"), "")
     if '?' not in question:
         return False
+    name = _words(str(expected_name or ""))
+    placeholders = {"there", "unknown", "contact", "firstname", "first", "name"}
+    if not name or name[0] in placeholders:
+        # Manual “Call me” has no lead variables. Use only a capitalized proper
+        # name in the spoken identity question, never generic “is this a good
+        # time / your address / the right number” or an unresolved placeholder.
+        match = re.search(r"\b(?i:is this|am i (?:speaking|talking) (?:to|with))\s+"
+                          r"([A-Z][a-z]+(?:['-][A-Z]?[a-z]+)?(?:\s+[A-Z][a-z]+){0,2})\s*\?\s*$", question)
+        if not match:
+            return False
+        name = _words(match.group(1))
+        if name[0] in placeholders | {"a", "an", "the", "your", "our", "my", "this", "that", "good", "right", "correct"}:
+            return False
     variants = {name[0], ' '.join(name)}
     normalized_question = ' '.join(_words(question))
     if not any(re.search(r"\b(?:is this|am i (?:speaking|talking) (?:to|with)) " + re.escape(n) + r"$",

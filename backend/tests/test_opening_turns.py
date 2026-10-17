@@ -36,9 +36,17 @@ def test_only_opening_exchange_not_later_identity_recheck():
     assert not complete_identity_answer(chat('Yes',previous=previous),'Matt')
 
 
-def test_missing_or_placeholder_name_never_uses_fast_path():
+def test_manual_call_uses_name_in_spoken_identity_question():
     for name in [None,'','there','unknown','firstname']:
-        assert not complete_identity_answer(chat('Yes'),name)
+        assert complete_identity_answer(chat('Yes'),name)
+        assert complete_identity_answer(chat("It's Matt"),name)
+
+
+@pytest.mark.parametrize('question',['Is this a good time?','Is this Your Address?',
+                                     'Is this First Name?','Is this The Right Number?',
+                                     'Is this {{name}}?','Is this Unknown?'])
+def test_manual_call_generic_or_placeholder_question_never_uses_fast_path(question):
+    assert not complete_identity_answer(chat('Yes',question),None)
 
 
 @pytest.mark.asyncio
