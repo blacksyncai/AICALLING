@@ -2398,6 +2398,16 @@ class RealGeeks(Provider):
         raise CrmError("Real Geeks Incoming Leads API does not list your contacts. Existing lead imports need the separate outgoing webhook integration.")
 
 
+class Brivity(Provider):
+    key, name = "brivity", "Brivity"
+    native = False
+    can_import = False
+    can_new_leads = False
+    description = "Direct CRM connection is pending verified Brivity API documentation and account access."
+    docs_url = "https://www.brivity.com/"
+    setup_required_reason = "Brivity cannot be connected yet. Its API authentication and supported operations must be verified before activation."
+
+
 class BoomTown(Provider):
     key, name = "boomtown", "BoomTown"
     native = False
@@ -2411,7 +2421,7 @@ class BoomTown(Provider):
 
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
-    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), BoomTown(), GoogleSheets(), Slack(),
+    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), BoomTown(), GoogleSheets(), Slack(),
 )}
 
 

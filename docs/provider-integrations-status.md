@@ -33,3 +33,7 @@ Vulcan7 and REDX remain CSV contact import options in Lead Finder → My lead so
 Oracle and Real Geeks documentation became reachable during this correction. HTTP contract tests use mocks based on these documents; no customer credentials were available to verify a live customer connection or perform external writes. Do not describe those tests as live customer sync validation.
 
 Rollback: revert the correction commit; avoid reverting the earlier CSV additions wholesale because that would also remove the requested Vulcan7/REDX import path and prior MCP link changes.
+
+## Brivity
+
+Listed as API verification pending, with activation blocked. No CSV substitute, credentials form, contact sync, or call-note delivery is claimed. Public website and API-documentation requests were denied by the environment network policy during this task; Brivity authentication, endpoints and partner-access requirements remain unverified. Access domains have been saved to the environment configuration draft for review and publication.
