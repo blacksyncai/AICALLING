@@ -319,6 +319,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               </div>
               <Field label="First message" hint="Spoken word-for-word, all in one go, as soon as the call connects — so if it asks a question, put the question last. Leave empty to let the agent improvise.">
                 <Textarea rows={2} value={draft.first_message} onChange={(e) => set("first_message", e.target.value)} />
+                <p className="text-sm font-semibold text-[#ff3333]">WE SUGGEST TO LEAVE THIS EMPTY ON OUTBOUND AGENTS</p>
               </Field>
               <div className="flex flex-wrap items-center gap-2">
                 <ImproveWithAI
