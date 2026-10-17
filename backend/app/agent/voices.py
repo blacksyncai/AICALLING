@@ -14,7 +14,7 @@ VOICE_MODELS = ["sonic-3"]  # the Cartesia TTS model the voice worker uses
 
 FEATURED_VOICES: list[dict] = [
     {"id": "elevenlabs:iRh44YCGcZyLpQjPFMsh", "name": "Matt", "provider": "elevenlabs",
-     "clone": True, "description": "ElevenLabs voice.", "language": "en"},
+     "clone": True, "description": "Live voice clone.", "language": "en"},
     # Shown in this order in the voice picker. Gender, language and description for entries without
     # them come from the live Cartesia catalog.
     {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "name": "Jena"},

@@ -240,7 +240,7 @@ export function VoicePicker({
       if (token !== playToken.current) return;
       setPlaying(null);
       setFetching(null);
-      setError(`Couldn't preview ${v.name}: ${(e as Error).message}`);
+      setError(`Couldn't preview ${v.name}. Please try again.`);
     }
   }
 

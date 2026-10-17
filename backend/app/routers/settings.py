@@ -319,7 +319,7 @@ async def preview_voice(body: VoicePreview):
     voice_id = body.voice_id.strip()
     if elevenlabs_tts.is_elevenlabs_voice(voice_id):
         if not settings.elevenlabs_api_key:
-            raise HTTPException(status_code=400, detail="ElevenLabs voice previews aren't configured yet.")
+            raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
         key = (voice_id, round(body.speed, 2), body.language, body.text)
         if key not in _preview_cache:
             try:
@@ -328,7 +328,7 @@ async def preview_voice(body: VoicePreview):
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
             except httpx.HTTPError:
-                raise HTTPException(status_code=502, detail="Couldn't generate this voice preview. Check ElevenLabs access to this voice.")
+                raise HTTPException(status_code=502, detail="Couldn't generate this voice preview. Please try again.")
             while len(_preview_cache) > _PREVIEW_CACHE_MAX:
                 _preview_cache.popitem(last=False)
         _preview_cache.move_to_end(key)
