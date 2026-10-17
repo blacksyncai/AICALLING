@@ -13,7 +13,7 @@ os.environ["AUTH_EMAIL"] = "admin@test.dev"
 os.environ["AUTH_PASSWORD"] = "admin-pass-123"
 os.environ["ADMIN_PASSWORD"] = "portal-pass-456"
 for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DEEPGRAM_API_KEY",
-          "CARTESIA_API_KEY", "LIVEKIT_SIP_OUTBOUND_TRUNK_ID", "CALCOM_API_KEY", "RESEND_API_KEY"):
+          "CARTESIA_API_KEY", "ELEVENLABS_API_KEY", "LIVEKIT_SIP_OUTBOUND_TRUNK_ID", "CALCOM_API_KEY", "RESEND_API_KEY"):
     os.environ[k] = ""
 
 import pytest

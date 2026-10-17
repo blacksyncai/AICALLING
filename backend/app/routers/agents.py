@@ -228,6 +228,15 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
     agent = await _get_agent(db, ctx, agent_id)
     before = _prompt_state(agent)
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if {"voice_id", "voice_speed"} & changes.keys():
+        from app.agent.elevenlabs_tts import is_elevenlabs_voice, provider_voice_id, voice_settings
+        selected_voice = changes.get("voice_id", agent.voice_id)
+        if is_elevenlabs_voice(selected_voice):
+            try:
+                provider_voice_id(selected_voice)
+                voice_settings(changes.get("voice_speed", agent.voice_speed or 1.0))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
     if changes.get("status") == "active" and agent.status != "active":
         from app.services import entitlements
 

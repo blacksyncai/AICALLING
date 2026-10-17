@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     # ── STT / TTS ─────────────────────────────────────────────────────────────
     deepgram_api_key: str = ""
     cartesia_api_key: str = ""
+    elevenlabs_api_key: str = ""
     voice_turn_trace: bool = True
     # Canary only; changes sentence aggregation, never the selected voice/model.
     voice_short_sentence_streaming: bool = False

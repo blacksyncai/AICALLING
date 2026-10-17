@@ -38,6 +38,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
+from app.agent.elevenlabs_tts import is_elevenlabs_voice, make_livekit_tts as make_elevenlabs_tts
 from app.agent.models import MISTRAL_MODELS, NEEDS_USER_TURN
 from app.agent.runtime import contact_turns, should_hold_hangup
 
@@ -1145,7 +1146,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             api_key=settings.deepgram_api_key,
         ),
         llm=openai.LLM(**llm_kwargs),
-        tts=make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia.TTS(
+        tts=make_elevenlabs_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
+        if is_elevenlabs_voice(voice_id) else
+        make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia.TTS(
             model="sonic-3",
             voice=DEFAULT_VOICE_ID if is_mistral_voice(voice_id) else voice_id,
             language=None if language in ("en", "multi") else language,

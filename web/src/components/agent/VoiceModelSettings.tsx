@@ -90,8 +90,8 @@ export function VoiceModelSettings({
         <Field label={`Speaking speed · ${draft.voice_speed.toFixed(2)}x`} className="sm:col-span-2">
           <input
             type="range"
-            min={0.7}
-            max={1.3}
+            min={draft.voice_id.startsWith("elevenlabs:") ? 0.8 : 0.7}
+            max={draft.voice_id.startsWith("elevenlabs:") ? 1.2 : 1.3}
             step={0.01}
             value={draft.voice_speed}
             onChange={(e) => set("voice_speed", Number(e.target.value))}
