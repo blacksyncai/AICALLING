@@ -76,3 +76,37 @@ def test_provider_errors_hide_secrets(client,monkeypatch):
     monkeypatch.setattr(eleven,'synthesize_wav',fail)
     r=client.post('/api/settings/voices/preview',json={'voice_id':MATT,'text':'failure'})
     assert r.status_code==502 and 'secret-test-key' not in r.text
+
+
+def test_mishal_arabic_catalog_and_instructions(client, monkeypatch):
+    from app.agent.runtime import build_instructions
+    monkeypatch.setattr(settings, 'cartesia_api_key', '')
+    monkeypatch.setattr(settings, 'elevenlabs_api_key', 'test-key')
+    voice = next(v for v in client.get('/api/settings/voices').json()['voices']
+                 if v['id'] == 'elevenlabs:Ywuz3KyW2N5pqKNpwcCL')
+    assert (voice['name'], voice['language'], voice['accent']) == ('Mishal', 'ar', 'Saudi')
+    assert voice['is_clone'] and voice['category'] == 'premium'
+    assert any(l['code'] == 'ar' for l in client.get('/api/settings/models').json()['languages'])
+    cfg = {'system_prompt': 'Qualify property owners and arrange a call.', 'language': 'ar'}
+    prompt = build_instructions(cfg, {})
+    assert 'Speak Arabic naturally.' in prompt
+    assert cfg['system_prompt'] in prompt
+    assert 'Speak Arabic naturally.' not in build_instructions({**cfg, 'language': 'en'}, {})
+
+
+@pytest.mark.asyncio
+async def test_arabic_preview_forwards_language_and_text(monkeypatch):
+    monkeypatch.setattr(settings, 'elevenlabs_api_key', 'test-key')
+    calls = []
+    class Client:
+        def __init__(self, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def post(self, url, **kw):
+            calls.append((url, kw))
+            return httpx.Response(200, content=b'\x00\x00' * 2400, request=httpx.Request('POST', url))
+    monkeypatch.setattr(eleven.httpx, 'AsyncClient', Client)
+    await eleven.synthesize_wav('elevenlabs:Ywuz3KyW2N5pqKNpwcCL', 'مرحباً', language='ar')
+    assert calls[0][0].endswith('/Ywuz3KyW2N5pqKNpwcCL')
+    assert calls[0][1]['json']['language_code'] == 'ar'
+    assert calls[0][1]['json']['text'] == 'مرحباً'

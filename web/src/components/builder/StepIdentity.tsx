@@ -230,7 +230,7 @@ export function StepIdentity({
               ))}
             </Select>
           </div>
-          <VoiceCards voices={voices} value={behavior.voice_id || HOUSE_VOICES[0]} language={behavior.language ?? "en"} onChange={(id) => onBehavior({ voice_id: id })} />
+          <VoiceCards voices={voices} value={behavior.voice_id || HOUSE_VOICES[0]} language={behavior.language ?? "en"} onChange={(id) => onBehavior({ voice_id: id, ...(id === "elevenlabs:Ywuz3KyW2N5pqKNpwcCL" ? { language: "ar" } : {}) })} />
         </section>
 
         {askName && (

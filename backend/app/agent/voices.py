@@ -28,6 +28,8 @@ FEATURED_VOICES: list[dict] = [
      "description": "Deep voice clone.", "clone": True},
     {"id": "elevenlabs:iRh44YCGcZyLpQjPFMsh", "name": "Matt", "provider": "elevenlabs",
      "clone": True, "description": "Live voice clone.", "language": "en"},
+    {"id": "elevenlabs:Ywuz3KyW2N5pqKNpwcCL", "name": "Mishal", "provider": "elevenlabs",
+     "clone": True, "gender": "masculine", "description": "Arabic voice clone.", "language": "ar", "accent": "Saudi"},
     {"id": "mistral:01a1346d-b155-75a6-a670-b9924b477fbf", "name": "Leena · Version 1", "family": "Leena", "tone": "Version 1",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "mistral:01a13477-ce35-7031-84e8-71a1f7a51cbd", "name": "Leena · Version 2", "family": "Leena", "tone": "Version 2",

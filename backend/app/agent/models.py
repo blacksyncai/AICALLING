@@ -223,6 +223,7 @@ GROUPS: list[tuple[str, str]] = [
 LANGUAGES: list[dict] = [
     {"code": "en", "label": "English"},
     {"code": "multi", "label": "Multilingual (auto)"},
+    {"code": "ar", "label": "Arabic"},
     {"code": "es", "label": "Spanish"},
     {"code": "fr", "label": "French"},
     {"code": "de", "label": "German"},

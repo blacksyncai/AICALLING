@@ -15,6 +15,7 @@ const FALLBACK_MODEL_IDS = ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o", 
 const FALLBACK_LANGUAGES = [
   { code: "en", label: "English" },
   { code: "multi", label: "Multilingual (auto)" },
+  { code: "ar", label: "Arabic" },
   { code: "es", label: "Spanish" },
   { code: "fr", label: "French" },
   { code: "de", label: "German" },
@@ -102,7 +103,7 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
       <VoicePicker voices={voices?.voices ?? []} featured={voices?.featured ?? []} categories={voices?.categories}
         message={voices?.message} loading={!voices} source={voices?.source} value={draft.voice_id}
         speed={draft.voice_speed} language={draft.language} agentLanguage={draft.language}
-        onChange={(id) => set("voice_id", id)} inline defaultOpen keepOpen suspendDismiss={settingsOpen}
+        onChange={(id) => { set("voice_id", id); if (id === "elevenlabs:Ywuz3KyW2N5pqKNpwcCL") set("language", "ar"); }} inline defaultOpen keepOpen suspendDismiss={settingsOpen}
         headerAccessory={
           <div className="flex shrink-0 items-stretch gap-2">
             <div className="relative flex w-14 items-center justify-center rounded-xl border border-zinc-200 bg-white px-2 focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100 sm:w-36"

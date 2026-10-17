@@ -1,5 +1,7 @@
 "use client";
 
+import { voicePreview } from "@/lib/voice-preview";
+
 import {
   AlertTriangle,
   Check,
@@ -221,7 +223,8 @@ export function VoicePicker({
     }
     stop();
     const token = playToken.current;
-    const key = `${v.id}|${speed}|${language}`;
+    const preview = voicePreview(v.language, language, PREVIEW_LINE);
+    const key = `${v.id}|${speed}|${preview.language}`;
     try {
       let url = clipCache.current.get(key);
       if (!url) {
@@ -231,9 +234,9 @@ export function VoicePicker({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             voice_id: v.id,
-            text: PREVIEW_LINE,
+            text: preview.text,
             speed,
-            language,
+            language: preview.language,
           }),
         });
         if (!res.ok)

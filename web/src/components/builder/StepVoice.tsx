@@ -51,7 +51,7 @@ export function StepVoice({
           value={behavior.voice_id ?? ""}
           speed={1}
           language={language}
-          onChange={(id) => onChange({ voice_id: id })}
+          onChange={(id) => onChange({ voice_id: id, ...(id === "elevenlabs:Ywuz3KyW2N5pqKNpwcCL" ? { language: "ar" } : {}) })}
           inline
         />
       )}
