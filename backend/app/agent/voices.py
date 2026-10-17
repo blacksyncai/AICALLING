@@ -13,6 +13,8 @@ Language/accent come from the live Cartesia catalog; nothing here is a guess abo
 VOICE_MODELS = ["sonic-3"]  # the Cartesia TTS model the voice worker uses
 
 FEATURED_VOICES: list[dict] = [
+    {"id": "elevenlabs:WkIfOTQgqfIPfV7X7nND", "name": "Sally", "provider": "elevenlabs",
+     "clone": True, "description": "Live voice clone.", "language": "en"},
     {"id": "elevenlabs:iRh44YCGcZyLpQjPFMsh", "name": "Matt", "provider": "elevenlabs",
      "clone": True, "description": "Live voice clone.", "language": "en"},
     # Shown in this order in the voice picker. Gender, language and description for entries without
