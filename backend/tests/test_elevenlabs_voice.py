@@ -110,3 +110,34 @@ async def test_arabic_preview_forwards_language_and_text(monkeypatch):
     assert calls[0][0].endswith('/Ywuz3KyW2N5pqKNpwcCL')
     assert calls[0][1]['json']['language_code'] == 'ar'
     assert calls[0][1]['json']['text'] == 'مرحباً'
+
+@pytest.mark.asyncio
+async def test_filipino_provider_language_mapping(monkeypatch):
+    monkeypatch.setattr(settings,'elevenlabs_api_key','test-key')
+    tts=eleven.make_livekit_tts(MATT,language='tl')
+    assert tts._opts.language=='fil'
+    await tts.aclose()
+
+def test_filipino_language_catalog_and_save_preserves_voice(client,agent_id):
+    languages=client.get('/api/settings/models').json()['languages']
+    assert any(l['code']=='tl' and l['label']=='Filipino (Tagalog)' for l in languages)
+    before=client.get(f'/api/agents/{agent_id}').json()
+    after=client.patch(f'/api/agents/{agent_id}',json={'language':'tl'}).json()
+    assert after['language']=='tl' and after['voice_id']==before['voice_id']
+    assert after['system_prompt']==before['system_prompt']
+
+@pytest.mark.asyncio
+async def test_installed_filipino_transcription_constructor():
+    from livekit.plugins import cartesia
+    from livekit.plugins.cartesia.models import STTLanguages
+    from typing import get_args
+    assert 'tl' in get_args(STTLanguages)
+    stt=cartesia.STT(model='ink-whisper',language='tl',api_key='test-key')
+    assert stt.capabilities.streaming
+    await stt.aclose()
+
+def test_filipino_instructions_preserve_business_script():
+    from app.agent.runtime import build_instructions
+    prompt=build_instructions({'language':'tl','system_prompt':'Help owners book a consultation.'},{})
+    assert 'Speak Filipino (Tagalog)' in prompt
+    assert 'Help owners book a consultation.' in prompt

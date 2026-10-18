@@ -1165,7 +1165,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if sends_temperature:
         llm_kwargs["temperature"] = float(cfg.get("temperature", 0.5))
     session_kwargs = dict(
-        stt=deepgram.STT(
+        stt=cartesia.STT(model="ink-whisper", language="tl", api_key=settings.cartesia_api_key)
+        if language == "tl" else deepgram.STT(
             model="nova-3", language=language if language != "multi" else "multi",
             api_key=settings.deepgram_api_key,
         ),
@@ -1439,6 +1440,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     session.on("conversation_item_added", _on_item)
     log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,
              has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
+             stt_provider="cartesia" if language == "tl" else "deepgram", language=language,
              tts_provider="elevenlabs" if is_elevenlabs_voice(voice_id) else "mistral" if is_mistral_voice(voice_id) and settings.mistral_api_key else "cartesia",
              background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
              preemptive_generation=True, preemptive_tts=True,

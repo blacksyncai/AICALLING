@@ -39,7 +39,7 @@ def make_livekit_tts(voice_id, *, speed=1.0, language="en"):
                   model=MODEL, encoding="pcm_24000", auto_mode=True,
                   voice_settings=elevenlabs.VoiceSettings(**voice_settings(speed)))
     if language not in ("", "multi", None):
-        kwargs["language"] = language
+        kwargs["language"] = "fil" if language == "tl" else language
     return elevenlabs.TTS(**kwargs)
 
 
@@ -48,7 +48,7 @@ async def synthesize_wav(voice_id, text, *, speed=1.0, language="en"):
         raise ValueError("ElevenLabs API key is not configured")
     payload = {"text": text, "model_id": MODEL, "voice_settings": voice_settings(speed)}
     if language not in ("", "multi", None):
-        payload["language_code"] = language
+        payload["language_code"] = "fil" if language == "tl" else language
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{provider_voice_id(voice_id)}",

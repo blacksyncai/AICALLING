@@ -238,6 +238,11 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
     parts = [conversation_rules(cfg), ("# YOUR ROLE AND SCRIPT\n" + script) if script else "", guardrails(cfg),
              _tools_block(cfg, channel)]
 
+    if cfg.get("language") == "tl":
+        parts.append("# CONVERSATION LANGUAGE\nSpeak Filipino (Tagalog) naturally. Preserve the business objective "
+                     "and facts in your script; express them in Filipino. Keep names and numbers accurate. "
+                     "Use another language only if the caller explicitly asks.")
+
     if cfg.get("language") == "ar":
         parts.append("# CONVERSATION LANGUAGE\nSpeak Arabic naturally. Preserve the business objective and facts "
                      "in your script; express them in Arabic. Keep names and numbers accurate. "

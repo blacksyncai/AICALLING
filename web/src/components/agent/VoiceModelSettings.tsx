@@ -16,6 +16,7 @@ const FALLBACK_LANGUAGES = [
   { code: "en", label: "English" },
   { code: "multi", label: "Multilingual (auto)" },
   { code: "ar", label: "Arabic" },
+  { code: "tl", label: "Filipino (Tagalog)" },
   { code: "es", label: "Spanish" },
   { code: "fr", label: "French" },
   { code: "de", label: "German" },
@@ -29,7 +30,7 @@ const FALLBACK_LANGUAGES = [
 const LANGUAGE_FLAGS: Record<string, string> = {
   en: "🇺🇸", es: "🇪🇸", fr: "🇫🇷", de: "🇩🇪", pt: "🇵🇹", it: "🇮🇹", nl: "🇳🇱",
   hi: "🇮🇳", ja: "🇯🇵", zh: "🇨🇳", ko: "🇰🇷", ru: "🇷🇺", ar: "🇸🇦", tr: "🇹🇷",
-  sv: "🇸🇪", pl: "🇵🇱", uk: "🇺🇦", multi: "🌐",
+  sv: "🇸🇪", pl: "🇵🇱", uk: "🇺🇦", multi: "🌐", tl: "🇵🇭",
 };
 
 /** Separate Voice and Model / Brain tabs share the existing saved draft. */

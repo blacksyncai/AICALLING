@@ -218,12 +218,13 @@ GROUPS: list[tuple[str, str]] = [
     ("other", "Other"),
 ]
 
-# Languages the editor offers. Deepgram nova-3 handles each of these (and
-# "multi" = automatic code-switching); Cartesia sonic-3 speaks all of them.
+# Languages the editor offers. Filipino uses Cartesia ink-whisper STT;
+# other languages retain the existing Deepgram path. "multi" = auto code-switching.
 LANGUAGES: list[dict] = [
     {"code": "en", "label": "English"},
     {"code": "multi", "label": "Multilingual (auto)"},
     {"code": "ar", "label": "Arabic"},
+    {"code": "tl", "label": "Filipino (Tagalog)"},
     {"code": "es", "label": "Spanish"},
     {"code": "fr", "label": "French"},
     {"code": "de", "label": "German"},

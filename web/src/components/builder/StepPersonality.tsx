@@ -17,6 +17,7 @@ type Depth = NonNullable<Behavior["qualification_depth"]>;
 export const LANGUAGES: [string, string][] = [
   ["en", "English"],
   ["ar", "Arabic"],
+  ["tl", "Filipino (Tagalog)"],
   ["es", "Spanish"],
   ["fr", "French"],
   ["de", "German"],
