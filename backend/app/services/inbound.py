@@ -72,9 +72,15 @@ async def ensure_routing(number: str, *, signalwire: bool = False) -> None:
         if signalwire:
             if number not in trunk.numbers or not trunk.auth_username or not trunk.auth_password:
                 raise InboundError("Inbound routing for this number has not been securely provisioned yet.")
+            try:
+                fingerprint = json.loads(trunk.metadata or "{}").get("blacksync_inbound_auth_sha256", "")
+                if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+                    raise ValueError("Missing fingerprint")
+            except (ValueError, TypeError, AttributeError):
+                raise InboundError("Secure inbound credential verification is not configured yet.") from None
             from app.services.signalwire import SignalWireError, verify_inbound_routing
             try:
-                await verify_inbound_routing(number, trunk.auth_username, trunk.auth_password)
+                await verify_inbound_routing(number, trunk.auth_username, fingerprint)
             except SignalWireError as exc:
                 raise InboundError(str(exc)) from exc
         if trunk.numbers and number not in trunk.numbers:

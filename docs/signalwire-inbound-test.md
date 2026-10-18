@@ -12,7 +12,7 @@ Provisioned test number: +17373654598.
 
 In the account that owns the number: Campaigns → New campaign → Inbound → select +17373654598 and an existing agent → Create inbound campaign. Creation automatically activates the campaign when routing verification succeeds. Do not select a different account's agent or change its prompt/voice for this test.
 
-Activation requires the dedicated trunk, the exact allowlisted number, digest credentials, and a carrier SWML readback matching destination and credentials. It fails closed if any check fails. Additional SignalWire numbers must be explicitly provisioned before activation; this does not silently enable inbound on every purchased number.
+Activation requires the dedicated trunk, the exact allowlisted number, digest credentials, and a carrier SWML readback matching destination, username and the credential fingerprint stored in trunk metadata. It fails closed if any check fails. Additional SignalWire numbers must be explicitly provisioned before activation; this does not silently enable inbound on every purchased number.
 
 ## Validation
 
@@ -21,3 +21,5 @@ Focused tests cover carrier trunk isolation, missing provisioning, readback mism
 ## Rollback
 
 Pause the inbound campaign to remove the agent assignment. Restore this number's previous carrier incoming handler from the operational rollback snapshot (laml_webhooks/voice; no previous incoming script). Remove only the newly created SignalWire script and dedicated dispatch/trunk after confirming they have no active calls. The local rollback record is `/workspace/scratch/inbound-737-rollback.json`; it contains resource identifiers and previous number routing, not digest credentials. Reverting the code also restores the prior SignalWire activation block. Do not delete or modify the existing Twilio/Bandwidth trunks or dispatch rule.
+
+LiveKit masks passwords on trunk list responses. Provisioning atomically sets the digest credentials and their SHA-256 fingerprint (`username + NUL + password`) on this dedicated trunk. Runtime compares the hosted script credentials to that fingerprint, never to the masked list value. The exact runtime verifier passed against the production number after provisioning.

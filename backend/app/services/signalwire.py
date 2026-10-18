@@ -1,6 +1,8 @@
 """Number inventory, purchase, release and outbound trunk management."""
 import re
 import copy
+import hashlib
+import hmac
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -211,7 +213,11 @@ async def release(number_id: str):
     await _number_request("DELETE", f"/{number_id}")
 
 
-async def verify_inbound_routing(number: str, username: str, password: str) -> None:
+def inbound_auth_fingerprint(username: str, password: str) -> str:
+    return hashlib.sha256((username + "\0" + password).encode()).hexdigest()
+
+
+async def verify_inbound_routing(number: str, username: str, fingerprint: str) -> None:
     """Read back the number and SWML handoff before marking an inbound campaign live."""
     if not settings.livekit_sip_host or not re.fullmatch(r"[a-zA-Z0-9.-]+", settings.livekit_sip_host):
         raise SignalWireError("The inbound media host is not configured.")
@@ -231,7 +237,7 @@ async def verify_inbound_routing(number: str, username: str, password: str) -> N
         steps = script["sections"]["main"]
         connect = steps[0]["connect"]
         expected = f"sip:{number}@{settings.livekit_sip_host};transport=tls"
-        if len(steps) != 1 or connect.get("to") != expected or connect.get("username") != username or connect.get("password") != password:
+        if len(steps) != 1 or connect.get("to") != expected or connect.get("username") != username or not hmac.compare_digest(inbound_auth_fingerprint(str(connect.get("username") or ""), str(connect.get("password") or "")), fingerprint):
             raise ValueError("Unexpected inbound handoff")
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
         raise SignalWireError("Couldn't verify the secure inbound handoff. The campaign has not been activated.") from None

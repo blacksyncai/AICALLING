@@ -43,9 +43,9 @@ async def test_provider_handoff_readback(monkeypatch,mutation):
         assert not r.headers.get('authorization')
         return httpx.Response(200,json=script)
     monkeypatch.setattr(signalwire.httpx,'AsyncClient',lambda **kw:real(transport=httpx.MockTransport(handle),**kw))
-    if mutation=='none':await signalwire.verify_inbound_routing(NUMBER,'user','pass')
+    if mutation=='none':await signalwire.verify_inbound_routing(NUMBER,'user',signalwire.inbound_auth_fingerprint('user','pass'))
     else:
-        with pytest.raises(signalwire.SignalWireError):await signalwire.verify_inbound_routing(NUMBER,'user','pass')
+        with pytest.raises(signalwire.SignalWireError):await signalwire.verify_inbound_routing(NUMBER,'user',signalwire.inbound_auth_fingerprint('user','pass'))
 
 @pytest.mark.asyncio
 async def test_missing_number_or_digest_fails_before_dispatch(monkeypatch):
@@ -78,3 +78,30 @@ async def test_activation_requires_verified_routing_before_assigning(monkeypatch
         await inbound.activate(None,campaign)
         assert row.inbound_agent_id=='agent-test' and row.inbound_campaign_id=='campaign-test'
     assert calls==[(NUMBER,{'signalwire':True})]
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('metadata_valid',[True,False])
+async def test_activation_readiness_uses_fingerprint_with_redacted_sdk_password(monkeypatch,metadata_valid):
+    import json
+    fingerprint=signalwire.inbound_auth_fingerprint('user','actual-secret')
+    monkeypatch.setattr(type(settings),'livekit_ready',property(lambda self:True))
+    monkeypatch.setattr(settings,'livekit_agent_name','closer')
+    trunk=SimpleNamespace(sip_trunk_id='ST_sw',numbers=[NUMBER],auth_username='user',auth_password='********',metadata=json.dumps({'blacksync_inbound_auth_sha256':fingerprint}) if metadata_valid else '{}')
+    verified=[]
+    class Sip:
+        async def list_dispatch_rule(self,req):
+            return SimpleNamespace(items=[SimpleNamespace(trunk_ids=['ST_sw'],room_config=SimpleNamespace(agents=[SimpleNamespace(agent_name='closer')]))])
+    class LK:
+        sip=Sip()
+        async def aclose(self):pass
+    monkeypatch.setattr(inbound,'_lk',LK)
+    async def get(*a,**kw):return trunk
+    async def verify(number,user,fp):verified.append((number,user,fp))
+    monkeypatch.setattr(inbound,'_inbound_trunk',get)
+    monkeypatch.setattr(signalwire,'verify_inbound_routing',verify)
+    if metadata_valid:
+        await inbound.ensure_routing(NUMBER,signalwire=True)
+        assert verified==[(NUMBER,'user',fingerprint)]
+    else:
+        with pytest.raises(inbound.InboundError,match='credential verification'):await inbound.ensure_routing(NUMBER,signalwire=True)
+        assert not verified
