@@ -47,6 +47,7 @@ class Pronunciation(BaseModel):
 
 
 class VoiceTuning(BaseModel):
+    voicemail_min_connected_seconds: float = Field(default=6.2, ge=0, le=60)
     volume: float = Field(default=1.0, ge=0.5, le=2)
     # 0–1. Defaults reproduce the worker's standard turn-taking.
     responsiveness: float = Field(default=0.75, ge=0, le=1)

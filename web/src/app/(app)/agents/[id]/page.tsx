@@ -733,7 +733,7 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
 }
 
 const VOICEMAIL_OPTIONS: { value: NonNullable<Agent["voicemail_action"]>; label: string; hint: string }[] = [
-  { value: "hang_up", label: "Hang up", hint: "End the call right away. Only the phone line fee is charged." },
+  { value: "hang_up", label: "Hang up", hint: "End the call after the minimum connected time." },
   { value: "leave_message", label: "Leave a message", hint: "Wait for the beep, say your message, then hang up." },
   { value: "ignore", label: "Keep talking", hint: "Treat it like a normal call (not recommended)." },
 ];
@@ -764,6 +764,13 @@ function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof
           </button>
         ))}
       </div>
+      {action !== "ignore" && (
+        <Field label="Minimum connected time (seconds)" hint="Wait silently until this much time has passed since answer before ending a voicemail call. Default: 6.2 seconds. Carrier charges still apply.">
+          <Input type="number" min={0} max={60} step={0.1}
+            value={draft.voice_tuning?.voicemail_min_connected_seconds ?? 6.2}
+            onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value)) set("voice_tuning", { ...draft.voice_tuning, voicemail_min_connected_seconds: Math.min(60, Math.max(0, value)) }); }} />
+        </Field>
+      )}
       {action === "leave_message" && (
         <Field label="Voicemail message" hint="Keep it under 30 seconds. You can use {{name}}, {{company}} and other contact fields.">
           <Textarea

@@ -48,6 +48,7 @@ export interface Agent {
 }
 
 export interface VoiceTuning {
+  voicemail_min_connected_seconds?: number;
   volume?: number;
   responsiveness?: number;
   interruption?: number;

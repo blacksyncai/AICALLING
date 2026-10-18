@@ -823,6 +823,9 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 return
             run.post_task = asyncio.create_task(_post_run_outcome(run, outcome))
             await asyncio.sleep(1.2)
+            if outcome == "voicemail" or session_ref.get("voicemail_detected"):
+                from app.agent.voicemail_timing import wait_for_voicemail_minimum
+                await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))
             await _delete_room(ctx.room.name)
         _keep(asyncio.create_task(_go()))
 
@@ -1310,6 +1313,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 yield chunk
 
     async def _handle_voicemail() -> None:
+        session_ref["voicemail_detected"] = True
         log.info("voicemail_detected", room=ctx.room.name, action=vm_action)
         try:
             session.interrupt(force=True)
@@ -1340,6 +1344,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         run.outcome = "voicemail"
         await _post_run_outcome(run, "voicemail")
         await asyncio.sleep(0.5)
+        from app.agent.voicemail_timing import wait_for_voicemail_minimum
+        await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))
         await _delete_room(ctx.room.name)
 
     def _on_transcribed(ev) -> None:
@@ -1552,6 +1558,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     async def _hang_up_on_silence() -> None:
         while True:
             await asyncio.sleep(1)
+            if vm["detected"]:
+                continue  # voicemail handler owns its silent wait and hangup
             quiet = silence["agent"] in ("listening", "") and silence["user"] != "speaking"
             if not quiet:
                 continue
