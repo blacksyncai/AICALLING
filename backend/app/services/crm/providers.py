@@ -2400,12 +2400,69 @@ class RealGeeks(Provider):
 
 class Brivity(Provider):
     key, name = "brivity", "Brivity"
-    native = False
-    can_import = False
+    native = True
+    can_import = True
     can_new_leads = False
-    description = "Direct CRM connection is pending verified Brivity API documentation and account access."
-    docs_url = "https://www.brivity.com/"
-    setup_required_reason = "Brivity cannot be connected yet. Its API authentication and supported operations must be verified before activation."
+    can_log_calls = False
+    description = "Connect with your Brivity API token and import selected people by their Brivity person IDs. Call-note writes and full-account discovery are not supported by the published API."
+    docs_url = "https://nvntd.github.io/brivity-core/doc/api/index.html"
+    auth_fields = [
+        AuthField("api_key", "API token", help="Use your Brivity account API token, not your login password."),
+        AuthField("person_ids", "Person IDs to import (optional)", secret=False,
+                  placeholder="38732871, 38732872",
+                  help="Comma-separated Brivity person IDs. The published API reads individual people; it does not list or search all contacts. Update credentials to change this list."),
+    ]
+
+    @staticmethod
+    def _ids(config):
+        value = (config.get("person_ids") or "").strip()
+        if not value:
+            return []
+        parts = re.split(r"[\s,]+", value)
+        if len(parts) > 100 or any(not re.fullmatch(r"[1-9][0-9]{0,18}", x) for x in parts):
+            raise CrmError("Enter up to 100 positive numeric Brivity person IDs, separated by commas or spaces.")
+        return list(dict.fromkeys(parts))
+
+    def native_http(self, secret, config):
+        self._ids(config)
+        if not secret or any(c.isspace() or c in '\"\\' for c in secret):
+            raise CrmError("Enter the Brivity API token only, without an Authorization header prefix.")
+        return NativeHttp("https://api.brivity.com", headers={"Authorization": f"Token token={secret}"})
+
+    async def verify(self, http, config):
+        # Read-only: connecting never creates a lead or event subscription.
+        rows = await http.request("GET", "/api/v2/roster")
+        if not isinstance(rows, list) or any(not isinstance(r, dict) or not isinstance(r.get("user_id"), int) for r in rows):
+            raise CrmError("Brivity did not return a valid agent roster. The API token was not verified.")
+        owner = next((r for r in rows if r.get("is_owner") is True), rows[0] if rows else {})
+        return str(owner.get("team") or owner.get("brokerage") or "Brivity account")
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        if since is not None or (filters or {}).get("skip_contacted"):
+            raise CrmError("Brivity's published person API does not expose contact history or creation timestamps for these filters.")
+        ids = self._ids(config)
+        if not ids:
+            raise CrmError("Add Brivity person IDs through Update credentials before importing. Full-account contact listing is not documented by Brivity.")
+        people = []
+        # Fail the whole preview on an inaccessible/malformed record rather than
+        # silently presenting a partial import as complete. All requests are reads.
+        for person_id in ids[:max(0, min(limit, 100))]:
+            rows = await http.request("GET", f"/api/people/{person_id}")
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or not rows[0].get("account_id"):
+                raise CrmError("Brivity did not return the requested person record.")
+            row = rows[0]
+            phone = normalize_phone(str(row.get("phone_number") or ""))
+            if not phone:
+                continue
+            people.append(Contact(name=" ".join(str(row.get(k) or "") for k in ("first_name", "last_name")).strip(),
+                                  phone=phone, email=str(row.get("email_address") or ""), external_id=person_id))
+        return people
+
+    async def find_or_create(self, http, config, c, create):
+        raise CrmError("Brivity contact search and automatic creation are not enabled. Import existing people by their Brivity person IDs.")
+
+    async def log_call(self, http, config, external_id, call):
+        raise CrmError("Brivity call-note writes are not documented and are not enabled.")
 
 
 class BoomTown(Provider):

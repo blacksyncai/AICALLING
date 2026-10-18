@@ -36,4 +36,12 @@ Rollback: revert the correction commit; avoid reverting the earlier CSV addition
 
 ## Brivity
 
-Listed as API verification pending, with activation blocked. No CSV substitute, credentials form, contact sync, or call-note delivery is claimed. Public website and API-documentation requests were denied by the environment network policy during this task; Brivity authentication, endpoints and partner-access requirements remain unverified. Access domains have been saved to the environment configuration draft for review and publication.
+Native API-token connection, verified read-only against `/api/v2/roster` before encrypted storage. Supports importing up to 100 explicitly selected Brivity person IDs via `/api/people/{id}`. The imported external ID is preserved for each record. This is not CSV and does not discover the full account.
+
+Published documentation: https://nvntd.github.io/brivity-core/doc/api/index.html (generated July 2019). Verified authentication format `Authorization: Token token=<token>` and array response shapes. The API host returns HTTP 401 without a token for roster and person reads. Mock contract tests cover positive and negative response shapes; no customer token or live authenticated account was available for this task.
+
+The published API has no contact list/search, note-write or opt-out-update contract. Those operations are disabled in UI, settings API and sync worker. Lead creation and event subscriptions are documented, but are not enabled in this release; no duplicate-prone creation or unverified webhook payload handling is introduced. The roster only verifies access; it is never imported as customer leads.
+
+To use: Integrations → Brivity → Connect; paste the API token and optionally comma-separated person IDs, then use Import. Change selected IDs through Update credentials. Existing agent scripts, objectives and voices remain unchanged.
+
+Rollback: revert this connector commit; existing tokens remain encrypted and can be disconnected normally.

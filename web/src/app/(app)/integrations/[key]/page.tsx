@@ -164,7 +164,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
 
   const isCrm = p.category === "crm";
   const sections: { id: Section; label: string; icon: React.ReactNode }[] = [
-    { id: "push", label: p.category === "notify" ? "Posting calls" : "Push calls", icon: <ArrowUpFromLine className="h-4 w-4" /> },
+    { id: "push", label: p.can_log_calls === false ? "Connection" : p.category === "notify" ? "Posting calls" : "Push calls", icon: <ArrowUpFromLine className="h-4 w-4" /> },
     ...(p.pipeline_noun || p.can_install ? [{ id: "pipeline" as Section, label: "Pipeline", icon: <GitBranch className="h-4 w-4" /> }] : []),
     ...(p.can_import ? [{ id: "import" as Section, label: "Import", icon: <ArrowDownToLine className="h-4 w-4" /> }] : []),
     ...(p.can_import ? [{ id: "auto" as Section, label: `Auto-sync${c.auto_imports.length ? ` · ${c.auto_imports.length}` : ""}`, icon: <Repeat className="h-4 w-4" /> }] : []),
@@ -255,7 +255,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
 
       {/* Flow: how data moves between BlackSync and the CRM */}
       <div className="mb-6 flex flex-col items-stretch gap-2 md:flex-row md:items-center">
-        <FlowNode icon={PhoneCall} title={`Calls → ${p.name}`} detail={pushDetail} active={section === "push"} onClick={() => go("push")} />
+        <FlowNode icon={PhoneCall} title={p.can_log_calls === false ? "API connection" : `Calls → ${p.name}`} detail={p.can_log_calls === false ? "Read access" : pushDetail} active={section === "push"} onClick={() => go("push")} />
         {(p.pipeline_noun || p.can_install) && (
           <>
             <ChevronRight className="hidden h-4 w-4 shrink-0 text-zinc-300 md:block" />
@@ -297,7 +297,9 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
         className="scroll-thin mb-5 w-fit max-w-full overflow-x-auto"
       />
 
-      {section === "push" && <PushCalls p={p} c={c} isCrm={isCrm} onSaved={refresh} />}
+      {section === "push" && (p.can_log_calls === false ? (
+        <Notice tone="amber">{p.description} This connection does not send call notes or opt-out updates back to Brivity.</Notice>
+      ) : <PushCalls p={p} c={c} isCrm={isCrm} onSaved={refresh} />)}
       {section === "pipeline" && (
         <div className="space-y-5">
           {p.pipeline_noun && <PipelineSync p={p} c={c} onSaved={refresh} />}

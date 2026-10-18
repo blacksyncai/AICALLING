@@ -29,6 +29,7 @@ export interface Provider {
   oauth: boolean;
   /** Our own OAuth sign-in (no Nango): the browser goes to the CRM's login page and comes back connected. */
   oauth_native?: boolean;
+  can_log_calls?: boolean;
   can_import: boolean;
   can_new_leads: boolean;
   docs_url: string;

@@ -110,6 +110,8 @@ def call_info(data: dict) -> CallInfo:
 
 
 async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
+    if not getattr(PROVIDERS.get(conn.provider), "can_log_calls", True):
+        return
     cfg = conn_settings(conn)
     call = call_info(data)
     if not cfg["log_calls"] or (cfg["only_connected"] and not call.connected):

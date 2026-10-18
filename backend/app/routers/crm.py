@@ -87,7 +87,7 @@ def conn_to_dict(c: CrmConnection) -> dict:
         "pipeline": ({"id": s["pipeline"]["id"], "name": (s["pipeline"].get("snapshot") or {}).get("name", ""),
                       "mapped": len(s["pipeline"].get("map") or {})} if s.get("pipeline") else None),
         # Non-secret details only.
-        "config": {k: v for k, v in cfg.items() if k in ("location_id", "spreadsheet", "username", "instance_url", "site_uuid", "verification_lead_id")},
+        "config": {k: v for k, v in cfg.items() if k in ("location_id", "spreadsheet", "username", "instance_url", "site_uuid", "verification_lead_id", "person_ids")},
     }
 
 
@@ -113,7 +113,7 @@ async def overview(ctx: ManagerDep, db: DbDep):
         "native": p.native, "setup_required_reason": getattr(p, "setup_required_reason", ""), "oauth": any(n in nango_providers for n in p.nango_providers),
         # Our own OAuth sign-in (no Nango): "Connect with …" sends the browser to the CRM's login page.
         "oauth_native": p.key == "salesforce" and sf_oauth.enabled(),
-        "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
+        "can_log_calls": getattr(p, "can_log_calls", True), "can_import": p.can_import, "can_new_leads": p.can_new_leads, "docs_url": p.docs_url,
         "pipeline_noun": p.pipeline_noun, "can_install": p.can_install, "install_style": p.install_style,
         "can_activity": p.can_activity, "can_map_fields": p.can_map_fields,
         "fields": [{"name": f.name, "label": f.label, "secret": f.secret, "placeholder": f.placeholder, "help": f.help}
@@ -134,6 +134,8 @@ async def _save(db, ctx, p: Provider, method: str, secret: str, config: dict, la
         db.add(conn)
     conn.method, conn.config, conn.account_label = method, config, label[:255]
     conn.secret_enc = secret_store.encrypt_value(secret) if secret else None
+    if not getattr(p, "can_log_calls", True):
+        conn.settings = {**sync.conn_settings(conn), "log_calls": False, "create_contacts": False}
     conn.status, conn.last_error = "connected", None
     await db.flush()
     await sync.add_log(db, conn, "test", "ok", f"Connected to {p.name}" + (f" as {label}" if label else "") + ".")
@@ -210,6 +212,8 @@ async def salesforce_oauth_callback(db: DbDep, state: str = "", code: str = "", 
         db.add(conn)
     conn.method, conn.config, conn.account_label = "oauth", config, (label or "Salesforce")[:255]
     conn.secret_enc = secret_store.encrypt_value(secret)
+    if not getattr(p, "can_log_calls", True):
+        conn.settings = {**sync.conn_settings(conn), "log_calls": False, "create_contacts": False}
     conn.status, conn.last_error = "connected", None
     await db.flush()
     await sync.add_log(db, conn, "test", "ok", f"Connected to Salesforce as {label}.")
@@ -410,6 +414,8 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
     conn = await _require_conn(db, ctx.org.id, key)
     s = sync.conn_settings(conn)
     data = body.model_dump(exclude_unset=True)
+    if not getattr(p, "can_log_calls", True) and (data.get("log_calls") or data.get("create_contacts")):
+        raise HTTPException(status_code=400, detail=f"{p.name} does not support call-note writes or automatic contact creation.")
     for k in ("log_calls", "create_contacts", "csv_create_fields", "only_connected", "note_summary", "note_details", "note_link", "note_transcript", "min_seconds"):
         if data.get(k) is not None:
             s[k] = data[k]
