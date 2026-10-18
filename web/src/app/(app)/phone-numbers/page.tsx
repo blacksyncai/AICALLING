@@ -11,12 +11,7 @@ import { api, fetcher, patch, post } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
 import type { MyPhoneNumbers, PhoneNumberItem } from "@/lib/types";
 
-interface Available {
-  number: string;
-  friendly: string;
-  locality: string;
-  region: string;
-}
+import { searchNumberInventory, type AvailableNumber as Available } from "@/lib/number-search";
 
 type Pricing = MyPhoneNumbers["pricing"];
 
@@ -269,7 +264,6 @@ function RequestNumber({ pricing, refresh }: { pricing: Pricing; refresh: () => 
 }
 
 function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: () => void; carriers: string[] }) {
-  const [carrier, setCarrier] = useState(carriers[0] || "signalwire");
   const toast = useToast();
   const [area, setArea] = useState("");
   const [results, setResults] = useState<Available[] | null>(null);
@@ -279,9 +273,12 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
   async function search(e: FormEvent) {
     e.preventDefault();
     setSearching(true);
+    setResults(null);
     try {
-      const r = await api<{ numbers: Available[] }>(`/api/phone-numbers/available?area_code=${encodeURIComponent(area)}&carrier=${encodeURIComponent(carrier)}`);
-      setResults(r.numbers);
+      const numbers = await searchNumberInventory(carriers, (carrier) =>
+        api<{ numbers: Available[] }>(`/api/phone-numbers/available?area_code=${encodeURIComponent(area)}&carrier=${encodeURIComponent(carrier)}`),
+      );
+      setResults(numbers);
     } catch (err) {
       toast((err as Error).message, "error");
     } finally {
@@ -301,7 +298,7 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
     setBuying(n.number);
     try {
       // confirm_charge: the customer just saw and accepted the price above.
-      const r = await post<{ checkout_url?: string }>("/api/phone-numbers/purchase", { number: n.number, carrier, confirm_charge: !cost.free });
+      const r = await post<{ checkout_url?: string }>("/api/phone-numbers/purchase", { number: n.number, carrier: n.carrier, confirm_charge: !cost.free });
       if (r?.checkout_url) {
         window.location.href = r.checkout_url;
         return; // stays busy while the browser leaves for checkout
@@ -319,12 +316,6 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
 
   return (
     <GetNumberCard title="Get a local number" description="Choose a local number for outbound calls.">
-      <label className="text-xs text-zinc-300">Number provider
-        <select aria-label="Number provider" className="ml-3 rounded-lg bg-zinc-800 px-3 py-2 text-white" value={carrier} disabled={!!buying || searching} onChange={(e) => { setCarrier(e.target.value); setResults(null); }}>
-          {carriers.map((c) => <option key={c} value={c}>{c === "signalwire" ? "SignalWire · Primary" : "Twilio · Backup"}</option>)}
-        </select>
-      </label>
-      {carrier === "signalwire" && <p className="text-xs text-zinc-400">Outbound calling available. Inbound routing will be added later.</p>}
       <form onSubmit={search} className="flex items-center gap-2">
         <Input
           value={area}
@@ -334,7 +325,7 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
           aria-label="Area code"
           className="h-11 flex-1 bg-white text-zinc-900"
         />
-        <Button variant="primary" loading={searching} disabled={area.length !== 3} className="h-11 shrink-0 rounded-xl! px-5">
+        <Button variant="primary" loading={searching} disabled={area.length !== 3 || !!buying} className="h-11 shrink-0 rounded-xl! px-5">
           <Search className="h-4 w-4" /> Search numbers
         </Button>
       </form>
