@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Globe, Info, MessageSquare, PhoneCall, PhoneOutgoing, X } from "lucide-react";
+import { CalendarDays, FileText, Globe, Info, MessageSquare, PhoneCall, PhoneOutgoing, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
@@ -9,7 +9,7 @@ import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { CallAudioProvider, PlayButton } from "@/components/calls/CallAudio";
 import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
 import { TranscriptLines } from "@/components/calls/Transcript";
-import { Button, Card, EmptyState, Modal, PageHeader, Select, Spinner } from "@/components/ui";
+import { Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model";
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -46,14 +46,33 @@ function CallLogs() {
   // Filters live in the URL, so a dashboard day link (or a shared link) opens pre-filtered.
   const rawDate = params.get("date") ?? "";
   const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : "";
+  const startedFrom = params.get("started_from") ?? "";
+  const startedBefore = params.get("started_before") ?? "";
   const agentId = params.get("agent_id") ?? "";
   const outcome = params.get("outcome") ?? "";
   const type = params.get("call_type") ?? "";
   const sort = params.get("sort") ?? "";
   const [page, setPage] = useState(1);
   const [peek, setPeek] = useState<Call | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [draftFrom, setDraftFrom] = useState("");
+  const [draftBefore, setDraftBefore] = useState("");
+  const [rangeError, setRangeError] = useState("");
+
+  function setRange(from: string, before: string) {
+    const next = new URLSearchParams(params.toString());
+    next.delete("date");
+    next.delete("started_from");
+    next.delete("started_before");
+    if (from) next.set("started_from", from);
+    if (before) next.set("started_before", before);
+    setPage(1);
+    router.replace(next.size ? `${pathname}?${next}` : pathname, { scroll: false });
+    setCalendarOpen(false);
+  }
 
   function setFilter(key: string, value: string) {
+    if (key === "range") { setRange("", ""); return; }
     const next = new URLSearchParams(params.toString());
     if (value) next.set(key, value);
     else next.delete(key);
@@ -68,12 +87,16 @@ function CallLogs() {
   if (type) qs.set("call_type", type);
   if (date) qs.set("date", date);
   if (sort) qs.set("sort", sort);
+  if (startedFrom) qs.set("started_from", startedFrom);
+  if (startedBefore) qs.set("started_before", startedBefore);
   const { data, error } = useSWR<{ items: Call[]; total: number }>(`/api/calls/?${qs}`, fetcher, { refreshInterval: 10000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1;
   const tz = session?.org?.timezone;
 
+  const rangeText = (value: string) => `${formatDay(value.slice(0, 10))} ${value.slice(11, 16)}`;
   const chips: { key: string; label: string; title?: string }[] = [];
+  if (startedFrom || startedBefore) chips.push({ key: "range", label: `${startedFrom ? rangeText(startedFrom) : "Any time"} → ${startedBefore ? rangeText(startedBefore) : "No end"}`, title: tz ? `Call start times, ${timeZoneLabel(tz)}; end time excluded` : "Call start times; end time excluded" });
   if (date) chips.push({ key: "date", label: formatDay(date), title: tz ? `Calls started on this day, ${timeZoneLabel(tz)}` : undefined });
   if (agentId) chips.push({ key: "agent_id", label: `Agent ${agents?.find((a) => a.id === agentId)?.name ?? "…"}` });
   if (outcome) chips.push({ key: "outcome", label: OUTCOME_CHIP[outcome] ?? humanize(outcome) });
@@ -81,7 +104,32 @@ function CallLogs() {
 
   return (
     <>
-      <PageHeader title="Call Logs" description="Every call with its transcript, AI summary and extracted data." />
+      <div className="relative pr-14">
+        <PageHeader title="Call Logs" description="Every call with its transcript, AI summary and extracted data." />
+        <button type="button" aria-label="Filter calls by date and time" title="Date and time" aria-haspopup="dialog" aria-expanded={calendarOpen}
+          onClick={() => {
+            const endOfDay = date ? new Date(`${date}T00:00:00Z`) : null;
+            if (endOfDay && !Number.isNaN(endOfDay.getTime())) endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
+            setDraftFrom(startedFrom || (date ? `${date}T00:00` : ""));
+            setDraftBefore(startedBefore || (endOfDay && !Number.isNaN(endOfDay.getTime()) ? `${endOfDay.toISOString().slice(0, 10)}T00:00` : ""));
+            setRangeError(""); setCalendarOpen(true);
+          }}
+          className={`absolute right-0 top-0 flex h-10 w-10 items-center justify-center rounded-xl border shadow-xs transition hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-brand-500 ${date || startedFrom || startedBefore ? "border-brand-300 bg-brand-50 text-brand-700" : "border-zinc-200 bg-white text-zinc-600"}`}>
+          <CalendarDays className="h-4 w-4" />
+        </button>
+      </div>
+      <Modal open={calendarOpen} onClose={() => setCalendarOpen(false)} title="Filter calls by date and time">
+        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (draftFrom && draftBefore && draftBefore <= draftFrom) { setRangeError("Choose an end after the start."); return; } setRange(draftFrom, draftBefore); }}>
+          <p className="text-xs text-zinc-500">Call start times in {tz ? timeZoneLabel(tz) : "your account time zone"}. Leave either end blank for an open range. The end time is excluded.</p>
+          <Field label="From"><Input aria-label="From date and time" type="datetime-local" value={draftFrom} onChange={(e) => { setDraftFrom(e.target.value); setRangeError(""); }} /></Field>
+          <Field label="Until"><Input aria-label="Until date and time" type="datetime-local" value={draftBefore} onChange={(e) => { setDraftBefore(e.target.value); setRangeError(""); }} /></Field>
+          {rangeError && <p role="alert" className="text-sm text-red-600">{rangeError}</p>}
+          <div className="flex justify-between gap-3">
+            <Button type="button" variant="ghost" onClick={() => setRange("", "")}>Clear dates</Button>
+            <Button type="submit" variant="primary">Apply</Button>
+          </div>
+        </form>
+      </Modal>
       <div className="mb-4 flex flex-wrap gap-2">
         <Select className="sm:w-56" value={agentId} onChange={(e) => setFilter("agent_id", e.target.value)} aria-label="Agent">
           <option value="">All agents</option>
@@ -133,7 +181,7 @@ function CallLogs() {
             </span>
           ))}
           {chips.length > 1 && (
-            <button type="button" onClick={() => router.replace(pathname, { scroll: false })} className="text-xs text-zinc-500 underline hover:text-zinc-800">
+            <button type="button" onClick={() => { setPage(1); router.replace(pathname, { scroll: false }); }} className="text-xs text-zinc-500 underline hover:text-zinc-800">
               Clear all
             </button>
           )}
