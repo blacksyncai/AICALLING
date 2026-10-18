@@ -36,6 +36,7 @@ FEATURED_VOICES: list[dict] = [
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "mistral:01a13477-ce35-7031-84e8-71a1f7a51cbd", "name": "Leena · Version 2", "family": "Leena", "tone": "Version 2",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
+    {"id": "a7b6afa8-fa7f-4b0d-ba37-6cb8d8014919", "name": "Don"},
     {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "name": "Jena"},
     {"id": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", "name": "Sarah"},
     {"id": "f786b574-daa5-4673-aa0c-cbe3e8534c02", "name": "Kate"},
