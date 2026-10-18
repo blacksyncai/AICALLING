@@ -209,3 +209,29 @@ async def release(number_id: str):
     if not re.fullmatch(r"[a-zA-Z0-9-]+", number_id):
         raise SignalWireError("Invalid owned number identifier.")
     await _number_request("DELETE", f"/{number_id}")
+
+
+async def verify_inbound_routing(number: str, username: str, password: str) -> None:
+    """Read back the number and SWML handoff before marking an inbound campaign live."""
+    if not settings.livekit_sip_host or not re.fullmatch(r"[a-zA-Z0-9.-]+", settings.livekit_sip_host):
+        raise SignalWireError("The inbound media host is not configured.")
+    data = await _number_request("GET", "", params={"filter_number": number})
+    row = next((n for n in data.get("data", []) if n.get("number") == number), None)
+    url = (row or {}).get("call_relay_script_url") or ""
+    parsed = urlparse(url)
+    if (not row or row.get("call_handler") != "relay_script" or parsed.scheme != "https"
+            or parsed.netloc != settings.signalwire_space or not parsed.path.startswith("/relay-bins/")
+            or parsed.query or parsed.fragment):
+        raise SignalWireError("Incoming calls on this number have not been connected to BlackSync yet.")
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            script = response.json()
+        steps = script["sections"]["main"]
+        connect = steps[0]["connect"]
+        expected = f"sip:{number}@{settings.livekit_sip_host};transport=tls"
+        if len(steps) != 1 or connect.get("to") != expected or connect.get("username") != username or connect.get("password") != password:
+            raise ValueError("Unexpected inbound handoff")
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+        raise SignalWireError("Couldn't verify the secure inbound handoff. The campaign has not been activated.") from None
