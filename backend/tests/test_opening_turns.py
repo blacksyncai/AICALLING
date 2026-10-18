@@ -81,7 +81,7 @@ async def test_actual_sdk_eou_drops_max_delay_only_for_complete_identity(record_
         async def supports_language(self,language):return True
         async def unlikely_threshold(self,language):return .7
         async def predict_end_of_turn(self,ctx,**kw):return .1
-    async def measure(answer,adapt):
+    async def measure(answer,adapt,question="Hey, is this Matt?"):
         detector=OpeningTurnDetector(Delegate(),'Matt') if adapt else Delegate()
         received=[]
         hooks=NS(on_end_of_turn=lambda info:received.append(info) or False, on_eot_prediction=lambda event:None)
@@ -91,7 +91,7 @@ async def test_actual_sdk_eou_drops_max_delay_only_for_complete_identity(record_
         now=time.time();rec._last_speaking_time=now-.55
         rec._last_final_transcript_time=now-.1;rec._user_turn_start=now-1
         rec._audio_transcript=answer
-        ctx=ChatContext();ctx.add_message(role='assistant',content='Hey, is this Matt?')
+        ctx=ChatContext();ctx.add_message(role='assistant',content=question)
         rec._run_eou_detection(ctx,trigger='vad')
         await asyncio.wait_for(rec._end_of_turn_task,timeout=4)
         assert len(received)==1
@@ -99,7 +99,39 @@ async def test_actual_sdk_eou_drops_max_delay_only_for_complete_identity(record_
     baseline=await measure('Yes',False)
     fixed=await measure('Yes',True)
     unfinished=await measure('Yes but',True)
+    closed=await measure('Yes',True,'Would you like a callback?')
+    assert closed < 1.0
     record_property('baseline_end_of_turn_seconds',baseline)
     record_property('fixed_identity_end_of_turn_seconds',fixed)
     record_property('unfinished_end_of_turn_seconds',unfinished)
     assert baseline>=2.4 and fixed<1.0 and unfinished>=2.4
+
+@pytest.mark.parametrize('question,answer',[
+    ('Are you interested?', 'Yes.'), ('Would you like a callback?', 'No.'),
+    ('Do you own the property?', 'Yep!'), ('Can I help?', 'Yeah'),
+    ('Hello?', 'Hello'), ('Hello.', 'Hi'),
+])
+def test_closed_short_answers(question,answer):
+    from app.agent.opening_turns import complete_short_answer
+    assert complete_short_answer(chat(answer,question))
+
+@pytest.mark.parametrize('question,answer',[
+    ('Are you interested?', 'Yes, but'), ('Are you interested?', 'Yes...'),
+    ('Are you interested?', 'Yes?'), ('Are you interested?', 'No, wait'),
+    ('What is your address?', '14 Main'), ('Is your phone number correct?', 'Yes'),
+    ('Would you prefer Tuesday or Wednesday?', 'Yes'), ('What would you like?', 'Yes'),
+    ('Can you spell your name?', 'Yes'), ('Hello, how can I help?', 'Hello'),
+    ('Are you interested?', 'four one five'), ('Are you interested?', 'Yes—'),
+])
+def test_pauses_and_open_questions_still_use_semantic_model(question,answer):
+    from app.agent.opening_turns import complete_short_answer
+    assert not complete_short_answer(chat(answer,question))
+
+@pytest.mark.asyncio
+async def test_later_closed_question_uses_existing_detector_fast_path():
+    class Delegate:
+        async def predict_end_of_turn(self,*args,**kwargs):
+            raise AssertionError('closed answer should not hit semantic maximum')
+    ctx=chat('Yes','Would you like a callback?',previous=[('assistant','Hello'),('user','Hello'),
+        ('assistant','How can I help?'),('user','I need information')])
+    assert await OpeningTurnDetector(Delegate(),None).predict_end_of_turn(ctx)==1.0

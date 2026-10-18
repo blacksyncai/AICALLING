@@ -1147,7 +1147,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 from app.agent.opening_turns import OpeningTurnDetector
                 turn_detector = OpeningTurnDetector(
                     turn_detector, variables.get("full_name") or variables.get("name") or variables.get("first_name"),
-                    on_fast=lambda: trace.mark("identity_turn_complete", source="closed_opening_answer"))
+                    on_fast=lambda: trace.mark("identity_turn_complete", source="closed_short_answer"))
         except Exception as exc:
             log.warning("turn_detector_unavailable", error=type(exc).__name__, reason=str(exc)[:240])
             turn_detector = None
@@ -1439,6 +1439,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     session.on("conversation_item_added", _on_item)
     log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,
              has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
+             tts_provider="elevenlabs" if is_elevenlabs_voice(voice_id) else "mistral" if is_mistral_voice(voice_id) and settings.mistral_api_key else "cartesia",
              background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
              preemptive_generation=True, preemptive_tts=True,
              short_sentence_streaming=settings.voice_short_sentence_streaming, trace_enabled=settings.voice_turn_trace,

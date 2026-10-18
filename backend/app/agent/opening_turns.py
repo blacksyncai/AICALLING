@@ -1,9 +1,9 @@
-"""Complete opening identity answers should not hit semantic max-delay.
+"""Complete short answers should not hit semantic max-delay.
 
 This participates in the existing turn detector, not a second commit controller.
 VAD, minimum endpoint delay, transcript updates and interruption handling remain
-owned by the SDK. Only the early identity question with a known contact name is
-eligible; dictated details and incomplete answers keep semantic inference.
+owned by the SDK. Early identity answers, unambiguous closed-question replies
+and greeting acknowledgments are eligible; other answers keep semantic inference.
 """
 import re
 
@@ -55,6 +55,32 @@ def complete_identity_answer(chat_ctx, expected_name):
     return response in complete
 
 
+def complete_short_answer(chat_ctx):
+    """Conservative English closed answers; never commit open or dictated text."""
+    messages = [m for m in chat_ctx.items if getattr(m, "role", None) in ("user", "assistant")
+                and getattr(m, "text_content", "")]
+    if len(messages) < 2 or messages[-1].role != "user" or messages[-2].role != "assistant":
+        return False
+    answer = messages[-1].text_content.strip()
+    if re.search(r"(?:\.\.|…|[,?;:\-–—])\s*$", answer) or any(c.isdigit() for c in answer):
+        return False
+    response = ' '.join(_words(answer))
+    question = messages[-2].text_content.strip()
+    # Greeting acknowledgments only answer a greeting, not an open question.
+    if response in {'hi', 'hello', 'hey'}:
+        return ' '.join(_words(question)) in {'hi', 'hello', 'hey', 'hello there', 'hi there'}
+    if response not in {'yes', 'yeah', 'yep', 'yup', 'no', 'nope'} or not question.endswith('?'):
+        return False
+    # Last sentence must itself be a closed question. Open questions and offers
+    # listing alternatives keep the semantic model, including dictated details.
+    clause = re.split(r'[.!?]', question[:-1])[-1].strip().lower()
+    if re.search(r"\b(?:or|address|number|phone|email|spell|digit|code)\b", clause):
+        return False
+    return bool(re.match(r"^(?:do you|did you|does (?:it|that)|are you|is (?:it|that|this)|"
+                         r"have you|has (?:it|that)|can (?:i|you|we)|could (?:i|you|we)|"
+                         r"would you|will you|should (?:i|we))\b", clause))
+
+
 class OpeningTurnDetector:
     """Installed LiveKit 1.6.4 _TurnDetector protocol, delegating every other case."""
     def __init__(self, delegate, expected_name, on_fast=None):
@@ -75,7 +101,7 @@ class OpeningTurnDetector:
         return await self.delegate.unlikely_threshold(language)
 
     async def predict_end_of_turn(self, chat_ctx, *, timeout=3):
-        if complete_identity_answer(chat_ctx, self.expected_name):
+        if complete_identity_answer(chat_ctx, self.expected_name) or complete_short_answer(chat_ctx):
             if self.on_fast:
                 self.on_fast()
             return 1.0
