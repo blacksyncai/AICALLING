@@ -106,6 +106,8 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
     )).scalars().all()
     from app.services.billing.subscriptions import phone_summary
 
+    from app.services.number_registration import summaries
+    registration_status = await summaries(db, numbers)
     cfg = await settings_store.get_all(db)
     pricing = await phone_summary(db, ctx.org.id)
     from app.services import entitlements
@@ -113,7 +115,7 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
     pricing["included_on_plan"] = await entitlements.included_numbers(db, ctx.org)
     return {
         "pricing": pricing,
-        "numbers": [telephony.number_to_dict(n) for n in numbers],
+        "numbers": [{**telephony.number_to_dict(n), "registration": registration_status.get(n.id)} for n in numbers],
         "requests": [_request_to_dict(r) for r in requests],
         "self_serve": bool(cfg["self_serve_numbers"]) and bool(telephony.purchase_carriers()),
         "purchase_carriers": telephony.purchase_carriers(),

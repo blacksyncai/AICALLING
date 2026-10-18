@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     signalwire_space: str = ""
     signalwire_project_id: str = ""
     signalwire_api_token: str = ""
+    # Kill switch: outbox events remain durable while execution is paused.
+    number_registration_worker_enabled: bool = True
     livekit_agent_name: str = "closer"
 
     # ── Phone numbers (Twilio, bought into the account behind the LiveKit trunk) ──

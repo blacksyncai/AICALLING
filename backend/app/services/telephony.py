@@ -253,6 +253,8 @@ async def _claim_row(db: AsyncSession, org_id: uuid.UUID, number: str) -> PhoneN
     if row is not None:
         if row.status == "active":
             raise TelephonyError("That number is already assigned to an account.")
+        from app.services.number_registration import retire_number
+        await retire_number(db, row)
         row.org_id, row.status, row.released_at = org_id, "active", None
         row.created_at = datetime.now(timezone.utc)
         row.label, row.is_default = "", None
@@ -288,6 +290,8 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
         row.carrier = "signalwire" if selected == "signalwire" else None
         await db.flush()
         await _make_default_if_first(db, row)
+        from app.services.number_registration import enqueue_number
+        await enqueue_number(db, row)
         await db.commit()
     except Exception as exc:
         log.error("phone_number_save_failed_releasing", number=number)
@@ -324,6 +328,8 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
     row.carrier = carrier if carrier in ("bandwidth", "signalwire") else None
     await db.flush()
     await _make_default_if_first(db, row)
+    from app.services.number_registration import enqueue_number
+    await enqueue_number(db, row)
     await db.commit()
     if row.carrier == "bandwidth":
         from app.services import bandwidth
@@ -349,6 +355,8 @@ async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool)
                 raise TelephonyError(str(exc)) from exc
         else:
             await _release_twilio(row.provider_sid)
+    from app.services.number_registration import retire_number
+    await retire_number(db, row)
     was_default = bool(row.is_default)
     row.status, row.released_at, row.is_default = "released", datetime.now(timezone.utc), None
     await db.execute(update(Agent).where(Agent.org_id == row.org_id, Agent.caller_number == row.number)

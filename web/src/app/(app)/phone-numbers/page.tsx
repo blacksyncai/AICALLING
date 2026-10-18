@@ -197,6 +197,7 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm font-medium tabular-nums text-zinc-900">{n.number}</span>
                   {n.is_default && <Badge tone="violet">Default</Badge>}
+                  {n.registration && <span className="text-xs text-zinc-500">{n.registration.status}</span>}
                 </div>
                 {manager ? (
                   <input

@@ -56,6 +56,7 @@ export interface VoiceTuning {
 }
 
 export interface PhoneNumberItem {
+  registration?: { status: string; providers: {provider: string; status: string; prerequisite: string; request_id: string | null}[] };
   carrier?: "twilio" | "bandwidth" | "signalwire";
   id: string;
   number: string;
