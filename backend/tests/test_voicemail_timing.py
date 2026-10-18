@@ -32,3 +32,19 @@ def test_setting_persists_and_validation(client,agent_id):
     assert saved['voice_id']==before['voice_id'] and saved['system_prompt']==before['system_prompt']
     for value in [-1,61]:
         assert client.patch(url,json={'voice_tuning':{'voicemail_min_connected_seconds':value}}).status_code==422
+
+@pytest.mark.asyncio
+async def test_final_report_follows_hold_and_hangup():
+    from app.agent.voicemail_timing import finish_voicemail
+    now=[102.0]
+    events=[]
+    async def sleep(delay):
+        events.append(('wait',delay))
+        now[0]+=delay
+    async def hangup():events.append(('hangup',now[0]))
+    async def report():events.append(('report',now[0]))
+    await finish_voicemail(100,{},hangup=hangup,report=report,clock=lambda:now[0],sleep=sleep)
+    assert [e[0] for e in events]==['wait','hangup','report']
+    assert events[0][1]==pytest.approx(4.2)
+    assert events[1][1]==pytest.approx(106.2)
+    assert events[2][1]==pytest.approx(106.2)

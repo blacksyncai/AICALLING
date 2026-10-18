@@ -21,3 +21,11 @@ async def wait_for_voicemail_minimum(connected_at, tuning, *, clock=time.monoton
     remaining = minimum_connected_seconds(tuning) - (clock() - connected_at)
     if remaining > 0:
         await sleep(remaining)
+
+
+async def finish_voicemail(connected_at, tuning, *, hangup, report,
+                           clock=time.monotonic, sleep=asyncio.sleep):
+    """Finalization must follow the hold and hangup, not freeze duration at detection."""
+    await wait_for_voicemail_minimum(connected_at, tuning, clock=clock, sleep=sleep)
+    await hangup()
+    await report()

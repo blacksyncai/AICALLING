@@ -149,3 +149,13 @@ def test_onboarding_rejects_bad_phone_without_creating_workspace(client, make_cl
                                             'phone': '+44 20 7946 0958'})
     assert r.status_code == 201, r.text
     assert r.json()['user']['phone'] == '+442079460958'
+
+
+def test_marketing_signup(client, make_client):
+    c = _orphan_login(client, make_client)
+    options = c.get('/api/onboarding/options').json()
+    assert any(i['key'] == 'marketing' and i['label'] == 'Marketing' for i in options['industries'])
+    response = c.post('/api/onboarding/start', json={'company': 'Bright Agency', 'industry': 'marketing'})
+    assert response.status_code == 201, response.text
+    assert response.json()['org']['industry'] == 'marketing'
+    assert c.get('/api/business-profile').json()['industry'] == 'marketing'

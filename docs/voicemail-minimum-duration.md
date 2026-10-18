@@ -9,3 +9,7 @@ This is application timing, not a guarantee about carrier billing intervals, spa
 Validation: 24 focused voicemail/timing/tuning tests, API persistence/range checks, frontend typecheck and production build. No live carrier-duration measurement performed by these tests. Test an early voicemail greeting and inspect answered-to-ended carrier timestamps before claiming a carrier-side outcome.
 
 Rollback: revert this commit and redeploy; optional JSON field is harmless to old code. Per-agent setting 0 disables the new floor without a code rollback.
+
+## Duration-report correction
+
+Production trace on 2026-10-18: room call-481ae54e-6afd-44f2-9886-756e67ca4764 became SIP-active at 16:35:38 UTC, matched voicemail at 2.5 seconds and closed around 16:35:44 UTC. The outcome was posted at detection, freezing the displayed duration before the hold ended. Voicemail finalization now waits, hangs up and only then posts the final outcome. This avoids treating detection time as end time; it does not manufacture a minimum duration if the remote party disconnects early. A regression test checks wait → hangup → report ordering. Live after-change carrier timing remains to be tested.

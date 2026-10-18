@@ -823,12 +823,18 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 return
             if outcome == "voicemail":
                 session_ref["voicemail_detected"] = True
-            run.post_task = asyncio.create_task(_post_run_outcome(run, outcome))
+            is_voicemail = outcome == "voicemail" or session_ref.get("voicemail_detected")
+            if not is_voicemail:
+                run.post_task = asyncio.create_task(_post_run_outcome(run, outcome))
             await asyncio.sleep(1.2)
+            # Recheck: AMD may classify voicemail while goodbye is playing.
             if outcome == "voicemail" or session_ref.get("voicemail_detected"):
-                from app.agent.voicemail_timing import wait_for_voicemail_minimum
-                await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))
-            await _delete_room(ctx.room.name)
+                from app.agent.voicemail_timing import finish_voicemail
+                await finish_voicemail(run.t0, cfg.get("voice_tuning"),
+                    hangup=lambda: _delete_room(ctx.room.name),
+                    report=lambda: _post_run_outcome(run, run.outcome or outcome))
+            else:
+                await _delete_room(ctx.room.name)
         _keep(asyncio.create_task(_go()))
 
     guard = {"refused": False}
@@ -1344,11 +1350,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 run.outcome_posted = False
                 log.info("outcome_corrected_to_voicemail", room=ctx.room.name, was=run.outcome)
         run.outcome = "voicemail"
-        await _post_run_outcome(run, "voicemail")
         await asyncio.sleep(0.5)
-        from app.agent.voicemail_timing import wait_for_voicemail_minimum
-        await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))
-        await _delete_room(ctx.room.name)
+        from app.agent.voicemail_timing import finish_voicemail
+        await finish_voicemail(run.t0, cfg.get("voice_tuning"),
+            hangup=lambda: _delete_room(ctx.room.name),
+            report=lambda: _post_run_outcome(run, "voicemail"))
 
     def _on_transcribed(ev) -> None:
         if call_type != "outbound" or vm["detected"] or not getattr(ev, "is_final", False):

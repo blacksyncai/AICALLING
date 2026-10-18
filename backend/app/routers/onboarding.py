@@ -39,6 +39,7 @@ HINTS = {
     "recruiting": "Staffing and recruiting firms",
     "automotive": "Dealers and service centers",
     "healthcare": "Clinics, dental and wellness",
+    "marketing": "Marketing agencies, advertising and lead generation",
     "professional_services": "Agencies, consultants and law firms",
     "funeral_services": "Funeral homes, cremation and memorial services",
     "other": "Tell us what you do",

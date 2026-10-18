@@ -25,6 +25,7 @@ INDUSTRIES: list[dict] = [
     {"key": "recruiting", "label": "Recruiting and Staffing", "icon": "users"},
     {"key": "logistics", "label": "Logistics and Freight", "icon": "truck"},
     {"key": "automotive", "label": "Automotive", "icon": "car"},
+    {"key": "marketing", "label": "Marketing", "icon": "line-chart"},
     {"key": "professional_services", "label": "Professional Services", "icon": "briefcase"},
     {"key": "funeral_services", "label": "Funeral Homes", "icon": "flower"},
     {"key": "other", "label": "Something Else", "icon": "sparkles"},
