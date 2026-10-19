@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import httpx
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -388,6 +388,46 @@ async def caller_id_for(db: AsyncSession, org_id: uuid.UUID, agent: Agent | None
             return agent.caller_number
     default = next((n for n in numbers if n.is_default), numbers[0])
     return default.number
+
+
+async def campaign_caller_id_for(db, org_id, agent, campaign_id, lead_id=None):
+    """Transactional per-campaign round robin; never rotates across another tenant's numbers."""
+    from app.models.campaign import Campaign
+    from app.models.call_log import CallLog
+    if not campaign_id:
+        return await caller_id_for(db, org_id, agent)
+    campaign = (await db.execute(select(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+                               .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+    if campaign is None:
+        raise TelephonyError("The campaign is not on this account.")
+    if not campaign.number_rotation_enabled:
+        return await caller_id_for(db, org_id, agent)
+    pool = list(campaign.caller_number_pool or [])
+    owned = {number.number for number in await active_numbers(db, org_id)}
+    if len(pool) < 2 or len(set(pool)) != len(pool) or any(number not in owned for number in pool):
+        raise TelephonyError("Update the campaign's rotation pool: select at least two distinct active numbers owned by this account.")
+    previous = None
+    if lead_id:
+        previous = (await db.execute(select(CallLog.from_phone).where(
+            CallLog.org_id == org_id, CallLog.campaign_id == campaign_id, CallLog.lead_id == lead_id,
+            CallLog.call_type == "outbound", CallLog.from_phone.is_not(None),
+        ).order_by(CallLog.started_at.desc(), CallLog.id.desc()).limit(1))).scalar_one_or_none()
+    policy = campaign.retry_caller_policy or "same"
+    if policy not in ("same", "different"):
+        raise TelephonyError("Choose a valid campaign retry caller-number policy.")
+    if previous and policy == "same":
+        if previous not in pool:
+            raise TelephonyError("The previous caller number is no longer in this campaign's active pool. Update the retry policy before redialing.")
+        return previous
+    # Cursor updates and the eventual call record commit together. Failed preparation rolls both back.
+    for _ in range(2):
+        cursor = (await db.execute(update(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+                                 .values(caller_rotation_cursor=func.coalesce(Campaign.caller_rotation_cursor, 0) + 1)
+                                 .returning(Campaign.caller_rotation_cursor))).scalar_one()
+        chosen = pool[(cursor - 1) % len(pool)]
+        if not previous or chosen != previous:
+            return chosen
+    raise TelephonyError("Could not select a different active caller number.")
 
 
 async def carrier_of(db: AsyncSession, org_id: uuid.UUID, number: str) -> str:

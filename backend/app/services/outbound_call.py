@@ -367,7 +367,10 @@ class CallService:
             if not any(n.number == from_number for n in await telephony.active_numbers(db, org.id)):
                 raise CallSetupError("That number isn't on this account — pick one of your phone numbers.")
         else:
-            from_number = await telephony.caller_id_for(db, org.id, agent)
+            try:
+                from_number = await telephony.campaign_caller_id_for(db, org.id, agent, campaign_id, lead.id if lead else None)
+            except telephony.TelephonyError as exc:
+                raise CallSetupError(str(exc)) from exc
         call_log = CallLog(
             id=uuid.uuid4(),
             org_id=org.id,

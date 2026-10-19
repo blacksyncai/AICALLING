@@ -113,6 +113,9 @@ export interface Campaign {
   retry_delay_minutes: number;
   /** Minutes to wait before each retry, in order ([] = call once). */
   retry_schedule: number[];
+  number_rotation_enabled?: boolean;
+  caller_number_pool?: string[];
+  retry_caller_policy?: "same" | "different";
   within_calling_hours: boolean;
   next_window_at: string | null;
   pending_retries: number;

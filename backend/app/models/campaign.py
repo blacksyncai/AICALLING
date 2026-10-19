@@ -5,7 +5,7 @@ Campaign model — a batch of leads to dial with a shared ICP.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import Boolean, JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -62,6 +62,12 @@ class Campaign(Base):
     # Custom retry schedule: minutes to wait before each retry, in order (e.g. [15, 20, 1440, 2880]).
     # When set, it decides the number of tries (len + 1) and each wait; NULL = the single delay above.
     retry_schedule: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # Optional outbound caller-ID pool. NULL preserves the existing single-number behavior.
+    number_rotation_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    caller_number_pool: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    retry_caller_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    caller_rotation_cursor: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # ── Counters ──────────────────────────────────────────────────────────────
     total_targets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

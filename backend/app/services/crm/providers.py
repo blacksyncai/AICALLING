@@ -2555,6 +2555,17 @@ class Apollo(Provider):
         raise CrmError("Apollo call-note writes are not enabled by this saved-contact connector.")
 
 
+class Rechat(Provider):
+    key, name = "rechat", "Rechat"
+    native = False
+    can_import = False
+    can_new_leads = False
+    can_log_calls = False
+    docs_url = "https://docs.api.rechat.com/master/user.html"
+    description = "Rechat API documentation. Direct account connection is not enabled yet."
+    setup_required_reason = "Rechat API documentation is linked below. Authentication and server-side contact APIs must be verified before account connection can be enabled."
+
+
 class BoomTown(Provider):
     key, name = "boomtown", "BoomTown"
     native = False
@@ -2568,7 +2579,7 @@ class BoomTown(Provider):
 
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
-    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), BoomTown(), GoogleSheets(), Slack(),
+    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), Rechat(), BoomTown(), GoogleSheets(), Slack(),
 )}
 
 

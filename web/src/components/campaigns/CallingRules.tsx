@@ -1,11 +1,12 @@
 "use client";
 
-import { Clock, Plus, RotateCcw, X } from "lucide-react";
+import { ArrowUp, ArrowDown, Clock, Plus, RotateCcw, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Button, Card, CardHeader, Field, Input, Select } from "@/components/ui";
-import { patch } from "@/lib/api";
-import type { Campaign } from "@/lib/types";
+import { Button, Card, CardHeader, Field, Input, Select, Toggle } from "@/components/ui";
+import { fetcher, patch } from "@/lib/api";
+import type { Campaign, MyPhoneNumbers } from "@/lib/types";
 
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -140,6 +141,9 @@ type Form = {
   call_days: number[];
   timezone: string;
   retry_schedule: number[];
+  number_rotation_enabled: boolean;
+  caller_number_pool: string[];
+  retry_caller_policy: "same" | "different";
 };
 
 function formFrom(c: Campaign): Form {
@@ -148,6 +152,9 @@ function formFrom(c: Campaign): Form {
     call_window_end: c.call_window_end,
     call_days: c.call_days,
     timezone: c.timezone,
+    number_rotation_enabled: !!c.number_rotation_enabled,
+    caller_number_pool: c.caller_number_pool ?? [],
+    retry_caller_policy: c.retry_caller_policy ?? "same",
     retry_schedule: c.retry_schedule ?? Array(Math.max(0, c.max_attempts - 1)).fill(c.retry_delay_minutes),
   };
 }
@@ -156,6 +163,9 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
   const toast = useToast();
   const [form, setForm] = useState<Form>(() => formFrom(campaign));
   const [busy, setBusy] = useState(false);
+  const { data: phoneNumbers, error: numbersError } = useSWR<MyPhoneNumbers>("/api/phone-numbers", fetcher);
+  const activeNumbers = (phoneNumbers?.numbers ?? []).filter((number) => number.status === "active");
+  const invalidRotation = form.number_rotation_enabled && (form.caller_number_pool.length < 2 || !!phoneNumbers && form.caller_number_pool.some((number) => !activeNumbers.some((n) => n.number === number)));
   const saved = formFrom(campaign);
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
   useEffect(() => { onDirtyChange?.(dirty || busy); }, [dirty, busy, onDirtyChange]);
@@ -200,7 +210,7 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
               <Button size="sm" variant="ghost" onClick={() => setForm(saved)}>
                 Reset
               </Button>
-              <Button size="sm" variant="primary" onClick={save} loading={busy} disabled={invalidWindow || noDays}>
+              <Button size="sm" variant="primary" onClick={save} loading={busy} disabled={invalidWindow || noDays || invalidRotation}>
                 Save
               </Button>
             </div>
@@ -255,6 +265,37 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
           </Field>
         </div>
         <div className="space-y-4">
+          <div className="rounded-xl border border-zinc-200 p-4">
+            <Toggle checked={form.number_rotation_enabled} onChange={(checked) => setForm((f) => ({ ...f, number_rotation_enabled: checked }))}
+              label="Rotate caller numbers" description="First attempts use A, then B, then C, and repeat. Off uses the agent's number or your account default." />
+            {form.number_rotation_enabled && <div className="mt-4 space-y-3">
+              <p className="text-xs text-zinc-500">Choose at least two active numbers. Use the arrows to set their order. Rotation does not guarantee removal of spam labels.</p>
+              {numbersError && <p className="text-xs text-red-600">Could not load your numbers. Try refreshing before saving.</p>}
+              {!phoneNumbers && !numbersError && <p className="text-xs text-zinc-500">Loading your numbers…</p>}
+              {[...form.caller_number_pool, ...activeNumbers.map((n) => n.number).filter((number) => !form.caller_number_pool.includes(number))].map((number) => {
+                const index = form.caller_number_pool.indexOf(number);
+                const owned = activeNumbers.find((n) => n.number === number);
+                const move = (delta: number) => setForm((f) => { const pool = [...f.caller_number_pool]; [pool[index], pool[index + delta]] = [pool[index + delta], pool[index]]; return { ...f, caller_number_pool: pool }; });
+                return <div key={number} className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2">
+                  <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                    <input type="checkbox" className="accent-brand-600" checked={index >= 0} disabled={index < 0 && form.caller_number_pool.length >= 20}
+                      onChange={(e) => setForm((f) => ({ ...f, caller_number_pool: e.target.checked ? [...f.caller_number_pool, number] : f.caller_number_pool.filter((n) => n !== number) }))} />
+                    {index >= 0 && <span className="text-xs font-semibold text-brand-600">{String.fromCharCode(65 + index)}</span>}
+                    <span className="min-w-0 truncate">{number}{owned?.label ? ` · ${owned.label}` : ""}{phoneNumbers && !owned ? " · inactive" : ""}</span>
+                  </label>
+                  {index >= 0 && <><button type="button" aria-label={`Move ${number} up`} disabled={index === 0} onClick={() => move(-1)} className="rounded p-2 text-zinc-500 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button><button type="button" aria-label={`Move ${number} down`} disabled={index === form.caller_number_pool.length - 1} onClick={() => move(1)} className="rounded p-2 text-zinc-500 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button></>}
+                </div>;
+              })}
+              {invalidRotation && <p className="text-xs text-red-600">Select at least two active numbers owned by this account.</p>}
+              <Field label="Number to use for retries">
+                <Select value={form.retry_caller_policy} onChange={(e) => setForm((f) => ({ ...f, retry_caller_policy: e.target.value as "same" | "different" }))}>
+                  <option value="same">Same number</option>
+                  <option value="different">Different selected number</option>
+                </Select>
+              </Field>
+              <p className="text-xs text-zinc-500">Same keeps the number used for that contact's previous campaign attempt. Different chooses the next number in the pool that differs from the last attempt.</p>
+            </div>}
+          </div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
             <RotateCcw className="h-3.5 w-3.5" /> Automatic retries
           </div>

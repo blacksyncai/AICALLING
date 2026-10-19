@@ -47,6 +47,9 @@ class CallingRules(BaseModel):
     retry_delay_minutes: int | None = None
     # Minutes to wait before each retry, in order; [] = call once. Overrides the two fields above.
     retry_schedule: list[int] | None = None
+    number_rotation_enabled: bool | None = None
+    caller_number_pool: list[str] | None = None
+    retry_caller_policy: str | None = Field(default=None, pattern="^(same|different)$")
 
 
 class CampaignCreate(CallingRules):
@@ -128,6 +131,9 @@ def calling_rules(c) -> dict:
         "max_attempts": c.max_attempts or DEFAULT_MAX_ATTEMPTS,
         "retry_delay_minutes": c.retry_delay_minutes or DEFAULT_RETRY_DELAY,
         "retry_schedule": retry_waits(c),
+        "number_rotation_enabled": bool(getattr(c, "number_rotation_enabled", False)),
+        "caller_number_pool": list(getattr(c, "caller_number_pool", None) or []),
+        "retry_caller_policy": getattr(c, "retry_caller_policy", None) or "same",
     }
 
 
@@ -308,6 +314,23 @@ async def _get_campaign(db, ctx: Context, campaign_id: uuid.UUID) -> Campaign:
     return campaign
 
 
+async def _validate_number_rotation(db, org_id, data, current=None, direction="outbound"):
+    from app.services.telephony import active_numbers
+    enabled = data.get("number_rotation_enabled", bool(getattr(current, "number_rotation_enabled", False)))
+    pool = data.get("caller_number_pool", getattr(current, "caller_number_pool", None) or [])
+    if len(pool) > 20 or len(pool) != len(set(pool)):
+        raise HTTPException(status_code=400, detail="Choose up to 20 distinct caller numbers.")
+    if enabled and (direction == "inbound" or len(pool) < 2):
+        raise HTTPException(status_code=400, detail="Outbound number rotation needs at least two selected numbers.")
+    if pool and (enabled or list(pool) != list(getattr(current, "caller_number_pool", None) or [])):
+        owned = {number.number for number in await active_numbers(db, org_id)}
+        if any(number not in owned for number in pool):
+            raise HTTPException(status_code=400, detail="Every selected caller number must be active on this account.")
+    # Start at A whenever a pool is changed; the cursor itself is never client-editable.
+    if "caller_number_pool" in data and list(pool) != list(getattr(current, "caller_number_pool", None) or []):
+        data["caller_rotation_cursor"] = 0
+
+
 async def _check_agent(db, ctx: Context, agent_id: uuid.UUID | None) -> None:
     if agent_id is not None:
         agent = await db.get(Agent, agent_id)
@@ -360,6 +383,7 @@ async def create_campaign(
         await _check_number(db, ctx, body.phone_number_id)
     rules = body.model_dump(include=set(CallingRules.model_fields), exclude_none=True)
     _validate_rules(rules)
+    await _validate_number_rotation(db, ctx.org.id, rules, direction=body.direction)
     await entitlements.check_concurrency(db, ctx.org, body.max_concurrent_calls)
     campaign = Campaign(
         direction=body.direction,
@@ -410,6 +434,7 @@ async def update_campaign(
         else:
             await _check_number(db, ctx, data["phone_number_id"])
     _validate_rules(data, campaign)
+    await _validate_number_rotation(db, ctx.org.id, data, campaign, campaign.direction or "outbound")
     if data.get("max_concurrent_calls") and data["max_concurrent_calls"] > (campaign.max_concurrent_calls or 1):
         await entitlements.check_concurrency(db, ctx.org, data["max_concurrent_calls"])
     relink = (campaign.direction == "inbound" and campaign.status == "running"
