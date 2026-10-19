@@ -183,7 +183,7 @@ export function ModelPicker({
           data-solid
           className={cn("mt-2 flex flex-col rounded-xl border border-zinc-200 bg-white", inline ? "relative w-full" : "absolute right-0 top-full z-50 max-h-[min(30rem,72vh)] w-[max(100%,min(26rem,calc(100vw-2rem)))] shadow-xl")}
         >
-          <div className="border-b border-zinc-100 p-2">
+          <div className="border-b border-zinc-100 p-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
               <Input
@@ -192,7 +192,7 @@ export function ModelPicker({
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={onKeyDown}
                 placeholder="Search models…"
-                className="pl-9"
+                className="min-h-14 pl-10 text-base! font-medium"
                 role="combobox"
                 aria-expanded
                 aria-controls={`${uid}-models`}

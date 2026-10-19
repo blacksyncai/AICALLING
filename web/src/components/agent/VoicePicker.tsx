@@ -555,7 +555,7 @@ export function VoicePicker({
                   onChange={(e) => setQ(e.target.value)}
                   onKeyDown={onKeyDown}
                   placeholder="Search voices by name…"
-                  className="pl-9"
+                  className="min-h-14 pl-10 text-base! font-medium"
                   role="combobox"
                   aria-expanded
                   aria-controls={`${uid}-list`}

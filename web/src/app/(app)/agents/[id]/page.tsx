@@ -304,7 +304,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             onChange={setSection}
             variant="dark"
             layoutId="agent-editor-tab"
-            className="mb-5 grid! grid-cols-3 [&>button]:min-w-0 [&>button]:justify-center [&>button]:px-2! [&>button]:text-xs! sm:flex! sm:flex-wrap! sm:[&>button]:text-sm!"
+            swipeHint
+            className="mb-5 flex! flex-nowrap! overflow-x-auto overscroll-x-contain [scrollbar-width:none] snap-x snap-proximity [&>button]:min-h-11 [&>button]:snap-start [&>button]:px-4! [&>button]:text-sm! sm:flex-wrap!"
           />
 
           <AnimatedTabPanel key={section}>

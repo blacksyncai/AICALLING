@@ -122,11 +122,11 @@ export function AiMascotInput({ onSubmit, isProcessing = false, value, onChange,
       </motion.div>}
     </AnimatePresence>
     {active && <div className="ml-auto h-24 w-28 mr-3"><RobotBeta emotion={busy ? "thinking" : "reading"} textLength={text.length} isListening={listening} /></div>}
-    <div className={`min-w-0 rounded-3xl border border-zinc-200 bg-white p-4 shadow-[0_12px_35px_#211b1808] focus-within:border-brand-400 dark:border-zinc-700 dark:bg-zinc-900 ${className}`}>
+    <div className={`min-w-0 rounded-3xl border border-zinc-300 bg-white p-4 shadow-[0_12px_35px_#211b1808] focus-within:border-brand-400 dark:border-zinc-700 dark:bg-zinc-900 ${className}`}>
       <textarea ref={textarea} aria-label="Describe your automation" value={text} maxLength={4000} rows={3} disabled={disabled || busy}
         onChange={e => change(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); } }}
         placeholder={listening ? "Listening…" : placeholder}
-        className="block w-full resize-none bg-transparent text-sm leading-6 text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100" />
+        className="block w-full resize-none bg-transparent text-base leading-7 text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100" />
       <div className="mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
         <span className="text-[11px] text-zinc-500">{busy ? "Drafting your workflow…" : "Draft mode · Review before activation"}</span>
         <div className="flex shrink-0 items-center gap-2">
