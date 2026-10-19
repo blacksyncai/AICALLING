@@ -3,10 +3,12 @@
 import { ConnectionState, Room, RoomEvent, Track, type RemoteParticipant, type RemoteTrack, type TextStreamReader } from "livekit-client";
 import { ExternalLink, Mic, MicOff, PhoneCall, PhoneOff } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { post } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button, Notice } from "../ui";
+import { AiOrb } from "../ui/ai-orb";
+import { callOrbState } from "../ui/ai-orb-state";
 
 type Line = { id: string; who: "agent" | "you"; text: string; final: boolean };
 type Phase = "idle" | "connecting" | "live" | "ended";
@@ -51,12 +53,14 @@ export function WebCallPanel({
   const [record, setRecord] = useState(false);
   const [recording, setRecording] = useState(false);
 
-  const agentLevel = useLevel(() => {
+  const getAgentLevel = useCallback(() => {
     const room = roomRef.current;
-    const agent = room ? [...room.remoteParticipants.values()][0] : undefined;
+    const agent = room ? [...room.remoteParticipants.values()].find((participant) => participant.isAgent) : undefined;
     return agent?.audioLevel ?? 0;
-  }, phase === "live");
-  const youLevel = useLevel(() => roomRef.current?.localParticipant.audioLevel ?? 0, phase === "live" && !muted);
+  }, []);
+  const getYouLevel = useCallback(() => roomRef.current?.localParticipant.audioLevel ?? 0, []);
+  const agentLevel = useLevel(getAgentLevel, phase === "live");
+  const youLevel = useLevel(getYouLevel, phase === "live" && !muted);
 
   useEffect(() => {
     if (phase !== "live") return;
@@ -113,8 +117,11 @@ export function WebCallPanel({
         }
       });
       room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => track.detach().forEach((el) => el.remove()));
+      room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+        if (participant.isAgent && participant.attributes["lk.agent.state"]) setAgentState(participant.attributes["lk.agent.state"]);
+      });
       room.on(RoomEvent.ParticipantAttributesChanged, (attrs: Record<string, string>, p) => {
-        if ((p as RemoteParticipant).isAgent !== false && attrs["lk.agent.state"]) setAgentState(attrs["lk.agent.state"]);
+        if ((p as RemoteParticipant).isAgent && attrs["lk.agent.state"]) setAgentState(attrs["lk.agent.state"]);
       });
       room.on(RoomEvent.ConnectionStateChanged, (s: ConnectionState) => {
         if (s === ConnectionState.Disconnected) setPhase("ended");
@@ -141,6 +148,8 @@ export function WebCallPanel({
       if (cancelledRef.current) return void room.disconnect();
       await room.localParticipant.setMicrophoneEnabled(true);
       if (cancelledRef.current) return void room.disconnect();
+      const agent = [...room.remoteParticipants.values()].find((participant) => participant.isAgent);
+      if (agent?.attributes["lk.agent.state"]) setAgentState(agent.attributes["lk.agent.state"]);
       setPhase("live");
     } catch (e) {
       setError((e as Error).message);
@@ -172,19 +181,9 @@ export function WebCallPanel({
     <div className="flex h-full flex-col">
       <div ref={audioRef} className="hidden" />
       <div className="flex flex-col items-center gap-4 py-6">
-        <div className="relative flex h-28 w-28 items-center justify-center">
-          <div
-            className="absolute inset-0 rounded-full bg-brand-500/15 transition-transform duration-100"
-            style={{ transform: `scale(${1 + Math.min(agentLevel * 2.2, 0.45)})` }}
-          />
-          <div
-            className={cn(
-              "relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br text-white shadow-lg",
-              phase === "live" ? "brand-gradient" : "from-zinc-400 to-zinc-500",
-            )}
-          >
-            <PhoneCall className="h-7 w-7" />
-          </div>
+        <div className="flex h-28 w-28 items-center justify-center">
+          <AiOrb size="lg" state={callOrbState({ phase, agentState, hasError: !!error, agentAudioLevel: agentLevel })}
+            label={!error && phase === "live" && (agentState === "speaking" || agentLevel > 0.02) ? "Agent is speaking" : undefined} />
         </div>
         <div className="text-center">
           <div className="text-sm font-medium">{phase === "idle" ? "Talk to your agent" : stateLabel}</div>

@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUp, LoaderCircle, Mic, Square } from "lucide-react";
 
+import { AiOrb, orbStateFor } from "./ai-orb";
+
 export type RobotEmotion = "reading" | "thinking";
 export interface ChatSubmitData { prompt: string }
 export interface AiMascotInputProps {
@@ -121,7 +123,10 @@ export function AiMascotInput({ onSubmit, isProcessing = false, value, onChange,
         <p className="mt-1 text-xs leading-6 text-zinc-500 dark:text-zinc-400">{subtitle}</p>
       </motion.div>}
     </AnimatePresence>
-    {active && <div className="ml-auto h-24 w-28 mr-3"><RobotBeta emotion={busy ? "thinking" : "reading"} textLength={text.length} isListening={listening} /></div>}
+    {active && <div className="mb-3 flex items-center justify-end gap-2 text-xs text-zinc-500" role="status">
+      <span>{error ? "Request failed" : busy ? "Drafting your workflow…" : listening ? "Listening…" : "Ready to send"}</span>
+      <AiOrb size="md" decorative state={listening ? "listening" : orbStateFor({ status: error ? "error" : busy ? "submitted" : "ready" })} />
+    </div>}
     <div className={`min-w-0 rounded-3xl border border-zinc-300 bg-white p-4 shadow-[0_12px_35px_#211b1808] focus-within:border-brand-400 dark:border-zinc-700 dark:bg-zinc-900 ${className}`}>
       <textarea ref={textarea} aria-label="Describe your automation" value={text} maxLength={4000} rows={3} disabled={disabled || busy}
         onChange={e => change(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); } }}
