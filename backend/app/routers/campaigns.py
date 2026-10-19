@@ -25,7 +25,7 @@ from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.services import entitlements, quiet_hours
 from app.services.accounts import InsufficientCredits, ensure_can_call
-from app.services.outbound_call import LeadBusy
+from app.services.outbound_call import LeadBusy, CampaignScheduleClosed
 from app.services.auth import Context, CtxDep, DbDep
 from app.services.contacts import CsvError, parse_contacts_csv
 
@@ -114,10 +114,7 @@ def _parse_hhmm(value: str) -> time:
 
 
 def _tz(name: str | None) -> ZoneInfo:
-    try:
-        return ZoneInfo(name or DEFAULT_TIMEZONE)
-    except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo(DEFAULT_TIMEZONE)
+    return ZoneInfo(name or DEFAULT_TIMEZONE)
 
 
 def calling_rules(c) -> dict:
@@ -156,7 +153,10 @@ def _aware(d: datetime) -> datetime:
 
 def within_calling_hours(campaign, now_utc: datetime) -> bool:
     """True if `now_utc` falls inside the campaign's calling window (in its own time zone)."""
-    start, end, days, tz = _window(campaign)
+    try:
+        start, end, days, tz = _window(campaign)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False  # Invalid saved zones must never silently dial in a different zone.
     local = _aware(now_utc).astimezone(tz)
     return local.weekday() in days and start <= local.time().replace(tzinfo=None) < end
 
@@ -169,7 +169,10 @@ def next_window_start(campaign, now_utc: datetime) -> datetime | None:
     now_utc = _aware(now_utc)
     if within_calling_hours(campaign, now_utc):
         return now_utc
-    start, _end, days, tz = _window(campaign)
+    try:
+        start, _end, days, tz = _window(campaign)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
     local = now_utc.astimezone(tz)
     for offset in range(0, 8):
         day: date = local.date() + timedelta(days=offset)
@@ -696,6 +699,8 @@ async def call_selected_leads(
 
     if campaign.status == "cancelled":
         raise HTTPException(status_code=400, detail="This campaign was cancelled — make a new one to call these contacts.")
+    if not within_calling_hours(campaign, datetime.now(timezone.utc)):
+        raise HTTPException(status_code=409, detail=f"This campaign is outside its calling hours in {calling_rules(campaign)['timezone']}. Selected contacts were not dialed.")
     # The campaign's own status is left alone: calling a few picked contacts doesn't start the whole list
     # (a "running" campaign is dialed in full, including after a restart).
     background_tasks.add_task(_dispatch_selected, str(campaign_id), valid_ids, campaign.status)
@@ -728,8 +733,9 @@ async def _dial_selected_one(campaign_uuid: uuid.UUID, lid: str, outbound_call_s
             return True
         try:
             campaign = await db.get(Campaign, campaign_uuid)
-            if campaign:
-                _record_attempt(lead, campaign)
+            if not campaign or not within_calling_hours(campaign, datetime.now(timezone.utc)):
+                return False
+            _record_attempt(lead, campaign)
             await outbound_call_service.dispatch_call(lead, db)
             if campaign:
                 campaign.total_dialed += 1
@@ -737,6 +743,9 @@ async def _dial_selected_one(campaign_uuid: uuid.UUID, lid: str, outbound_call_s
                 await db.commit()
         except InsufficientCredits as exc:
             await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
+            return False
+        except CampaignScheduleClosed:
+            await db.rollback()
             return False
         except LeadBusy:
             await db.rollback()
@@ -986,6 +995,9 @@ async def _process_call_queue(campaign_id: str) -> None:
                     except InsufficientCredits as exc:
                         await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
                         return
+                    except CampaignScheduleClosed:
+                        await db.rollback()  # A closed/changed schedule is a wait, never a failed attempt.
+                        wait = 1
                     except LeadBusy:
                         await db.rollback()  # already on a call from somewhere else; their result decides what's next
                     except Exception as exc:

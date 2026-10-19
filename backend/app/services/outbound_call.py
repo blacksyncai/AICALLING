@@ -47,8 +47,25 @@ class CallSetupError(RuntimeError):
     """Raised when a call can't be placed because something isn't configured."""
 
 
+class CampaignScheduleClosed(CallSetupError):
+    """Campaign-linked calls must obey the saved campaign timezone and window."""
+
+
 class LeadBusy(CallSetupError):
     """The contact is already being dialed or is on a call — never ring someone twice at once."""
+
+
+async def _check_campaign_schedule(db, campaign_id):
+    if not campaign_id:
+        return
+    # Lazy import avoids the router/service import cycle. The same rules are used by the queue and API.
+    from app.routers.campaigns import calling_rules, within_calling_hours
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign:
+        raise CampaignScheduleClosed("This campaign no longer exists; the call was not placed.")
+    await db.refresh(campaign, ["timezone", "call_window_start", "call_window_end", "call_days"])
+    if not within_calling_hours(campaign, datetime.now(timezone.utc)):
+        raise CampaignScheduleClosed(f"This campaign is outside its calling hours in {calling_rules(campaign)['timezone']}. The call was not placed.")
 
 
 # Contacts being dialed right now in this process (one API process runs every dialer).
@@ -310,6 +327,8 @@ class CallService:
             )
         if lead is not None and lead.do_not_call:
             raise CallSetupError("This contact is on the do-not-call list.")
+        effective_campaign_id = campaign_id or (lead.campaign_id if lead else None)
+        await _check_campaign_schedule(db, effective_campaign_id)
         if lead is not None and lead.crm_refs:
             from app.services.crm.sync import ensure_context
             try:
@@ -394,6 +413,9 @@ class CallService:
             metadata = json.dumps({**json.loads(metadata), "record_key": call_log.recording_key,
                                    "worker_recording": True})
 
+        # CRM/context, credit checks and metadata preparation can await network work.
+        # Re-read the saved rules immediately before committing a real dial.
+        await _check_campaign_schedule(db, campaign_id)
         if lead:
             now = datetime.now(timezone.utc)
             await db.execute(update(Lead).where(Lead.id == lead.id)

@@ -194,6 +194,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
   const [droppedCsv, setDroppedCsv] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [rulesDirty, setRulesDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   const leads = useMemo(() => leadsData?.leads ?? [], [leadsData]);
@@ -264,10 +265,10 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
           ) : (
             <Button
               variant="primary"
-              onClick={() => action("start", () => post(`/api/campaigns/${id}/start`), "Campaign started — dialing now")}
+              onClick={() => action("start", () => post(`/api/campaigns/${id}/start`), "Campaign started — follows saved calling hours")}
               loading={busy === "start"}
-              disabled={!canDial || pending === 0 || !["draft", "paused"].includes(campaign.status)}
-              title={!canDial ? "Phone calling isn't available yet" : pending === 0 ? "No contacts left to call" : undefined}
+              disabled={rulesDirty || !canDial || pending === 0 || !["draft", "paused"].includes(campaign.status)}
+              title={rulesDirty ? "Save calling rules first" : !canDial ? "Phone calling isn't available yet" : pending === 0 ? "No contacts left to call" : undefined}
             >
               <Play className="h-4 w-4" /> {campaign.status === "paused" ? "Resume" : "Start campaign"}
             </Button>
@@ -379,7 +380,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         </div>
       </Card>
 
-      <CallingRulesCard campaign={campaign} onSaved={refreshCampaign} />
+      <CallingRulesCard campaign={campaign} onSaved={refreshCampaign} onDirtyChange={setRulesDirty} />
 
       <Card
         className="relative mb-6"
@@ -417,7 +418,8 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
                   size="sm"
                   variant="primary"
                   loading={busy === "call"}
-                  disabled={!canDial}
+                  disabled={rulesDirty || !canDial}
+                  title={rulesDirty ? "Save calling rules first" : undefined}
                   onClick={() =>
                     action(
                       "call",

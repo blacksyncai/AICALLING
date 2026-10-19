@@ -152,12 +152,13 @@ function formFrom(c: Campaign): Form {
   };
 }
 
-export function CallingRulesCard({ campaign, onSaved }: { campaign: Campaign; onSaved: () => void }) {
+export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaign: Campaign; onSaved: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const toast = useToast();
   const [form, setForm] = useState<Form>(() => formFrom(campaign));
   const [busy, setBusy] = useState(false);
   const saved = formFrom(campaign);
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+  useEffect(() => { onDirtyChange?.(dirty || busy); }, [dirty, busy, onDirtyChange]);
 
   // Pick up changes made elsewhere while the form is untouched.
   const savedKey = JSON.stringify(saved);
@@ -206,6 +207,7 @@ export function CallingRulesCard({ campaign, onSaved }: { campaign: Campaign; on
           ) : undefined
         }
       />
+      {dirty && <p className="px-5 pt-3 text-sm font-medium text-amber-700">Save these calling rules before starting or resuming calls. Until saved, the server keeps using the previous schedule.</p>}
       <div className="grid gap-6 p-5 lg:grid-cols-2">
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
@@ -242,7 +244,7 @@ export function CallingRulesCard({ campaign, onSaved }: { campaign: Campaign; on
             </div>
             {noDays && <p className="mt-1 text-xs text-red-600">Pick at least one day.</p>}
           </div>
-          <Field label="Time zone" hint="Calling hours follow this time zone. We also never ring anyone before 8 AM or after 9 PM their own time.">
+          <Field label="Time zone" hint="The server uses this saved time zone—not your browser or device. For example, 9 AM Pacific means 9 AM in Los Angeles, including daylight saving changes. Recipient quiet hours can delay a call further.">
             <Select value={form.timezone} onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))}>
               {zones.map(([z, label]) => (
                 <option key={z} value={z}>
