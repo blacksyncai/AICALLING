@@ -298,7 +298,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
       />
 
       {section === "push" && (p.can_log_calls === false ? (
-        <Notice tone="amber">{p.description} This connection does not send call notes or opt-out updates back to Brivity.</Notice>
+        <Notice tone="amber">{p.description} This connection does not send call notes or opt-out updates back to {p.name}.</Notice>
       ) : <PushCalls p={p} c={c} isCrm={isCrm} onSaved={refresh} />)}
       {section === "pipeline" && (
         <div className="space-y-5">

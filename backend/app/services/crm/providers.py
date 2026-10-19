@@ -2465,6 +2465,96 @@ class Brivity(Provider):
         raise CrmError("Brivity call-note writes are not documented and are not enabled.")
 
 
+class Apollo(Provider):
+    key, name = "apollo", "Apollo"
+    native = True
+    can_import = True
+    can_new_leads = False
+    can_log_calls = False
+    description = "Connect your Apollo API key to import saved contacts with phone numbers, manually or through scheduled sync. This does not search or enrich Apollo's prospect database, enroll sequences, or write call notes."
+    docs_url = "https://docs.apollo.io/reference/search-for-contacts"
+    auth_fields = [
+        AuthField("api_key", "Apollo API key", help="Use a key with saved-contact search access. Availability depends on your Apollo plan and API permissions; never use your login password."),
+        AuthField("search", "Saved-contact search (optional)", secret=False, placeholder="Name, company, title or email",
+                  help="Limits imported saved contacts using Apollo's keyword search. Leave empty to import saved contacts. You can change this through Update credentials."),
+    ]
+
+    def native_http(self, secret, config):
+        if not secret or secret != secret.strip() or any(ch.isspace() for ch in secret):
+            raise CrmError("Enter the Apollo API key only, without spaces or a header prefix.")
+        if len(str(config.get("search") or "")) > 500:
+            raise CrmError("Keep the Apollo saved-contact search under 500 characters.")
+        return NativeHttp("https://api.apollo.io/api/v1", headers={"X-Api-Key": secret})
+
+    @staticmethod
+    def _rows(data):
+        if not isinstance(data, dict) or not isinstance(data.get("contacts"), list) or any(not isinstance(row, dict) or not row.get("id") for row in data["contacts"]):
+            raise CrmError("Apollo did not return a valid saved-contact response. No contacts were imported.")
+        return data["contacts"]
+
+    async def verify(self, http, config):
+        health = await http.request("GET", "/auth/health")
+        if not isinstance(health, dict) or health.get("is_logged_in") is not True:
+            raise CrmError("Apollo did not verify this API key.")
+        # Read-only search: also verify the account/key can access saved contacts.
+        self._rows(await http.request("POST", "/contacts/search", json={"page": 1, "per_page": 1}))
+        return "Apollo account"
+
+    @staticmethod
+    def _contact(row):
+        numbers = row.get("phone_numbers") or []
+        numbers = numbers if isinstance(numbers, list) else []
+        candidates = [row.get("direct_phone"), row.get("phone")]
+        candidates += [number.get("sanitized_number") or number.get("raw_number") for number in numbers if isinstance(number, dict)]
+        phone = next((normalized for value in candidates if isinstance(value, str) and (normalized := normalize_phone(value))), "")
+        if not phone:
+            return None
+        labels = row.get("labels") or []
+        tags = [str(label.get("name") or "") if isinstance(label, dict) else str(label) for label in labels] if isinstance(labels, list) else []
+        tags += [str(label) for label in row.get("label_names", [])] if isinstance(row.get("label_names"), list) else []
+        flagged = any(row.get(key) is True for key in ("do_not_call", "is_dnc", "dnc"))
+        flagged = flagged or any(tag.strip().lower() in _DNC_TAGS for tag in tags)
+        flagged = flagged or any(isinstance(number, dict) and (number.get("do_not_call") is True or number.get("dnc_status") in (True, "dnc", "do_not_call")) for number in numbers)
+        company = row.get("organization_name") or next((value.get("name") for key in ("account", "organization") if isinstance(value := row.get(key), dict) and value.get("name")), "")
+        return Contact(name=str(row.get("name") or " ".join(str(row.get(key) or "") for key in ("first_name", "last_name")).strip()),
+                       phone=phone, email=str(row.get("email") or ""), company=str(company), external_id=str(row["id"]),
+                       created_at=_parse_time(row.get("created_at")), tags=[tag for tag in tags if tag], dnc=flagged)
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        if since is not None or (filters or {}).get("skip_contacted"):
+            raise CrmError("Apollo imports do not support new-lead timestamps or reliable previous-contact filtering. Turn off 'Skip already contacted' to import saved contacts.")
+        if filters:
+            raise CrmError("Unsupported Apollo import filters. Use Saved-contact search through Update credentials.")
+        limit = max(0, min(int(limit), 2000))
+        contacts, seen = [], set()
+        for page in range(1, (limit + 99) // 100 + 1):
+            per_page = 100  # Fixed page size: changing it on the last page shifts Apollo's offset.
+            body = {"page": page, "per_page": per_page, "sort_by_field": "contact_created_at", "sort_ascending": False}
+            if config.get("search"):
+                body["q_keywords"] = str(config["search"]).strip()
+            data = await http.request("POST", "/contacts/search", json=body)
+            rows = self._rows(data)
+            if len(rows) > per_page:
+                raise CrmError("Apollo returned more saved contacts than requested. Import stopped.")
+            for row in rows[:limit - (page - 1) * per_page]:
+                external_id = str(row["id"])
+                if external_id in seen:
+                    raise CrmError("Apollo returned repeated contact IDs during pagination. Please retry the import.")
+                seen.add(external_id)
+                contact = self._contact(row)
+                if contact:
+                    contacts.append(contact)
+            if len(rows) < per_page:
+                break
+        return contacts
+
+    async def find_or_create(self, http, config, c, create):
+        raise CrmError("Apollo contact creation and reverse lookup are not enabled by this saved-contact connector.")
+
+    async def log_call(self, http, config, external_id, call):
+        raise CrmError("Apollo call-note writes are not enabled by this saved-contact connector.")
+
+
 class BoomTown(Provider):
     key, name = "boomtown", "BoomTown"
     native = False
@@ -2478,7 +2568,7 @@ class BoomTown(Provider):
 
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
-    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), BoomTown(), GoogleSheets(), Slack(),
+    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), BoomTown(), GoogleSheets(), Slack(),
 )}
 
 
