@@ -182,7 +182,7 @@ export function WebCallPanel({
       <div ref={audioRef} className="hidden" />
       <div className="flex flex-col items-center gap-4 py-6">
         <div className="flex h-28 w-28 items-center justify-center">
-          <AiOrb size="lg" state={callOrbState({ phase, agentState, hasError: !!error, agentAudioLevel: agentLevel })}
+          <AiOrb size="lg" className="scale-150 sm:scale-100" state={callOrbState({ phase, agentState, hasError: !!error, agentAudioLevel: agentLevel })}
             label={!error && phase === "live" && (agentState === "speaking" || agentLevel > 0.02) ? "Agent is speaking" : undefined} />
         </div>
         <div className="text-center">
