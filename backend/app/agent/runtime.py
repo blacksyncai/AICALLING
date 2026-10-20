@@ -303,14 +303,17 @@ def lead_variables(lead) -> dict:
     """Template variables available for a lead (incl. custom CSV columns)."""
     if lead is None:
         return {}
+    first = (lead.name or "").split(" ")[0]
     v = {
-        "name": (lead.name or "").split(" ")[0] if lead.name else "",
+        "name": first,
         "full_name": lead.name or "",
         "company": lead.company or "",
         "phone": lead.phone or "",
         "email": lead.email or "",
         "role": lead.role or "",
     }
+    if first:
+        v["first_name"] = first  # scripts often say {{first_name}}; a CSV column of that name fills it otherwise
     for k, val in (getattr(lead, "custom_fields", None) or {}).items():
         if isinstance(val, (dict, list)):
             continue  # internal (e.g. the raw CRM fields) — not a template value
