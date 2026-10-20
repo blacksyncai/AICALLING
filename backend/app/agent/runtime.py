@@ -70,6 +70,7 @@ def agent_to_runtime(agent, *, secrets: bool = False) -> dict:
         "transfer_number": agent.transfer_number or "",
         "voicemail_action": getattr(agent, "voicemail_action", None) or "hang_up",
         "voicemail_message": getattr(agent, "voicemail_message", None) or "",
+        "screener_action": getattr(agent, "screener_action", None) or "answer",
         "max_duration_seconds": agent.max_duration_seconds or 600,
         "ai_disclosure": getattr(agent, "ai_disclosure", None) is not False,
         "business_name": (getattr(agent, "builder", None) or {}).get("business_name") or "",
@@ -421,6 +422,36 @@ def voicemail_greeting_match(text: str) -> str | None:
 
 def is_voicemail_greeting(text: str) -> bool:
     return voicemail_greeting_match(text) is not None
+
+# Call screening (iPhone Call Screening, Google Call Screen, carrier screeners): an assistant answers, asks who's
+# calling, then holds the line while the person decides.
+_SCREENER = (
+    "screening service", "call screening", "this call is being screened", "calls are being screened",
+    "record your name and reason", "say your name and why you're calling", "say your name and why you are calling",
+    "state your name and", "say your name and", "name and reason for calling", "name and the reason for",
+    "and why you're calling", "and why you are calling", "what you're calling about", "who's calling and why",
+    "see if this person is available", "see if they're available", "see if they are available",
+    "the person you're calling is using", "the person you are calling is using", "google assistant",
+)
+# What a screener says while the person decides; no reply needed.
+_SCREENER_HOLD = (
+    "stay on the line", "please hold", "please wait", "one moment", "just a moment", "be with you",
+    "connecting you", "see if", "screening", "checking", "trying to reach", "hang on",
+)
+
+
+def screener_match(text: str) -> str | None:
+    t = (text or "").lower().replace("’", "'")
+    return next((h for h in _SCREENER if h in t), None)
+
+
+def is_screener_hold(text: str) -> bool:
+    """A screener's holding line (or a fragment of one), not a person picking up."""
+    t = (text or "").lower().replace("’", "'").strip()
+    if screener_match(t):
+        return True
+    return "?" not in t and any(h in t for h in _SCREENER_HOLD)  # a person picking up asks ("Hello? Who's this?")
+
 
 NO_CONVERSATION_OUTCOMES = ("no_answer", "voicemail")
 

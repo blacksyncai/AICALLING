@@ -44,7 +44,7 @@ const VARIABLES = ["name", "full_name", "company", "email", "phone", "role"];
 const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
   "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio", "enable_booking",
-  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "voicemail_action", "voicemail_message", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
+  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "voicemail_action", "voicemail_message", "screener_action", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
   "ai_disclosure", "builder", "caller_number", "record_calls", "specialty",
 ];
 
@@ -765,6 +765,11 @@ const VOICEMAIL_OPTIONS: { value: NonNullable<Agent["voicemail_action"]>; label:
   { value: "ignore", label: "Keep talking", hint: "Treat it like a normal call (not recommended)." },
 ];
 
+const SCREENER_OPTIONS: { value: NonNullable<Agent["screener_action"]>; label: string; hint: string }[] = [
+  { value: "answer", label: "Answer and wait", hint: "Say “Hey, it’s just …”, wait on the line, then talk to the person." },
+  { value: "hang_up", label: "Hang up", hint: "Treat it like voicemail." },
+];
+
 /** What a phone call does when an answering machine picks up. */
 function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void }) {
   const action = draft.voicemail_action ?? "hang_up";
@@ -821,6 +826,31 @@ function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof
           alertDetail="Calls stay open until the mailbox cuts off (often 2+ minutes). Hang up or Leave a message is cheaper and sounds better."
           showControls={false}
         />
+      )}
+      {action !== "ignore" && (
+        <div className="space-y-2 border-t border-zinc-100 pt-4">
+          <div>
+            <div className="text-sm font-medium">When a call screener answers</div>
+            <p className="mt-0.5 text-xs text-zinc-500">Phone assistants that ask &ldquo;say your name and why you&rsquo;re calling&rdquo; before putting the person on.</p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {SCREENER_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => set("screener_action", o.value)}
+                aria-pressed={(draft.screener_action ?? "answer") === o.value}
+                className={cn(
+                  "rounded-xl border p-3 text-left transition-colors",
+                  (draft.screener_action ?? "answer") === o.value ? "border-brand-500 bg-brand-50/60 ring-1 ring-brand-500" : "border-zinc-200 hover:border-zinc-300",
+                )}
+              >
+                <div className="text-sm font-medium text-zinc-900">{o.label}</div>
+                <div className="mt-0.5 text-xs text-zinc-500">{o.hint}</div>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
     </Card>
   );

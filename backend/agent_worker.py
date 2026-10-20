@@ -1270,6 +1270,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     vm = {"detected": False, "heard": "", "speaking": False, "changed": _time.monotonic()}
     vm_action = (cfg.get("voicemail_action") or "hang_up")
+    # Call screener: "seen" once one answered; "holding" while we wait for the person to come on the line.
+    screen = {"seen": False, "holding": False}
+    screen_action = cfg.get("screener_action") or "answer"
     vm_message = render_vars(cfg.get("voicemail_message") or "", variables).strip()
 
     class _CallAgent(Agent):
@@ -1277,6 +1280,17 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             trace.mark("turn_committed", turn_key=trace.turn_key(new_message.text_content or ""))
             if vm["detected"]:
                 raise StopResponse()  # don't talk back to a voicemail greeting
+            if screen["holding"]:
+                from app.agent.runtime import is_screener_hold
+
+                text = (new_message.text_content or "").strip()
+                if not text or is_screener_hold(text):
+                    raise StopResponse()  # the screener is still holding the line: stay quiet
+                screen["holding"] = False
+                log.info("screener_passed", room=ctx.room.name)
+                turn_ctx.add_message(role="system", content=(
+                    "The call screener has put the actual person on the line. Greet them naturally and carry on "
+                    "with your opening from the start, as if they just picked up."))
 
         async def tts_node(self, text, model_settings):
             speech = owning_speech()
@@ -1354,12 +1368,43 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             hangup=lambda: _delete_room(ctx.room.name),
             report=lambda: _post_run_outcome(run, "voicemail"))
 
+    async def _answer_screener() -> None:
+        try:
+            session.interrupt(force=True)
+        except Exception:
+            pass
+        run.transcript.append({"role": "tool", "tool": "call_screener", "args": {"action": screen_action},
+                               "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
+        if screen_action == "hang_up":
+            vm["detected"] = True
+            await _handle_voicemail()
+            return
+        try:
+            session.generate_reply(instructions=(
+                "A call-screening assistant answered and asked who is calling. Answer it in one short, casual "
+                "line with your first name and the company, like \"Hey, it's just Zane with Compass Multifamily.\" "
+                "Nothing else: no pitch, no question. Then stay quiet until the person comes on the line."),
+                allow_interruptions=False)
+        except Exception as exc:
+            log.warning("screener_reply_failed", error=str(exc)[:200])
+
     def _on_transcribed(ev) -> None:
         if call_type != "outbound" or vm["detected"] or not getattr(ev, "is_final", False):
             return
         if run.t0 and _time.monotonic() - run.t0 > 45:
             return  # only the opening of the call
         text = getattr(ev, "transcript", "") or ""
+        if not screen["seen"]:
+            from app.agent.runtime import screener_match
+
+            hit = screener_match(vm["heard"] + " " + text)
+            if hit:
+                screen["seen"] = True
+                vm["heard"] = ""  # a screener that then sends us to voicemail is still caught below
+                log.info("screener_match", room=ctx.room.name, phrase=hit, action=screen_action)
+                screen["holding"] = screen_action == "answer"  # before its turn completes, so we don't reply to it
+                asyncio.create_task(_answer_screener())
+                return
         first = not vm["heard"].strip()
         vm["heard"] += " " + text
         # A recorded greeting ("Hey, it's Sam, can't talk right now, I'll call you back") is the first
@@ -1505,6 +1550,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                                            "args": {"result": cat, "reason": result.reason[:160]},
                                            "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
                     if result.is_machine and not vm["detected"]:
+                        await asyncio.sleep(1.5)  # a screener's words may still be on their way to the transcript
+                        if screen["seen"] or "screen" in (result.reason or "").lower():
+                            log.info("amd_machine_is_screener", room=ctx.room.name)
+                            return
                         vm["detected"] = True
                         await _handle_voicemail()
                 except Exception as exc:
