@@ -363,7 +363,7 @@ class CallService:
         )
         carrier = await telephony.carrier_of(db, org.id, from_number)
         record = recordings.enabled_for(agent)
-        if record and settings.recording_via_twilio and carrier != "bandwidth":
+        if record and settings.recording_via_twilio and carrier == "twilio":
             # The Twilio trunk records the call; it's copied into the bucket after the call ends.
             from app.services import twilio_recordings
 
@@ -416,8 +416,10 @@ class CallService:
         # Dial in the background and wait for the outcome, so a carrier rejection
         # (403, busy, no answer…) is recorded on the call instead of it looking
         # "in progress" forever.
+        trunk_id = (settings.livekit_sip_plivo_trunk_id if carrier == "plivo" and settings.livekit_sip_plivo_trunk_id
+                    else settings.livekit_sip_outbound_trunk_id)
         sip_req = api.CreateSIPParticipantRequest(
-            sip_trunk_id=settings.livekit_sip_outbound_trunk_id,
+            sip_trunk_id=trunk_id,
             sip_call_to=phone,
             sip_number=from_number,
             room_name=room_name,
@@ -429,10 +431,10 @@ class CallService:
             krisp_enabled=True,
         )
         log.info("livekit_sip_dialing", room=room_name, to=phone, from_number=from_number or "trunk default",
-                 trunk=settings.livekit_sip_outbound_trunk_id)
+                 trunk=trunk_id, carrier=carrier)
         # LiveKit egress only when Twilio isn't recording (egress is capped by concurrency and monthly minutes).
         recording_key = (recordings.key_for(org.id, call_log.id)
-                         if record and not settings.recording_via_twilio else None)
+                         if record and (not settings.recording_via_twilio or carrier != "twilio") else None)
         task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name,
                                                    recording_key))
         _BACKGROUND.add(task)

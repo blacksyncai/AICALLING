@@ -44,7 +44,7 @@ def twilio(monkeypatch):
     monkeypatch.setattr(settings, "twilio_auth_token", "secret")
     monkeypatch.setattr(settings, "twilio_trunk_sid", TRUNK)
 
-    async def fake_lk_numbers(add=None, remove=None):
+    async def fake_lk_numbers(add=None, remove=None, trunk_id=None):
         state.lk.append((add or [], remove or []))
 
     monkeypatch.setattr(telephony, "_livekit_numbers", fake_lk_numbers)

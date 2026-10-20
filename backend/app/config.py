@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_sip_outbound_trunk_id: str = ""
+    # LiveKit outbound trunk for numbers that live with Plivo (Zentrunk); empty = no Plivo calling.
+    livekit_sip_plivo_trunk_id: str = ""
     livekit_sip_inbound_trunk_id: str = ""
     livekit_agent_name: str = "closer"
 

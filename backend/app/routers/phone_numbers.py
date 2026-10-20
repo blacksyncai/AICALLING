@@ -47,7 +47,7 @@ class PurchaseIn(BaseModel):
 
 class AdminAssign(BaseModel):
     number: str
-    mode: str = Field(pattern="^(purchase|import)$")
+    mode: str = Field(pattern="^(purchase|import|plivo)$")
     label: str = Field(default="", max_length=100)
     request_id: uuid.UUID | None = None
 
@@ -271,6 +271,8 @@ async def admin_assign(org_id: uuid.UUID, body: AdminAssign, admin: AdminDep, db
     try:
         if body.mode == "purchase":
             row = await telephony.purchase(db, org_id, body.number, body.label)
+        elif body.mode == "plivo":
+            row = await telephony.add_plivo_number(db, org_id, body.number, body.label)
         else:
             row = await telephony.import_owned(db, org_id, body.number, body.label)
     except (telephony.TelephonyError, ValueError) as exc:

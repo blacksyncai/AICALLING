@@ -366,3 +366,40 @@ def test_recording_downloads_as_mp3(client, agent_id, monkeypatch):
     assert "phone.mp3" in client.get(f"/api/calls/{phone.id}/recording/download").json()["url"] and len(converted) == 1
     missing = asyncio.run(make("recordings/{org}/later.ogg"))
     assert client.get(f"/api/calls/{missing.id}/recording/download").json()["status"] == "processing"
+
+
+def test_admin_adds_a_plivo_number_and_calls_route_through_plivo(client, monkeypatch):
+    import asyncio
+    import uuid as _uuid
+
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.services import telephony
+
+    added = []
+
+    async def fake_numbers(add=None, remove=None, trunk_id=None):
+        added.append((tuple(add or []), tuple(remove or []), trunk_id))
+
+    monkeypatch.setattr(telephony, "_livekit_numbers", fake_numbers)
+    org_id = client.get("/api/auth/me").json()["org"]["id"]
+    number = f"+1415555{_uuid.uuid4().int % 10000:04d}"
+    # Not set up on the server: refused with a clear message.
+    monkeypatch.setattr(settings, "livekit_sip_plivo_trunk_id", "")
+    r = client.post(f"/api/admin/orgs/{org_id}/phone-numbers", json={"number": number, "mode": "plivo"})
+    assert r.status_code == 400 and "Plivo" in r.json()["detail"]
+
+    monkeypatch.setattr(settings, "livekit_sip_plivo_trunk_id", "ST_plivo")
+    r = client.post(f"/api/admin/orgs/{org_id}/phone-numbers", json={"number": number, "mode": "plivo", "label": "Plivo"})
+    assert r.status_code == 201, r.text
+    assert r.json()["carrier"] == "plivo" and added[-1] == ((number,), (), "ST_plivo")
+
+    async def carrier():
+        async with AsyncSessionLocal() as db:
+            return await telephony.carrier_of(db, _uuid.UUID(org_id), number)
+    assert asyncio.run(carrier()) == "plivo"
+
+    # Releasing it takes it off the Plivo trunk, not the default one.
+    n = next(x for x in client.get(f"/api/admin/orgs/{org_id}/phone-numbers").json()["numbers"] if x["number"] == number)
+    assert client.delete(f"/api/admin/phone-numbers/{n['id']}").status_code in (200, 204)
+    assert added[-1] == ((), (number,), "ST_plivo")
