@@ -1089,12 +1089,17 @@ async def _draft_opening(cfg: dict, variables: dict) -> str:
 
         if model in GROQ_MODELS:
             kwargs["reasoning_effort"] = "none"
+        contact_name = (variables.get("full_name") or variables.get("name") or "").strip()
         resp = await asyncio.wait_for(client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": build_instructions(cfg, variables, channel="phone")},
                 {"role": "user", "content": "[The contact just picked up the phone.] Say only your opening line — one or two "
-                                            "short spoken sentences, no stage directions or quotes."},
+                                            "short spoken sentences, no stage directions or quotes."
+                                            + (f" Greet {contact_name} by name and refer to them, never to yourself. "
+                                               f"You are the caller; {contact_name} is the person who answered."
+                                               if contact_name else
+                                               " You are the caller; never introduce yourself as the person who answered.")},
             ],
             **kwargs,
         ), timeout=12)
