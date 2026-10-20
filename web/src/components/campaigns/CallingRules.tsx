@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, ArrowDown, Clock, Plus, RotateCcw, X } from "lucide-react";
+import { ArrowRight, ArrowUp, ArrowDown, Clock, Plus, RotateCcw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
@@ -49,11 +49,11 @@ const DELAYS: [number, string][] = [
 
 const MAX_RETRIES = 10;
 
-const PRESETS: [string, number[]][] = [
-  ["Call once", []],
-  ["Double-dial", [5]],
-  ["Daily for 3 days", [DAY, DAY, DAY]],
-  ["5-day follow-up", [15, 20, DAY, 2 * DAY, 2 * DAY]],
+const PRESETS: [string, number[], string][] = [
+  ["Call once", [], "One call per contact — no follow-ups."],
+  ["Double-dial", [5], "Call now, then once more 5 minutes later if they don't answer."],
+  ["Daily for 3 days", [DAY, DAY, DAY], "Call now, then again around the same time for the next 3 days."],
+  ["5-day follow-up", [15, 20, DAY, 2 * DAY, 2 * DAY], "Most persistent: up to 6 attempts spread over about a week."],
 ];
 
 export function formatWait(minutes: number): string {
@@ -179,6 +179,7 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
 
   const invalidWindow = !form.call_window_start || !form.call_window_end || form.call_window_start >= form.call_window_end;
   const noDays = form.call_days.length === 0;
+  const activePreset = PRESETS.find(([, waits]) => JSON.stringify(waits) === JSON.stringify(form.retry_schedule));
 
   function toggleDay(d: number) {
     setForm((f) => ({ ...f, call_days: f.call_days.includes(d) ? f.call_days.filter((x) => x !== d) : [...f.call_days, d].sort((a, b) => a - b) }));
@@ -267,7 +268,7 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 p-4">
             <Toggle checked={form.number_rotation_enabled} onChange={(checked) => setForm((f) => ({ ...f, number_rotation_enabled: checked }))}
-              label="Rotate caller numbers" description="First attempts use A, then B, then C, and repeat. Off uses the agent's number or your account default." />
+              label="Rotate caller numbers" description="Spread calls across the numbers you pick so contacts don't see the same caller ID every time. Off: every call comes from the agent's number or your account default." />
             {form.number_rotation_enabled && <div className="mt-4 space-y-3">
               <p className="text-xs text-zinc-500">Choose at least two active numbers. Use the arrows to set their order. Rotation does not guarantee removal of spam labels.</p>
               {numbersError && <p className="text-xs text-red-600">Could not load your numbers. Try refreshing before saving.</p>}
@@ -280,27 +281,49 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
                   <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
                     <input type="checkbox" className="accent-brand-600" checked={index >= 0} disabled={index < 0 && form.caller_number_pool.length >= 20}
                       onChange={(e) => setForm((f) => ({ ...f, caller_number_pool: e.target.checked ? [...f.caller_number_pool, number] : f.caller_number_pool.filter((n) => n !== number) }))} />
-                    {index >= 0 && <span className="text-xs font-semibold text-brand-600">{String.fromCharCode(65 + index)}</span>}
+                    {index >= 0 && <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-brand-100 text-[11px] font-bold text-brand-700">{String.fromCharCode(65 + index)}</span>}
                     <span className="min-w-0 truncate">{number}{owned?.label ? ` · ${owned.label}` : ""}{phoneNumbers && !owned ? " · inactive" : ""}</span>
                   </label>
                   {index >= 0 && <><button type="button" aria-label={`Move ${number} up`} disabled={index === 0} onClick={() => move(-1)} className="rounded p-2 text-zinc-500 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button><button type="button" aria-label={`Move ${number} down`} disabled={index === form.caller_number_pool.length - 1} onClick={() => move(1)} className="rounded p-2 text-zinc-500 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button></>}
                 </div>;
               })}
               {invalidRotation && <p className="text-xs text-red-600">Select at least two active numbers owned by this account.</p>}
-              <Field label="Number to use for retries">
+              {form.caller_number_pool.length >= 2 && (
+                <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">How calls rotate</div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-600">
+                    {form.caller_number_pool.map((number, i) => (
+                      <span key={number} className="flex items-center gap-1.5">
+                        {i > 0 && <ArrowRight className="h-3 w-3 text-zinc-400" />}
+                        <span className="rounded-full bg-white px-2 py-1 font-semibold text-zinc-700 ring-1 ring-zinc-200">
+                          {String.fromCharCode(65 + i)}
+                          <span className="ml-1 font-normal text-zinc-500">{number.slice(-4)}</span>
+                        </span>
+                      </span>
+                    ))}
+                    <ArrowRight className="h-3 w-3 text-zinc-400" />
+                    <span className="text-zinc-500">back to A, and repeat</span>
+                  </div>
+                </div>
+              )}
+              <Field label="If we call them again (a retry), use" hint="">
                 <Select value={form.retry_caller_policy} onChange={(e) => setForm((f) => ({ ...f, retry_caller_policy: e.target.value as "same" | "different" }))}>
-                  <option value="same">Same number</option>
-                  <option value="different">Different selected number</option>
+                  <option value="same">The same number as before</option>
+                  <option value="different">A different number from the pool</option>
                 </Select>
               </Field>
-              <p className="text-xs text-zinc-500">Same keeps the number used for that contact's previous campaign attempt. Different chooses the next number in the pool that differs from the last attempt.</p>
+              <p className="-mt-2 text-xs text-zinc-500">
+                {form.retry_caller_policy === "same"
+                  ? "Same number: the contact sees the caller ID they already saw — it feels familiar, like the same person trying again."
+                  : "Different number: we switch to the next number in the pool, so the retry looks like a fresh call from a new line."}
+              </p>
             </div>}
           </div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
             <RotateCcw className="h-3.5 w-3.5" /> Automatic retries
           </div>
           <p className="-mt-2 text-xs text-zinc-500">
-            People who don&apos;t pick up or go to voicemail are called again on this schedule. Anyone who answers is never called twice.
+            If someone doesn&apos;t pick up, we redial them on the schedule below — within your calling hours. Anyone who answers is never called again.
           </p>
           <div className="flex flex-wrap gap-1.5">
             {PRESETS.map(([label, waits]) => {
@@ -320,10 +343,11 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
               );
             })}
           </div>
+          {activePreset && <p className="-mt-2 text-xs text-brand-700">{activePreset[2]}</p>}
           <ol className="space-y-2 text-sm">
             <li className="flex h-9 items-center gap-3">
               <span className="w-16 shrink-0 text-xs font-medium text-zinc-500">1st call</span>
-              <span className="text-zinc-700">When the campaign reaches them</span>
+              <span className="text-zinc-700">When the campaign reaches them, within calling hours</span>
             </li>
             {form.retry_schedule.map((wait, i) => (
               <li key={i} className="flex items-center gap-3">
