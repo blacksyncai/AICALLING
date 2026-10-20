@@ -385,10 +385,10 @@ function CallPerformance({ overview, days }: { overview: Overview; days: number 
           },
           {
             title: "Booking rate",
-            value: pct(overview.meetings_booked, connected),
+            value: pct(overview.meetings_booked, overview.meaningful_calls),
             target: 10,
-            caption: connected ? `${overview.meetings_booked.toLocaleString()} booked from ${connected.toLocaleString()} answered` : undefined,
-            description: "Answered calls that ended with a meeting on the calendar.",
+            caption: overview.meaningful_calls ? `${overview.meetings_booked.toLocaleString()} booked from ${overview.meaningful_calls.toLocaleString()} conversations` : undefined,
+            description: "Conversations that ended with a meeting on the calendar.",
             action: { label: "View meetings", href: "/meetings" },
           },
         ]}
