@@ -7,6 +7,33 @@ and greeting acknowledgments are eligible; other answers keep semantic inference
 """
 import re
 
+# Complete one-word/phrase replies to a closed question. Never matched against
+# open questions, dictated details or hesitation-marked answers (guards below).
+_AGREEMENT = {
+    'yes', 'yeah', 'yep', 'yup', 'sure', 'absolutely', 'definitely', 'certainly',
+    'indeed', 'of course', 'correct', 'exactly', 'true', "that's right", 'right',
+    'that works', 'sounds good', 'sounds great', 'no problem', 'go ahead',
+    'fine', 'okay', 'ok', 'agreed', 'deal',
+}
+_DECLINE = {'no', 'nope', 'not really', 'not yet', 'no thanks', 'no thank you',
+            'not at all', 'never', 'wrong number'}
+_AUX = {'am', 'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could',
+        'will', 'would', 'have', 'has', "don't", "doesn't", "isn't", "aren't",
+        "wasn't", "weren't", "can't", "couldn't", "won't", "wouldn't",
+        "haven't", "hasn't", "didn't", "ain't"}
+
+def _complete_agreement(response: str) -> bool:
+    """A bounded complete reply to a closed question: fixed phrase or short subject+verb."""
+    if response in _AGREEMENT or response in _DECLINE:
+        return True
+    words = response.split()
+    # "I am.", "We do.", "It doesn't.", "I am not." — at most 3 words, a known
+    # subject and a known (auxiliary) verb, optionally one negation. Anything
+    # longer or looser keeps the semantic model.
+    if len(words) in (2, 3) and words[0] in ('i', 'we', 'you', 'it', 'that', 'this'):
+        if words[1] in _AUX:
+            return len(words) == 2 or words[2] == 'not'
+    return False
 
 def _words(text):
     return re.findall(r"[a-z]+(?:'[a-z]+)?", text.lower().replace("’", "'"))
@@ -69,16 +96,19 @@ def complete_short_answer(chat_ctx):
     # Greeting acknowledgments only answer a greeting, not an open question.
     if response in {'hi', 'hello', 'hey'}:
         return ' '.join(_words(question)) in {'hi', 'hello', 'hey', 'hello there', 'hi there'}
-    if response not in {'yes', 'yeah', 'yep', 'yup', 'no', 'nope'} or not question.endswith('?'):
+    if not question.endswith('?'):
         return False
     # Last sentence must itself be a closed question. Open questions and offers
     # listing alternatives keep the semantic model, including dictated details.
     clause = re.split(r'[.!?]', question[:-1])[-1].strip().lower()
-    if re.search(r"\b(?:or|address|number|phone|email|spell|digit|code)\b", clause):
+    if re.search(r'\b(?:or|address|number|phone|email|spell|digit|code)\b', clause):
         return False
-    return bool(re.match(r"^(?:do you|did you|does (?:it|that)|are you|is (?:it|that|this)|"
-                         r"have you|has (?:it|that)|can (?:i|you|we)|could (?:i|you|we)|"
-                         r"would you|will you|should (?:i|we))\b", clause))
+    closed_verb = bool(re.match(r"^(?:do you|did you|does (?:it|that)|are you|is (?:it|that|this)|"
+                                r"have you|has (?:it|that)|can (?:i|you|we)|could (?:i|you|we)|"
+                                r"would you|will you|should (?:i|we))\b", clause))
+    # Tag questions ("You're the owner, right?") are closed too.
+    tag = bool(re.search(r'\b(?:right|correct|ok|okay)\s*$', clause))
+    return (closed_verb or tag) and _complete_agreement(response)
 
 
 class OpeningTurnDetector:
