@@ -42,11 +42,34 @@ def test_short_lines_may_repeat():
     assert out == "Hey, is this Sam?" and calls == [False]
 
 
-def test_guard_states():
+def test_guard_judges_sentences():
     g = RepeatGuard([INTRO])
-    assert g.feed("Hey Farah, this ") == "wait"
-    assert g.feed("is Olivia giving you a ") == "repeat"
-    assert RepeatGuard([INTRO]).feed("Sure thing ") == "ok"
+    assert g.repeats("Hey Farah, this is Olivia giving you a call over from Compass Multifamily.")
+    assert not g.repeats("Sure thing.")
+    assert g.clearly_new("The fourplex on Oak Street that you own ")
+    assert not g.clearly_new("Do you have a quick ")
+
+
+# The call that started this: the agent re-asked its pitch three times in new words.
+CALL = ["Hey Thai, this is Zane, calling on behalf of Gabriel Manzanares with Compass Multifamily. Do you have a "
+        "quick second to talk about the property over on 27th Street?",
+        "I'm reaching out from our Compass Multifamily office. Do you have a quick second to talk about the "
+        "property on 27th Street?"]
+
+
+def test_reworded_repeats_are_dropped_and_new_words_kept():
+    out, calls, cut = _run({False: "I'm calling from our Compass Multifamily office. Do you have a quick second to "
+                                   "talk about the property on 27th Street?",
+                            True: "Compass Multifamily, here in San Francisco. It's about your building on 27th."},
+                           CALL)
+    assert out == "Compass Multifamily, here in San Francisco. It's about your building on 27th."
+    assert calls == [False, True] and cut
+
+
+def test_only_the_repeated_sentence_is_cut():
+    out, calls, _ = _run({False: "Sorry about that, the line was choppy for a second. Do you have a quick second to "
+                                 "talk about the property on 27th Street?", True: "x"}, CALL)
+    assert out == "Sorry about that, the line was choppy for a second. " and calls == [False]
 
 
 def test_nudge_goes_into_instructions_and_contact_keeps_last_turn():
