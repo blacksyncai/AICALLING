@@ -17,6 +17,8 @@ import json
 import logging
 import os
 
+import httpx
+
 import structlog
 from dotenv import load_dotenv
 
@@ -387,19 +389,22 @@ class PounceAgent(Agent):
 
 # ── Call outcome finalization ─────────────────────────────────────────────────
 
-async def _push_live_event(call_log_id: str, event: dict) -> None:
-    """Fire-and-forget: send a live event to the SSE broadcaster via HTTP."""
-    if not call_log_id:
-        return
-    import httpx as _httpx
-    try:
-        async with _httpx.AsyncClient(timeout=2.0) as client:
-            await client.post(
-                f"{settings.api_base_url}/internal/calls/{call_log_id}/live-event", headers=settings.internal_headers,
-                json=event,
-            )
-    except Exception as exc:
-        log.debug("live_push_failed", error=str(exc))
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _api_client() -> httpx.AsyncClient:
+    """One pooled client for internal API calls — no per-request TCP/TLS handshake."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
+    return _shared_client
+
+
+async def _api_post(path: str, *, json: dict, timeout: float = 10.0) -> httpx.Response:
+    """POST to the internal API on the shared pooled connection."""
+    return await _api_client().post(
+        f"{settings.api_base_url}{path}", headers=settings.internal_headers, json=json, timeout=timeout
+    )
 
 
 async def _post_call_outcome(state, outcome: str) -> None:
@@ -412,24 +417,19 @@ async def _post_call_outcome(state, outcome: str) -> None:
         return
     state.outcome_posted = True
 
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome", headers=settings.internal_headers,
-                json={
-                    "outcome": outcome,
-                    "qualification_score": state.qualification_score,
-                    "q_team_size": state.q_team_size,
-                    "q_current_process": state.q_current_process,
-                    "q_decision_maker": state.q_decision_maker,
-                    "agreed_meeting_time": state.agreed_meeting_time,
-                    "meeting_link": state.meeting_link,
-                    "prospect_email": state.prospect_email,
-                    "transcript": state.transcript,
-                },
-            )
-            resp.raise_for_status()  # a rejected report must be retried, not logged as sent
+        resp = await _api_post(f"/internal/calls/{state.call_log_id}/outcome", json={
+            "outcome": outcome,
+            "qualification_score": state.qualification_score,
+            "q_team_size": state.q_team_size,
+            "q_current_process": state.q_current_process,
+            "q_decision_maker": state.q_decision_maker,
+            "agreed_meeting_time": state.agreed_meeting_time,
+            "meeting_link": state.meeting_link,
+            "prospect_email": state.prospect_email,
+            "transcript": state.transcript,
+        })
+        resp.raise_for_status()  # a rejected report must be retried, not logged as sent
         log.info("call_outcome_posted", call_log_id=state.call_log_id,
                  outcome=outcome, turns=len(state.transcript))
     except Exception as exc:
@@ -745,22 +745,17 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
     if run.outcome_posted or not run.call_log_id:
         return
     run.outcome_posted = True
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{settings.api_base_url}/internal/calls/{run.call_log_id}/outcome", headers=settings.internal_headers,
-                json={
-                    "outcome": outcome,
-                    "agreed_meeting_time": run.meeting_time,
-                    "meeting_link": run.meeting_link or None,
-                    "prospect_email": run.email,
-                    "transcript": run.transcript,
-                    "metrics": run.latency_summary(),
-                    "ended_at": run.ended_wall,
-                },
-            )
-            resp.raise_for_status()  # a rejected report must be retried, not logged as sent
+        resp = await _api_post(f"/internal/calls/{run.call_log_id}/outcome", json={
+            "outcome": outcome,
+            "agreed_meeting_time": run.meeting_time,
+            "meeting_link": run.meeting_link or None,
+            "prospect_email": run.email,
+            "transcript": run.transcript,
+            "metrics": run.latency_summary(),
+            "ended_at": run.ended_wall,
+        })
+        resp.raise_for_status()  # a rejected report must be retried, not logged as sent
         log.info("call_outcome_posted", call_log_id=run.call_log_id, outcome=outcome)
     except Exception as exc:
         run.outcome_posted = False
@@ -768,12 +763,12 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
 
 
 async def _fetch_agent_config(agent_id: str) -> dict | None:
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(f"{settings.api_base_url}/internal/agents/{agent_id}/runtime", headers=settings.internal_headers)
-            resp.raise_for_status()
-            return resp.json()
+        resp = await _api_client().get(
+            f"{settings.api_base_url}/internal/agents/{agent_id}/runtime",
+            headers=settings.internal_headers, timeout=8.0)
+        resp.raise_for_status()
+        return resp.json()
     except Exception as exc:
         log.warning("agent_config_fetch_failed", agent_id=agent_id, error=str(exc))
         return None
@@ -1048,15 +1043,13 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
 
 
 async def _recording_state(metadata: dict, room_name: str, state: str) -> None:
-    import httpx
     if not metadata.get("worker_recording") or not metadata.get("call_log_id"):
         return
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                f"{settings.api_base_url}/internal/calls/{metadata['call_log_id']}/recording-state",
-                headers=settings.internal_headers, json={"room_name": room_name, "state": state})
-            response.raise_for_status()
+        response = await _api_post(
+            f"/internal/calls/{metadata['call_log_id']}/recording-state",
+            json={"room_name": room_name, "state": state}, timeout=5.0)
+        response.raise_for_status()
     except Exception as exc:
         log.warning("recording_state_update_failed", state=state, error=type(exc).__name__)
 
@@ -1391,7 +1384,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     instructions = build_instructions(cfg, variables, channel=channel)
     tts_prewarmed = False
-    if call_type == "outbound":
+    if call_type in ("outbound", "inbound"):
         tts_prewarmed = _prewarm_tts(session_kwargs["tts"], ctx)
     log.info("voice_resources_ready", room=ctx.room.name,
              seconds=round(_time.monotonic() - prepare_started, 3),
@@ -1444,10 +1437,6 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             # Per-turn trace for diagnosing dropped calls: the agent's words, only a word count for the contact.
             log.info("turn", room=ctx.room.name, role=role, words=len(text.split()),
                      t=round(_time.monotonic() - run.t0, 1), **({"text": text[:80]} if role == "assistant" else {}))
-            asyncio.create_task(_push_live_event(run.call_log_id, {
-                "type": "transcript_turn", "session_id": ctx.room.name,
-                "role": "agent" if role == "assistant" else "caller", "text": text, "ts": str(_time.time()),
-            }))
         except Exception as exc:
             log.debug("transcript_capture_failed", error=str(exc))
 
@@ -1492,9 +1481,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             await detector.__aenter__()
             # Don't hold the opening line for AMD's verdict (that cost ~6 s on live pickups); it keeps listening
             # and hangs up / leaves the message as soon as it hears a machine.
+            # Private SDK method: verify on any livekit-agents upgrade — if it disappears, AMD will hold the
+            # opening line again; this warning makes that regression visible in logs instead of silent.
             act = getattr(session, "_activity", None)
             if act is not None and hasattr(act, "_resume_authorization"):
                 act._resume_authorization()
+            else:
+                log.warning("amd_resume_authorization_unavailable",
+                            hint="livekit-agents private API changed; opening line may be held for AMD verdict")
 
             async def _amd_flow() -> None:
                 try:
@@ -1519,13 +1513,6 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             asyncio.create_task(_amd_flow())
         except Exception as exc:
             log.warning("amd_unavailable", error=str(exc)[:200])
-
-    asyncio.create_task(_push_live_event(run.call_log_id, {
-        "type": "call_started", "session_id": ctx.room.name, "agent_type": cfg.get("name", "agent"),
-        "direction": call_type, "caller_phone": variables.get("phone", ""),
-        "prospect_name": variables.get("full_name") or variables.get("name", ""),
-        "prospect_company": variables.get("company", ""), "ts": str(_time.time()),
-    }))
 
     bg_state: dict = {"task": None, "track": None}
     if cfg.get("background_audio") and call_type == "outbound":
@@ -1626,10 +1613,6 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             saved = await recorder.finish()
             if metadata.get("worker_recording"):
                 await _recording_state(metadata, ctx.room.name, "ready" if saved else "failed")
-        await _push_live_event(run.call_log_id, {
-            "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
-            "duration_sec": round((run.ended_wall or _time.time()) - wall_t0), "ts": str(_time.time()),
-        })
         # If the session died on its own (e.g. a voice error), don't leave the caller on dead air.
         if call_type != "web" and ctx.room.remote_participants:
             await _delete_room(ctx.room.name)
@@ -1733,19 +1716,16 @@ async def _wait_for_sip_answer(ctx: JobContext, timeout: float = 50.0) -> None:
 # ── Worker entrypoint ─────────────────────────────────────────────────────────
 
 async def _run_inbound(ctx: JobContext) -> None:
-    import httpx
-
     caller = await ctx.wait_for_participant()
     attrs = dict(getattr(caller, "attributes", {}) or {})
     to_number = attrs.get("sip.trunkPhoneNumber", "")
     from_number = attrs.get("sip.phoneNumber", "")
     routed = None
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(f"{settings.api_base_url}/internal/inbound-call", headers=settings.internal_headers,
-                                     json={"to": to_number, "from_number": from_number, "room": ctx.room.name})
-            if resp.status_code == 200:
-                routed = resp.json()
+        resp = await _api_post("/internal/inbound-call",
+                               json={"to": to_number, "from_number": from_number, "room": ctx.room.name}, timeout=8.0)
+        if resp.status_code == 200:
+            routed = resp.json()
     except Exception as exc:
         log.warning("inbound_route_failed", error=str(exc), to=to_number)
     if not routed:
@@ -1912,13 +1892,6 @@ async def entrypoint(ctx: JobContext) -> None:
             })
             # Push to live monitor in real time
             import time as _t2
-            asyncio.create_task(_push_live_event(state.call_log_id, {
-                "type": "transcript_turn",
-                "session_id": ctx.room.name,
-                "role": "agent" if role == "assistant" else "caller",
-                "text": text,
-                "ts": str(_t2.time()),
-            }))
         except Exception as exc:  # never let transcript capture break the call
             log.debug("transcript_capture_failed", error=str(exc))
 
@@ -1929,16 +1902,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # Announce call_started to Live Monitor
     import time as _ts
-    asyncio.create_task(_push_live_event(state.call_log_id, {
-        "type": "call_started",
-        "session_id": ctx.room.name,
-        "agent_type": "sdr",
-        "direction": "outbound",
-        "caller_phone": state.phone,
-        "prospect_name": state.name,
-        "prospect_company": state.company,
-        "ts": str(_ts.time()),
-    }))
 
     # Continuous call-center ambience — separate track, always on (hevox parity).
     bg_audio_state: dict = {"task": None, "track": None}
@@ -1967,13 +1930,6 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _finalize_call() -> None:
         outcome = _derive_outcome(state)
         import time as _tf
-        await _push_live_event(state.call_log_id, {
-            "type": "call_ended",
-            "session_id": ctx.room.name,
-            "outcome": outcome,
-            "duration_sec": round(_tf.monotonic() - _call_t0),
-            "ts": str(_tf.time()),
-        })
         if not state.outcome_posted:
             await _post_call_outcome(state, outcome)
         if recorder is not None:
