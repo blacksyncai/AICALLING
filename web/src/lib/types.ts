@@ -115,6 +115,12 @@ export interface Campaign {
   retry_schedule: number[];
   number_rotation_enabled?: boolean;
   caller_number_pool?: string[];
+  /** Warm-up pacing: slow dialing with rest pauses (null = off). */
+  warmup_enabled?: boolean | null;
+  warmup_min_gap_seconds?: number | null;
+  warmup_max_gap_seconds?: number | null;
+  warmup_batch_size?: number | null;
+  warmup_rest_seconds?: number | null;
   retry_caller_policy?: "same" | "different";
   within_calling_hours: boolean;
   next_window_at: string | null;

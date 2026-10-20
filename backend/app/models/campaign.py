@@ -67,6 +67,15 @@ class Campaign(Base):
     number_rotation_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     caller_number_pool: Mapped[list | None] = mapped_column(JSON, nullable=True)
     retry_caller_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Warm-up pacing: dial slowly with random gaps and rest pauses so a fresh
+    # number doesn't register as spam. NULL = off (normal dialing).
+    warmup_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Seconds between calls (NULL = random 180-300, i.e. ~1 call per 3-5 minutes).
+    warmup_min_gap_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    warmup_max_gap_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Calls before a longer rest pause (NULL = 10), and how long that rest lasts (NULL = 15 min).
+    warmup_batch_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    warmup_rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     caller_rotation_cursor: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # ── Counters ──────────────────────────────────────────────────────────────
