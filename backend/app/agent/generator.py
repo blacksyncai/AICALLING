@@ -906,6 +906,17 @@ def readiness(agent, org) -> dict:
             "AI disclosure is off. Many places require telling people they're talking to an AI — we recommend turning it on.",
             href)
 
+    # CRM script variables: remind the builder to check the {{variables}} are mapped to CRM fields.
+    from app.services.crm import variables as crm_vars
+    script_vars = [v for v in crm_vars.script_variables(agent) if v not in crm_vars.BUILT_IN]
+    if script_vars:
+        shown = ", ".join("{{" + v + "}}" for v in script_vars[:4]) + ("..." if len(script_vars) > 4 else "")
+        add("crm_variables", "CRM script variables", "warning",
+            f"The script uses {len(script_vars)} variable{'' if len(script_vars) == 1 else 's'} ({shown}). "
+            "Check they're mapped to your CRM fields so calls fill them in.",
+            "/integrations")
+    else:
+        add("crm_variables", "CRM script variables", "ok", "The script needs no CRM fields.")
     return {"ready": not any(c["status"] == "blocker" for c in checks), "checks": checks}
 
 

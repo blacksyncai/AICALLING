@@ -16,6 +16,7 @@ import { CreatedBanner } from "@/components/agent-editor/CreatedBanner";
 import { ImproveWithAI } from "@/components/agent-editor/ImproveWithAI";
 import { assemblePrompt, humanizeKey } from "@/components/agent-editor/prompt";
 import { CheckList, ReadinessCard, type Readiness } from "@/components/agent-editor/ReadinessCard";
+import { VariableWizard } from "@/components/crm/VariableWizard";
 import { QualityPanel } from "@/components/agent-editor/QualityPanel";
 import { SectionsEditor } from "@/components/agent-editor/SectionsEditor";
 import { VersionHistory } from "@/components/agent-editor/VersionHistory";
@@ -89,6 +90,10 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
   const testKeys = testContact ? Object.keys(testContact) : (["name", "company", "email", "role"] as string[]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
+  const { data: crmConns } = useSWR<{ connections: { provider: string; status?: string }[] }>("/api/integrations/crm", fetcher,
+    { revalidateOnFocus: false });
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const crmProvider = crmConns?.connections?.find((c) => (c.status ?? "connected") !== "error")?.provider ?? null;
   const readinessUrl = `/api/agent-builder/agents/${id}/readiness`;
   const {
     data: readiness,
@@ -297,6 +302,19 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             onSection={goToSection}
             forceOpen={openReadiness}
           />
+
+        {crmProvider && (
+          <VariableWizard
+            open={wizardOpen}
+            onClose={() => setWizardOpen(false)}
+            providerKey={crmProvider}
+            providerName={crmProvider}
+            agentId={id}
+            agentName={draft.name}
+            firstMessage={draft.first_message}
+            voiceId={draft.voice_id}
+          />
+        )}
           <div ref={editorRef} className="agent-glass scroll-mt-32 rounded-2xl p-3 sm:p-5">
           <AnimatedTabList
             tabs={SECTIONS.map(({ value, label, icon: Icon }) => ({ id: value, label, icon: <Icon className="h-4 w-4" /> }))}
@@ -323,6 +341,14 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 <p className="mb-2 text-sm font-semibold text-[#ff3333]">We suggest leaving the First message section blank for outbound agents.</p>
                 <Textarea rows={2} value={draft.first_message} onChange={(e) => set("first_message", e.target.value)} />
               </Field>
+              {crmProvider && /\{\{/.test(draft.first_message) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-brand-50 px-4 py-3 text-sm">
+                  <span className="text-brand-900">
+                    This opening line uses <code className="rounded bg-white px-1">{`{{variables}}`}</code> — make sure they fill from your CRM.
+                  </span>
+                  <Button size="sm" variant="secondary" onClick={() => setWizardOpen(true)}>Set up CRM fields</Button>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <ImproveWithAI
                   agent={saved ?? draft}
