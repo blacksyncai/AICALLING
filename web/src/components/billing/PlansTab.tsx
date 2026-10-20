@@ -141,11 +141,12 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
     }
   }
 
-  async function choose(plan: Plan) {
+  async function choose(plan: Plan, planCountry?: string) {
     setBusy(plan.key);
     try {
       if (!live) {
-        if (!countryData?.country) {
+        const country = planCountry ?? countryData?.country;
+        if (!country) {
           setAskCountry(plan);
           setBusy(null);
           return;
@@ -398,7 +399,7 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
       </Modal>
       <CountryPopup
         open={askCountry !== null}
-        onDone={() => { const plan = askCountry; setAskCountry(null); if (plan) void choose(plan); }}
+        onDone={(country) => { const plan = askCountry; setAskCountry(null); if (plan) void choose(plan, country); }}
         onCancel={() => setAskCountry(null)}
       />
     </div>
