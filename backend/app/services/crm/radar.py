@@ -60,6 +60,9 @@ class Signals:
     deal_updated_at: dt.datetime | None = None
     won_at: dt.datetime | None = None
     status: str = ""
+    source: str = ""  # lead source / lead flow (e.g. Zillow, Cold call)
+    pond: str = ""
+    tags: list[str] = field(default_factory=list)
     dnc: bool = False
     contacted: bool | None = None  # the CRM's own "has anyone contacted them" flag, when it keeps one
     calls_known: bool = True  # False when the scan didn't read call history (quick / old-lead batches)
@@ -112,6 +115,7 @@ def build_plays(signals: list[Signals], now: dt.datetime | None = None) -> dict:
         play, reason = hit
         groups[play].append({"external_id": s.external_id, "name": s.name, "phone": s.phone, "company": s.company,
                              "email": s.email, "reason": reason, "stage": s.deal_stage or s.status,
+                             "source": s.source, "pond": s.pond, "tags": s.tags[:20],
                              "created": s.created_at.isoformat() if s.created_at else None,
                              "calls": s.calls if s.calls_known else None, "contacted": s.contacted,
                              "last_touch": (s.last_call_at or s.last_inbound_at or s.last_activity_at or s.created_at

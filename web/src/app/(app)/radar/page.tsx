@@ -44,6 +44,9 @@ interface Item {
   company: string;
   reason: string;
   stage: string;
+  source?: string;
+  pond?: string;
+  tags?: string[];
   last_touch: string;
   created?: string | null;
   calls?: number | null;
@@ -469,6 +472,21 @@ function PlayCard({
   const [added, setAdded] = useState("any");
   const [quiet, setQuiet] = useState("any");
   const [uncontacted, setUncontacted] = useState(false);
+  const [pond, setPond] = useState("");
+  const [stage, setStage] = useState("");
+  const [source, setSource] = useState("");
+  const [tag, setTag] = useState("");
+  // The CRM's own groupings (ponds, stages, lead sources, tags) found in this list.
+  const groups = useMemo(() => {
+    const uniq = (vals: (string | undefined)[]) =>
+      [...new Set(vals.filter((v): v is string => !!v))].sort((a, b) => a.localeCompare(b));
+    return {
+      pond: uniq(play.items.map((i) => i.pond)),
+      stage: uniq(play.items.map((i) => i.stage)),
+      source: uniq(play.items.map((i) => i.source)),
+      tag: uniq(play.items.flatMap((i) => i.tags ?? [])),
+    };
+  }, [play.items]);
   const [showHandled, setShowHandled] = useState(false);
   const [launched, setLaunched] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -480,9 +498,13 @@ function PlayCard({
     return play.items.filter((i) => {
       if (!showHandled && (handled(i) || launched.has(i.external_id)))
         return false;
+      if (pond && i.pond !== pond) return false;
+      if (stage && i.stage !== stage) return false;
+      if (source && i.source !== source) return false;
+      if (tag && !(i.tags ?? []).includes(tag)) return false;
       if (
         needle &&
-        ![i.name, i.phone, i.company, i.reason, i.stage].some((v) =>
+        ![i.name, i.phone, i.company, i.reason, i.stage, i.source, i.pond].some((v) =>
           (v || "").toLowerCase().includes(needle),
         )
       )
@@ -505,7 +527,7 @@ function PlayCard({
         return false;
       return true;
     });
-  }, [play.items, q, added, quiet, uncontacted, showHandled, launched]);
+  }, [play.items, q, added, quiet, uncontacted, showHandled, launched, pond, stage, source, tag]);
   const handledCount = play.items.filter(
     (i) => handled(i) || launched.has(i.external_id),
   ).length;
@@ -604,7 +626,7 @@ function PlayCard({
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, phone, stage or reason"
+            placeholder="Search name, phone, stage, source or reason"
             className="pl-9"
             aria-label="Search"
           />
@@ -633,6 +655,31 @@ function PlayCard({
             <option value="d90">Quiet 90+ days</option>
             <option value="m6">Quiet 6+ months</option>
           </Select>
+          {(
+            [
+              ["pond", "Pond", pond, setPond],
+              ["stage", "Stage", stage, setStage],
+              ["source", "Lead source", source, setSource],
+              ["tag", "Tag", tag, setTag],
+            ] as const
+          ).map(([key, label, value, set]) =>
+            groups[key].length > 0 ? (
+              <Select
+                key={key}
+                value={value}
+                onChange={(e) => set(e.target.value)}
+                className="h-8 text-xs"
+                aria-label={label}
+              >
+                <option value="">{label}: all</option>
+                {groups[key].map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+            ) : null,
+          )}
           <label className="flex items-center gap-1.5 text-zinc-600">
             <input
               type="checkbox"

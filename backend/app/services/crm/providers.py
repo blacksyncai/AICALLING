@@ -796,7 +796,7 @@ class FollowUpBoss(Provider):
             state["next"] = list(req) if req else None  # where the next batch starts
         return out
 
-    _FIELDS = "id,name,firstName,lastName,phones,emails,created,updated,stage,tags,lastActivity,contacted,price"
+    _FIELDS = "id,name,firstName,lastName,phones,emails,created,updated,stage,tags,lastActivity,contacted,price,source,assignedPondId"
     # (people sort, how many people per batch, read calls?, events to read)
     _DEPTHS = {"quick": ("-created", 300, False, 300), "recent": ("-updated", 1000, True, 1500),
                "old": ("created", 300, False, 0)}
@@ -814,6 +814,13 @@ class FollowUpBoss(Provider):
         calls = await self._pages(http, "/v1/calls", "calls", 3000, {"sort": "-created"}) if with_calls else []
         # FUB's lead events are the gold: website visits, property views/saves, inquiries.
         events = await self._pages(http, "/v1/events", "events", n_events, {"sort": "-created"}) if n_events else []
+        ponds: dict[str, str] = {}
+        if any(p.get("assignedPondId") for p in people):
+            from app.services.crm.automation_resources import fub_collection
+            try:
+                ponds = {str(x.get("id")): x.get("name") or "" for x in await fub_collection(http, "ponds")}
+            except Exception:
+                pass  # pond names are a filter nicety; the scan still works without them
         by_person: dict[str, list[dict]] = {}
         for c in calls:
             if c.get("personId"):
@@ -855,6 +862,8 @@ class FollowUpBoss(Provider):
                 deal_updated_at=None,
                 won_at=_parse_time(p.get("updated")) if stage.lower() in ("closed", "past client") else None,
                 status=stage, dnc=stage.lower() == "trash" or bool(_DNC_TAGS & tags),
+                source=p.get("source") or "", pond=ponds.get(str(p.get("assignedPondId") or ""), ""),
+                tags=[t for t in p.get("tags") or [] if isinstance(t, str)],
                 contacted=bool(p.get("contacted")) if p.get("contacted") is not None else None))
         return out
 
