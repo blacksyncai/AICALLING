@@ -403,7 +403,8 @@ class BillingCountryIn(BaseModel):
 
 @router.get("/country")
 async def get_billing_country(ctx: CtxDep):
-    return {"country": getattr(ctx.org, "billing_country", None) or "US"}
+    # null = never asked; the pop-up shows until a choice is saved.
+    return {"country": getattr(ctx.org, "billing_country", None)}
 
 
 @router.post("/country")
