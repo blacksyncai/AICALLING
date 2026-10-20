@@ -270,13 +270,17 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
   const [results, setResults] = useState<Available[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [buying, setBuying] = useState<string | null>(null);
+  // Option 2 searches the second carrier only; option 1 keeps the usual order without it.
+  const [line, setLine] = useState<1 | 2>(1);
+  const hasLine2 = carriers.includes("plivo");
+  const searchCarriers = line === 2 && hasLine2 ? ["plivo"] : carriers.filter((c) => c !== "plivo");
 
   async function search(e: FormEvent) {
     e.preventDefault();
     setSearching(true);
     setResults(null);
     try {
-      const numbers = await searchNumberInventory(carriers, (carrier) =>
+      const numbers = await searchNumberInventory(searchCarriers, (carrier) =>
         api<{ numbers: Available[] }>(`/api/phone-numbers/available?area_code=${encodeURIComponent(area)}&carrier=${encodeURIComponent(carrier)}`),
       );
       setResults(numbers);
@@ -317,6 +321,22 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
 
   return (
     <GetNumberCard title="Get a local number" description="Choose a local number for outbound calls.">
+      {hasLine2 && (
+        <div className="flex gap-2" role="radiogroup" aria-label="Number option">
+          {([1, 2] as const).map((o) => (
+            <button
+              key={o}
+              type="button"
+              role="radio"
+              aria-checked={line === o}
+              onClick={() => { setLine(o); setResults(null); }}
+              className={`h-9 rounded-lg px-4 text-sm font-medium ring-1 ${line === o ? "bg-white text-zinc-900 ring-white" : "bg-transparent text-zinc-300 ring-white/30 hover:ring-white/60"}`}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
       <form onSubmit={search} className="flex items-center gap-2">
         <Input
           value={area}
