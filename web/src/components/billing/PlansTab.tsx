@@ -8,6 +8,7 @@ import { useToast } from "@/components/toast";
 import { Button, Modal, Notice, Spinner } from "@/components/ui";
 import { PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
+import { CountryPopup } from "./CountryPopup";
 import { cn } from "@/lib/utils";
 import { PlanCards, type PlanAction } from "./PlanCards";
 import { Card, CardHeader } from "./surface";
@@ -75,6 +76,8 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
   const { data, mutate } = useSWR<Catalog>("/api/billing/catalog", fetcher);
   const { data: ent, mutate: mutateEnt } = useSWR<Entitlements>("/api/billing/entitlements", fetcher);
   const [busy, setBusy] = useState<string | null>(null);
+  const { data: countryData } = useSWR<{ country: string }>("/api/billing/country", fetcher);
+  const [askCountry, setAskCountry] = useState<Plan | null>(null); // plan waiting on the pop-up
   const [preview, setPreview] = useState<{ plan: Plan; data: Preview } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [slots, setSlots] = useState<SlotPreview | null>(null);
@@ -142,6 +145,11 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
     setBusy(plan.key);
     try {
       if (!live) {
+        if (!countryData?.country) {
+          setAskCountry(plan);
+          setBusy(null);
+          return;
+        }
         const r = await post<{ url: string }>(`/api/billing/plans/${plan.key}/checkout`);
         window.location.href = r.url;
         return; // stays busy while the browser leaves for checkout
@@ -388,6 +396,11 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
           </div>
         )}
       </Modal>
+      <CountryPopup
+        open={askCountry !== null}
+        onDone={() => { const plan = askCountry; setAskCountry(null); if (plan) void choose(plan); }}
+        onCancel={() => setAskCountry(null)}
+      />
     </div>
   );
 }

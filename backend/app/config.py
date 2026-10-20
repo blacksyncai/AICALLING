@@ -137,6 +137,8 @@ class Settings(BaseSettings):
     # ── Billing (Stripe) ─────────────────────────────────────────────────────
     # Secret key (sk_live_… / sk_test_…) and webhook signing secret — backend only.
     stripe_secret_key: str = ""
+    # Helcim (Canadian/other customers) — one-time purchases route here when set.
+    helcim_api_key: str = ""
     stripe_webhook_secret: str = ""
     # Fernet key that encrypts secrets pasted into the admin portal (e.g. the Stripe key).
     secrets_encryption_key: str = ""
