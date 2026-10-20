@@ -49,6 +49,12 @@ class CallingRules(BaseModel):
     retry_schedule: list[int] | None = None
     number_rotation_enabled: bool | None = None
     caller_number_pool: list[str] | None = None
+    # Warm-up pacing: slow dialing with rest pauses for fresh numbers (None = off).
+    warmup_enabled: bool | None = None
+    warmup_min_gap_seconds: int | None = Field(default=None, ge=30, le=3600)
+    warmup_max_gap_seconds: int | None = Field(default=None, ge=30, le=3600)
+    warmup_batch_size: int | None = Field(default=None, ge=1, le=100)
+    warmup_rest_seconds: int | None = Field(default=None, ge=60, le=7200)
     retry_caller_policy: str | None = Field(default=None, pattern="^(same|different)$")
 
 
@@ -133,6 +139,11 @@ def calling_rules(c) -> dict:
         "retry_schedule": retry_waits(c),
         "number_rotation_enabled": bool(getattr(c, "number_rotation_enabled", False)),
         "caller_number_pool": list(getattr(c, "caller_number_pool", None) or []),
+        "warmup_enabled": bool(getattr(c, "warmup_enabled", None)),
+        "warmup_min_gap_seconds": getattr(c, "warmup_min_gap_seconds", None) or 180,
+        "warmup_max_gap_seconds": getattr(c, "warmup_max_gap_seconds", None) or 300,
+        "warmup_batch_size": getattr(c, "warmup_batch_size", None) or 10,
+        "warmup_rest_seconds": getattr(c, "warmup_rest_seconds", None) or 900,
         "retry_caller_policy": getattr(c, "retry_caller_policy", None) or "same",
     }
 
@@ -205,6 +216,12 @@ def _validate_rules(data: dict, current: Campaign | None = None) -> None:
     end = data.get("call_window_end") or (current.call_window_end if current else None) or DEFAULT_WINDOW_END
     if ("call_window_start" in data or "call_window_end" in data) and _parse_hhmm(start) >= _parse_hhmm(end):
         bad("The calling window has to end after it starts.")
+    lo = data.get("warmup_min_gap_seconds")
+    hi = data.get("warmup_max_gap_seconds")
+    if lo is not None and hi is not None and lo > hi:
+        bad("Warm-up gap: the minimum can't be larger than the maximum.")
+    if data.get("warmup_enabled") and (data.get("max_concurrent_calls") or (current.max_concurrent_calls if current else 1) or 1) > 1:
+        bad("Warm-up pacing dials one contact at a time — set concurrency to 1 or turn warm-up off.")
     if data.get("call_days") is not None:
         days = data["call_days"]
         if not days:
@@ -924,6 +941,10 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
 _QUEUES: dict[str, asyncio.Task] = {}
 
 
+# Calls placed under warm-up pacing in this process, for batch-rest counting.
+_WARMUP_CALLS: dict = {}
+
+
 def ensure_queue(campaign_id: str) -> bool:
     """Start the campaign's dialer unless one is already running. Returns True if it started one."""
     task = _QUEUES.get(campaign_id)
@@ -946,6 +967,24 @@ async def resume_running_campaigns() -> int:
     started = sum(ensure_queue(str(cid)) for cid in ids)
     log.info("campaigns_resumed", count=started)
     return started
+
+
+def _warmup_gap(campaign) -> float:
+    """Seconds to wait after a call when warm-up pacing is on: a random gap inside
+    the campaign's min/max (default 180-300s), so a fresh number dials like a careful
+    human instead of a dialer burst. 0 when warm-up is off."""
+    if not getattr(campaign, "warmup_enabled", None):
+        return 0
+    import random
+    lo = campaign.warmup_min_gap_seconds or 180
+    hi = max(lo, campaign.warmup_max_gap_seconds or 300)
+    return float(random.randint(lo, hi))
+
+
+async def _warmup_wait(campaign_id, seconds: float) -> bool:
+    """A long pause that still honours pause/stop (wakes every _IDLE_POLL to check).
+    Returns False when the campaign should halt."""
+    return await _idle(campaign_id, seconds)
 
 
 async def _process_call_queue(campaign_id: str) -> None:
@@ -1054,5 +1093,23 @@ async def _process_call_queue(campaign_id: str) -> None:
                 log.info("call_queue_halted", campaign_id=campaign_id)
                 return
         else:
-            # Brief delay between calls to avoid SIP trunk saturation
-            await asyncio.sleep(2)
+            # Between calls: warm-up pacing waits minutes (with batch rests) instead of
+            # the usual brief SIP-saturation gap. Both still honour pause/stop.
+            if getattr(campaign, "warmup_enabled", None):
+                _WARMUP_CALLS[campaign_id] = _warmup_calls.get(campaign_id, 0) + 1
+                batch = campaign.warmup_batch_size or 10
+                if _WARMUP_CALLS[campaign_id] >= batch:
+                    _WARMUP_CALLS[campaign_id] = 0
+                    rest = campaign.warmup_rest_seconds or 900
+                    log.info("warmup_rest", campaign_id=campaign_id, seconds=rest,
+                             batch=batch)
+                    if not await _warmup_wait(campaign_uuid, rest):
+                        return
+                gap = _warmup_gap(campaign)
+                if gap:
+                    if not await _warmup_wait(campaign_uuid, gap):
+                        return
+                    continue  # re-check pause/hours after the pause
+            else:
+                # Brief delay between calls to avoid SIP trunk saturation
+                await asyncio.sleep(2)

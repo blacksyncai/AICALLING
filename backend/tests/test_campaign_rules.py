@@ -499,3 +499,30 @@ def test_dispatcher_blocks_campaign_before_context_credits_or_provider(monkeypat
     with pytest.raises(oc.CampaignScheduleClosed, match='America/Los_Angeles'):
         asyncio.run(oc.outbound_call_service._dispatch(lead, DB()))
     assert lookups == ['Campaign']
+
+
+def test_warmup_pacing_create_update_and_validation(client):
+    r = client.post("/api/campaigns/", json={"name": "Warmup", "warmup_enabled": True})
+    assert r.status_code == 201, r.text
+    c = r.json()
+    # Defaults visible in the response: 180-300s gap, batch of 10, 900s rest.
+    assert c["warmup_enabled"] is True
+    assert c["warmup_min_gap_seconds"] == 180 and c["warmup_max_gap_seconds"] == 300
+    assert c["warmup_batch_size"] == 10 and c["warmup_rest_seconds"] == 900
+    cid = c["id"]
+    # Warm-up is single-line: it can't run with concurrency > 1.
+    r = client.patch(f"/api/campaigns/{cid}", json={"warmup_enabled": True, "max_concurrent_calls": 3})
+    assert r.status_code == 400
+    # min > max is rejected.
+    r = client.patch(f"/api/campaigns/{cid}", json={"warmup_min_gap_seconds": 400, "warmup_max_gap_seconds": 200})
+    assert r.status_code == 400
+    # A valid custom pace saves.
+    r = client.patch(f"/api/campaigns/{cid}", json={"warmup_min_gap_seconds": 120, "warmup_max_gap_seconds": 240,
+                                                   "warmup_batch_size": 5, "warmup_rest_seconds": 600})
+    assert r.status_code == 200, r.text
+    c = r.json()
+    assert c["warmup_min_gap_seconds"] == 120 and c["warmup_max_gap_seconds"] == 240
+    assert c["warmup_batch_size"] == 5 and c["warmup_rest_seconds"] == 600
+    # Turning it off keeps campaigns dialing exactly as before.
+    r = client.patch(f"/api/campaigns/{cid}", json={"warmup_enabled": False})
+    assert r.status_code == 200 and r.json()["warmup_enabled"] is False

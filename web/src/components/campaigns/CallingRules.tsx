@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, ArrowUp, ArrowDown, Clock, Plus, RotateCcw, X } from "lucide-react";
+import { ArrowRight, ArrowUp, ArrowDown, Clock, Flame, Plus, RotateCcw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
@@ -144,6 +144,11 @@ type Form = {
   number_rotation_enabled: boolean;
   caller_number_pool: string[];
   retry_caller_policy: "same" | "different";
+  warmup_enabled: boolean;
+  warmup_min_gap_seconds: number;
+  warmup_max_gap_seconds: number;
+  warmup_batch_size: number;
+  warmup_rest_seconds: number;
 };
 
 function formFrom(c: Campaign): Form {
@@ -155,6 +160,11 @@ function formFrom(c: Campaign): Form {
     number_rotation_enabled: !!c.number_rotation_enabled,
     caller_number_pool: c.caller_number_pool ?? [],
     retry_caller_policy: c.retry_caller_policy ?? "same",
+    warmup_enabled: !!c.warmup_enabled,
+    warmup_min_gap_seconds: c.warmup_min_gap_seconds ?? 180,
+    warmup_max_gap_seconds: c.warmup_max_gap_seconds ?? 300,
+    warmup_batch_size: c.warmup_batch_size ?? 10,
+    warmup_rest_seconds: c.warmup_rest_seconds ?? 900,
     retry_schedule: c.retry_schedule ?? Array(Math.max(0, c.max_attempts - 1)).fill(c.retry_delay_minutes),
   };
 }
@@ -399,6 +409,54 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
               {campaign.pending_retries} contact{campaign.pending_retries === 1 ? " is" : "s are"} waiting for another try.
             </p>
           )}
+        </div>
+
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          <Flame className="h-3.5 w-3.5" /> Warm-up number
+        </div>
+        <div className="rounded-xl border border-zinc-200 p-4">
+          <Toggle checked={form.warmup_enabled}
+            onChange={(checked) => setForm((f) => ({ ...f, warmup_enabled: checked }))}
+            label="Warm up this number"
+            description="Dial slowly with pauses so a fresh number doesn't register as spam. Pairs with number rotation." />
+          {form.warmup_enabled && <div className="mt-4 space-y-3">
+            <p className="text-xs text-zinc-500">
+              One call at a time, a random gap between calls, and a longer rest after a batch.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Gap between calls">
+                <div className="flex items-center gap-2">
+                  <Input type="number" min={30} max={3600} value={form.warmup_min_gap_seconds}
+                    onChange={(e) => setForm((f) => ({ ...f, warmup_min_gap_seconds: Number(e.target.value) }))}
+                    className="w-20" aria-label="Minimum gap seconds" />
+                  <span className="text-xs text-zinc-500">to</span>
+                  <Input type="number" min={30} max={3600} value={form.warmup_max_gap_seconds}
+                    onChange={(e) => setForm((f) => ({ ...f, warmup_max_gap_seconds: Number(e.target.value) }))}
+                    className="w-20" aria-label="Maximum gap seconds" />
+                  <span className="text-xs text-zinc-500">sec</span>
+                </div>
+              </Field>
+              <Field label="Rest after a batch">
+                <div className="flex items-center gap-2">
+                  <Input type="number" min={1} max={100} value={form.warmup_batch_size}
+                    onChange={(e) => setForm((f) => ({ ...f, warmup_batch_size: Number(e.target.value) }))}
+                    className="w-20" aria-label="Calls per batch" />
+                  <span className="text-xs text-zinc-500">calls, then</span>
+                  <Input type="number" min={60} max={7200} value={form.warmup_rest_seconds}
+                    onChange={(e) => setForm((f) => ({ ...f, warmup_rest_seconds: Number(e.target.value) }))}
+                    className="w-20" aria-label="Rest seconds" />
+                  <span className="text-xs text-zinc-500">sec rest</span>
+                </div>
+              </Field>
+            </div>
+            {form.warmup_min_gap_seconds > form.warmup_max_gap_seconds && (
+              <p className="text-xs text-red-600">The minimum gap can't be larger than the maximum.</p>
+            )}
+            <p className="text-xs text-zinc-500">
+              At the default settings: roughly 12-20 calls/hour with a 15-minute rest every 10 calls.
+              Loosen the gap as the number builds history.
+            </p>
+          </div>}
         </div>
       </div>
     </Card>
