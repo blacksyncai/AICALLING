@@ -1096,7 +1096,7 @@ async def _process_call_queue(campaign_id: str) -> None:
             # Between calls: warm-up pacing waits minutes (with batch rests) instead of
             # the usual brief SIP-saturation gap. Both still honour pause/stop.
             if getattr(campaign, "warmup_enabled", None):
-                _WARMUP_CALLS[campaign_id] = _warmup_calls.get(campaign_id, 0) + 1
+                _WARMUP_CALLS[campaign_id] = _WARMUP_CALLS.get(campaign_id, 0) + 1
                 batch = campaign.warmup_batch_size or 10
                 if _WARMUP_CALLS[campaign_id] >= batch:
                     _WARMUP_CALLS[campaign_id] = 0
