@@ -56,4 +56,56 @@ def test_radar_status_tags_campaign_calls_and_verified(client):
 
     st = asyncio.run(scenario())
     assert st["7"]["campaign"] == "Old leads" and st["7"]["calls"] == 2 and st["7"]["voicemails"] == 1
-    assert st["7"]["verified"] and not st["8"]["verified"] and st["8"]["last_outcome"] == "no_answer"
+    assert not st["7"]["verified"] and not st["8"]["verified"] and st["8"]["last_outcome"] == "no_answer"
+
+
+def test_csv_values_survive_crm_linking_and_repeated_prefill(monkeypatch):
+    from app.services.contacts import parse_contacts_csv
+    from app.agent.runtime import lead_variables, render_vars
+    from app.services.crm.variables import apply
+
+    row=parse_contacts_csv('name,phone,property address,city,unit count\nJames,4155550123,99 CSV Property Rd,CSV City,0')[0][0]
+    lead=types.SimpleNamespace(**row,crm_refs={})
+    agent=types.SimpleNamespace(id='a1',system_prompt='Discuss {{property_address}} in {{city}} with {{unit_count}} units.',first_message='Hi {{name}}',voicemail_message='',knowledge_base='')
+    original=lead_variables(lead)
+    conn=types.SimpleNamespace(provider='followupboss',config={},settings={})
+    monkeypatch.setattr(sync,'http_for',lambda conn:(FakeProvider(),None))
+    lead.crm_refs={'followupboss':'11204'}
+    for _ in range(3):
+        asyncio.run(sync.prefill_fields(conn,agent,[lead]))
+        values=apply(lead_variables(lead),lead,agent,[conn])
+        for key in ('name','property_address','city','unit_count'):
+            assert values[key]==original[key]
+        assert '99 CSV Property Rd' in render_vars(agent.system_prompt,values)
+        assert 'crm_variable_values' not in visible_fields(lead.custom_fields)
+
+
+def test_csv_values_survive_dial_time_crm_overlay_and_explicit_mapping_still_wins():
+    from app.services.crm.variables import apply
+    from app.agent.runtime import lead_variables
+    lead=types.SimpleNamespace(name='James',phone='+14155550123',company='',email='',role='',custom_fields={
+        'property_address':'99 CSV Property Rd','units':0,'active':False,
+        'crm_fields':{'followupboss':{'address':'12 Mailing Ave','unit_count':'8','active':'yes'}}})
+    agent=types.SimpleNamespace(id='a1',system_prompt='{{property_address}} {{units}} {{active}}',first_message='',voicemail_message='',knowledge_base='')
+    conn=types.SimpleNamespace(provider='followupboss',settings={})
+    values=apply(lead_variables(lead),lead,agent,[conn])
+    assert values['property_address']=='99 CSV Property Rd' and values['units']==0 and values['active'] is False
+    conn.settings={'var_maps':{'a1':{'property_address':'address','units':'unit_count'}}}
+    values=apply(lead_variables(lead),lead,agent,[conn])
+    assert values['property_address']=='12 Mailing Ave' and values['units']=='8'
+
+
+def test_known_crm_derived_values_refresh_but_later_csv_edits_are_preserved(monkeypatch):
+    from app.services.crm.variables import apply
+    from app.agent.runtime import lead_variables
+    conn=types.SimpleNamespace(provider='followupboss',config={},settings={})
+    agent=types.SimpleNamespace(id='a1',system_prompt='{{property_address}}',first_message='',voicemail_message='',knowledge_base='')
+    lead=types.SimpleNamespace(name='James',phone='',company='',email='',role='',crm_refs={'followupboss':'91'},custom_fields={})
+    monkeypatch.setattr(sync,'http_for',lambda conn:(FakeProvider(),None))
+    asyncio.run(sync.prefill_fields(conn,agent,[lead]))
+    assert lead.custom_fields['property_address']=='12 Oak St'
+    lead.custom_fields['crm_fields']['followupboss']['address']='Updated CRM address'
+    assert apply(lead_variables(lead),lead,agent,[conn])['property_address']=='Updated CRM address'
+    lead.custom_fields['property_address']='New CSV property'
+    asyncio.run(sync.prefill_fields(conn,agent,[lead]))
+    assert apply(lead_variables(lead),lead,agent,[conn])['property_address']=='New CSV property'

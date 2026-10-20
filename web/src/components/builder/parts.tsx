@@ -284,9 +284,12 @@ export function StepProgress({ step }: { step: number }) {
             Step {step} of {STEPS.length} · {label}
           </span>
         </div>
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-zinc-100">
-          <div className="h-full rounded-full bg-brand-600 transition-all duration-500" style={{ width: `${(step / STEPS.length) * 100}%` }} />
-        </div>
+        <ol className="mt-3 flex items-center" aria-label="Setup progress">
+          {STEPS.map((name, i) => <li key={name} aria-current={step === i + 1 ? "step" : undefined} aria-label={`${name}${i + 1 < step ? ": complete" : ""}`} className={cn("flex items-center", i < STEPS.length - 1 && "flex-1")}>
+            <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold", i + 1 < step ? "bg-brand-600 text-white" : i + 1 === step ? "bg-brand-50 text-brand-700 ring-2 ring-brand-500" : "bg-zinc-100 text-zinc-500")}>{i + 1 < step ? <Check className="h-3 w-3" /> : i + 1}</span>
+            {i < STEPS.length - 1 && <span className={cn("mx-1.5 h-px flex-1", i + 1 < step ? "bg-brand-500" : "bg-zinc-200")} />}
+          </li>)}
+        </ol>
       </div>
       {/* Desktop */}
       <ol className="hidden items-center sm:flex" aria-label="Progress">

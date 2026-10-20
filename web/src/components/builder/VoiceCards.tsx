@@ -1,5 +1,7 @@
 "use client";
 
+import { voicePreview } from "@/lib/voice-preview";
+
 import {
   Check,
   ChevronRight,
@@ -94,7 +96,8 @@ function usePreview(language: string) {
     if (playing === v.id || loading === v.id) return stop();
     stop();
     const t = token.current;
-    const key = `${v.id}|${language}`;
+    const preview = voicePreview(v.language, language, PREVIEW_LINE);
+    const key = `${v.id}|${preview.language}`;
     try {
       let url = cache.current.get(key);
       if (!url) {
@@ -104,9 +107,9 @@ function usePreview(language: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             voice_id: v.id,
-            text: PREVIEW_LINE,
+            text: preview.text,
             speed: 1,
-            language,
+            language: preview.language,
           }),
         });
         if (!res.ok)

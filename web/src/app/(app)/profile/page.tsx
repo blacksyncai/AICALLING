@@ -1,6 +1,7 @@
 "use client";
 
-import { Building2, KeyRound, UserRound, Users } from "lucide-react";
+import { CallAlertSettings } from "@/components/notifications/CallAlerts";
+import { BellRing, Building2, KeyRound, UserRound, Users } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, type ReactNode } from "react";
 import { OrgTab } from "@/components/profile/OrgTab";
@@ -14,6 +15,7 @@ const TABS = [
   { value: "profile", label: "Profile", icon: UserRound },
   { value: "security", label: "Security", icon: KeyRound },
   { value: "team", label: "Team", icon: Users },
+  { value: "alerts", label: "Call alerts", icon: BellRing },
   { value: "organization", label: "Organization", icon: Building2 },
 ] as const;
 
@@ -24,6 +26,7 @@ const PANELS: Record<Tab, () => ReactNode> = {
   security: () => <SecurityTab />,
   team: () => <TeamTab />,
   organization: () => <OrgTab />,
+  alerts: () => <CallAlertSettings />,
 };
 
 function ProfileContent() {

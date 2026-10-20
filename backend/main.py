@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_all_tables
 from app.routers import (
-    account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, internal, lead_finder, meetings, phone_numbers, speech,
+    number_registration, account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, radar_automations, internal, lead_finder, meetings, phone_numbers, speech,
     public_api, search, support,
     settings as settings_router,
 )
@@ -62,6 +62,10 @@ async def lifespan(app: FastAPI):
     refresh_task = start_refresh_loop()
     from app.services.crm.sync import start_poll_loop
     crm_task = start_poll_loop()
+    from app.services.crm.automations import start_worker
+    radar_task = start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services.call_alerts import start_worker as start_alerts
+    alert_task = start_alerts() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.outbound_call import fix_mislabeled_outcomes
     repair_task = asyncio.create_task(fix_mislabeled_outcomes() if settings.run_startup_jobs else asyncio.sleep(0))
     if settings.run_startup_jobs:
@@ -120,13 +124,18 @@ async def lifespan(app: FastAPI):
     from app.services import twilio_recordings
     rec_task =(twilio_recordings.start_sweeper() if settings.run_startup_jobs and settings.recording_via_twilio
                 else asyncio.create_task(asyncio.sleep(0)))
+    from app.services.number_registration import start_worker as start_registration_worker
+    registration_task = start_registration_worker() if settings.run_startup_jobs and settings.number_registration_worker_enabled else asyncio.create_task(asyncio.sleep(0))
     yield
+    registration_task.cancel()
     rec_task.cancel()
     followup_task.cancel()
     expiry_task.cancel()
     sweeper_task.cancel()
     refresh_task.cancel()
     crm_task.cancel()
+    radar_task.cancel()
+    alert_task.cancel()
     repair_task.cancel()
     log.info("pounce_shutting_down")
 
@@ -180,7 +189,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-for r in (auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, integrations, public_api, search, support,
+for r in (number_registration, auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, radar_automations, integrations, public_api, search, support,
           settings_router, internal):
     app.include_router(r.router)
 app.include_router(phone_numbers.admin_router)
@@ -216,3 +225,7 @@ async def health():
 @app.get("/", tags=["infra"])
 async def root():
     return {"message": "BlackSync API — AI voice agents", "docs": "/docs"}
+
+from app.routers import call_alerts  # noqa: E402
+app.include_router(call_alerts.router)
+app.include_router(call_alerts.admin_router)

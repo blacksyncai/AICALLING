@@ -6,6 +6,7 @@ import { post } from "@/lib/api";
 import type { ChatTurn, ToolEvent } from "@/lib/types";
 import { cn, humanize, toolLabel } from "@/lib/utils";
 import { Button, Notice } from "../ui";
+import { AiOrb } from "../ui/ai-orb";
 
 type Item = ChatTurn | { role: "tool"; event: ToolEvent };
 
@@ -110,10 +111,9 @@ export function ChatPanel({
           ),
         )}
         {busy && (
-          <div className="flex gap-1 px-2 py-1" aria-label="Agent is typing">
-            {[0, 1, 2].map((i) => (
-              <span key={i} className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" style={{ animationDelay: `${i * 120}ms` }} />
-            ))}
+          <div className="flex items-center gap-2 px-2 py-1" role="status">
+            <AiOrb size="sm" state="thinking" decorative />
+            <span className="text-xs text-zinc-500">Preparing a reply…</span>
           </div>
         )}
         {ended && (

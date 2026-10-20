@@ -21,6 +21,7 @@ const APPS = [
     key: "chatgpt",
     name: "ChatGPT",
     domain: "chatgpt.com",
+    settingsUrl: "https://chatgpt.com/#settings/Connectors",
     description: "Build agents, add contacts, run campaigns and review calls from a ChatGPT chat.",
     steps: [
       "In ChatGPT, open Settings → Apps & Connectors (turn on Developer mode under Advanced if asked).",
@@ -33,6 +34,7 @@ const APPS = [
     key: "claude",
     name: "Claude",
     domain: "claude.ai",
+    settingsUrl: "https://claude.ai/settings/connectors",
     description: "Use BlackSync from Claude: set up your account, edit agents and read call results.",
     steps: [
       "In Claude, open Settings → Connectors and choose Add custom connector.",
@@ -136,6 +138,16 @@ export function AssistantRows() {
                 </Button>
               </div>
             </div>
+            <a
+              href={open.settingsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 px-3 py-3 text-sm font-medium text-brand-700 hover:bg-brand-100"
+            >
+              <span>Next: open {open.name} connector settings</span>
+              <ExternalLink className="h-4 w-4 shrink-0" />
+            </a>
+            <p className="text-xs text-zinc-500">Opens in a new tab. Add BlackSync using the server URL above.</p>
             {mine(open).length > 0 && (
               <div>
                 <div className="mb-1 text-xs font-medium text-zinc-500">Connected to your login</div>

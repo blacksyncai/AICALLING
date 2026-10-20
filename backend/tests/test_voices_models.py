@@ -104,10 +104,10 @@ def test_voice_metadata_fields(client, cartesia, monkeypatch):
     for v in voices.values():
         assert {"id", "name", "provider", "category", "language", "accent", "gender", "description",
                 "is_clone", "preview", "models", "status"} <= v.keys()
-        assert v["provider"] == ("mistral" if v["id"].startswith("mistral:") else "cartesia")
-        assert v["models"] == (["voxtral-mini-tts-latest"] if v["provider"] == "mistral" else ["sonic-3"])
+        assert v["provider"] == ("elevenlabs" if v["id"].startswith("elevenlabs:") else "mistral" if v["id"].startswith("mistral:") else "cartesia")
+        assert v["models"] == (["eleven_flash_v2_5"] if v["provider"] == "elevenlabs" else ["voxtral-mini-tts-latest"] if v["provider"] == "mistral" else ["sonic-3"])
         assert v["status"] == "available"
-        assert v["preview"] is True
+        assert v["preview"] is (bool(settings.elevenlabs_api_key) if v["provider"] == "elevenlabs" else True)
     assert voices["pub-1"]["accent"] == "British"
     assert voices["pub-1"]["gender"] == "male"
     assert voices["pub-2"]["accent"] is None  # nothing in the metadata → no guess

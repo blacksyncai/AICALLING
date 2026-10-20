@@ -78,3 +78,18 @@ class CrmScan(Base):
     )
     result: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)
+
+
+class CrmTranscriptDelivery(Base):
+    """Durable per-part receipt; uncertain writes are never blindly repeated."""
+    __tablename__ = "crm_transcript_deliveries"
+    __table_args__ = (UniqueConstraint("connection_id", "call_id", "external_id", "content_hash", "part"),)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    connection_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("crm_connections.id", ondelete="CASCADE"), nullable=False)
+    call_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("call_logs.id", ondelete="CASCADE"), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    part: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    note_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)

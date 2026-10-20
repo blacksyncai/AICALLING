@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
@@ -86,6 +86,7 @@ export function AnimatedTabList<T extends string>({
   variant = "dark",
   layoutId = "active-tab",
   className,
+  swipeHint = false,
 }: {
   tabs: AnimatedTab<T>[];
   value: T;
@@ -93,10 +94,24 @@ export function AnimatedTabList<T extends string>({
   variant?: "dark" | "light";
   layoutId?: string;
   className?: string;
+  swipeHint?: boolean;
 }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    if (!swipeHint) return;
+    const el = scroller.current;
+    if (!el) return;
+    const update = () => setMore(el.scrollWidth - el.clientWidth - el.scrollLeft > 8);
+    const observer = new ResizeObserver(update); observer.observe(el);
+    el.addEventListener("scroll", update, { passive: true }); update();
+    return () => { observer.disconnect(); el.removeEventListener("scroll", update); };
+  }, [swipeHint]);
   const light = variant === "light";
   return (
+    <div className="relative min-w-0">
     <div
+      ref={scroller}
       role="tablist"
       className={cn(
         "flex gap-1 rounded-xl p-1",
@@ -114,7 +129,22 @@ export function AnimatedTabList<T extends string>({
             type="button"
             role="tab"
             aria-selected={active}
-            onClick={() => onChange(tab.id)}
+            tabIndex={active ? 0 : -1}
+            onKeyDown={(event) => {
+              const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+              if (!keys.includes(event.key)) return;
+              event.preventDefault();
+              const index = tabs.findIndex((item) => item.id === tab.id);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+              const button = scroller.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next];
+              button?.focus();
+              if (swipeHint) button?.scrollIntoView({ block: "nearest", inline: "nearest" });
+              onChange(tabs[next].id);
+            }}
+            onClick={(event) => {
+              onChange(tab.id);
+              if (swipeHint) event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
+            }}
             className={cn(
               "relative flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-500",
               light ? (active ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800") : "text-white",
@@ -137,6 +167,8 @@ export function AnimatedTabList<T extends string>({
           </button>
         );
       })}
+    </div>
+    {swipeHint && more && <span aria-hidden="true" className="pointer-events-none absolute right-0 top-0 flex h-full w-8 items-center justify-end rounded-r-xl bg-gradient-to-l from-zinc-800 to-transparent pr-1 text-white sm:hidden">›</span>}
     </div>
   );
 }

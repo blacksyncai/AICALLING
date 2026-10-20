@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.agent import catalog
@@ -39,6 +39,7 @@ HINTS = {
     "recruiting": "Staffing and recruiting firms",
     "automotive": "Dealers and service centers",
     "healthcare": "Clinics, dental and wellness",
+    "marketing": "Marketing agencies, advertising and lead generation",
     "professional_services": "Agencies, consultants and law firms",
     "funeral_services": "Funeral homes, cremation and memorial services",
     "other": "Tell us what you do",
@@ -65,6 +66,23 @@ class StartBody(BaseModel):
     team_size: Literal["just_me", "2_5", "6_20", "21_plus"] | None = None
     website: str = Field(default="", max_length=300)
     timezone: str = Field(default="", max_length=64)
+    # Older API/connector clients can omit it; the guided web signup requires it.
+    phone: str | None = Field(default=None, max_length=40)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        import phonenumbers
+
+        try:
+            number = phonenumbers.parse(value.strip(), "US")
+            if not phonenumbers.is_valid_number(number):
+                raise ValueError("invalid phone")
+            return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+        except (phonenumbers.NumberParseException, ValueError):
+            raise ValueError("Enter a valid phone number, including a country code outside the US or Canada.") from None
 
 
 def _brief(industry_label: str, goal_labels: list[str], other: str, company: str) -> str:
@@ -104,6 +122,8 @@ async def start(body: StartBody, user: UserDep, db: DbDep):
     db.add(Membership(user_id=user.id, org_id=org.id, role="owner"))
     db.add(BusinessProfile(org_id=org.id, name=body.company.strip(), industry=body.industry,
                            website=body.website.strip()))
+    if body.phone is not None:
+        user.phone = body.phone
     user.active_org_id = org.id
     await db.flush()
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { voicePreview } from "@/lib/voice-preview";
+
 import {
   AlertTriangle,
   Check,
@@ -11,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useId,
@@ -86,6 +89,10 @@ export function VoicePicker({
   categories,
   message,
   inline = false,
+  defaultOpen = false,
+  keepOpen = false,
+  suspendDismiss = false,
+  headerAccessory,
 }: {
   voices: Voice[];
   featured?: Voice[];
@@ -103,10 +110,14 @@ export function VoicePicker({
   message?: string | null;
   /** Open the list in the page flow instead of floating — for containers that clip overflow (the wizard card). */
   inline?: boolean;
+  defaultOpen?: boolean;
+  keepOpen?: boolean;
+  suspendDismiss?: boolean;
+  headerAccessory?: ReactNode;
 }) {
   const uid = useId();
   const { open, setOpen, close, rootRef, triggerRef } =
-    usePopover<HTMLButtonElement>();
+    usePopover<HTMLButtonElement>({ defaultOpen, dismissOnOutside: !keepOpen, dismissOnEscape: !suspendDismiss });
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const featuredIds = useMemo(
@@ -142,10 +153,17 @@ export function VoicePicker({
   };
 
   const [tab, setTab] = useState<Cat>("premium");
+  const initializedOpen = useRef(false);
+  useEffect(() => {
+    if (!defaultOpen || initializedOpen.current || listLoading) return;
+    initializedOpen.current = true;
+    setTab(selected ? catOf(selected) : counts.premium ? "premium" : "standard");
+  }, [defaultOpen, listLoading, selected, catOf, counts.premium]);
   const [q, setQ] = useState("");
   const [lang, setLang] = useState("");
   const [accent, setAccent] = useState("");
   const [active, setActive] = useState(-1);
+  const keyboardNavigation = useRef(false);
   const [pasting, setPasting] = useState(false);
   const [pasted, setPasted] = useState("");
   // Tone picked per grouped row while the list is open (the row's play button previews it).
@@ -205,7 +223,8 @@ export function VoicePicker({
     }
     stop();
     const token = playToken.current;
-    const key = `${v.id}|${speed}|${language}`;
+    const preview = voicePreview(v.language, language, PREVIEW_LINE);
+    const key = `${v.id}|${speed}|${preview.language}`;
     try {
       let url = clipCache.current.get(key);
       if (!url) {
@@ -215,9 +234,9 @@ export function VoicePicker({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             voice_id: v.id,
-            text: PREVIEW_LINE,
+            text: preview.text,
             speed,
-            language,
+            language: preview.language,
           }),
         });
         if (!res.ok)
@@ -240,7 +259,7 @@ export function VoicePicker({
       if (token !== playToken.current) return;
       setPlaying(null);
       setFetching(null);
-      setError(`Couldn't preview ${v.name}: ${(e as Error).message}`);
+      setError(`Couldn't preview ${v.name}. Please try again.`);
     }
   }
 
@@ -313,18 +332,19 @@ export function VoicePicker({
   }, [open, tab, q, effLang, effAccent, shown.length]);
 
   useEffect(() => {
-    if (active < 0) return;
+    if (active < 0 || (inline && !keyboardNavigation.current)) return;
+    keyboardNavigation.current = false;
     listRef.current
       ?.querySelector(`[data-index="${active}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+  }, [active, inline]);
 
   function choose(id: string) {
     onChange(id);
-    close();
+    if (!keepOpen) close();
   }
 
-  const onKeyDown = listKeyHandler(shown.length, active, setActive, (i) =>
+  const onKeyDown = listKeyHandler(shown.length, active, (i) => { keyboardNavigation.current = true; setActive(i); }, (i) =>
     choose(current(shown[i]).id),
   );
   const optionId = (i: number) => `${uid}-opt-${i}`;
@@ -355,6 +375,8 @@ export function VoicePicker({
 
   return (
     <div ref={rootRef} className={cn("relative", styles.picker)}>
+      <div className="flex items-stretch gap-2">
+      <div className="min-w-0 flex-1">
       <button
         ref={triggerRef}
         type="button"
@@ -406,6 +428,9 @@ export function VoicePicker({
           </>
         )}
       </button>
+      </div>
+      {headerAccessory}
+      </div>
 
       {mismatch && (
         <p
@@ -439,7 +464,7 @@ export function VoicePicker({
             className={cn(
               styles.dialog,
               inline
-                ? "relative mt-2 flex max-h-[min(34rem,75vh)] flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
+                ? "relative mt-2 flex flex-col rounded-xl border border-zinc-200 bg-white shadow-sm"
                 : "fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 sm:max-h-[min(40rem,70vh)] sm:rounded-xl",
             )}
           >
@@ -530,7 +555,7 @@ export function VoicePicker({
                   onChange={(e) => setQ(e.target.value)}
                   onKeyDown={onKeyDown}
                   placeholder="Search voices by name…"
-                  className="pl-9"
+                  className="min-h-14 pl-10 text-base! font-medium"
                   role="combobox"
                   aria-expanded
                   aria-controls={`${uid}-list`}
@@ -579,7 +604,8 @@ export function VoicePicker({
               role="listbox"
               aria-label={labels[tab]}
               className={cn(
-                "scroll-thin min-h-0 flex-1 overflow-y-auto",
+                "min-h-0 flex-1",
+                !inline && "scroll-thin overflow-y-auto",
                 styles.voiceList,
               )}
             >
@@ -632,7 +658,7 @@ export function VoicePicker({
                     onClick={() => choose(v.id)}
                     onMouseMove={() => active !== i && setActive(i)}
                     className={cn(
-                      "flex cursor-pointer items-start gap-3 px-3 py-3",
+                      "flex cursor-pointer items-start gap-3 px-3 py-2.5",
                       styles.voiceRow,
                       i === active && "bg-zinc-50",
                       isSel && "bg-brand-50",

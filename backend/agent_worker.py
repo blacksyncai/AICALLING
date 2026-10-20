@@ -17,6 +17,8 @@ import json
 import logging
 import os
 
+import httpx
+
 import structlog
 from dotenv import load_dotenv
 
@@ -32,10 +34,13 @@ from livekit.agents import (
     cli,
     function_tool,
 )
-from livekit.plugins import cartesia, deepgram, openai, silero
+from livekit.plugins import cartesia, deepgram, elevenlabs, openai, silero
+# Register downloads and inference runners before CLI/worker initialization, on the main thread.
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
+from app.agent.elevenlabs_tts import is_elevenlabs_voice, make_livekit_tts as make_elevenlabs_tts
 from app.agent.models import MISTRAL_MODELS, NEEDS_USER_TURN
 from app.agent.runtime import contact_turns, should_hold_hangup
 
@@ -50,6 +55,38 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(message)s",
 )
+
+
+def _prewarm_process(proc) -> None:
+    """Load shared VAD before an idle worker accepts its first call."""
+    proc.userdata["vad"] = silero.VAD.load()
+    proc.userdata["vad_prewarmed"] = True
+
+
+def _job_vad(ctx):
+    # LiveKit VAD instances support independent streams for each session.
+    vad = ctx.proc.userdata.get("vad")
+    if vad is None:
+        vad = silero.VAD.load()
+        ctx.proc.userdata["vad"] = vad
+        ctx.proc.userdata["vad_prewarmed"] = False
+    return vad
+
+
+def _prewarm_tts(tts, ctx) -> bool:
+    warm = getattr(tts, "prewarm", None)
+    if not callable(warm):
+        return False
+    try:
+        # Register cleanup before opening a socket: no-answer jobs also need to close it.
+        close = getattr(tts, "aclose", None)
+        if callable(close):
+            ctx.add_shutdown_callback(close)
+        warm()
+        return True
+    except Exception as exc:
+        log.warning("tts_prewarm_failed", error=type(exc).__name__)
+        return False
 
 
 # ── Deepgram keyterm boosting for SDR calls (nova-3 uses keyterms, not keywords)
@@ -352,19 +389,22 @@ class PounceAgent(Agent):
 
 # ── Call outcome finalization ─────────────────────────────────────────────────
 
-async def _push_live_event(call_log_id: str, event: dict) -> None:
-    """Fire-and-forget: send a live event to the SSE broadcaster via HTTP."""
-    if not call_log_id:
-        return
-    import httpx as _httpx
-    try:
-        async with _httpx.AsyncClient(timeout=2.0) as client:
-            await client.post(
-                f"{settings.api_base_url}/internal/calls/{call_log_id}/live-event", headers=settings.internal_headers,
-                json=event,
-            )
-    except Exception as exc:
-        log.debug("live_push_failed", error=str(exc))
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _api_client() -> httpx.AsyncClient:
+    """One pooled client for internal API calls — no per-request TCP/TLS handshake."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
+    return _shared_client
+
+
+async def _api_post(path: str, *, json: dict, timeout: float = 10.0) -> httpx.Response:
+    """POST to the internal API on the shared pooled connection."""
+    return await _api_client().post(
+        f"{settings.api_base_url}{path}", headers=settings.internal_headers, json=json, timeout=timeout
+    )
 
 
 async def _post_call_outcome(state, outcome: str) -> None:
@@ -377,24 +417,19 @@ async def _post_call_outcome(state, outcome: str) -> None:
         return
     state.outcome_posted = True
 
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{settings.api_base_url}/internal/calls/{state.call_log_id}/outcome", headers=settings.internal_headers,
-                json={
-                    "outcome": outcome,
-                    "qualification_score": state.qualification_score,
-                    "q_team_size": state.q_team_size,
-                    "q_current_process": state.q_current_process,
-                    "q_decision_maker": state.q_decision_maker,
-                    "agreed_meeting_time": state.agreed_meeting_time,
-                    "meeting_link": state.meeting_link,
-                    "prospect_email": state.prospect_email,
-                    "transcript": state.transcript,
-                },
-            )
-            resp.raise_for_status()  # a rejected report must be retried, not logged as sent
+        resp = await _api_post(f"/internal/calls/{state.call_log_id}/outcome", json={
+            "outcome": outcome,
+            "qualification_score": state.qualification_score,
+            "q_team_size": state.q_team_size,
+            "q_current_process": state.q_current_process,
+            "q_decision_maker": state.q_decision_maker,
+            "agreed_meeting_time": state.agreed_meeting_time,
+            "meeting_link": state.meeting_link,
+            "prospect_email": state.prospect_email,
+            "transcript": state.transcript,
+        })
+        resp.raise_for_status()  # a rejected report must be retried, not logged as sent
         log.info("call_outcome_posted", call_log_id=state.call_log_id,
                  outcome=outcome, turns=len(state.transcript))
     except Exception as exc:
@@ -683,18 +718,26 @@ class _CallRun:
         self.last_found: list[dict] = []  # the times offered most recently ("the first one")
         self.post_task: asyncio.Task | None = None  # an outcome report in flight (awaited at shutdown)
         self.lat: dict[str, list[float]] = {"eou": [], "llm": [], "tts": []}
+        from app.agent.turn_latency import TurnLatency
+        self.turn_latency = TurnLatency()
+        from app.agent.committed_actions import CommittedActions
+        self.actions = CommittedActions()
+        self.trace = None  # attached by the configurable session
 
     def latency_summary(self) -> dict | None:
         avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
         eou, llm, tts = avg(self.lat["eou"]), avg(self.lat["llm"]), avg(self.lat["tts"])
-        if eou is None and llm is None:
+        observed = self.turn_latency.summary()
+        if eou is None and llm is None and not observed.get("response_gap_samples"):
             return None
         return {
+            **observed,
+            "response_metric": "session_state_gap" if observed.get("response_gap_samples") else "unmeasured",
             "turns": len(self.lat["llm"]),
             "avg_eou": eou,
             "avg_llm_ttft": llm,
             "avg_tts_ttfb": tts,
-            "avg_response": round(sum(v for v in (eou, llm, tts) if v), 3),
+            "avg_response": observed.get("avg_turn_gap"),
         }
 
 
@@ -702,22 +745,17 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
     if run.outcome_posted or not run.call_log_id:
         return
     run.outcome_posted = True
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{settings.api_base_url}/internal/calls/{run.call_log_id}/outcome", headers=settings.internal_headers,
-                json={
-                    "outcome": outcome,
-                    "agreed_meeting_time": run.meeting_time,
-                    "meeting_link": run.meeting_link or None,
-                    "prospect_email": run.email,
-                    "transcript": run.transcript,
-                    "metrics": run.latency_summary(),
-                    "ended_at": run.ended_wall,
-                },
-            )
-            resp.raise_for_status()  # a rejected report must be retried, not logged as sent
+        resp = await _api_post(f"/internal/calls/{run.call_log_id}/outcome", json={
+            "outcome": outcome,
+            "agreed_meeting_time": run.meeting_time,
+            "meeting_link": run.meeting_link or None,
+            "prospect_email": run.email,
+            "transcript": run.transcript,
+            "metrics": run.latency_summary(),
+            "ended_at": run.ended_wall,
+        })
+        resp.raise_for_status()  # a rejected report must be retried, not logged as sent
         log.info("call_outcome_posted", call_log_id=run.call_log_id, outcome=outcome)
     except Exception as exc:
         run.outcome_posted = False
@@ -725,12 +763,12 @@ async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
 
 
 async def _fetch_agent_config(agent_id: str) -> dict | None:
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(f"{settings.api_base_url}/internal/agents/{agent_id}/runtime", headers=settings.internal_headers)
-            resp.raise_for_status()
-            return resp.json()
+        resp = await _api_client().get(
+            f"{settings.api_base_url}/internal/agents/{agent_id}/runtime",
+            headers=settings.internal_headers, timeout=8.0)
+        resp.raise_for_status()
+        return resp.json()
     except Exception as exc:
         log.warning("agent_config_fetch_failed", agent_id=agent_id, error=str(exc))
         return None
@@ -756,10 +794,10 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     import time as _t
     from app.services import calendar as _cal
 
-    def _record(name: str, args: dict, output=None) -> None:
+    def _record(name: str, args: dict, output=None, *, success=True) -> None:
         run.transcript.append({
             "role": "tool", "tool": name, "args": args,
-            "result": {"output": output, "success": True},
+            "result": {"output": output, "success": success},
             "ts": round(_t.monotonic() - run.t0, 2) if run.t0 else 0.0,
         })
 
@@ -778,9 +816,20 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 # finish. The outcome stays as the latest result; a later end_call or the shutdown reports it.
                 log.info("hangup_cancelled_interrupted", room=ctx.room.name, outcome=outcome)
                 return
-            run.post_task = asyncio.create_task(_post_run_outcome(run, outcome))
+            if outcome == "voicemail":
+                session_ref["voicemail_detected"] = True
+            is_voicemail = outcome == "voicemail" or session_ref.get("voicemail_detected")
+            if not is_voicemail:
+                run.post_task = asyncio.create_task(_post_run_outcome(run, outcome))
             await asyncio.sleep(1.2)
-            await _delete_room(ctx.room.name)
+            # Recheck: AMD may classify voicemail while goodbye is playing.
+            if outcome == "voicemail" or session_ref.get("voicemail_detected"):
+                from app.agent.voicemail_timing import finish_voicemail
+                await finish_voicemail(run.t0, cfg.get("voice_tuning"),
+                    hangup=lambda: _delete_room(ctx.room.name),
+                    report=lambda: _post_run_outcome(run, run.outcome or outcome))
+            else:
+                await _delete_room(ctx.room.name)
         _keep(asyncio.create_task(_go()))
 
     guard = {"refused": False}
@@ -793,7 +842,11 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 interested, not_interested, callback, transferred, voicemail, no_answer, wrong_number,
                 do_not_call, completed.
         """
+        if context.speech_handle.interrupted:
+            return "Not ended: the caller interrupted. Respond to their latest turn."
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
+        if outcome == "transferred" and run.outcome != "transferred":
+            return "Not ended: no transfer has completed. Use the transfer tool first, or offer a callback; do not hang up as though the caller was connected."
         if outcome == "meeting_booked" and not run.meeting_time:
             return "Not ended: no meeting is booked yet. Finish booking first, or pick another outcome."
         last = _last_contact_turn(run.transcript)
@@ -813,7 +866,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
     tools = [function_tool(end_call)]
 
     if cfg.get("enable_booking"):
-        async def check_availability(preferred_date: str = "", time_of_day: str = "", time: str = "") -> str:
+        async def check_availability(context: RunContext, preferred_date: str = "", time_of_day: str = "", time: str = "") -> str:
             """Look up open appointment times. Only ever offer times this returns. Call it again whenever they want
             other options (another day, morning/afternoon/evening, or a specific time) — each call returns times
             not offered yet.
@@ -823,13 +876,24 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 time_of_day: "morning", "afternoon" or "evening" if they said so, else empty.
                 time: A specific time they asked about, 24h "HH:MM" (e.g. "15:00"), else empty.
             """
-            session = session_ref.get("session")
-            if session:
-                session.say("One sec, let me check the calendar.", allow_interruptions=True)
-            found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
+            if context.speech_handle.interrupted:
+                return "Lookup cancelled: the caller changed the turn."
+            if run.trace:
+                run.trace.mark("tool_request", speech=context.speech_handle, tool="check_availability")
+            try:
+                found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
                                            cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
                                            time_of_day=time_of_day, time=time,
-                                           exclude={s["start"] for s in run.slots})
+                                           exclude={s["start"] for s in run.slots}, count=2)
+            except _cal.CalendarUnavailable:
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="check_availability", status="unavailable")
+                _record("check_availability", {}, {"error": "calendar unavailable"}, success=False)
+                return "Availability is unavailable, not fully booked. Don't invent slots. Offer a teammate follow-up."
+            if run.trace:
+                run.trace.mark("tool_result", speech=context.speech_handle, tool="check_availability", status="ok")
+            if context.speech_handle.interrupted:
+                return "Lookup cancelled: don't offer these results after the caller changed their request."
             run.slots = _cal.remember_slots(run.slots, found)
             if found:
                 run.last_found = found
@@ -839,15 +903,18 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 return ("No new openings for that. Offer a different day or time of day"
                         + (", or one of the times already offered." if run.slots else "."))
             return ("Open: " + "; ".join(s["label"] for s in found)
-                    + ". Offer two or three of these naturally. All times offered so far can be booked.")
+                    + (". Offer both together naturally." if len(found) == 2 else ". Offer this verified time.")
+                    + " Availability will be rechecked before booking.")
 
-        async def book_appointment(slot: str, email: str) -> str:
+        async def book_appointment(slot: str, email: str, context: RunContext) -> str:
             """Book one of the slots from check_availability. Confirm the email spelling first.
 
             Args:
                 slot: The exact label of the slot they chose, as returned by check_availability.
                 email: The contact's email exactly as they said it. Never guess it.
             """
+            if run.meeting_time:
+                return f"Already booked for {run.meeting_time}. Do not create a second booking; changes need a teammate."
             if not run.slots:
                 return "No slots offered yet. Call check_availability first."
             chosen = _cal.pick_slot(run.slots, slot, cfg.get("calendar_timezone"), run.last_found)
@@ -860,53 +927,148 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             if not email_was_given(email, user_turns, (cfg_vars or {}).get("email", "")):
                 return ("Not booked: the contact hasn't given that email. Ask for their email "
                         "and have them spell it — never guess it.")
-            link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"),
-                                             cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
-            if not link:
-                _record("book_appointment", {"slot": slot, "email": email}, {"error": "booking failed"})
-                return ("Not booked: the calendar didn't accept it. Don't say it's booked — tell them "
-                        "the team will email a confirmation to set the time, then wrap up.")
-            run.meeting_link, run.meeting_time, run.email = link, chosen["label"], email
-            _record("book_appointment", {"slot": slot, "email": email}, {"booked": chosen["label"], "link": link})
-            return f"Booked for {chosen['label']}. Confirm exactly this time with them, then wrap up."
+            from app.agent.committed_actions import ActionUncertain, NoAction
+            async def _book():
+                if run.trace:
+                    run.trace.mark("tool_request", speech=context.speech_handle, tool="book_appointment")
+                # A previous offer is not a reservation. Recheck real availability.
+                from datetime import datetime
+                local_day = datetime.fromisoformat(chosen["start"].replace("Z", "+00:00")).astimezone(
+                    _cal._zone(cfg.get("calendar_timezone"))).date().isoformat()
+                try:
+                    fresh = await _cal.fetch_slots(local_day, cfg.get("calcom_event_type_id"),
+                        cfg.get("calcom_api_key"), cfg.get("calendar_timezone"), count=10000)
+                except _cal.CalendarUnavailable as exc:
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="read_unavailable_no_write")
+                    raise NoAction("Not booked: availability could not be verified. Try checking availability again or offer a teammate follow-up.") from exc
+                if context.speech_handle.interrupted:
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="cancelled_before_write")
+                    raise NoAction("Not booked: the caller interrupted before booking. Respond to their latest request.")
+                if chosen["start"] not in {s["start"] for s in fresh}:
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="stale")
+                    raise NoAction("Not booked: that slot is no longer available. Check availability again.")
+                link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"),
+                    cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
+                if not link:
+                    raise ActionUncertain("No booking receipt")
+                # Persist the authoritative result inside the shielded operation,
+                # even if caller interruption cancels the model's waiting tool.
+                run.meeting_link, run.meeting_time, run.email = link, chosen["label"], email
+                _record("book_appointment", {"slot": slot, "email": email}, {"booked": chosen["label"], "link": link})
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="confirmed")
+                return f"Booked for {chosen['label']}. Confirm exactly this time with them, then wrap up."
+            try:
+                return await run.actions.run(("booking",), _book, context=context)
+            except NoAction as exc:
+                return str(exc)
+            except ActionUncertain:
+                _record("book_appointment", {}, {"error": "confirmation unavailable"}, success=False)
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="unknown_no_retry")
+                return "Booking is not confirmed. Do not retry or promise confirmation; offer a teammate follow-up."
 
         tools += [function_tool(check_availability), function_tool(book_appointment)]
 
     transfer_to = (cfg.get("transfer_number") or "").strip()
     if transfer_to and run.call_type in ("outbound", "inbound"):  # the prompt offers it on every phone call
-        async def transfer_call() -> str:
+        async def transfer_call(context: RunContext) -> str:
             """Transfer the caller to a human teammate. Tell them you're connecting them first."""
             from livekit import api as _lkapi
-            sip_identity = next(
-                (p.identity for p in ctx.room.remote_participants.values() if p.identity.startswith("sip_")),
-                None,
-            )
+            from app.agent import call_transfer
+            sip_identity = call_transfer.caller_identity(ctx.room.remote_participants.values())
             if not sip_identity:
+                log.warning("call_transfer_no_sip_caller", call_log_id=run.call_log_id,
+                            call_type=run.call_type, participant_count=len(ctx.room.remote_participants))
                 return "Transfer isn't possible on this call. Offer to take a message instead."
-            _record("transfer_call", {"to": transfer_to})
-            run.outcome = "transferred"
-            lk = _lkapi.LiveKitAPI(
-                url=settings.livekit_url, api_key=settings.livekit_api_key,
-                api_secret=settings.livekit_api_secret,
-            )
+            from app.agent.committed_actions import ActionUncertain, NoAction
+            async def _transfer():
+                try:
+                    transfer_request = call_transfer.request(ctx.room.name, sip_identity, transfer_to)
+                except ValueError:
+                    raise NoAction("Transfer destination is not a valid phone number. Offer a callback and ask the team to check its transfer setting.") from None
+                # Await the actual handoff line, rather than adding 2.5 seconds.
+                try:
+                    await asyncio.wait_for(context.wait_for_playout(), timeout=12)
+                except asyncio.TimeoutError as exc:
+                    raise NoAction("Transfer not started: handoff speech did not finish. Check the caller's request before continuing.") from exc
+                if context.speech_handle.interrupted:
+                    raise NoAction("Transfer cancelled before connecting; respond to the caller's correction.")
+                lk = _lkapi.LiveKitAPI(url=settings.livekit_url, api_key=settings.livekit_api_key,
+                                       api_secret=settings.livekit_api_secret)
+                try:
+                    if run.trace:
+                        run.trace.mark("tool_request", speech=context.speech_handle, tool="transfer_call")
+                    response = await asyncio.wait_for(lk.sip.transfer_sip_participant(
+                        transfer_request, timeout=call_transfer.REQUEST_SECONDS), timeout=call_transfer.DEADLINE_SECONDS)
+                    result = call_transfer.receipt(response)
+                    log.info("call_transfer_result", call_log_id=run.call_log_id, **result)
+                    if result["status"] != "completed":
+                        _record("transfer_call", {}, result, success=False)
+                        if run.trace:
+                            run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", **result)
+                        return ("Transfer failed. Offer a teammate callback; do not claim a connection or retry automatically."
+                                if result["status"] == "failed" else
+                                "Transfer is not confirmed. Do not retry automatically or claim a human answered; offer a teammate callback if the caller is still here.")
+                    run.outcome = "transferred"
+                    _record("transfer_call", {"to": transfer_to}, result)
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="completed")
+                    run.post_task = asyncio.create_task(_post_run_outcome(run, "transferred"))
+                    return "Transfer completed by the phone system. This does not verify which person answered."
+                finally:
+                    try:
+                        await lk.aclose()
+                    except Exception as exc:
+                        # Closing the HTTP client cannot undo a confirmed handoff.
+                        log.warning("call_transfer_client_cleanup_failed", error_type=type(exc).__name__)
             try:
-                await asyncio.sleep(2.5)  # let the hand-off line finish
-                await lk.sip.transfer_sip_participant(_lkapi.TransferSIPParticipantRequest(
-                    participant_identity=sip_identity, room_name=ctx.room.name,
-                    transfer_to=f"tel:{transfer_to}", play_dialtone=True,
-                ))
-                run.post_task = asyncio.create_task(_post_run_outcome(run, "transferred"))
-                return "Transferred."
-            except Exception as exc:
-                log.warning("transfer_failed", error=str(exc))
-                run.outcome = None
-                return "The transfer failed. Apologize and offer to have someone call them back."
-            finally:
-                await lk.aclose()
+                return await run.actions.run(("transfer",), _transfer, context=context)
+            except NoAction as exc:
+                return str(exc)
+            except ActionUncertain as exc:
+                details = call_transfer.error_details(exc.__cause__ or exc)
+                log.warning("call_transfer_unconfirmed", call_log_id=run.call_log_id, **details)
+                _record("transfer_call", {}, {"error": "result unavailable", **details}, success=False)
+                if run.trace:
+                    run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="unknown_no_retry")
+                return "Transfer is not confirmed. Do not retry automatically; offer a teammate callback."
 
         tools.append(function_tool(transfer_call))
 
     return tools
+
+
+async def _recording_state(metadata: dict, room_name: str, state: str) -> None:
+    if not metadata.get("worker_recording") or not metadata.get("call_log_id"):
+        return
+    try:
+        response = await _api_post(
+            f"/internal/calls/{metadata['call_log_id']}/recording-state",
+            json={"room_name": room_name, "state": state}, timeout=5.0)
+        response.raise_for_status()
+    except Exception as exc:
+        log.warning("recording_state_update_failed", state=state, error=type(exc).__name__)
+
+
+async def _start_worker_recording(ctx, session, metadata):
+    if not metadata.get("record_key") or not (metadata.get("call_type") == "web" or metadata.get("worker_recording")):
+        return None
+    from app.agent.call_recorder import CallRecorder
+    recorder = CallRecorder(session, metadata["record_key"])
+    try:
+        if await recorder.start():
+            log.info("worker_recording_started", room=ctx.room.name)
+            asyncio.create_task(_recording_state(metadata, ctx.room.name, "recording"))
+            return recorder
+    except Exception as exc:
+        log.warning("call_recording_start_failed", room=ctx.room.name, error=type(exc).__name__)
+    await recorder.finish()
+    asyncio.create_task(_recording_state(metadata, ctx.room.name, "failed"))
+    return None
 
 
 async def _draft_opening(cfg: dict, variables: dict) -> str:
@@ -962,6 +1124,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     variables = metadata.get("variables") or {}
     call_type = metadata.get("call_type", "outbound")
     run = _CallRun(metadata.get("call_log_id", ""), call_type)
+    from app.agent.voice_trace import VoiceTrace, owning_speech, short_sentence_tokenizer
+    trace = VoiceTrace(lambda event, **fields: log.info(event, room=ctx.room.name, **fields),
+                       enabled=settings.voice_turn_trace)
+    run.trace = trace
 
     log.info("configurable_agent_started", room=ctx.room.name, agent=cfg.get("name"), call_type=call_type)
 
@@ -976,17 +1142,18 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if call_type == "outbound" and not render_vars(fixed_opening, variables).strip():
         opening_task = asyncio.create_task(_draft_opening(cfg, variables))
 
-    if call_type == "outbound":
-        await _wait_for_sip_answer(ctx)
-    else:
-        await ctx.wait_for_participant()
-
+    prepare_started = _time.monotonic()
     turn_detector = None
     if not settings.low_resource_mode:
         try:
-            from livekit.plugins.turn_detector.multilingual import MultilingualModel
             turn_detector = MultilingualModel()
-        except Exception:
+            if settings.voice_fast_identity_turns:
+                from app.agent.opening_turns import OpeningTurnDetector
+                turn_detector = OpeningTurnDetector(
+                    turn_detector, variables.get("full_name") or variables.get("name") or variables.get("first_name"),
+                    on_fast=lambda: trace.mark("identity_turn_complete", source="closed_short_answer"))
+        except Exception as exc:
+            log.warning("turn_detector_unavailable", error=type(exc).__name__, reason=str(exc)[:240])
             turn_detector = None
 
     language = cfg.get("language") or "en"
@@ -1002,20 +1169,24 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if sends_temperature:
         llm_kwargs["temperature"] = float(cfg.get("temperature", 0.5))
     session_kwargs = dict(
-        stt=deepgram.STT(
+        stt=cartesia.STT(model="ink-whisper", language="tl", api_key=settings.cartesia_api_key)
+        if language == "tl" else deepgram.STT(
             model="nova-3", language=language if language != "multi" else "multi",
             api_key=settings.deepgram_api_key,
         ),
         llm=openai.LLM(**llm_kwargs),
-        tts=make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia.TTS(
+        tts=make_elevenlabs_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
+        if is_elevenlabs_voice(voice_id) else
+        make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia.TTS(
             model="sonic-3",
             voice=DEFAULT_VOICE_ID if is_mistral_voice(voice_id) else voice_id,
             language=None if language in ("en", "multi") else language,
             speed=float(cfg.get("voice_speed") or 1.0),
             volume=tuning["volume"] if tuning["volume"] != 1.0 else None,
             api_key=settings.cartesia_api_key,
+            tokenizer=short_sentence_tokenizer(settings.voice_short_sentence_streaming),
         ),
-        vad=silero.VAD.load(),
+        vad=_job_vad(ctx),
         turn_handling={
             "interruption": {
                 "min_duration": tuning["min_duration"],
@@ -1042,6 +1213,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     def _on_metrics(ev) -> None:
         m = getattr(ev, "metrics", None)
         kind = getattr(m, "type", "")
+        if kind in ("llm_metrics", "tts_metrics", "stt_metrics", "eou_metrics"):
+            fields = {key: getattr(m, key) for key in (
+                "ttft", "ttfb", "duration", "cancelled", "completion_tokens", "prompt_tokens",
+                "audio_duration", "characters_count", "acquire_time", "connection_reused",
+                "end_of_utterance_delay", "transcription_delay", "on_user_turn_completed_delay")
+                if isinstance(getattr(m, key, None), (int, float, bool))}
+            trace.mark("provider_metrics", provider_metric=kind,
+                       provider_speech_id=getattr(m, "speech_id", None), **fields)
         try:
             if kind == "eou_metrics":
                 run.lat["eou"].append(float(m.end_of_utterance_delay))
@@ -1053,6 +1232,32 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             pass
 
     session.on("metrics_collected", _on_metrics)
+
+    def _speech_created(ev):
+        speech = ev.speech_handle
+        trace.mark("speech_created", speech=speech, source=ev.source, user_initiated=ev.user_initiated)
+        speech.add_done_callback(lambda handle: trace.mark("speech_done", speech=handle, interrupted=handle.interrupted))
+
+    session.on("speech_created", _speech_created)
+    session.on("user_input_transcribed", lambda ev: trace.mark(
+        "transcript_final" if ev.is_final else "transcript_interim"))
+    session.on("agent_false_interruption", lambda ev: trace.mark("false_interruption", resumed=ev.resumed))
+    session.on("eot_prediction", lambda ev: trace.mark("semantic_prediction", delay_seconds=ev.delay,
+                                                       inference_seconds=ev.inference_duration))
+
+    def _track_user_gap(ev):
+        trace.mark("user_" + ev.new_state, observed_at="callback_receipt")
+        run.turn_latency.user_state(getattr(ev, "old_state", ""), getattr(ev, "new_state", ""), _time.monotonic())
+
+    def _track_agent_gap(ev):
+        trace.mark("agent_" + ev.new_state, speech=session.current_speech,
+                   observed_at="worker_output_state_not_caller_audibility")
+        observed = run.turn_latency.agent_state(getattr(ev, "old_state", ""), getattr(ev, "new_state", ""), _time.monotonic())
+        if observed:
+            log.info("turn_response_gap", room=ctx.room.name, model=model, **observed)
+
+    session.on("user_state_changed", _track_user_gap)
+    session.on("agent_state_changed", _track_agent_gap)
     channel = "web" if call_type == "web" else "phone"
 
     # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
@@ -1064,8 +1269,16 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     class _CallAgent(Agent):
         async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+            trace.mark("turn_committed", turn_key=trace.turn_key(new_message.text_content or ""))
             if vm["detected"]:
                 raise StopResponse()  # don't talk back to a voicemail greeting
+
+        async def tts_node(self, text, model_settings):
+            speech = owning_speech()
+            observed_text = trace.stream(text, "tts_input", speech=speech)
+            async for frame in trace.stream(Agent.default.tts_node(self, observed_text, model_settings),
+                                            "tts_audio", speech=speech, audio=True):
+                yield frame
 
         async def llm_node(self, chat_ctx, tools, model_settings):
             """The model's reply minus any leaked notes or imagined turns (see app/agent/speech_guard.py)."""
@@ -1079,17 +1292,29 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             from app.agent.repeat_guard import no_repeats, said_lines, with_nudge
 
             chat_ctx = contact_last(chat_ctx, needs_user_last=model in MISTRAL_MODELS)
+            speech = owning_speech()
+            user = next((item for item in reversed(chat_ctx.items)
+                         if getattr(item, "role", None) == "user"), None)
+            turn_key = trace.turn_key(getattr(user, "text_content", "") or "") if user else None
 
             def _attempt(nudged: bool):
-                return Agent.default.llm_node(self, with_nudge(chat_ctx) if nudged else chat_ctx, tools, model_settings)
+                trace.mark("llm_request", speech=speech, attempt=int(nudged), turn_key=turn_key)
+                return trace.stream(Agent.default.llm_node(self, with_nudge(chat_ctx) if nudged else chat_ctx,
+                                    tools, model_settings), "llm_chunk", speech=speech, attempt=int(nudged))
 
             def _repeat(dropped: str) -> None:
                 log.warning("llm_repeat_cut", room=ctx.room.name, model=model, dropped=dropped[:80])
 
+            first_text = True
             async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat), _cut):
+                text = chunk if isinstance(chunk, str) else getattr(getattr(chunk, "delta", None), "content", None)
+                if text and first_text:
+                    trace.mark("usable_text_first", speech=speech, turn_key=turn_key)
+                    first_text = False
                 yield chunk
 
     async def _handle_voicemail() -> None:
+        session_ref["voicemail_detected"] = True
         log.info("voicemail_detected", room=ctx.room.name, action=vm_action)
         try:
             session.interrupt(force=True)
@@ -1118,9 +1343,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 run.outcome_posted = False
                 log.info("outcome_corrected_to_voicemail", room=ctx.room.name, was=run.outcome)
         run.outcome = "voicemail"
-        await _post_run_outcome(run, "voicemail")
         await asyncio.sleep(0.5)
-        await _delete_room(ctx.room.name)
+        from app.agent.voicemail_timing import finish_voicemail
+        await finish_voicemail(run.t0, cfg.get("voice_tuning"),
+            hangup=lambda: _delete_room(ctx.room.name),
+            report=lambda: _post_run_outcome(run, "voicemail"))
 
     def _on_transcribed(ev) -> None:
         if call_type != "outbound" or vm["detected"] or not getattr(ev, "is_final", False):
@@ -1155,8 +1382,21 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session.on("user_input_transcribed", _on_transcribed)
         session.on("user_state_changed", _on_user_state)
 
+    instructions = build_instructions(cfg, variables, channel=channel)
+    tts_prewarmed = False
+    if call_type in ("outbound", "inbound"):
+        tts_prewarmed = _prewarm_tts(session_kwargs["tts"], ctx)
+    log.info("voice_resources_ready", room=ctx.room.name,
+             seconds=round(_time.monotonic() - prepare_started, 3),
+             vad_prewarmed=bool(ctx.proc.userdata.get("vad_prewarmed")), tts_prewarm_started=tts_prewarmed)
+    # Construct providers and warm the voice socket during ringing, but do not listen or speak before answer.
+    if call_type == "outbound":
+        await _wait_for_sip_answer(ctx)
+    else:
+        await ctx.wait_for_participant()
+
     agent = _CallAgent(
-        instructions=build_instructions(cfg, variables, channel=channel),
+        instructions=instructions,
         tools=_build_tools(cfg, run, ctx, session_ref, variables),
     )
 
@@ -1184,6 +1424,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         try:
             item = getattr(ev, "item", None)
             role = getattr(item, "role", None)
+            from app.agent.turn_latency import stage_timings
+            timings = stage_timings(getattr(item, "metrics", None))
+            if timings:
+                log.info("turn_stage_latency", room=ctx.room.name, model=model, role=role, **timings)
+                trace.mark("sdk_item_metrics", speech=owning_speech(), role=role,
+                           item_id=getattr(item, "id", None), **timings)
             text = (getattr(item, "text_content", None) or "").strip()
             if role not in ("user", "assistant") or not text or text == CALL_CONNECTED_CUE:
                 return
@@ -1191,37 +1437,31 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             # Per-turn trace for diagnosing dropped calls: the agent's words, only a word count for the contact.
             log.info("turn", room=ctx.room.name, role=role, words=len(text.split()),
                      t=round(_time.monotonic() - run.t0, 1), **({"text": text[:80]} if role == "assistant" else {}))
-            asyncio.create_task(_push_live_event(run.call_log_id, {
-                "type": "transcript_turn", "session_id": ctx.room.name,
-                "role": "agent" if role == "assistant" else "caller", "text": text, "ts": str(_time.time()),
-            }))
         except Exception as exc:
             log.debug("transcript_capture_failed", error=str(exc))
 
     session.on("conversation_item_added", _on_item)
     log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,
              has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
-             background_audio=bool(cfg.get("background_audio")), tuning={k: v for k, v in tuning.items() if k != "pronunciations"})
+             stt_provider="cartesia" if language == "tl" else "deepgram", language=language,
+             tts_provider="elevenlabs" if is_elevenlabs_voice(voice_id) else "mistral" if is_mistral_voice(voice_id) and settings.mistral_api_key else "cartesia",
+             background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
+             preemptive_generation=True, preemptive_tts=True,
+             short_sentence_streaming=settings.voice_short_sentence_streaming, trace_enabled=settings.voice_turn_trace,
+             fast_identity_turns=settings.voice_fast_identity_turns,
+             tuning={k: v for k, v in tuning.items() if k != "pronunciations"})
     session.on("agent_state_changed", lambda ev: log.info("agent_state", room=ctx.room.name,
                                                            state=getattr(ev, "new_state", "")))
     session.on("error", lambda ev: log.warning("session_error", room=ctx.room.name,
                                                error=str(getattr(ev, "error", ev))[:300]))
     session.on("close", lambda ev: log.info("session_closed", room=ctx.room.name,
                                             reason=str(getattr(ev, "reason", "")), error=str(getattr(ev, "error", "") or "")[:300]))
+    session_started = _time.monotonic()
     await session.start(agent, room=ctx.room)
+    log.info("voice_session_ready", room=ctx.room.name,
+             after_answer_seconds=round(_time.monotonic() - session_started, 3))
 
-    # "Record this call" on a browser test: the worker records both sides itself (see app/agent/call_recorder.py).
-    recorder = None
-    if call_type == "web" and metadata.get("record_key"):
-        from app.agent.call_recorder import CallRecorder
-
-        try:
-            recorder = CallRecorder(session, metadata["record_key"])
-            if not await recorder.start():
-                recorder = None
-        except Exception as exc:  # a recording problem must never affect the call
-            log.warning("call_recording_start_failed", room=ctx.room.name, error=str(exc)[:200])
-            recorder = None
+    recorder = await _start_worker_recording(ctx, session, metadata)
 
     # Answering-machine detection: LiveKit's AMD classifies the first seconds after pickup (human / voicemail /
     # IVR / mailbox full) and holds the agent's opening line until it decides. Phrase matching stays as backup.
@@ -1241,9 +1481,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             await detector.__aenter__()
             # Don't hold the opening line for AMD's verdict (that cost ~6 s on live pickups); it keeps listening
             # and hangs up / leaves the message as soon as it hears a machine.
+            # Private SDK method: verify on any livekit-agents upgrade — if it disappears, AMD will hold the
+            # opening line again; this warning makes that regression visible in logs instead of silent.
             act = getattr(session, "_activity", None)
             if act is not None and hasattr(act, "_resume_authorization"):
                 act._resume_authorization()
+            else:
+                log.warning("amd_resume_authorization_unavailable",
+                            hint="livekit-agents private API changed; opening line may be held for AMD verdict")
 
             async def _amd_flow() -> None:
                 try:
@@ -1268,13 +1513,6 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             asyncio.create_task(_amd_flow())
         except Exception as exc:
             log.warning("amd_unavailable", error=str(exc)[:200])
-
-    asyncio.create_task(_push_live_event(run.call_log_id, {
-        "type": "call_started", "session_id": ctx.room.name, "agent_type": cfg.get("name", "agent"),
-        "direction": call_type, "caller_phone": variables.get("phone", ""),
-        "prospect_name": variables.get("full_name") or variables.get("name", ""),
-        "prospect_company": variables.get("company", ""), "ts": str(_time.time()),
-    }))
 
     bg_state: dict = {"task": None, "track": None}
     if cfg.get("background_audio") and call_type == "outbound":
@@ -1315,6 +1553,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     async def _hang_up_on_silence() -> None:
         while True:
             await asyncio.sleep(1)
+            if vm["detected"] or session_ref.get("voicemail_detected"):
+                continue  # voicemail handler owns its silent wait and hangup
             quiet = silence["agent"] in ("listening", "") and silence["user"] != "speaking"
             if not quiet:
                 continue
@@ -1370,11 +1610,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             outcome = "no_answer"
         await _post_run_outcome(run, outcome)  # first: it's what matters if the job is cut short
         if recorder is not None:
-            await recorder.finish()
-        await _push_live_event(run.call_log_id, {
-            "type": "call_ended", "session_id": ctx.room.name, "outcome": outcome,
-            "duration_sec": round((run.ended_wall or _time.time()) - wall_t0), "ts": str(_time.time()),
-        })
+            saved = await recorder.finish()
+            if metadata.get("worker_recording"):
+                await _recording_state(metadata, ctx.room.name, "ready" if saved else "failed")
         # If the session died on its own (e.g. a voice error), don't leave the caller on dead air.
         if call_type != "web" and ctx.room.remote_participants:
             await _delete_room(ctx.room.name)
@@ -1478,19 +1716,16 @@ async def _wait_for_sip_answer(ctx: JobContext, timeout: float = 50.0) -> None:
 # ── Worker entrypoint ─────────────────────────────────────────────────────────
 
 async def _run_inbound(ctx: JobContext) -> None:
-    import httpx
-
     caller = await ctx.wait_for_participant()
     attrs = dict(getattr(caller, "attributes", {}) or {})
     to_number = attrs.get("sip.trunkPhoneNumber", "")
     from_number = attrs.get("sip.phoneNumber", "")
     routed = None
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(f"{settings.api_base_url}/internal/inbound-call", headers=settings.internal_headers,
-                                     json={"to": to_number, "from_number": from_number, "room": ctx.room.name})
-            if resp.status_code == 200:
-                routed = resp.json()
+        resp = await _api_post("/internal/inbound-call",
+                               json={"to": to_number, "from_number": from_number, "room": ctx.room.name}, timeout=8.0)
+        if resp.status_code == 200:
+            routed = resp.json()
     except Exception as exc:
         log.warning("inbound_route_failed", error=str(exc), to=to_number)
     if not routed:
@@ -1544,7 +1779,6 @@ async def entrypoint(ctx: JobContext) -> None:
     turn_detector = None
     if not settings.low_resource_mode:
         try:
-            from livekit.plugins.turn_detector.multilingual import MultilingualModel
             turn_detector = MultilingualModel()
         except Exception:
             turn_detector = None
@@ -1574,7 +1808,7 @@ async def entrypoint(ctx: JobContext) -> None:
             text_pacing=True,       # keep Cartesia's natural phrase pauses
             api_key=settings.cartesia_api_key,
         ),
-        vad=silero.VAD.load(),
+        vad=_job_vad(ctx),
         user_away_timeout=5.0,
         turn_handling={
             "interruption": {
@@ -1658,32 +1892,16 @@ async def entrypoint(ctx: JobContext) -> None:
             })
             # Push to live monitor in real time
             import time as _t2
-            asyncio.create_task(_push_live_event(state.call_log_id, {
-                "type": "transcript_turn",
-                "session_id": ctx.room.name,
-                "role": "agent" if role == "assistant" else "caller",
-                "text": text,
-                "ts": str(_t2.time()),
-            }))
         except Exception as exc:  # never let transcript capture break the call
             log.debug("transcript_capture_failed", error=str(exc))
 
     session.on("conversation_item_added", _on_conversation_item)
 
     await session.start(agent, room=ctx.room)
+    recorder = await _start_worker_recording(ctx, session, metadata)
 
     # Announce call_started to Live Monitor
     import time as _ts
-    asyncio.create_task(_push_live_event(state.call_log_id, {
-        "type": "call_started",
-        "session_id": ctx.room.name,
-        "agent_type": "sdr",
-        "direction": "outbound",
-        "caller_phone": state.phone,
-        "prospect_name": state.name,
-        "prospect_company": state.company,
-        "ts": str(_ts.time()),
-    }))
 
     # Continuous call-center ambience — separate track, always on (hevox parity).
     bg_audio_state: dict = {"task": None, "track": None}
@@ -1712,16 +1930,12 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _finalize_call() -> None:
         outcome = _derive_outcome(state)
         import time as _tf
-        await _push_live_event(state.call_log_id, {
-            "type": "call_ended",
-            "session_id": ctx.room.name,
-            "outcome": outcome,
-            "duration_sec": round(_tf.monotonic() - _call_t0),
-            "ts": str(_tf.time()),
-        })
-        if state.outcome_posted:
-            return
-        await _post_call_outcome(state, outcome)
+        if not state.outcome_posted:
+            await _post_call_outcome(state, outcome)
+        if recorder is not None:
+            saved = await recorder.finish()
+            if metadata.get("worker_recording"):
+                await _recording_state(metadata, ctx.room.name, "ready" if saved else "failed")
 
     ctx.add_shutdown_callback(_finalize_call)
 
@@ -1751,6 +1965,8 @@ if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            prewarm_fnc=_prewarm_process,
+            shutdown_process_timeout=90.0,
             agent_name=settings.livekit_agent_name or "closer",
             **extra,
         )

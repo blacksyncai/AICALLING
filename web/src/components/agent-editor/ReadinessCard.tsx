@@ -80,7 +80,7 @@ export const ReadinessCard = forwardRef<
       : `${blockers} thing${blockers === 1 ? "" : "s"} to fix before launch`;
 
   return (
-    <div ref={ref} tabIndex={-1} className="scroll-mt-32 rounded-xl border border-zinc-200 bg-white shadow-xs focus:outline-none">
+    <div ref={ref} tabIndex={-1} className="scroll-mt-32 rounded-xl border border-zinc-200 bg-white focus:outline-none">
       <div className="flex items-center gap-3 px-4 py-3">
         <div
           className={cn(
@@ -127,6 +127,11 @@ export const ReadinessCard = forwardRef<
           </button>
         )}
       </div>
+      {!expanded && data && blockers > 0 && (
+        <div className="border-t border-zinc-100 px-4">
+          <CheckList checks={checks.filter((c) => c.status === "blocker").slice(0, 1)} onSection={onSection} />
+        </div>
+      )}
       {expanded && data && checks.length > 0 && (
         <div id="readiness-checks" className="border-t border-zinc-100 px-4">
           <CheckList checks={checks} onSection={onSection} />

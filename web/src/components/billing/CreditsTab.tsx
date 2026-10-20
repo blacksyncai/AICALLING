@@ -11,6 +11,7 @@ import { fetcher, post, put } from "@/lib/api";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { cn } from "@/lib/utils";
 import { type AutoRechargeCfg, type Catalog, type CreditBreakdown, type LedgerRow, fmtDate, fmtDateTime, usd } from "./types";
+import { CountryPopup } from "./CountryPopup";
 import { amount } from "./units";
 
 interface CreditsData extends CreditBreakdown {
@@ -28,6 +29,8 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
   const { data } = useSWR<CreditsData>("/api/billing/credits", fetcher);
   const { data: cat } = useSWR<Catalog>("/api/billing/catalog", fetcher);
   const [buying, setBuying] = useState<string | null>(null);
+  const { data: countryData } = useSWR<{ country: string }>("/api/billing/country", fetcher);
+  const [askCountry, setAskCountry] = useState<string | null>(null); // pack waiting on the country pop-up
   const access = cat?.pack_access;
   const packsLocked = !!access && !access.allowed;
 
@@ -38,7 +41,13 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
       </div>
     );
 
-  async function buy(pack: string) {
+  async function buy(pack: string, countryOverride?: string) {
+    // Ask where they're based the first time; the choice routes Stripe vs Helcim.
+    const country = countryOverride ?? countryData?.country;
+    if (!country) {
+      setAskCountry(pack);
+      return;
+    }
     setBuying(pack);
     try {
       window.location.href = (await post<{ url: string }>("/api/billing/credits/checkout", { pack })).url;
@@ -121,6 +130,11 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
       </div>
 
       <AutoRecharge canManage={canManage} onPlan={access?.on_plan ?? true} packs={cat.packs.filter((p) => p.available)} />
+      <CountryPopup
+        open={askCountry !== null}
+        onDone={(country) => { const pack = askCountry; setAskCountry(null); if (pack) void buy(pack, country); }}
+        onCancel={() => setAskCountry(null)}
+      />
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <Card className="min-w-0">

@@ -2,7 +2,7 @@
 
 import { Phone, Search, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import useSWR from "swr";
+import useSWR, { mutate as refreshSWR } from "swr";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Spinner, Tabs } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, del, fetcher, post } from "@/lib/api";
@@ -12,6 +12,7 @@ interface OrgNumbers {
   numbers: PhoneNumberItem[];
   requests: PhoneNumberRequestItem[];
   twilio_ready: boolean;
+  purchase_carriers?: string[];
 }
 
 interface Available {
@@ -22,6 +23,7 @@ interface Available {
 }
 
 interface Owned {
+  carrier?: string;
   sid: string;
   number: string;
   friendly: string;
@@ -37,13 +39,16 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   const toast = useToast();
   const url = `/api/admin/orgs/${orgId}/phone-numbers`;
   const { data, mutate } = useSWR<OrgNumbers>(url, fetcher);
-  const [mode, setMode] = useState<Mode>("buy");
+  const [chosenCarrier, setChosenCarrier] = useState<string | null>(null);
+  const carriers = data?.purchase_carriers || (data?.twilio_ready ? ["twilio"] : []);
+  const carrier = chosenCarrier || carriers[0] || "signalwire";
+  const [mode, setMode] = useState<Mode>("import");
   const [area, setArea] = useState("");
   const [results, setResults] = useState<Available[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [plivoNumber, setPlivoNumber] = useState("");
-  const { data: telephony } = useSWR<{ owned: Owned[]; owned_error: string }>(mode === "import" ? "/api/admin/telephony" : null, fetcher);
+  const { data: telephony } = useSWR<{ owned: Owned[]; owned_error: string; owned_warnings?: string[] }>(mode === "import" ? "/api/admin/telephony" : null, fetcher);
 
   const openRequest = data?.requests[0];
 
@@ -51,7 +56,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
     e.preventDefault();
     setSearching(true);
     try {
-      const r = await api<{ numbers: Available[] }>(`/api/admin/phone-numbers/available?area_code=${encodeURIComponent(area)}`);
+      const r = await api<{ numbers: Available[] }>(`/api/admin/phone-numbers/available?area_code=${encodeURIComponent(area)}&carrier=${encodeURIComponent(carrier)}`);
       setResults(r.numbers);
     } catch (err) {
       toast((err as Error).message, "error");
@@ -61,10 +66,10 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   }
 
   async function assign(number: string, how: "purchase" | "import" | "plivo") {
-    if (how === "purchase" && !window.confirm(`Buy ${number} from Twilio for this account? Twilio bills the platform account monthly.`)) return;
+    if (how === "purchase" && !window.confirm(`Buy ${number} from ${carrier === "signalwire" ? "SignalWire" : "Twilio"} for this account? The provider bills the platform account monthly.`)) return;
     setBusy(number);
     try {
-      await post(url, { number, mode: how, request_id: openRequest?.id });
+      await post(url, { number, carrier, mode: how, request_id: openRequest?.id });
       setResults(null);
       if (how === "plivo") setPlivoNumber("");
       await mutate();
@@ -77,13 +82,13 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   }
 
   async function release(n: PhoneNumberItem) {
-    const returnIt = n.source === "purchased" && window.confirm(`Release ${n.number} back to Twilio too? (OK = release and stop paying for it, Cancel = only remove it from this account)`);
+    const returnIt = n.source === "purchased" && window.confirm(`Release ${n.number} back to its carrier too? (OK = release and stop paying for it, Cancel = only remove it from this account)`);
     if (!returnIt && !window.confirm(`Remove ${n.number} from this account?`)) return;
     setBusy(n.id);
     try {
       await del(`/api/admin/phone-numbers/${n.id}?return_to_twilio=${returnIt}`);
       await mutate();
-      toast(returnIt ? `${n.number} released to Twilio` : `${n.number} removed`);
+      toast(returnIt ? `${n.number} released to carrier` : `${n.number} removed`);
     } catch (err) {
       toast((err as Error).message, "error");
     } finally {
@@ -120,6 +125,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
                   <Phone className="h-3.5 w-3.5 text-zinc-400" />
                   <span className="font-mono text-sm tabular-nums">{n.number}</span>
                   {n.is_default && <Badge tone="violet">Default</Badge>}
+                  <Badge tone="gray">{n.carrier || "twilio"}</Badge>
                   <Badge tone="gray">{n.source}</Badge>
                   <button
                     type="button"
@@ -144,19 +150,19 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
             </Notice>
           ))}
 
-          {!data.twilio_ready ? (
-            <Notice>Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN on the server to buy and assign numbers.</Notice>
-          ) : (
+          {(
             <>
               <Tabs<Mode>
                 value={mode}
                 onChange={setMode}
                 tabs={[
                   { value: "buy", label: "Buy new" },
-                  { value: "import", label: "From Twilio" },
+                  { value: "import", label: "Assign existing" },
                   { value: "plivo", label: "Plivo number" },
                 ]}
               />
+              {mode === "import" && telephony?.owned_warnings?.map((warning) => <Notice key={warning}>{warning}</Notice>)}
+              {mode === "import" && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-zinc-500">Assign numbers already owned in Twilio, Bandwidth or SignalWire. SignalWire currently supports outbound calls.</p><Button size="sm" onClick={() => void refreshSWR("/api/admin/telephony")}>Refresh numbers</Button></div>}
               {mode === "plivo" ? (
                 <form
                   onSubmit={(e) => {
@@ -175,8 +181,14 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
                   </div>
                   <p className="text-xs text-zinc-500">Outbound calls from this number go through Plivo. Buy the number in the Plivo console first.</p>
                 </form>
-              ) : mode === "buy" ? (
+              ) : mode === "buy" && !carriers.length ? <Notice>Number purchasing is not configured. Use Assign existing.</Notice> : mode === "buy" ? (
                 <>
+                  <label className="text-xs text-zinc-500">Number provider
+                    <select aria-label="Number provider" className="ml-3 rounded-lg border border-zinc-200 px-3 py-2" value={carrier} disabled={!!busy || searching} onChange={(e) => { setChosenCarrier(e.target.value); setResults(null); }}>
+                      {carriers.map((c) => <option key={c} value={c}>{c === "signalwire" ? "SignalWire · Primary" : "Twilio · Backup"}</option>)}
+                    </select>
+                  </label>
+                  {carrier === "signalwire" && <p className="text-xs text-zinc-500">Purchases support outbound calling. Inbound routing is not configured yet.</p>}
                   <form onSubmit={search} className="flex items-end gap-2">
                     <Field label="Area code" className="flex-1">
                       <Input
@@ -214,13 +226,14 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
               ) : telephony.owned_error ? (
                 <Notice tone="red">{telephony.owned_error}</Notice>
               ) : unassigned.length === 0 ? (
-                <p className="text-sm text-zinc-500">Every number in the Twilio account is already assigned.</p>
+                <p className="text-sm text-zinc-500">No unassigned numbers found. Purchase numbers in your carrier dashboard, then refresh. SignalWire requires API credentials and a LiveKit trunk configured on the server.</p>
               ) : (
                 <ul className="max-h-64 divide-y divide-zinc-100 overflow-y-auto rounded-lg border border-zinc-200">
                   {unassigned.map((o) => (
                     <li key={o.sid} className="flex items-center justify-between gap-2 px-3 py-2">
                       <span className="min-w-0">
                         <span className="font-mono text-sm tabular-nums">{o.number}</span>
+                        <Badge tone="gray">{o.carrier || "twilio"}</Badge>
                         {o.friendly && <span className="ml-2 text-xs text-zinc-500">{o.friendly}</span>}
                       </span>
                       <Button size="sm" onClick={() => void assign(o.number, "import")} loading={busy === o.number} disabled={!!busy}>

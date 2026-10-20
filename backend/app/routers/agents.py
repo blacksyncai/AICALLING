@@ -47,6 +47,7 @@ class Pronunciation(BaseModel):
 
 
 class VoiceTuning(BaseModel):
+    voicemail_min_connected_seconds: float = Field(default=6.2, ge=0, le=60)
     volume: float = Field(default=1.0, ge=0.5, le=2)
     # 0–1. Defaults reproduce the worker's standard turn-taking.
     responsiveness: float = Field(default=0.75, ge=0, le=1)
@@ -228,6 +229,21 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
     agent = await _get_agent(db, ctx, agent_id)
     before = _prompt_state(agent)
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "transfer_number" in changes:
+        from app.services.outbound_call import validate_e164
+        try:
+            changes["transfer_number"] = validate_e164(changes["transfer_number"]) if changes["transfer_number"].strip() else ""
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Enter a valid transfer phone number, for example +14155550123.") from None
+    if {"voice_id", "voice_speed"} & changes.keys():
+        from app.agent.elevenlabs_tts import is_elevenlabs_voice, provider_voice_id, voice_settings
+        selected_voice = changes.get("voice_id", agent.voice_id)
+        if is_elevenlabs_voice(selected_voice):
+            try:
+                provider_voice_id(selected_voice)
+                voice_settings(changes.get("voice_speed", agent.voice_speed or 1.0))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
     if changes.get("status") == "active" and agent.status != "active":
         from app.services import entitlements
 

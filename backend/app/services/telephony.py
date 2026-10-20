@@ -1,13 +1,7 @@
-"""
-Phone numbers for sub-accounts.
+"""Per-account caller IDs: SignalWire purchases by default, with explicit Twilio backup.
 
-Every number lives in the platform's Twilio account, on the Elastic SIP trunk the
-LiveKit outbound trunk dials through. Each organization gets its own numbers and
-calls go out with one of them as caller ID (`sip_number` on the SIP participant).
-
-  • purchase — buy a number from Twilio (attached to the trunk at purchase time)
-  • import   — assign a number already in the Twilio account (routing left untouched)
-  • release  — purchased numbers go back to Twilio; imported ones are only unassigned
+SignalWire purchases use the shared outbound LiveKit trunk; inbound routing is
+not provisioned here. Purchased numbers are released through their own carrier.
 """
 
 from __future__ import annotations
@@ -17,7 +11,7 @@ from datetime import datetime, timezone
 
 import httpx
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -111,7 +105,29 @@ async def trunk_sid() -> str:
     return match["sid"]
 
 
-async def search_available(area_code: str = "", contains: str = "", country: str = "US", limit: int = 20) -> list[dict]:
+def purchase_carriers() -> list[str]:
+    from app.services import signalwire
+    return (["signalwire"] if signalwire.ready() else []) + (["twilio"] if settings.twilio_ready else [])
+
+
+def purchase_carrier(carrier: str | None = None) -> str:
+    available = purchase_carriers()
+    selected = carrier or (available[0] if available else "")
+    if selected not in available:
+        raise TelephonyError("The selected number provider is not configured.")
+    return selected
+
+
+async def search_available(area_code: str = "", contains: str = "", country: str = "US", limit: int = 20, carrier: str | None = None) -> list[dict]:
+    selected = purchase_carrier(carrier)
+    if selected == "signalwire":
+        from app.services import signalwire
+        if country.upper() != "US":
+            raise TelephonyError("Only US local numbers are supported here.")
+        try:
+            return await signalwire.search_available(area_code, contains, limit)
+        except signalwire.SignalWireError as exc:
+            raise TelephonyError(str(exc)) from exc
     params: dict = {"VoiceEnabled": "true", "PageSize": max(1, min(limit, 50))}
     if area_code:
         if not area_code.isdigit() or len(area_code) != 3:
@@ -123,12 +139,12 @@ async def search_available(area_code: str = "", contains: str = "", country: str
     data = await _request("GET", _account_url(f"AvailablePhoneNumbers/{country}/Local.json"), params=params)
     return [
         {"number": n["phone_number"], "friendly": n.get("friendly_name") or n["phone_number"],
-         "locality": n.get("locality") or "", "region": n.get("region") or ""}
+         "locality": n.get("locality") or "", "region": n.get("region") or "", "carrier": "twilio"}
         for n in data.get("available_phone_numbers") or []
     ]
 
 
-async def list_owned() -> list[dict]:
+async def list_owned(warnings: list[str] | None = None) -> list[dict]:
     """Every number in the Twilio account (first 1000), plus the Bandwidth account's numbers."""
     out = []
     if settings.twilio_ready:
@@ -146,6 +162,23 @@ async def list_owned() -> list[dict]:
                     for n in await bandwidth.list_numbers()]
         except bandwidth.BandwidthError as exc:
             log.warning("bandwidth_numbers_failed", error=str(exc))
+    from app.services import signalwire
+    if signalwire.ready():
+        try:
+            out += await signalwire.list_numbers()
+        except signalwire.SignalWireError as exc:
+            warning = str(exc)
+            try:
+                configured = await signalwire.configured_numbers()
+                out += configured
+                if configured:
+                    warning += " Showing caller IDs already configured on the SignalWire SIP trunk. Other purchased numbers may be missing."
+            except signalwire.SignalWireError as fallback_exc:
+                warning += " " + str(fallback_exc)
+            if warnings is not None:
+                warnings.append(warning)
+            elif not out:
+                raise TelephonyError(warning) from exc
     return out
 
 
@@ -203,7 +236,7 @@ async def sync_inbound_numbers() -> int:
     async with AsyncSessionLocal() as db:
         nums = (await db.execute(select(PhoneNumber.number).where(
             PhoneNumber.status == "active",
-            (PhoneNumber.carrier.is_(None)) | (PhoneNumber.carrier != "bandwidth")))).scalars().all()  # Bandwidth: own trunk
+            (PhoneNumber.carrier.is_(None)) | (PhoneNumber.carrier == "twilio")))).scalars().all()  # Bandwidth: own trunk
     for n in nums:
         await _inbound_ready(n)
     return len(nums)
@@ -222,6 +255,8 @@ async def _claim_row(db: AsyncSession, org_id: uuid.UUID, number: str) -> PhoneN
     if row is not None:
         if row.status == "active":
             raise TelephonyError("That number is already assigned to an account.")
+        from app.services.number_registration import retire_number
+        await retire_number(db, row)
         row.org_id, row.status, row.released_at = org_id, "active", None
         row.created_at = datetime.now(timezone.utc)
         row.label, row.is_default = "", None
@@ -237,29 +272,42 @@ async def _make_default_if_first(db: AsyncSession, row: PhoneNumber) -> None:
         row.is_default = True
 
 
-async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str = "") -> PhoneNumber:
+async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str = "", *, carrier: str | None = None) -> PhoneNumber:
     number = normalize(number)
     existing = (await db.execute(select(PhoneNumber).where(PhoneNumber.number == number,
                                                            PhoneNumber.status == "active"))).scalar_one_or_none()
     if existing:
         raise TelephonyError("That number is already assigned to an account.")
-    bought = await _buy(number)
+    selected = purchase_carrier(carrier)
+    from app.services import signalwire
     try:
+        bought = await signalwire.buy(number) if selected == "signalwire" else await _buy(number)
+    except signalwire.SignalWireError as exc:
+        raise TelephonyError(str(exc)) from exc
+    try:
+        if selected == "signalwire":
+            await signalwire.allow_number(number)
         row = await _claim_row(db, org_id, number)
         row.provider_sid, row.source, row.label = bought["sid"], "purchased", label.strip()[:100]
+        row.carrier = "signalwire" if selected == "signalwire" else None
         await db.flush()
         await _make_default_if_first(db, row)
+        from app.services.number_registration import enqueue_number
+        await enqueue_number(db, row)
         await db.commit()
-    except Exception:
+    except Exception as exc:
         log.error("phone_number_save_failed_releasing", number=number)
         await db.rollback()
         try:
-            await _release_twilio(bought["sid"])
+            await signalwire.release(bought["sid"]) if selected == "signalwire" else await _release_twilio(bought["sid"])
         except Exception:
             log.error("phone_number_release_after_failure_failed", number=number, sid=bought.get("sid"))
+        if isinstance(exc, signalwire.SignalWireError):
+            raise TelephonyError(str(exc)) from exc
         raise
-    await _livekit_numbers(add=[number])
-    await _inbound_ready(number)
+    if selected != "signalwire":
+        await _livekit_numbers(add=[number])
+        await _inbound_ready(number)
     log.info("phone_number_purchased", org_id=str(org_id), number=number)
     return row
 
@@ -269,18 +317,27 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
     number = normalize(number)
     owned = {n["number"]: n for n in await list_owned()}
     if number not in owned:
-        raise TelephonyError("That number isn't in the Twilio or Bandwidth account.")
+        raise TelephonyError("That number isn't in a configured carrier account.")
+    carrier = owned[number].get("carrier")
+    if carrier == "signalwire":
+        from app.services import signalwire
+        try:
+            await signalwire.allow_number(number)
+        except signalwire.SignalWireError as exc:
+            raise TelephonyError(str(exc)) from exc
     row = await _claim_row(db, org_id, number)
     row.provider_sid, row.source, row.label = owned[number]["sid"], "imported", label.strip()[:100]
-    row.carrier = "bandwidth" if owned[number].get("carrier") == "bandwidth" else None
+    row.carrier = carrier if carrier in ("bandwidth", "signalwire") else None
     await db.flush()
     await _make_default_if_first(db, row)
+    from app.services.number_registration import enqueue_number
+    await enqueue_number(db, row)
     await db.commit()
     if row.carrier == "bandwidth":
         from app.services import bandwidth
 
         await bandwidth.ensure_bridge_trunk([number])
-    else:
+    elif row.carrier != "signalwire":
         await _livekit_numbers(add=[number])
         await _inbound_ready(number)
     log.info("phone_number_imported", org_id=str(org_id), number=number)
@@ -307,7 +364,16 @@ async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool)
     if row.status != "active":
         return
     if return_to_twilio and row.source == "purchased" and row.provider_sid:
-        await _release_twilio(row.provider_sid)
+        if row.carrier == "signalwire":
+            from app.services import signalwire
+            try:
+                await signalwire.release(row.provider_sid)
+            except signalwire.SignalWireError as exc:
+                raise TelephonyError(str(exc)) from exc
+        else:
+            await _release_twilio(row.provider_sid)
+    from app.services.number_registration import retire_number
+    await retire_number(db, row)
     was_default = bool(row.is_default)
     row.status, row.released_at, row.is_default = "released", datetime.now(timezone.utc), None
     await db.execute(update(Agent).where(Agent.org_id == row.org_id, Agent.caller_number == row.number)
@@ -318,8 +384,9 @@ async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool)
         if rest:
             rest[0].is_default = True
     await db.commit()
-    await _livekit_numbers(remove=[row.number],
-                           trunk_id=settings.livekit_sip_plivo_trunk_id if row.carrier == "plivo" else None)
+    if row.carrier not in ("signalwire", "bandwidth"):
+        await _livekit_numbers(remove=[row.number],
+                               trunk_id=settings.livekit_sip_plivo_trunk_id if row.carrier == "plivo" else None)
     log.info("phone_number_released", org_id=str(row.org_id), number=row.number, returned=return_to_twilio)
 
 
@@ -341,13 +408,53 @@ async def caller_id_for(db: AsyncSession, org_id: uuid.UUID, agent: Agent | None
     return default.number
 
 
+async def campaign_caller_id_for(db, org_id, agent, campaign_id, lead_id=None):
+    """Transactional per-campaign round robin; never rotates across another tenant's numbers."""
+    from app.models.campaign import Campaign
+    from app.models.call_log import CallLog
+    if not campaign_id:
+        return await caller_id_for(db, org_id, agent)
+    campaign = (await db.execute(select(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+                               .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+    if campaign is None:
+        raise TelephonyError("The campaign is not on this account.")
+    if not campaign.number_rotation_enabled:
+        return await caller_id_for(db, org_id, agent)
+    pool = list(campaign.caller_number_pool or [])
+    owned = {number.number for number in await active_numbers(db, org_id)}
+    if len(pool) < 2 or len(set(pool)) != len(pool) or any(number not in owned for number in pool):
+        raise TelephonyError("Update the campaign's rotation pool: select at least two distinct active numbers owned by this account.")
+    previous = None
+    if lead_id:
+        previous = (await db.execute(select(CallLog.from_phone).where(
+            CallLog.org_id == org_id, CallLog.campaign_id == campaign_id, CallLog.lead_id == lead_id,
+            CallLog.call_type == "outbound", CallLog.from_phone.is_not(None),
+        ).order_by(CallLog.started_at.desc(), CallLog.id.desc()).limit(1))).scalar_one_or_none()
+    policy = campaign.retry_caller_policy or "same"
+    if policy not in ("same", "different"):
+        raise TelephonyError("Choose a valid campaign retry caller-number policy.")
+    if previous and policy == "same":
+        if previous not in pool:
+            raise TelephonyError("The previous caller number is no longer in this campaign's active pool. Update the retry policy before redialing.")
+        return previous
+    # Cursor updates and the eventual call record commit together. Failed preparation rolls both back.
+    for _ in range(2):
+        cursor = (await db.execute(update(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+                                 .values(caller_rotation_cursor=func.coalesce(Campaign.caller_rotation_cursor, 0) + 1)
+                                 .returning(Campaign.caller_rotation_cursor))).scalar_one()
+        chosen = pool[(cursor - 1) % len(pool)]
+        if not previous or chosen != previous:
+            return chosen
+    raise TelephonyError("Could not select a different active caller number.")
+
+
 async def carrier_of(db: AsyncSession, org_id: uuid.UUID, number: str) -> str:
-    """"bandwidth" or "plivo" when the account's number lives there, else "twilio"."""
+    """The carrier the account's number lives with ("bandwidth", "signalwire" or "plivo"), else "twilio"."""
     if not number:
         return "twilio"
     row = (await db.execute(select(PhoneNumber).where(PhoneNumber.org_id == org_id, PhoneNumber.number == number,
                                                       PhoneNumber.status == "active"))).scalar_one_or_none()
-    return row.carrier if row is not None and row.carrier in ("bandwidth", "plivo") else "twilio"
+    return row.carrier if row is not None and row.carrier in ("bandwidth", "signalwire", "plivo") else "twilio"
 
 
 def number_to_dict(n: PhoneNumber) -> dict:

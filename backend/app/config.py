@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     # LiveKit outbound trunk for numbers that live with Plivo (Zentrunk); empty = no Plivo calling.
     livekit_sip_plivo_trunk_id: str = ""
     livekit_sip_inbound_trunk_id: str = ""
+    signalwire_sip_outbound_trunk_id: str = ""
+    signalwire_outbound_script_id: str = ""
+    signalwire_space: str = ""
+    signalwire_project_id: str = ""
+    signalwire_api_token: str = ""
+    # Kill switch: outbox events remain durable while execution is paused.
+    number_registration_worker_enabled: bool = True
     livekit_agent_name: str = "closer"
 
     # ── Phone numbers (Twilio, bought into the account behind the LiveKit trunk) ──
@@ -90,6 +97,11 @@ class Settings(BaseSettings):
     # ── STT / TTS ─────────────────────────────────────────────────────────────
     deepgram_api_key: str = ""
     cartesia_api_key: str = ""
+    elevenlabs_api_key: str = ""
+    voice_turn_trace: bool = True
+    voice_fast_identity_turns: bool = True
+    # Canary only; changes sentence aggregation, never the selected voice/model.
+    voice_short_sentence_streaming: bool = False
     # Voice picker categories. Premium = the featured house voices + voices
     # owned/cloned in your Cartesia account + any ids listed here (comma-separated).
     voice_premium_label: str = "Premium Human Voices"
@@ -127,6 +139,8 @@ class Settings(BaseSettings):
     # ── Billing (Stripe) ─────────────────────────────────────────────────────
     # Secret key (sk_live_… / sk_test_…) and webhook signing secret — backend only.
     stripe_secret_key: str = ""
+    # Helcim (Canadian/other customers) — one-time purchases route here when set.
+    helcim_api_key: str = ""
     stripe_webhook_secret: str = ""
     # Fernet key that encrypts secrets pasted into the admin portal (e.g. the Stripe key).
     secrets_encryption_key: str = ""
@@ -181,6 +195,7 @@ class Settings(BaseSettings):
     # Senders (the blacksync.ai domain is verified in Resend): account and product emails come from
     # notifications@, team invites from invites@.
     email_from: str = "BlackSync <notifications@blacksync.ai>"
+    email_from_calls: str = "BlackSync Campaigns <campaigns@blacksync.ai>"
     email_from_invites: str = "BlackSync <invites@blacksync.ai>"
 
     # ── Support (in-app help widget) ──────────────────────────────────────────

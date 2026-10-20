@@ -3,7 +3,7 @@
 import { Loader2, X } from "lucide-react";
 import type React from "react";
 import { motion } from "motion/react";
-import { forwardRef, useEffect, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { forwardRef, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -138,17 +138,32 @@ export function Badge({ tone = "gray", children, className }: { tone?: keyof typ
   );
 }
 
+let modalLocks = 0;
+let unlockedBodyOverflow = "";
+
 export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    if (modalLocks++ === 0) {
+      unlockedBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+    }
+    const level = modalLocks;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || level !== modalLocks) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeRef.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("keydown", onKey, true); if (--modalLocks === 0) document.body.style.overflow = unlockedBodyOverflow; };
+  }, [open]);
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-zinc-950/40 p-4 pt-[10vh] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-zinc-950/65 p-4 pt-[10vh] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0"
       onMouseDown={onClose}
     >
       <div

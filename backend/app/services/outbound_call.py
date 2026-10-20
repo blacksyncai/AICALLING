@@ -47,8 +47,25 @@ class CallSetupError(RuntimeError):
     """Raised when a call can't be placed because something isn't configured."""
 
 
+class CampaignScheduleClosed(CallSetupError):
+    """Campaign-linked calls must obey the saved campaign timezone and window."""
+
+
 class LeadBusy(CallSetupError):
     """The contact is already being dialed or is on a call — never ring someone twice at once."""
+
+
+async def _check_campaign_schedule(db, campaign_id):
+    if not campaign_id:
+        return
+    # Lazy import avoids the router/service import cycle. The same rules are used by the queue and API.
+    from app.routers.campaigns import calling_rules, within_calling_hours
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign:
+        raise CampaignScheduleClosed("This campaign no longer exists; the call was not placed.")
+    await db.refresh(campaign, ["timezone", "call_window_start", "call_window_end", "call_days"])
+    if not within_calling_hours(campaign, datetime.now(timezone.utc)):
+        raise CampaignScheduleClosed(f"This campaign is outside its calling hours in {calling_rules(campaign)['timezone']}. The call was not placed.")
 
 
 # Contacts being dialed right now in this process (one API process runs every dialer).
@@ -146,6 +163,9 @@ async def _mark_call_failed(call_id: uuid.UUID, lead_id: uuid.UUID | None, outco
             status="no_answer" if outcome == "no_answer" else "failed",
             outcome=outcome, summary=reason, duration_seconds=0, ended_at=now,
         ))
+        await db.execute(update(CallLog).where(CallLog.id == call_id,
+                                               CallLog.recording_status == "worker_pending")
+                         .values(recording_key=None, recording_status="worker_failed"))
         if lead_id:
             await db.execute(update(Lead).where(Lead.id == lead_id).values(status=outcome, updated_at=now))
         await db.commit()
@@ -300,13 +320,15 @@ class CallService:
                         to_phone: str | None = None, campaign_id: uuid.UUID | None = None,
                         from_number: str | None = None) -> CallLog:
         """Dial a phone number via LiveKit SIP outbound with the given agent."""
-        if not settings.livekit_sip_outbound_trunk_id:
+        if not (settings.livekit_sip_outbound_trunk_id or settings.signalwire_sip_outbound_trunk_id):
             raise CallSetupError(
                 "Phone calling isn't configured — set LIVEKIT_SIP_OUTBOUND_TRUNK_ID "
                 "(a LiveKit outbound SIP trunk, e.g. via Twilio Elastic SIP)."
             )
         if lead is not None and lead.do_not_call:
             raise CallSetupError("This contact is on the do-not-call list.")
+        effective_campaign_id = campaign_id or (lead.campaign_id if lead else None)
+        await _check_campaign_schedule(db, effective_campaign_id)
         if lead is not None and lead.crm_refs:
             from app.services.crm.sync import ensure_context
             try:
@@ -345,7 +367,10 @@ class CallService:
             if not any(n.number == from_number for n in await telephony.active_numbers(db, org.id)):
                 raise CallSetupError("That number isn't on this account — pick one of your phone numbers.")
         else:
-            from_number = await telephony.caller_id_for(db, org.id, agent)
+            try:
+                from_number = await telephony.campaign_caller_id_for(db, org.id, agent, campaign_id, lead.id if lead else None)
+            except telephony.TelephonyError as exc:
+                raise CallSetupError(str(exc)) from exc
         call_log = CallLog(
             id=uuid.uuid4(),
             org_id=org.id,
@@ -362,6 +387,10 @@ class CallService:
             started_at=datetime.now(timezone.utc),
         )
         carrier = await telephony.carrier_of(db, org.id, from_number)
+        trunk_id = {"signalwire": settings.signalwire_sip_outbound_trunk_id,
+                    "plivo": settings.livekit_sip_plivo_trunk_id}.get(carrier, settings.livekit_sip_outbound_trunk_id)
+        if carrier != "bandwidth" and not trunk_id:
+            raise CallSetupError("The selected carrier outbound trunk isn't configured.")
         record = recordings.enabled_for(agent)
         if record and settings.recording_via_twilio and carrier == "twilio":
             # The Twilio trunk records the call; it's copied into the bucket after the call ends.
@@ -380,7 +409,16 @@ class CallService:
             conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == org.id))).scalars().all()
             variables = crm_vars.apply(variables, lead, agent, list(conns))
         metadata = _build_metadata(call_log, agent, variables, "outbound", lead, max_seconds=max_seconds)
+        if record and carrier in ("signalwire", "plivo"):
+            # Record the session in our worker; carrier-native calls must not depend on egress quota.
+            call_log.recording_key = recordings.key_for(org.id, call_log.id)
+            call_log.recording_status = "worker_pending"
+            metadata = json.dumps({**json.loads(metadata), "record_key": call_log.recording_key,
+                                   "worker_recording": True})
 
+        # CRM/context, credit checks and metadata preparation can await network work.
+        # Re-read the saved rules immediately before committing a real dial.
+        await _check_campaign_schedule(db, campaign_id)
         if lead:
             now = datetime.now(timezone.utc)
             await db.execute(update(Lead).where(Lead.id == lead.id)
@@ -416,8 +454,6 @@ class CallService:
         # Dial in the background and wait for the outcome, so a carrier rejection
         # (403, busy, no answer…) is recorded on the call instead of it looking
         # "in progress" forever.
-        trunk_id = (settings.livekit_sip_plivo_trunk_id if carrier == "plivo" and settings.livekit_sip_plivo_trunk_id
-                    else settings.livekit_sip_outbound_trunk_id)
         sip_req = api.CreateSIPParticipantRequest(
             sip_trunk_id=trunk_id,
             sip_call_to=phone,
@@ -434,7 +470,8 @@ class CallService:
                  trunk=trunk_id, carrier=carrier)
         # LiveKit egress only when Twilio isn't recording (egress is capped by concurrency and monthly minutes).
         recording_key = (recordings.key_for(org.id, call_log.id)
-                         if record and (not settings.recording_via_twilio or carrier != "twilio") else None)
+                         if record and carrier not in ("signalwire", "plivo") and not settings.recording_via_twilio
+                         else None)
         task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name,
                                                    recording_key))
         _BACKGROUND.add(task)
@@ -590,6 +627,16 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             lead = await db.get(Lead, call_log.lead_id)
             if lead:
                 lead.do_not_call = True
+        # Save evidence and enqueue durable Radar work in the same analysis transaction.
+        from app.services.crm.automations import on_analyzed_call
+        await db.flush()
+        try:
+            async with db.begin_nested():
+                await on_analyzed_call(db, call_log)
+        except Exception as exc:
+            # A Radar failure must not discard the existing call analysis or DNC update.
+            # The worker recovers eligible analyzed calls after this transaction commits.
+            log.warning("radar_enqueue_failed", call_log_id=call_log_id, error=str(exc)[:200])
         await db.commit()
         log.info("call_analyzed", call_log_id=call_log_id, outcome=call_log.outcome)
 

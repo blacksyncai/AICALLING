@@ -25,9 +25,11 @@ export interface Provider {
   category: "crm" | "notify" | "sheet";
   description: string;
   native: boolean;
+  setup_required_reason?: string;
   oauth: boolean;
   /** Our own OAuth sign-in (no Nango): the browser goes to the CRM's login page and comes back connected. */
   oauth_native?: boolean;
+  can_log_calls?: boolean;
   can_import: boolean;
   can_new_leads: boolean;
   docs_url: string;
@@ -61,7 +63,7 @@ export interface Connection {
   last_error: string | null;
   last_synced_at: string | null;
   settings: {
-    log_calls: boolean; create_contacts: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null;
+    log_calls: boolean; create_contacts: boolean; csv_create_fields?: boolean; only_connected: boolean; speed_to_lead_agent_id: string | null;
     activity_agent_id: string | null;
     min_seconds: number;
     skip_outcomes: string[];
@@ -70,6 +72,7 @@ export interface Connection {
     note_summary: boolean;
     note_details: boolean;
     note_link: boolean;
+    note_transcript?: boolean;
   };
   auto_imports: AutoRule[];
   pending_calls: number;
@@ -103,7 +106,7 @@ const DOMAIN: Record<string, string> = {
   followupboss: "followupboss.com", close: "close.com", hubspot: "hubspot.com", highlevel: "gohighlevel.com",
   pipedrive: "pipedrive.com", salesforce: "salesforce.com", zoho: "zoho.com", attio: "attio.com",
   google_sheets: "sheets.google.com", slack: "slack.com", boldtrail: "kvcore.com", lofty: "lofty.com",
-  sierra: "sierrainteractive.com",
+  sierra: "sierrainteractive.com", oracle_sales: "oracle.com", realgeeks: "realgeeks.com", boomtown: "boomtownroi.com", brivity: "brivity.com", apollo: "apollo.io", rechat: "rechat.com",
 };
 
 export function Logo({ p }: { p: Provider }) {
@@ -282,14 +285,17 @@ export function CrmIntegrations() {
         </div>
 
         <Group title="Coming soon">
-          {[...soon.map((p) => ({ key: p.key, name: p.name, description: p.description, domain: DOMAIN[p.key] })), ...UPCOMING].map((x) => (
+          {[...soon.map((p) => ({ key: p.key, name: p.name, description: p.description, domain: DOMAIN[p.key], pending: !!p.setup_required_reason, docs_url: p.docs_url })), ...UPCOMING.map((p) => ({ ...p, pending: false, docs_url: undefined }))].map((x) => (
             <li key={x.key} className="relative flex items-center gap-4 px-4 py-3.5">
               <SoonLogo name={x.name} domain={x.domain} />
               <span className="min-w-0 flex-1">
                 <span className="block text-[15px] font-medium text-zinc-700">{x.name}</span>
                 <span className="block truncate text-xs text-zinc-500">{x.description}</span>
               </span>
-              <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">Coming soon</span>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">{x.pending ? "API verification pending" : "Coming soon"}</span>
+                {x.docs_url && <a href={x.docs_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-brand-600">API docs <ExternalLink className="h-3 w-3" /></a>}
+              </div>
             </li>
           ))}
         </Group>
@@ -406,7 +412,7 @@ export function ConnectModal({ p, existing, onClose, onDone }: { p: Provider; ex
                   autoComplete="off"
                   value={values[f.name] ?? ""}
                   placeholder={existing?.method === "api_key" ? "Leave blank to keep the saved key" : f.placeholder}
-                  onChange={(e) => setValues({ ...values, [f.name]: e.target.value.trim() })}
+                  onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
                 />
               </Field>
             ))}

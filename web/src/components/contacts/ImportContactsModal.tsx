@@ -23,11 +23,15 @@ export function ImportContactsModal({
   onClose,
   campaigns,
   onDone,
+  sourceName,
+  defaultTags = [],
 }: {
   open: boolean;
   onClose: () => void;
   campaigns: Campaign[];
   onDone: () => void;
+  sourceName?: string;
+  defaultTags?: string[];
 }) {
   const toast = useToast();
   const [csv, setCsv] = useState("");
@@ -63,7 +67,7 @@ export function ImportContactsModal({
   async function submit() {
     setBusy(true);
     try {
-      const res = await post<ImportResult>("/api/contacts/import", { csv, campaign_id: campaignId || null, tags: parseTags(tags) });
+      const res = await post<ImportResult>("/api/contacts/import", { csv, campaign_id: campaignId || null, tags: [...new Set([...defaultTags, ...parseTags(tags)])] });
       setResult(res);
       toast(`Imported ${res.created} contact${res.created === 1 ? "" : "s"}`);
       setCsv("");
@@ -77,7 +81,7 @@ export function ImportContactsModal({
   }
 
   return (
-    <Modal open={open} onClose={close} title="Import contacts from CSV" wide>
+    <Modal open={open} onClose={close} title={sourceName ? `Import ${sourceName} contacts` : "Import contacts from CSV"} wide>
       <div className="space-y-4">
         {result && (
           <Notice tone="green">

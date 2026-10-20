@@ -9,6 +9,7 @@ release numbers for any account.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 import structlog
 from fastapi.responses import JSONResponse
@@ -39,6 +40,7 @@ class NumberRequestIn(BaseModel):
 
 
 class PurchaseIn(BaseModel):
+    carrier: Literal["signalwire", "twilio"] | None = None
     number: str
     label: str = Field(default="", max_length=100)
     # The customer saw and accepted the $3.50/mo charge for a number beyond the plan's included ones.
@@ -46,6 +48,7 @@ class PurchaseIn(BaseModel):
 
 
 class AdminAssign(BaseModel):
+    carrier: Literal["signalwire", "twilio"] | None = None
     number: str
     mode: str = Field(pattern="^(purchase|import|plivo)$")
     label: str = Field(default="", max_length=100)
@@ -103,6 +106,8 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
     )).scalars().all()
     from app.services.billing.subscriptions import phone_summary
 
+    from app.services.number_registration import summaries
+    registration_status = await summaries(db, numbers)
     cfg = await settings_store.get_all(db)
     pricing = await phone_summary(db, ctx.org.id)
     from app.services import entitlements
@@ -110,9 +115,10 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
     pricing["included_on_plan"] = await entitlements.included_numbers(db, ctx.org)
     return {
         "pricing": pricing,
-        "numbers": [telephony.number_to_dict(n) for n in numbers],
+        "numbers": [{**telephony.number_to_dict(n), "registration": registration_status.get(n.id)} for n in numbers],
         "requests": [_request_to_dict(r) for r in requests],
-        "self_serve": bool(cfg["self_serve_numbers"]) and settings.twilio_ready,
+        "self_serve": bool(cfg["self_serve_numbers"]) and bool(telephony.purchase_carriers()),
+        "purchase_carriers": telephony.purchase_carriers(),
         "max_numbers": int(cfg["max_numbers_per_org"] or 0),
         "recordings_enabled": settings.recordings_ready,
     }
@@ -146,15 +152,15 @@ async def request_number(body: NumberRequestIn, ctx: ManagerDep, db: DbDep):
 
 
 async def _require_self_serve(db) -> None:
-    if not settings.twilio_ready or not await settings_store.get(db, "self_serve_numbers"):
+    if not telephony.purchase_carriers() or not await settings_store.get(db, "self_serve_numbers"):
         raise HTTPException(status_code=403, detail="Request a number and we'll set it up for you.")
 
 
 @router.get("/available")
-async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = ""):
+async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = "", carrier: Literal["signalwire", "twilio"] | None = None):
     await _require_self_serve(db)
     try:
-        return {"numbers": await telephony.search_available(area_code.strip())}
+        return {"numbers": await telephony.search_available(area_code.strip(), carrier=carrier)}
     except (telephony.TelephonyError, ValueError) as exc:
         raise _err(exc)
 
@@ -165,12 +171,17 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
     await _room_for_another(db, ctx.org.id)
     from app.services.billing.subscriptions import phone_summary
 
+    try:
+        carrier = telephony.purchase_carrier(body.carrier)
+    except telephony.TelephonyError as exc:
+        raise _err(exc)
+
     # No plan: buy the number on its own ($3.50/mo) through Stripe Checkout; it's bought once paid.
     if not (await phone_summary(db, ctx.org.id))["subscribed"]:
         from app.services.billing import purchases
 
         try:
-            url = await purchases.checkout_phone_number(db, ctx.org, ctx.user.id, telephony.normalize(body.number))
+            url = await purchases.checkout_phone_number(db, ctx.org, ctx.user.id, telephony.normalize(body.number), carrier=carrier)
         except purchases.BillingError as exc:
             raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
         return JSONResponse(status_code=200, content={"checkout_url": url})
@@ -189,7 +200,7 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
     except purchases.BillingError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     try:
-        row = await telephony.purchase(db, ctx.org.id, body.number, body.label)
+        row = await telephony.purchase(db, ctx.org.id, body.number, body.label, carrier=carrier)
     except (telephony.TelephonyError, ValueError) as exc:
         if charged:
             await _sync_billing(db, ctx.org.id)  # the number wasn't bought — take the add-on back down
@@ -205,8 +216,9 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
 async def telephony_status(_: AdminDep, db: DbDep):
     """Twilio + recording setup, and every number in the Twilio account with who has it."""
     out: dict = {
-        "twilio_ready": settings.twilio_ready, "recordings_ready": settings.recordings_ready,
-        "trunk_sid": "", "trunk_error": "", "owned": [], "owned_error": "",
+        "twilio_ready": settings.twilio_ready, "purchase_carriers": telephony.purchase_carriers(),
+        "recordings_ready": settings.recordings_ready,
+        "trunk_sid": "", "trunk_error": "", "owned": [], "owned_error": "", "owned_warnings": [],
         "settings": {k: v for k, v in (await settings_store.get_all(db)).items()
                      if k in ("self_serve_numbers", "max_numbers_per_org")},
         "open_requests": [],
@@ -216,19 +228,18 @@ async def telephony_status(_: AdminDep, db: DbDep):
         .where(PhoneNumberRequest.status == "open").order_by(PhoneNumberRequest.created_at)
     )).all()
     out["open_requests"] = [{**_request_to_dict(r), "org_id": str(r.org_id), "org_name": name} for r, name in reqs]
-    if not settings.twilio_ready:
-        return out
     try:
-        out["trunk_sid"] = await telephony.trunk_sid()
+        if settings.twilio_ready:
+            out["trunk_sid"] = await telephony.trunk_sid()
     except Exception as exc:
         out["trunk_error"] = str(exc)
     try:
-        owned = await telephony.list_owned()
+        owned = await telephony.list_owned(warnings=out["owned_warnings"])
         assigned = {n.number: (n, name) for n, name in (await db.execute(
             select(PhoneNumber, Organization.name).join(Organization, Organization.id == PhoneNumber.org_id)
             .where(PhoneNumber.status == "active"))).all()}
         out["owned"] = [{
-            **o, "on_trunk": o.get("carrier") == "bandwidth" or (bool(out["trunk_sid"]) and o["trunk_sid"] == out["trunk_sid"]),
+            **o, "on_trunk": o.get("carrier") in ("bandwidth", "signalwire", "plivo") or (bool(out["trunk_sid"]) and o["trunk_sid"] == out["trunk_sid"]),
             "org_id": str(assigned[o["number"]][0].org_id) if o["number"] in assigned else None,
             "org_name": assigned[o["number"]][1] if o["number"] in assigned else None,
         } for o in owned]
@@ -246,9 +257,9 @@ async def update_telephony_settings(body: TelephonySettings, admin: AdminDep, db
 
 
 @admin_router.get("/phone-numbers/available")
-async def admin_available(_: AdminDep, area_code: str = "", contains: str = ""):
+async def admin_available(_: AdminDep, area_code: str = "", contains: str = "", carrier: Literal["signalwire", "twilio"] | None = None):
     try:
-        return {"numbers": await telephony.search_available(area_code.strip(), contains.strip())}
+        return {"numbers": await telephony.search_available(area_code.strip(), contains.strip(), carrier=carrier)}
     except (telephony.TelephonyError, ValueError) as exc:
         raise _err(exc)
 
@@ -261,7 +272,8 @@ async def admin_org_numbers(org_id: uuid.UUID, _: AdminDep, db: DbDep):
     reqs = (await db.execute(select(PhoneNumberRequest).where(
         PhoneNumberRequest.org_id == org_id, PhoneNumberRequest.status == "open"))).scalars().all()
     return {"numbers": [telephony.number_to_dict(n) for n in numbers],
-            "requests": [_request_to_dict(r) for r in reqs], "twilio_ready": settings.twilio_ready}
+            "requests": [_request_to_dict(r) for r in reqs], "twilio_ready": settings.twilio_ready,
+            "purchase_carriers": telephony.purchase_carriers()}
 
 
 @admin_router.post("/orgs/{org_id}/phone-numbers", status_code=201)
@@ -270,7 +282,7 @@ async def admin_assign(org_id: uuid.UUID, body: AdminAssign, admin: AdminDep, db
         raise HTTPException(status_code=404, detail="Account not found")
     try:
         if body.mode == "purchase":
-            row = await telephony.purchase(db, org_id, body.number, body.label)
+            row = await telephony.purchase(db, org_id, body.number, body.label, carrier=body.carrier)
         elif body.mode == "plivo":
             row = await telephony.add_plivo_number(db, org_id, body.number, body.label)
         else:
@@ -300,7 +312,7 @@ async def admin_release(number_id: uuid.UUID, admin: AdminDep, db: DbDep, return
         raise _err(exc)
     db.add(BillingAudit(admin_id=admin.id, org_id=org_id, target="phone_numbers", previous=number,
                         adjustment="released" if return_to_twilio else "unassigned", new="",
-                        reason="Released to Twilio" if return_to_twilio else "Unassigned by admin"))
+                        reason="Released to carrier" if return_to_twilio else "Unassigned by admin"))
     await db.commit()
     await _sync_billing(db, org_id)
     return {"ok": True}

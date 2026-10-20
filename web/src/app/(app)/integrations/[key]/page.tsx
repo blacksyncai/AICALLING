@@ -164,7 +164,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
 
   const isCrm = p.category === "crm";
   const sections: { id: Section; label: string; icon: React.ReactNode }[] = [
-    { id: "push", label: p.category === "notify" ? "Posting calls" : "Push calls", icon: <ArrowUpFromLine className="h-4 w-4" /> },
+    { id: "push", label: p.can_log_calls === false ? "Connection" : p.category === "notify" ? "Posting calls" : "Push calls", icon: <ArrowUpFromLine className="h-4 w-4" /> },
     ...(p.pipeline_noun || p.can_install ? [{ id: "pipeline" as Section, label: "Pipeline", icon: <GitBranch className="h-4 w-4" /> }] : []),
     ...(p.can_import ? [{ id: "import" as Section, label: "Import", icon: <ArrowDownToLine className="h-4 w-4" /> }] : []),
     ...(p.can_import ? [{ id: "auto" as Section, label: `Auto-sync${c.auto_imports.length ? ` · ${c.auto_imports.length}` : ""}`, icon: <Repeat className="h-4 w-4" /> }] : []),
@@ -255,7 +255,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
 
       {/* Flow: how data moves between BlackSync and the CRM */}
       <div className="mb-6 flex flex-col items-stretch gap-2 md:flex-row md:items-center">
-        <FlowNode icon={PhoneCall} title={`Calls → ${p.name}`} detail={pushDetail} active={section === "push"} onClick={() => go("push")} />
+        <FlowNode icon={PhoneCall} title={p.can_log_calls === false ? "API connection" : `Calls → ${p.name}`} detail={p.can_log_calls === false ? "Read access" : pushDetail} active={section === "push"} onClick={() => go("push")} />
         {(p.pipeline_noun || p.can_install) && (
           <>
             <ChevronRight className="hidden h-4 w-4 shrink-0 text-zinc-300 md:block" />
@@ -297,7 +297,9 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
         className="scroll-thin mb-5 w-fit max-w-full overflow-x-auto"
       />
 
-      {section === "push" && <PushCalls p={p} c={c} isCrm={isCrm} onSaved={refresh} />}
+      {section === "push" && (p.can_log_calls === false ? (
+        <Notice tone="amber">{p.description} This connection does not send call notes or opt-out updates back to {p.name}.</Notice>
+      ) : <PushCalls p={p} c={c} isCrm={isCrm} onSaved={refresh} />)}
       {section === "pipeline" && (
         <div className="space-y-5">
           {p.pipeline_noun && <PipelineSync p={p} c={c} onSaved={refresh} />}
@@ -430,6 +432,7 @@ function PushCalls({ p, c, isCrm, onSaved }: { p: Provider; c: Connection; isCrm
             <Toggle checked={s.note_summary} onChange={(v) => void save({ note_summary: v })} label="AI summary" />
             <Toggle checked={s.note_details} onChange={(v) => void save({ note_details: v })} label="Extracted details" />
             <Toggle checked={s.note_link} onChange={(v) => void save({ note_link: v })} label="Recording link" />
+            {p.key === "followupboss" && <Toggle checked={s.note_transcript !== false} onChange={(v) => void save({ note_transcript: v })} label="Full transcript" description="Send the spoken conversation as FUB notes. Long calls are split into numbered parts." />}
           </div>
         </Card>
 
@@ -440,6 +443,16 @@ function PushCalls({ p, c, isCrm, onSaved }: { p: Provider; c: Connection; isCrm
               onChange={(v) => void save({ create_contacts: v })}
               label={`Create people who aren't in ${p.name}`}
               description={`Off by default. When on, a called number that isn't in ${p.name} is added quietly (no new-lead alerts). Leave off while testing with your own phone.`}
+            />
+          </Card>
+        )}
+        {p.key === "followupboss" && (
+          <Card className="p-5">
+            <Toggle
+              checked={!!s.csv_create_fields}
+              onChange={(v) => void save({ csv_create_fields: v })}
+              label="Create missing custom fields for CSV data"
+              description="Radar reuses existing fields and script-variable mappings when sending CSV data to Follow Up Boss. Turn this on to create missing text fields too (requires an account-owner API key). Existing values are preserved. A full source-data snapshot is also retained in the contact background."
             />
           </Card>
         )}

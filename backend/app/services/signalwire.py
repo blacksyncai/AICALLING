@@ -1,0 +1,243 @@
+"""Number inventory, purchase, release and outbound trunk management."""
+import re
+import copy
+import hashlib
+import hmac
+from urllib.parse import urljoin, urlparse
+
+import httpx
+
+from app.config import settings
+
+
+class SignalWireError(RuntimeError):
+    pass
+
+
+def ready() -> bool:
+    return bool(settings.signalwire_space and settings.signalwire_project_id
+                and settings.signalwire_api_token and settings.signalwire_sip_outbound_trunk_id)
+
+
+async def list_numbers() -> list[dict]:
+    if not ready():
+        return []
+    space = settings.signalwire_space.strip().lower()
+    if not re.fullmatch(r"[a-z0-9-]+\.signalwire\.com", space):
+        raise SignalWireError("SignalWire space must be a hostname ending in .signalwire.com.")
+    if not re.fullmatch(r"[a-zA-Z0-9-]+", settings.signalwire_project_id):
+        raise SignalWireError("Invalid SignalWire project ID.")
+    base = f"https://{space}"
+    path = "/api/relay/rest/phone_numbers"
+    result = []
+    async with httpx.AsyncClient(auth=(settings.signalwire_project_id, settings.signalwire_api_token),
+                                 timeout=20, follow_redirects=False) as client:
+        for _ in range(100):
+            try:
+                response = await client.get(base + path)
+                response.raise_for_status()
+                data = response.json()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status in (401, 403):
+                    raise SignalWireError(f"SignalWire rejected number access (HTTP {status}). Check the API token, project ID and number-read permission.") from None
+                raise SignalWireError(f"SignalWire number lookup failed (HTTP {status}).") from None
+            except (httpx.HTTPError, ValueError):
+                raise SignalWireError("Couldn't load SignalWire numbers. Check the API credentials and number-read permission.") from None
+            for number in data.get("data", []):
+                capabilities = number.get("capabilities")
+                if isinstance(capabilities, list) and "voice" not in capabilities:
+                    continue
+                if isinstance(capabilities, dict) and capabilities.get("voice") is False:
+                    continue
+                result.append({"sid": number["id"], "number": number["number"],
+                               "friendly": number.get("name") or "SignalWire",
+                               "carrier": "signalwire", "trunk_sid": ""})
+            path = (data.get("links") or {}).get("next")
+            if not path:
+                return result
+            # Do not forward API credentials to a pagination URL on another host.
+            parsed = urlparse(urljoin(base, path))
+            if (parsed.scheme != "https" or parsed.netloc != space
+                    or parsed.path != "/api/relay/rest/phone_numbers" or parsed.fragment):
+                raise SignalWireError("SignalWire returned an unexpected pagination URL.")
+            path = parsed.path + ("?" + parsed.query if parsed.query else "")
+    raise SignalWireError("Too many SignalWire numbers to load safely.")
+
+
+async def configured_numbers() -> list[dict]:
+    """Fallback inventory from the explicitly configured, authenticated LiveKit trunk."""
+    from livekit import api
+    from app.services.outbound_call import _lk
+
+    if not settings.signalwire_sip_outbound_trunk_id:
+        return []
+    lk = _lk()
+    try:
+        response = await lk.sip.list_outbound_trunk(api.ListSIPOutboundTrunkRequest(
+            trunk_ids=[settings.signalwire_sip_outbound_trunk_id]))
+        trunk = next((t for t in response.items
+                      if t.sip_trunk_id == settings.signalwire_sip_outbound_trunk_id), None)
+        if trunk is None:
+            raise SignalWireError("The configured SignalWire LiveKit trunk wasn't found.")
+        return [{"sid": f"sw:{n}", "number": n, "friendly": "Configured SignalWire SIP caller ID",
+                 "carrier": "signalwire", "trunk_sid": "", "inventory_source": "livekit"}
+                for n in trunk.numbers]
+    except SignalWireError:
+        raise
+    except Exception:
+        raise SignalWireError("Couldn't read configured SignalWire caller IDs from LiveKit.") from None
+    finally:
+        await lk.aclose()
+
+
+async def allow_number(number: str) -> None:
+    from livekit import api
+    from app.services.outbound_call import _lk
+
+    if not settings.signalwire_sip_outbound_trunk_id:
+        raise SignalWireError("Configure the SignalWire LiveKit outbound trunk first.")
+    await ensure_dynamic_routing()
+    lk = _lk()
+    try:
+        await lk.sip.update_outbound_trunk_fields(
+            settings.signalwire_sip_outbound_trunk_id, numbers=api.ListUpdate(add=[number]))
+    except Exception:
+        raise SignalWireError("Couldn't add the caller ID to the SignalWire trunk. Try again.") from None
+    finally:
+        await lk.aclose()
+
+
+DYNAMIC_CALLER_ID = "%{call.sip_data.sip_from_user}"
+DYNAMIC_DESTINATION = "%{call.to.replace(/^sip:/i, '').replace(/@.*/, '')}"
+
+
+def dynamic_script(contents: dict) -> dict:
+    """Patch only the known one-connect outbound script; refuse arbitrary custom call flows."""
+    expected = {"version": "1.0.0", "sections": {"main": [{"connect": {
+        "answer_on_bridge": True, "from": "", "to": DYNAMIC_DESTINATION}}]}}
+    if not isinstance(contents, dict):
+        raise SignalWireError("Review the outbound SWML script before enabling multiple caller IDs.")
+    candidate = copy.deepcopy(contents)
+    try:
+        caller = candidate["sections"]["main"][0]["connect"]["from"]
+        candidate["sections"]["main"][0]["connect"]["from"] = ""
+    except (KeyError, TypeError, IndexError):
+        raise SignalWireError("Review the outbound SWML script before enabling multiple caller IDs.") from None
+    if candidate != expected or not (caller == DYNAMIC_CALLER_ID or
+                                    isinstance(caller, str) and re.fullmatch(r"\+[1-9]\d{7,14}", caller)):
+        raise SignalWireError("Custom outbound script detected. Review caller-ID routing before assigning a new number.")
+    candidate["sections"]["main"][0]["connect"]["from"] = DYNAMIC_CALLER_ID
+    return candidate
+
+
+async def ensure_dynamic_routing() -> None:
+    resource = settings.signalwire_outbound_script_id
+    if not resource:
+        raise SignalWireError("Configure the shared SignalWire outbound script before assigning more numbers.")
+    if not re.fullmatch(r"[a-zA-Z0-9-]+", resource):
+        raise SignalWireError("Invalid SignalWire outbound script ID.")
+    space = settings.signalwire_space.strip().lower()
+    if not re.fullmatch(r"[a-z0-9-]+\.signalwire\.com", space):
+        raise SignalWireError("Invalid SignalWire space hostname.")
+    url = f"https://{space}/api/fabric/resources/swml_scripts/{resource}"
+    async with httpx.AsyncClient(auth=(settings.signalwire_project_id, settings.signalwire_api_token),
+                                 timeout=20, follow_redirects=False) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            old = response.json()["swml_script"]["contents"]
+            updated = dynamic_script(old)
+            if updated == old:
+                return
+            response = await client.put(url, json={"contents": updated})
+            response.raise_for_status()
+            # Do not claim repair based only on HTTP success; verify the saved document.
+            response = await client.get(url)
+            response.raise_for_status()
+            if response.json()["swml_script"]["contents"] != updated:
+                raise SignalWireError("SignalWire routing update could not be verified.")
+        except (httpx.HTTPError, ValueError, KeyError):
+            raise SignalWireError("Couldn't verify shared SignalWire caller-ID routing. Check the API token and Voice permission.") from None
+
+
+async def _number_request(method: str, path: str, **kwargs):
+    if not ready():
+        raise SignalWireError("Number purchasing is not configured.")
+    space = settings.signalwire_space.strip().lower()
+    if not re.fullmatch(r"[a-z0-9-]+\.signalwire\.com", space):
+        raise SignalWireError("Invalid number service hostname.")
+    async with httpx.AsyncClient(auth=(settings.signalwire_project_id, settings.signalwire_api_token),
+                                 timeout=20, follow_redirects=False) as client:
+        try:
+            response = await client.request(method, f"https://{space}/api/relay/rest/phone_numbers{path}", **kwargs)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+        except httpx.HTTPStatusError as exc:
+            raise SignalWireError(f"Number service rejected the request (HTTP {exc.response.status_code}).") from None
+        except (httpx.HTTPError, ValueError):
+            # No automatic retry: a timed-out purchase may already have completed.
+            raise SignalWireError("Couldn't confirm the number request. Check owned numbers before retrying.") from None
+
+
+async def search_available(area_code="", contains="", limit=20):
+    if area_code and not re.fullmatch(r"\d{3}", area_code):
+        raise SignalWireError("Area code must be 3 digits.")
+    if contains and not re.fullmatch(r"\d{3,7}", contains):
+        raise SignalWireError("Number search must contain 3 to 7 digits.")
+    params = {"number_type": "local", "max_results": max(1, min(limit, 50))}
+    if area_code:
+        params["areacode"] = area_code
+    if contains:
+        params["contains"] = contains
+    data = await _number_request("GET", "/search", params=params)
+    return [{"number": n["e164"], "friendly": n.get("national_number_formatted") or n["e164"],
+             "locality": n.get("rate_center") or "", "region": n.get("region") or "",
+             "carrier": "signalwire"}
+            for n in data.get("data", []) if "voice" in n.get("capabilities", [])]
+
+
+async def buy(number: str):
+    if not re.fullmatch(r"\+1\d{10}", number):
+        raise SignalWireError("Choose a US local number from search results.")
+    await ensure_dynamic_routing()
+    data = await _number_request("POST", "", json={"number": number})
+    if not data.get("id") or data.get("number") != number:
+        raise SignalWireError("Couldn't confirm the purchased number. Check owned numbers before retrying.")
+    return {"sid": data["id"], "number": number}
+
+
+async def release(number_id: str):
+    if not re.fullmatch(r"[a-zA-Z0-9-]+", number_id):
+        raise SignalWireError("Invalid owned number identifier.")
+    await _number_request("DELETE", f"/{number_id}")
+
+
+def inbound_auth_fingerprint(username: str, password: str) -> str:
+    return hashlib.sha256((username + "\0" + password).encode()).hexdigest()
+
+
+async def verify_inbound_routing(number: str, username: str, fingerprint: str) -> None:
+    """Read back the number and SWML handoff before marking an inbound campaign live."""
+    if not settings.livekit_sip_host or not re.fullmatch(r"[a-zA-Z0-9.-]+", settings.livekit_sip_host):
+        raise SignalWireError("The inbound media host is not configured.")
+    data = await _number_request("GET", "", params={"filter_number": number})
+    row = next((n for n in data.get("data", []) if n.get("number") == number), None)
+    url = (row or {}).get("call_relay_script_url") or ""
+    parsed = urlparse(url)
+    if (not row or row.get("call_handler") != "relay_script" or parsed.scheme != "https"
+            or parsed.netloc != settings.signalwire_space or not parsed.path.startswith("/relay-bins/")
+            or parsed.query or parsed.fragment):
+        raise SignalWireError("Incoming calls on this number have not been connected to BlackSync yet.")
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            script = response.json()
+        steps = script["sections"]["main"]
+        connect = steps[0]["connect"]
+        expected = f"sip:{number}@{settings.livekit_sip_host};transport=tls"
+        if len(steps) != 1 or connect.get("to") != expected or connect.get("username") != username or not hmac.compare_digest(inbound_auth_fingerprint(str(connect.get("username") or ""), str(connect.get("password") or "")), fingerprint):
+            raise ValueError("Unexpected inbound handoff")
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+        raise SignalWireError("Couldn't verify the secure inbound handoff. The campaign has not been activated.") from None

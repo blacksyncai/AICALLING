@@ -19,14 +19,15 @@ def email_enabled() -> bool:
     return bool(settings.resend_api_key)
 
 
-async def send_email(to: str, subject: str, html_body: str, sender: str | None = None, kind: str = "other") -> bool:
+async def send_email(to: str, subject: str, html_body: str, sender: str | None = None, kind: str = "other", idempotency_key: str | None = None) -> bool:
     if not email_enabled():
         return False
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+                headers={"Authorization": f"Bearer {settings.resend_api_key}",
+                         **({"Idempotency-Key": idempotency_key} if idempotency_key else {})},
                 json={"from": sender or settings.email_from, "to": [to], "subject": subject, "html": html_body},
             )
         if resp.status_code >= 400:

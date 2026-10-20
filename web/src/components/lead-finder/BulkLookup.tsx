@@ -44,6 +44,9 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const uploading = useRef(false);
   const [showSkipped, setShowSkipped] = useState(false);
   const { session } = useSession();
   const isAdmin = !!session?.user.is_superadmin;
@@ -68,7 +71,10 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
   });
 
   async function upload(file: File) {
+    if (uploading.current || !usage?.enabled || !usage.configured) return;
+    if (!/\.csv$/i.test(file.name)) return toast("Please choose a CSV file.", "error");
     if (file.size > MAX_BYTES) return toast("That file is over 2 MB. Split it into smaller files.", "error");
+    uploading.current = true;
     setBusy(true);
     try {
       setPreview(await post<BatchPreview>("/api/lead-finder/batches", { filename: file.name, text: await file.text() }));
@@ -76,6 +82,7 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
     } catch (e) {
       toast((e as Error).message, "error");
     } finally {
+      uploading.current = false;
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
@@ -130,15 +137,44 @@ export function BulkLookup({ usage, onUsage }: { usage: LeadFinderUsage | undefi
 
       {!preview ? (
         <Card className="p-5">
-          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center">
+          <div
+            onDragEnter={(e) => {
+              e.preventDefault();
+              if (!e.dataTransfer.types.includes("Files") || disabled || busy) return;
+              dragDepth.current += 1;
+              setDragging(true);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = disabled || busy ? "none" : "copy";
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              dragDepth.current = Math.max(0, dragDepth.current - 1);
+              if (!dragDepth.current) setDragging(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              dragDepth.current = 0;
+              setDragging(false);
+              if (disabled || busy) return;
+              if (e.dataTransfer.files.length !== 1) {
+                toast("Drop one CSV file at a time.", "error");
+                return;
+              }
+              void upload(e.dataTransfer.files[0]);
+            }}
+            aria-busy={busy}
+            className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed px-4 py-8 text-center transition-colors", dragging ? "border-brand-500 bg-brand-50" : "border-zinc-300")}
+          >
             <FileSpreadsheet className="h-6 w-6 text-zinc-400" />
             <div>
-              <p className="text-sm font-medium text-zinc-900">Upload a CSV of property addresses</p>
+              <p className="text-sm font-medium text-zinc-900">{busy ? "Reading your CSV…" : dragging ? "Drop your CSV here" : "Drag and drop a CSV of property addresses"}</p>
               <p className="mt-0.5 text-xs text-zinc-500">
                 Columns: Address, City, State, Zip — or one Full Address column. Up to 1,000 rows. Other columns are ignored.
               </p>
             </div>
-            <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
+            <input ref={fileRef} type="file" disabled={disabled || busy} accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
             <div className="flex flex-wrap justify-center gap-2">
               <Button variant="primary" onClick={() => fileRef.current?.click()} loading={busy} disabled={disabled}>
                 <Upload className="h-4 w-4" /> Choose CSV

@@ -109,7 +109,8 @@ def test_self_serve_purchase_respects_limit(client, make_client, twilio, monkeyp
         # No plan → the number is sold on its own through Checkout (bought once paid).
         from app.services.billing import purchases
 
-        async def fake_checkout(db, org, user_id, number):
+        async def fake_checkout(db, org, user_id, number, *, carrier="twilio"):
+            assert carrier == "twilio"
             return f"https://checkout.test/{number}"
 
         monkeypatch.setattr(purchases, "checkout_phone_number", fake_checkout)

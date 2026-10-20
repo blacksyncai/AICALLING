@@ -16,6 +16,8 @@ type Depth = NonNullable<Behavior["qualification_depth"]>;
 
 export const LANGUAGES: [string, string][] = [
   ["en", "English"],
+  ["ar", "Arabic"],
+  ["tl", "Filipino (Tagalog)"],
   ["es", "Spanish"],
   ["fr", "French"],
   ["de", "German"],
@@ -95,7 +97,7 @@ export function PersonalityFields({
               onChange({ voice_id: "" });
             }}
           >
-            Recommended voice
+            Default · Marissa
           </Chip>
           <Chip role="radio" selected={pickVoice} onClick={() => setPickVoice(true)}>
             Choose a voice
@@ -111,7 +113,7 @@ export function PersonalityFields({
               value={behavior.voice_id ?? ""}
               speed={1}
               language={behavior.language ?? "en"}
-              onChange={(id) => onChange({ voice_id: id })}
+              onChange={(id) => onChange({ voice_id: id, ...(id === "elevenlabs:Ywuz3KyW2N5pqKNpwcCL" ? { language: "ar" } : {}) })}
             />
           </div>
         )}

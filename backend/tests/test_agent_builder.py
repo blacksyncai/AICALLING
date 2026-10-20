@@ -529,4 +529,6 @@ def test_guardrails_are_added_at_call_time_not_to_the_prompt():
     from app.agent.runtime import build_instructions
 
     text = build_instructions({"system_prompt": "You are Sam.", "business_name": "Acme"}, {})
-    assert "STAYING ON TOPIC" in text and "BlackSync dot A I" in text and "not one of those AI chatbots" in text
+    assert "STAYING ON TOPIC" in text and "BlackSync dot A I" in text
+    assert "I'm here to help with your business question." in text
+    assert "not one of those AI chatbots" not in text  # must not contradict the AI honesty rule

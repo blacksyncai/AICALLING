@@ -723,18 +723,24 @@ class FollowUpBoss(Provider):
 
     _cf_cache: dict = {}  # account → (fetched at, custom fields); they rarely change
 
-    async def _custom_fields(self, http) -> list[dict]:
+    async def _custom_fields(self, http, *, fresh=False, strict=False) -> list[dict]:
         import time
 
         key = str(getattr(http, "basic", None) or getattr(http, "connection_id", "") or id(http))
         hit = self._cf_cache.get(key)
-        if hit and time.monotonic() - hit[0] < 600:
+        if hit and not fresh and time.monotonic() - hit[0] < 600:
             return hit[1]
         try:
-            rows = (await http.request("GET", "/v1/customFields", params={"limit": 100})).get("customfields") or []
+            from app.services.crm.automation_resources import fub_collection
+            rows = await fub_collection(http, "customFields", response_key="customfields", strict_response=strict)
         except CrmError:
+            if strict:
+                raise
             return []
-        out = [{"name": r["name"], "label": r.get("label") or r["name"]} for r in rows if r.get("name")]
+        if strict and any(not r.get("name") or not r.get("label") for r in rows):
+            raise CrmError("The CRM returned incomplete custom-field definitions. Review the catalog before syncing.")
+        out = [{"name": r["name"], "label": r.get("label") or r["name"],
+                "type": r.get("type") or "text", "choices": r.get("choices") or []} for r in rows if r.get("name")]
         if out:
             self._cf_cache[key] = (time.monotonic(), out)
         return out
@@ -2205,9 +2211,375 @@ class SierraInteractive(Provider):
         return {k: str(v)[:500] for k, v in out.items() if v not in (None, "")}
 
 
+class OracleSales(Provider):
+    key, name = "oracle_sales", "Oracle Sales / Fusion"
+    description = "Connect Oracle Sales contacts, import people to call, and save call notes on their records."
+    can_new_leads = False
+    docs_url = "https://docs.oracle.com/en/cloud/saas/sales/faaps/api-contacts.html"
+    auth_fields = [
+        AuthField("api_key", "API user password", help="Password for your Fusion REST API user; stored encrypted."),
+        AuthField("username", "API username", secret=False),
+        AuthField("instance_url", "Fusion instance URL", secret=False, placeholder="https://your-instance.fa.us2.oraclecloud.com"),
+    ]
+    root = "/crmRestApi/resources/11.13.18.05/contacts"
+
+    def native_http(self, secret, config):
+        from urllib.parse import urlsplit
+        try:
+            u = urlsplit(config.get("instance_url", ""))
+            port = u.port
+        except ValueError:
+            raise CrmError("Enter a valid Oracle Fusion instance URL.") from None
+        if (u.scheme != "https" or not u.hostname or not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.oraclecloud\.com", u.hostname)
+                or u.username or u.password or port or u.query or u.fragment or u.path not in ("", "/")):
+            raise CrmError("Enter your HTTPS Oracle Fusion instance URL, ending in .oraclecloud.com, without a path or port.")
+        user = config.get("username", "").strip()
+        if not user or ":" in user or any(c in user for c in "\r\n"):
+            raise CrmError("Enter a valid Fusion API username.")
+        return NativeHttp(f"https://{u.hostname}", basic=(user, secret))
+
+    @staticmethod
+    def _contact(r):
+        phone = r.get("RawPhoneNumber") or ""
+        if not phone:
+            phone = "".join(str(r.get(k) or "") for k in ("PhoneCountryCode", "PhoneAreaCode", "PhoneNumber"))
+        if not phone or not r.get("PartyNumber"):
+            return None
+        dnc = any(str(r.get(k, "")).lower() in ("true", "y", "1") for k in
+                  ("DoNotCallFlag", "DoNotCallPrimaryPhoneFlag"))
+        return Contact(name=r.get("ContactName") or " ".join(filter(None, [r.get("FirstName"), r.get("LastName")])),
+                       phone=normalize_phone(str(phone)), email=r.get("EmailAddress") or "",
+                       company=r.get("AccountName") or "", external_id=str(r["PartyNumber"]),
+                       created_at=_parse_time(r.get("CreationDate")), dnc=dnc)
+
+    async def verify(self, http, config):
+        data = await http.request("GET", self.root, params={"limit": 1, "onlyData": "true"})
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            raise CrmError("Oracle did not return a contacts collection. Check this API user's Sales permissions.")
+        return "Oracle Sales · " + config["username"]
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out, offset = [], 0
+        while len(out) < limit and offset < 10000:
+            data = await http.request("GET", self.root, params={"limit": min(100, limit-len(out)), "offset": offset, "onlyData": "true"})
+            rows = data.get("items") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                raise CrmError("Oracle returned an invalid contacts collection.")
+            for row in rows:
+                c = self._contact(row)
+                if c and not (since and c.created_at and c.created_at <= since):
+                    out.append(c)
+            if not rows or not data.get("hasMore"):
+                break
+            offset += len(rows)
+        return out[:limit]
+
+    async def find_or_create(self, http, config, c, create):
+        candidates = {}
+        queries = []
+        if c.email and re.fullmatch(r"[A-Za-z0-9._+@-]+", c.email):
+            queries.append("EmailAddress='" + c.email + "'")
+        if _digits(c.phone):
+            queries.extend("RawPhoneNumber='" + value + "'" for value in dict.fromkeys([normalize_phone(c.phone), _digits(c.phone)]))
+        for query in queries:
+            data = await http.request("GET", self.root, params={"q": query, "limit": 100, "onlyData": "true"})
+            if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+                raise CrmError("Oracle returned an invalid contacts collection; no contact was created.")
+            for raw in data["items"]:
+                found = self._contact(raw)
+                if not found and raw.get("PartyNumber") and c.email and str(raw.get("EmailAddress") or "").lower() == c.email.lower():
+                    found = Contact(email=c.email, external_id=str(raw["PartyNumber"]))
+                if found and ((_digits(found.phone) == _digits(c.phone) and _digits(c.phone)) or
+                              (c.email and found.email.lower() == c.email.lower())):
+                    candidates[found.external_id] = found
+        if len(candidates) > 1:
+            raise CrmError("More than one Oracle contact matches. Link the intended contact before retrying.")
+        if candidates:
+            return next(iter(candidates))
+        if not create:
+            return None
+        if not c.email or not re.fullmatch(r"[A-Za-z0-9._+@-]+", c.email):
+            raise CrmError("Import the existing Oracle contact first, or provide an email before creating one to reduce duplicate-contact risk.")
+        first, last = split_name(c.name)
+        row = await http.request("POST", self.root, json={"FirstName": first or c.phone, "LastName": last or first or c.phone,
+            "ContactPoint": [{"ContactPointType": "PHONE", "PhoneNumber": c.phone}, {"ContactPointType": "EMAIL", "EmailAddress": c.email}]})
+        if not isinstance(row, dict) or not row.get("PartyNumber"):
+            raise CrmError("Oracle did not confirm a contact number. Review the record before retrying.")
+        return str(row["PartyNumber"])
+
+    async def log_call(self, http, config, external_id, call):
+        from urllib.parse import quote
+        path = self.root + "/" + quote(str(external_id), safe="")
+        person = await http.request("GET", path)
+        if not isinstance(person, dict) or not person.get("PartyId"):
+            raise CrmError("Oracle did not return this contact's ID; no call note was written.")
+        note = await http.request("POST", path + "/child/Note", json={"NoteTxt": call.note(), "NoteTypeCode": "GENERAL",
+            "SourceObjectCode": "SALES_PARTY_CONTACT", "SourceObjectId": str(person["PartyId"]), "VisibilityCode": "INTERNAL"})
+        if not isinstance(note, dict) or not note.get("NoteId"):
+            raise CrmError("Oracle did not confirm the note. Review the contact before retrying.")
+
+    async def mark_dnc(self, http, config, external_id):
+        from urllib.parse import quote
+        await http.request("PATCH", self.root + "/" + quote(str(external_id), safe=""), json={"DoNotCallFlag": True})
+
+
+class RealGeeks(Provider):
+    key, name = "realgeeks", "Real Geeks"
+    description = "Create contacts and send call notes through the Real Geeks Incoming Leads API. Registered API access required."
+    can_import = False
+    can_new_leads = False
+    docs_url = "https://developers.realgeeks.com/incoming-leads-api/"
+    auth_fields = [
+        AuthField("api_key", "Integration API password", help="Use registered Incoming Leads API credentials, not your normal Real Geeks login."),
+        AuthField("username", "Integration API username", secret=False),
+        AuthField("site_uuid", "Site UUID", secret=False),
+        AuthField("verification_lead_id", "Existing lead UUID for connection test", secret=False, help="Read-only verification: use one existing lead on the authorized site. No test lead is created."),
+    ]
+
+    @staticmethod
+    def _uuid(value):
+        import uuid
+        try:
+            return str(uuid.UUID(str(value)))
+        except (ValueError, TypeError, AttributeError):
+            raise CrmError("Site and lead identifiers must be valid UUIDs.") from None
+
+    def native_http(self, secret, config):
+        self._uuid(config.get("site_uuid"))
+        self._uuid(config.get("verification_lead_id"))
+        if not config.get("username") or ":" in config["username"] or any(c in config["username"] for c in "\r\n"):
+            raise CrmError("Enter the registered integration API username.")
+        return NativeHttp("https://receivers.leadrouter.realgeeks.com/rest", basic=(config["username"], secret))
+
+    def _path(self, config, lead_id):
+        return f"/sites/{self._uuid(config['site_uuid'])}/leads/{self._uuid(lead_id)}"
+
+    async def verify(self, http, config):
+        lead_id = self._uuid(config["verification_lead_id"])
+        row = await http.request("GET", self._path(config, lead_id))
+        if not isinstance(row, dict) or str(row.get("id", "")) != lead_id:
+            raise CrmError("Real Geeks did not confirm this lead. Check the API credentials, site authorization and existing lead UUID.")
+        return "Real Geeks · " + self._uuid(config["site_uuid"])
+
+    async def find_or_create(self, http, config, c, create):
+        import uuid
+        if not _digits(c.phone):
+            raise CrmError("A valid contact phone number is required.")
+        existing = await http.request("GET", self._path(config, config["verification_lead_id"]))
+        if not isinstance(existing, dict) or not existing.get("id"):
+            raise CrmError("Real Geeks did not return the verification lead.")
+        if c.phone and _digits(existing.get("phone", "")) == _digits(c.phone):
+            return self._uuid(existing["id"])
+        lead_id = str(uuid.uuid5(uuid.UUID(self._uuid(config["site_uuid"])), normalize_phone(c.phone)))
+        try:
+            row = await http.request("GET", self._path(config, lead_id))
+            if not isinstance(row, dict) or str(row.get("id", "")) != lead_id:
+                raise CrmError("Real Geeks returned a different lead. Review the linked record.")
+            return lead_id
+        except CrmError as exc:
+            if exc.status != 404:
+                raise
+        if not create:
+            return None
+        first, last = split_name(c.name)
+        body = {"id": lead_id, "source": "BlackSync", "first_name": first, "last_name": last, "phone": c.phone}
+        if c.email:
+            body["email"] = c.email
+        await http.request("POST", f"/sites/{self._uuid(config['site_uuid'])}/leads", json=body)
+        row = await http.request("GET", self._path(config, lead_id))
+        if not isinstance(row, dict) or str(row.get("id", "")) != lead_id:
+            raise CrmError("Real Geeks did not confirm the created lead. Review the CRM before retrying.")
+        return lead_id
+
+    async def log_call(self, http, config, external_id, call):
+        await http.request("POST", self._path(config, external_id) + "/activities", json=[{"type": "note", "description": call.note()}])
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        raise CrmError("Real Geeks Incoming Leads API does not list your contacts. Existing lead imports need the separate outgoing webhook integration.")
+
+
+class Brivity(Provider):
+    key, name = "brivity", "Brivity"
+    native = True
+    can_import = True
+    can_new_leads = False
+    can_log_calls = False
+    description = "Connect with your Brivity API token and import selected people by their Brivity person IDs. Call-note writes and full-account discovery are not supported by the published API."
+    docs_url = "https://nvntd.github.io/brivity-core/doc/api/index.html"
+    auth_fields = [
+        AuthField("api_key", "API token", help="Use your Brivity account API token, not your login password."),
+        AuthField("person_ids", "Person IDs to import (optional)", secret=False,
+                  placeholder="38732871, 38732872",
+                  help="Comma-separated Brivity person IDs. The published API reads individual people; it does not list or search all contacts. Update credentials to change this list."),
+    ]
+
+    @staticmethod
+    def _ids(config):
+        value = (config.get("person_ids") or "").strip()
+        if not value:
+            return []
+        parts = re.split(r"[\s,]+", value)
+        if len(parts) > 100 or any(not re.fullmatch(r"[1-9][0-9]{0,18}", x) for x in parts):
+            raise CrmError("Enter up to 100 positive numeric Brivity person IDs, separated by commas or spaces.")
+        return list(dict.fromkeys(parts))
+
+    def native_http(self, secret, config):
+        self._ids(config)
+        if not secret or any(c.isspace() or c in '\"\\' for c in secret):
+            raise CrmError("Enter the Brivity API token only, without an Authorization header prefix.")
+        return NativeHttp("https://api.brivity.com", headers={"Authorization": f"Token token={secret}"})
+
+    async def verify(self, http, config):
+        # Read-only: connecting never creates a lead or event subscription.
+        rows = await http.request("GET", "/api/v2/roster")
+        if not isinstance(rows, list) or any(not isinstance(r, dict) or not isinstance(r.get("user_id"), int) for r in rows):
+            raise CrmError("Brivity did not return a valid agent roster. The API token was not verified.")
+        owner = next((r for r in rows if r.get("is_owner") is True), rows[0] if rows else {})
+        return str(owner.get("team") or owner.get("brokerage") or "Brivity account")
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        if since is not None or (filters or {}).get("skip_contacted"):
+            raise CrmError("Brivity's published person API does not expose contact history or creation timestamps for these filters.")
+        ids = self._ids(config)
+        if not ids:
+            raise CrmError("Add Brivity person IDs through Update credentials before importing. Full-account contact listing is not documented by Brivity.")
+        people = []
+        # Fail the whole preview on an inaccessible/malformed record rather than
+        # silently presenting a partial import as complete. All requests are reads.
+        for person_id in ids[:max(0, min(limit, 100))]:
+            rows = await http.request("GET", f"/api/people/{person_id}")
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or not rows[0].get("account_id"):
+                raise CrmError("Brivity did not return the requested person record.")
+            row = rows[0]
+            phone = normalize_phone(str(row.get("phone_number") or ""))
+            if not phone:
+                continue
+            people.append(Contact(name=" ".join(str(row.get(k) or "") for k in ("first_name", "last_name")).strip(),
+                                  phone=phone, email=str(row.get("email_address") or ""), external_id=person_id))
+        return people
+
+    async def find_or_create(self, http, config, c, create):
+        raise CrmError("Brivity contact search and automatic creation are not enabled. Import existing people by their Brivity person IDs.")
+
+    async def log_call(self, http, config, external_id, call):
+        raise CrmError("Brivity call-note writes are not documented and are not enabled.")
+
+
+class Apollo(Provider):
+    key, name = "apollo", "Apollo"
+    native = True
+    can_import = True
+    can_new_leads = False
+    can_log_calls = False
+    description = "Connect your Apollo API key to import saved contacts with phone numbers, manually or through scheduled sync. This does not search or enrich Apollo's prospect database, enroll sequences, or write call notes."
+    docs_url = "https://docs.apollo.io/reference/search-for-contacts"
+    auth_fields = [
+        AuthField("api_key", "Apollo API key", help="Use a key with saved-contact search access. Availability depends on your Apollo plan and API permissions; never use your login password."),
+        AuthField("search", "Saved-contact search (optional)", secret=False, placeholder="Name, company, title or email",
+                  help="Limits imported saved contacts using Apollo's keyword search. Leave empty to import saved contacts. You can change this through Update credentials."),
+    ]
+
+    def native_http(self, secret, config):
+        if not secret or secret != secret.strip() or any(ch.isspace() for ch in secret):
+            raise CrmError("Enter the Apollo API key only, without spaces or a header prefix.")
+        if len(str(config.get("search") or "")) > 500:
+            raise CrmError("Keep the Apollo saved-contact search under 500 characters.")
+        return NativeHttp("https://api.apollo.io/api/v1", headers={"X-Api-Key": secret})
+
+    @staticmethod
+    def _rows(data):
+        if not isinstance(data, dict) or not isinstance(data.get("contacts"), list) or any(not isinstance(row, dict) or not row.get("id") for row in data["contacts"]):
+            raise CrmError("Apollo did not return a valid saved-contact response. No contacts were imported.")
+        return data["contacts"]
+
+    async def verify(self, http, config):
+        health = await http.request("GET", "/auth/health")
+        if not isinstance(health, dict) or health.get("is_logged_in") is not True:
+            raise CrmError("Apollo did not verify this API key.")
+        # Read-only search: also verify the account/key can access saved contacts.
+        self._rows(await http.request("POST", "/contacts/search", json={"page": 1, "per_page": 1}))
+        return "Apollo account"
+
+    @staticmethod
+    def _contact(row):
+        numbers = row.get("phone_numbers") or []
+        numbers = numbers if isinstance(numbers, list) else []
+        candidates = [row.get("direct_phone"), row.get("phone")]
+        candidates += [number.get("sanitized_number") or number.get("raw_number") for number in numbers if isinstance(number, dict)]
+        phone = next((normalized for value in candidates if isinstance(value, str) and (normalized := normalize_phone(value))), "")
+        if not phone:
+            return None
+        labels = row.get("labels") or []
+        tags = [str(label.get("name") or "") if isinstance(label, dict) else str(label) for label in labels] if isinstance(labels, list) else []
+        tags += [str(label) for label in row.get("label_names", [])] if isinstance(row.get("label_names"), list) else []
+        flagged = any(row.get(key) is True for key in ("do_not_call", "is_dnc", "dnc"))
+        flagged = flagged or any(tag.strip().lower() in _DNC_TAGS for tag in tags)
+        flagged = flagged or any(isinstance(number, dict) and (number.get("do_not_call") is True or number.get("dnc_status") in (True, "dnc", "do_not_call")) for number in numbers)
+        company = row.get("organization_name") or next((value.get("name") for key in ("account", "organization") if isinstance(value := row.get(key), dict) and value.get("name")), "")
+        return Contact(name=str(row.get("name") or " ".join(str(row.get(key) or "") for key in ("first_name", "last_name")).strip()),
+                       phone=phone, email=str(row.get("email") or ""), company=str(company), external_id=str(row["id"]),
+                       created_at=_parse_time(row.get("created_at")), tags=[tag for tag in tags if tag], dnc=flagged)
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        if since is not None or (filters or {}).get("skip_contacted"):
+            raise CrmError("Apollo imports do not support new-lead timestamps or reliable previous-contact filtering. Turn off 'Skip already contacted' to import saved contacts.")
+        if filters:
+            raise CrmError("Unsupported Apollo import filters. Use Saved-contact search through Update credentials.")
+        limit = max(0, min(int(limit), 2000))
+        contacts, seen = [], set()
+        for page in range(1, (limit + 99) // 100 + 1):
+            per_page = 100  # Fixed page size: changing it on the last page shifts Apollo's offset.
+            body = {"page": page, "per_page": per_page, "sort_by_field": "contact_created_at", "sort_ascending": False}
+            if config.get("search"):
+                body["q_keywords"] = str(config["search"]).strip()
+            data = await http.request("POST", "/contacts/search", json=body)
+            rows = self._rows(data)
+            if len(rows) > per_page:
+                raise CrmError("Apollo returned more saved contacts than requested. Import stopped.")
+            for row in rows[:limit - (page - 1) * per_page]:
+                external_id = str(row["id"])
+                if external_id in seen:
+                    raise CrmError("Apollo returned repeated contact IDs during pagination. Please retry the import.")
+                seen.add(external_id)
+                contact = self._contact(row)
+                if contact:
+                    contacts.append(contact)
+            if len(rows) < per_page:
+                break
+        return contacts
+
+    async def find_or_create(self, http, config, c, create):
+        raise CrmError("Apollo contact creation and reverse lookup are not enabled by this saved-contact connector.")
+
+    async def log_call(self, http, config, external_id, call):
+        raise CrmError("Apollo call-note writes are not enabled by this saved-contact connector.")
+
+
+class Rechat(Provider):
+    key, name = "rechat", "Rechat"
+    native = False
+    can_import = False
+    can_new_leads = False
+    can_log_calls = False
+    docs_url = "https://docs.api.rechat.com/master/user.html"
+    description = "Rechat API documentation. Direct account connection is not enabled yet."
+    setup_required_reason = "Rechat API documentation is linked below. Authentication and server-side contact APIs must be verified before account connection can be enabled."
+
+
+class BoomTown(Provider):
+    key, name = "boomtown", "BoomTown"
+    native = False
+    can_import = False
+    can_new_leads = False
+    description = "Direct account connection is awaiting verified BoomTown API documentation and provider access."
+    docs_url = "https://developers.boomtownroi.com/"
+    setup_required_reason = "BoomTown's API documentation is currently unavailable. This connector cannot be activated until the provider contract is verified."
+
+
+
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
-    BoldTrail(), Lofty(), SierraInteractive(), GoogleSheets(), Slack(),
+    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), Rechat(), BoomTown(), GoogleSheets(), Slack(),
 )}
 
 

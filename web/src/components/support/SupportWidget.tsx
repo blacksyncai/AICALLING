@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ArrowLeft, BookOpen, ChevronLeft, ChevronRight, ImagePlus, Inbox, LifeBuoy, Loader2, MessageCircle, Minus, Search, Send, Sparkles,
+  ArrowLeft, BookOpen, Bug, ChevronLeft, ChevronRight, ImagePlus, Inbox, LifeBuoy, Lightbulb, Loader2, MessageCircle, Minus, Search, Send, Sparkles,
   Ticket as TicketIcon, UserRound, X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -21,7 +21,7 @@ type View =
   | { name: "home" }
   | { name: "chat"; id: string }
   | { name: "list"; tab?: "chats" | "tickets" }
-  | { name: "new-ticket"; conversationId?: string }
+  | { name: "new-ticket"; conversationId?: string; category?: string }
   | { name: "ticket"; id: string }
   | { name: "help"; q?: string }
   | { name: "article"; slug: string };
@@ -113,7 +113,7 @@ export function SupportWidget() {
             {view.name === "home" && <Home st={st} go={go} />}
             {view.name === "chat" && <Chat id={view.id} st={st} go={go} onSeen={() => void refreshState()} />}
             {view.name === "list" && <ListView tab={view.tab ?? "chats"} go={go} setTab={(tab) => setView({ name: "list", tab })} />}
-            {view.name === "new-ticket" && <NewTicket conversationId={view.conversationId} done={(id) => { setHistory([{ name: "home" }]); setView({ name: "ticket", id }); }} />}
+            {view.name === "new-ticket" && <NewTicket conversationId={view.conversationId} initialCategory={view.category} done={(id) => { setHistory([{ name: "home" }]); setView({ name: "ticket", id }); }} />}
             {view.name === "ticket" && <TicketView id={view.id} onSeen={() => void refreshState()} />}
             {view.name === "help" && <Help initial={view.q ?? ""} go={go} />}
             {view.name === "article" && <ArticleView slug={view.slug} go={go} />}
@@ -228,6 +228,13 @@ function Home({ st, go }: { st?: State; go: (v: View) => void }) {
             onClick={() => void startChat()} loading={busy} primary />
           <Action icon={<TicketIcon className="h-4 w-4" />} title="Submit a Support Ticket" sub="We'll follow up by ticket" onClick={() => go({ name: "new-ticket" })} />
           <Action icon={<Inbox className="h-4 w-4" />} title="View My Conversations" sub="Chats and tickets" onClick={() => go({ name: "list" })} />
+        </div>
+        <div>
+          <div className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Report a bug or request a feature</div>
+          <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-zinc-900/5">
+            <Action icon={<Bug className="h-4 w-4" />} title="Report a Bug" sub="Something broken? Tell us" onClick={() => go({ name: "new-ticket", category: "technical" })} />
+            <Action icon={<Lightbulb className="h-4 w-4" />} title="Request a Feature" sub="Tell us what you'd love next" onClick={() => go({ name: "new-ticket", category: "feature_request" })} />
+          </div>
         </div>
         {recent && (
           <button type="button" onClick={() => go({ name: "chat", id: recent.id })}
@@ -501,9 +508,9 @@ export function StatusPill({ status }: { status: string }) {
   return <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold", tone)}>{TICKET_STATUS[status] ?? status}</span>;
 }
 
-function NewTicket({ conversationId, done }: { conversationId?: string; done: (id: string) => void }) {
+function NewTicket({ conversationId, initialCategory, done }: { conversationId?: string; initialCategory?: string; done: (id: string) => void }) {
   const [subject, setSubject] = useState("");
-  const [category, setCategory] = useState("technical");
+  const [category, setCategory] = useState(TICKET_CATEGORIES.some(([v]) => v === initialCategory) ? initialCategory! : "technical");
   const [description, setDescription] = useState("");
   const [files, setFiles] = useState<SupportAttachment[]>([]);
   const [busy, setBusy] = useState(false);

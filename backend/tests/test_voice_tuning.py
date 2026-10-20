@@ -67,3 +67,39 @@ def test_guardrail_answer_is_short_and_spoken():
 
     g = guardrails({"business_name": "Compass"})
     assert "BlackSync dot A I" in g and "(blacksync" not in g and "spell that" in g
+
+
+def test_unrelated_short_reply_streams_before_the_next_model_chunk():
+    from app.agent.voice_tuning import BUILT_IN_PRONUNCIATIONS
+
+    async def run():
+        release=asyncio.Event()
+        async def chunks():
+            yield 'Yes, absolutely. '
+            await release.wait()
+            yield 'What works for you?'
+        stream=pronounce(BUILT_IN_PRONUNCIATIONS)(chunks())
+        try:
+            first=await asyncio.wait_for(anext(stream),timeout=0.2)
+            assert first=='Yes, absolutely. '
+            release.set()
+            assert ''.join([part async for part in stream])=='What works for you?'
+        finally:
+            await stream.aclose()
+    asyncio.run(run())
+
+
+def test_streaming_pronunciations_preserve_every_chunk_boundary_and_word_boundaries():
+    from app.agent.voice_tuning import BUILT_IN_PRONUNCIATIONS
+    pairs=[('BlackSync AI','Black Sync A.I.'),('AI','A.I.'),('I','eye'),*BUILT_IN_PRONUNCIATIONS]
+    examples=['I said AI, not saidAI.', 'Welcome to BlackSync AI today.',
+              'Visit blacksync.ai for details.', 'xblacksync.ai is not the same.',
+              'BLACKSYNC AI (blacksync.ai). Great.', 'BlackSync AIs are different.', 'Yes.', 'İn is not a word match. İ alone is.']
+    async def run(text,size):
+        async def chunks():
+            for start in range(0,len(text),size):
+                yield text[start:start+size]
+        return ''.join([part async for part in pronounce(pairs)(chunks())])
+    for text in examples:
+        for size in range(1,len(text)+1):
+            assert asyncio.run(run(text,size))==apply_pronunciations(text,pairs),(text,size)

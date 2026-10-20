@@ -201,7 +201,7 @@ class PhoneNumber(Base):
     # Twilio on removal, "imported" ones (already owned) are only unassigned.
     provider_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    # Which carrier the number lives with: None = Twilio (behind the LiveKit trunk), "bandwidth".
+    # Which carrier the number lives with: None = Twilio (behind the LiveKit trunk), "bandwidth", "signalwire" or "plivo".
     carrier: Mapped[str | None] = mapped_column(String(16), nullable=True)
     is_default: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Who answers calls to this number (set by a live inbound campaign).

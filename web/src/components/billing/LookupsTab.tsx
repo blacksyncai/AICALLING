@@ -9,6 +9,7 @@ import { Notice, Spinner } from "@/components/ui";
 import { Card, CardHeader, emptyCls, listCls, rowCls } from "./surface";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
+import { CountryPopup } from "./CountryPopup";
 import { cn } from "@/lib/utils";
 import { type Catalog, type LookupStatus, fmtDateTime, usd } from "./types";
 
@@ -21,6 +22,8 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
   const { data } = useSWR<LookupsData>("/api/billing/lookups", fetcher);
   const { data: cat } = useSWR<Catalog>("/api/billing/catalog", fetcher);
   const [busy, setBusy] = useState<string | null>(null);
+  const { data: countryData } = useSWR<{ country: string }>("/api/billing/country", fetcher);
+  const [askCountry, setAskCountry] = useState<string | null>(null);
 
   if (!data || !cat)
     return (
@@ -29,7 +32,12 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
       </div>
     );
 
-  async function add(key: string) {
+  async function add(key: string, countryOverride?: string) {
+    const country = countryOverride ?? countryData?.country;
+    if (!country) {
+      setAskCountry(key);
+      return;
+    }
     setBusy(key);
     try {
       window.location.href = (await post<{ url: string }>("/api/billing/lookups/checkout", { amount: key })).url;
@@ -139,6 +147,11 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
           </ul>
         )}
       </Card>
+    <CountryPopup
+      open={askCountry !== null}
+      onDone={(country) => { const key = askCountry; setAskCountry(null); if (key) void add(key, country); }}
+      onCancel={() => setAskCountry(null)}
+    />
     </div>
   );
 }

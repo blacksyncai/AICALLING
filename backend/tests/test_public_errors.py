@@ -11,7 +11,7 @@ def test_hides_env_names_and_vendors():
 def test_keeps_plain_messages_and_admin_detail():
     assert public_detail("/api/agents/1", "Agent not found") == "Agent not found"
     assert public_detail("/api/admin/orgs", "Twilio error 21212") == "Twilio error 21212"
-    assert public_detail("/api/settings/status", "LIVEKIT_URL missing") == "LIVEKIT_URL missing"
+    assert public_detail("/api/settings/status", "LIVEKIT_URL missing") == GENERIC
 
 
 def test_internal_routes_need_the_worker_token_when_set(client, monkeypatch):
@@ -31,3 +31,8 @@ def test_a_failed_label_on_a_real_conversation_is_not_redialable():
             {"role": "user", "text": "Sure, tell me more about the property."}]
     assert reconcile_outcome("failed", talk) == "completed"
     assert reconcile_outcome("failed", []) == "failed"
+
+
+def test_customer_voice_settings_hide_provider_errors():
+    for brand in ("ElevenLabs", "Eleven Labs", "eleven-labs", "Cartesia", "Deepgram", "SignalWire", "Bandwidth"):
+        assert public_detail("/api/settings/voices/preview", f"Check {brand} access to this voice") == GENERIC

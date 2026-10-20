@@ -16,6 +16,7 @@ import { CreatedBanner } from "@/components/agent-editor/CreatedBanner";
 import { ImproveWithAI } from "@/components/agent-editor/ImproveWithAI";
 import { assemblePrompt, humanizeKey } from "@/components/agent-editor/prompt";
 import { CheckList, ReadinessCard, type Readiness } from "@/components/agent-editor/ReadinessCard";
+import { VariableWizard } from "@/components/crm/VariableWizard";
 import { QualityPanel } from "@/components/agent-editor/QualityPanel";
 import { SectionsEditor } from "@/components/agent-editor/SectionsEditor";
 import { VersionHistory } from "@/components/agent-editor/VersionHistory";
@@ -26,14 +27,15 @@ import { fetcher, patch } from "@/lib/api";
 import type { Agent, SettingsStatus, Voice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type Section = "prompt" | "knowledge" | "voice" | "actions" | "analysis";
+type Section = "prompt" | "knowledge" | "voice" | "model" | "actions" | "analysis";
 type TestTab = "voice" | "chat" | "phone";
 
 const SECTIONS: { value: Section; label: string; icon: typeof Brain }[] = [
   { value: "prompt", label: "Prompt", icon: Brain },
-  { value: "voice", label: "Voice & Model", icon: Mic },
-  { value: "knowledge", label: "Knowledge", icon: BookOpen },
+  { value: "voice", label: "Voice", icon: Mic },
+  { value: "model", label: "Model / Brain", icon: Brain },
   { value: "actions", label: "Actions", icon: Zap },
+  { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "analysis", label: "Post-call analysis", icon: Sparkles },
 ];
 
@@ -61,7 +63,7 @@ const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 const HASH_SECTION: Record<string, Section> = {
   prompt: "prompt", script: "prompt", first_message: "prompt", system_prompt: "prompt",
   knowledge: "knowledge", knowledge_base: "knowledge",
-  voice: "voice", model: "voice",
+  voice: "voice", model: "model",
   actions: "actions", booking: "actions", transfer: "actions", disclosure: "actions", ai_disclosure: "actions",
   analysis: "analysis",
 };
@@ -88,6 +90,10 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
   const testKeys = testContact ? Object.keys(testContact) : (["name", "company", "email", "role"] as string[]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
+  const { data: crmConns } = useSWR<{ connections: { provider: string; status?: string }[] }>("/api/integrations/crm", fetcher,
+    { revalidateOnFocus: false });
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const crmProvider = crmConns?.connections?.find((c) => (c.status ?? "connected") !== "error")?.provider ?? null;
   const readinessUrl = `/api/agent-builder/agents/${id}/readiness`;
   const {
     data: readiness,
@@ -296,6 +302,19 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             onSection={goToSection}
             forceOpen={openReadiness}
           />
+
+        {crmProvider && (
+          <VariableWizard
+            open={wizardOpen}
+            onClose={() => setWizardOpen(false)}
+            providerKey={crmProvider}
+            providerName={crmProvider}
+            agentId={id}
+            agentName={draft.name}
+            firstMessage={draft.first_message}
+            voiceId={draft.voice_id}
+          />
+        )}
           <div ref={editorRef} className="agent-glass scroll-mt-32 rounded-2xl p-3 sm:p-5">
           <AnimatedTabList
             tabs={SECTIONS.map(({ value, label, icon: Icon }) => ({ id: value, label, icon: <Icon className="h-4 w-4" /> }))}
@@ -303,7 +322,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             onChange={setSection}
             variant="dark"
             layoutId="agent-editor-tab"
-            className="scroll-thin mb-5 flex-nowrap overflow-x-auto"
+            swipeHint
+            className="mb-5 flex! flex-nowrap! overflow-x-auto overscroll-x-contain [scrollbar-width:none] snap-x snap-proximity [&>button]:min-h-11 [&>button]:snap-start [&>button]:px-4! [&>button]:text-sm! sm:flex-wrap!"
           />
 
           <AnimatedTabPanel key={section}>
@@ -318,8 +338,17 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 </Field>
               </div>
               <Field label="First message" hint="Spoken word-for-word, all in one go, as soon as the call connects — so if it asks a question, put the question last. Leave empty to let the agent improvise.">
+                <p className="mb-2 text-sm font-semibold text-[#ff3333]">We suggest leaving the First message section blank for outbound agents.</p>
                 <Textarea rows={2} value={draft.first_message} onChange={(e) => set("first_message", e.target.value)} />
               </Field>
+              {crmProvider && /\{\{/.test(draft.first_message) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-brand-50 px-4 py-3 text-sm">
+                  <span className="text-brand-900">
+                    This opening line uses <code className="rounded bg-white px-1">{`{{variables}}`}</code> — make sure they fill from your CRM.
+                  </span>
+                  <Button size="sm" variant="secondary" onClick={() => setWizardOpen(true)}>Set up CRM fields</Button>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <ImproveWithAI
                   agent={saved ?? draft}
@@ -454,10 +483,16 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
 
-          {section === "voice" && <VoiceModelSettings draft={draft} set={set} voices={voices} />}
+          {section === "voice" && <VoiceModelSettings key="voice" draft={draft} set={set} voices={voices} view="voice" />}
+          {section === "model" && <VoiceModelSettings key="model" draft={draft} set={set} voices={voices} view="model" />}
 
           {section === "actions" && (
             <div className="space-y-5">
+              <Link href="/radar#assistant" className="flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 p-4 hover:border-brand-400">
+                <div><div className="text-sm font-semibold">Tell your agent what to do after a call</div>
+                  <p className="mt-1 text-xs text-zinc-600">Open Radar’s CRM Assistant to set up notes, follow-ups and CRM updates.</p></div>
+                <ArrowUpRight className="h-4 w-4 shrink-0" />
+              </Link>
               <Toggle
                 checked={draft.ai_disclosure ?? false}
                 onChange={(v) => set("ai_disclosure", v)}
@@ -473,7 +508,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               {draft.enable_booking && <CalcomSettings draft={draft} set={set} />}
               <VoicemailSettings draft={draft} set={set} />
               <CallFromSettings draft={draft} set={set} />
-              <Field label="Transfer to human (phone calls)" hint="If set, the agent can warm-transfer the caller to this number. E.164, e.g. +14155550123.">
+              <Field label="Transfer to human (phone calls)" hint="Direct transfer on phone calls only; browser tests cannot transfer. Enter a full number, e.g. +14155550123. The caller hears ringing while your teammate answers.">
                 <Input value={draft.transfer_number} onChange={(e) => set("transfer_number", e.target.value.trim())} placeholder="+14155550123" />
               </Field>
               <Card className="p-4">
@@ -725,7 +760,7 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
 }
 
 const VOICEMAIL_OPTIONS: { value: NonNullable<Agent["voicemail_action"]>; label: string; hint: string }[] = [
-  { value: "hang_up", label: "Hang up", hint: "End the call right away. Only the phone line fee is charged." },
+  { value: "hang_up", label: "Hang up", hint: "End the call after the minimum connected time." },
   { value: "leave_message", label: "Leave a message", hint: "Wait for the beep, say your message, then hang up." },
   { value: "ignore", label: "Keep talking", hint: "Treat it like a normal call (not recommended)." },
 ];
@@ -756,6 +791,13 @@ function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof
           </button>
         ))}
       </div>
+      {action !== "ignore" && (
+        <Field label="Minimum connected time (seconds)" hint="Wait silently until this much time has passed since answer before ending a voicemail call. Default: 6.2 seconds. Carrier charges still apply.">
+          <Input type="number" min={0} max={60} step={0.1}
+            value={draft.voice_tuning?.voicemail_min_connected_seconds ?? 6.2}
+            onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value)) set("voice_tuning", { ...draft.voice_tuning, voicemail_min_connected_seconds: Math.min(60, Math.max(0, value)) }); }} />
+        </Field>
+      )}
       {action === "leave_message" && (
         <Field label="Voicemail message" hint="Keep it under 30 seconds. You can use {{name}}, {{company}} and other contact fields.">
           <Textarea

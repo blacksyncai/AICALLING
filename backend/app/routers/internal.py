@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hmac
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
@@ -28,6 +28,29 @@ async def _internal_only(x_internal_token: Annotated[str | None, Header()] = Non
 
 router = APIRouter(prefix="/internal", tags=["internal"], include_in_schema=False,
                    dependencies=[Depends(_internal_only)])
+
+
+class RecordingStatePayload(BaseModel):
+    room_name: str
+    state: Literal["recording", "ready", "failed"]
+
+
+@router.post("/calls/{call_id}/recording-state")
+async def worker_recording_state(call_id: uuid.UUID, body: RecordingStatePayload,
+                                 db: Annotated[AsyncSession, Depends(get_db)]):
+    from app.models.call_log import CallLog
+    call = await db.get(CallLog, call_id)
+    if not call or call.livekit_room_name != body.room_name:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if call.recording_status not in ("worker_pending", "worker_recording", "worker_ready", "worker_failed"):
+        raise HTTPException(status_code=409, detail="This call does not use worker recording")
+    if call.recording_status in ("worker_ready", "worker_failed"):
+        return {"ok": True}  # duplicate or late status updates cannot regress a finished recording
+    call.recording_status = "worker_" + body.state
+    if body.state == "failed":
+        call.recording_key = None
+    await db.commit()
+    return {"ok": True}
 
 
 class CallOutcomePayload(BaseModel):

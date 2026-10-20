@@ -48,6 +48,7 @@ export interface Agent {
 }
 
 export interface VoiceTuning {
+  voicemail_min_connected_seconds?: number;
   volume?: number;
   responsiveness?: number;
   interruption?: number;
@@ -55,6 +56,8 @@ export interface VoiceTuning {
 }
 
 export interface PhoneNumberItem {
+  registration?: { status: string; providers: {provider: string; status: string; prerequisite: string; request_id: string | null}[] };
+  carrier?: "twilio" | "bandwidth" | "signalwire";
   id: string;
   number: string;
   label: string;
@@ -73,6 +76,7 @@ export interface PhoneNumberRequestItem {
 }
 
 export interface MyPhoneNumbers {
+  purchase_carriers?: string[];
   numbers: PhoneNumberItem[];
   requests: PhoneNumberRequestItem[];
   self_serve: boolean;
@@ -109,6 +113,9 @@ export interface Campaign {
   retry_delay_minutes: number;
   /** Minutes to wait before each retry, in order ([] = call once). */
   retry_schedule: number[];
+  number_rotation_enabled?: boolean;
+  caller_number_pool?: string[];
+  retry_caller_policy?: "same" | "different";
   within_calling_hours: boolean;
   next_window_at: string | null;
   pending_retries: number;
@@ -163,7 +170,7 @@ export interface Call {
   ended_at: string | null;
   transcript?: TranscriptTurn[];
   extracted_data?: Record<string, unknown>;
-  metrics?: { turns: number; avg_response: number; avg_eou: number | null; avg_llm_ttft: number | null; avg_tts_ttfb: number | null } | null;
+  metrics?: { turns: number; avg_response: number | null; avg_eou: number | null; avg_llm_ttft: number | null; avg_tts_ttfb: number | null; response_metric?: string; response_gap_samples?: number; p50_turn_gap?: number; p95_turn_gap?: number; max_turn_gap?: number; avg_interruption_recovery?: number } | null;
   from_phone?: string | null;
   has_recording?: boolean;
   prospect_email?: string | null;

@@ -5,6 +5,7 @@ Wiring (all in the platform's LiveKit project):
   Twilio number → Elastic SIP trunk origination → LiveKit inbound trunk (the number must be in its
   list) → dispatch rule (a room per call, with our agent dispatched into it) → the worker asks
   /internal/inbound-call which agent owns the dialed number.
+  Provisioned SignalWire numbers use a separate authenticated SIP handoff/trunk and dispatch rule.
 
 A live inbound campaign sets PhoneNumber.inbound_agent_id / inbound_campaign_id; pausing clears them.
 """
@@ -31,6 +32,9 @@ from app.services.contacts import normalize_phone
 log = structlog.get_logger(__name__)
 
 
+SIGNALWIRE_INBOUND_NAME = "BlackSync SignalWire inbound"
+
+
 class InboundError(RuntimeError):
     pass
 
@@ -40,25 +44,45 @@ def _lk() -> api.LiveKitAPI:
                           api_secret=settings.livekit_api_secret)
 
 
-async def _inbound_trunk(lk: api.LiveKitAPI):
+async def _inbound_trunk(lk: api.LiveKitAPI, *, signalwire: bool = False):
     from app.services.bandwidth import BRIDGE_TRUNK_NAME
 
     # The Bandwidth hand-off trunk is managed separately; numbers from the main carrier never go on it.
     trunks = [t for t in (await lk.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())).items
               if t.name != BRIDGE_TRUNK_NAME]
+    if signalwire:
+        trunk = next((t for t in trunks if t.name == SIGNALWIRE_INBOUND_NAME), None)
+        if trunk is None:
+            raise InboundError("Inbound routing for this number has not been provisioned yet.")
+        return trunk
+    trunks = [t for t in trunks if t.name != SIGNALWIRE_INBOUND_NAME]
     if not trunks:
         raise InboundError("Inbound calling isn't set up on the platform yet (no LiveKit inbound trunk).")
     want = getattr(settings, "livekit_sip_inbound_trunk_id", "") or ""
     return next((t for t in trunks if t.sip_trunk_id == want), None) or trunks[0]
 
 
-async def ensure_routing(number: str) -> None:
+async def ensure_routing(number: str, *, signalwire: bool = False) -> None:
     """Make sure calls to `number` reach LiveKit and get our agent: number on the inbound trunk, agent on the rule."""
     if not settings.livekit_ready:
         raise InboundError("Voice isn't configured on the platform.")
     lk = _lk()
     try:
-        trunk = await _inbound_trunk(lk)
+        trunk = await _inbound_trunk(lk, signalwire=signalwire)
+        if signalwire:
+            if number not in trunk.numbers or not trunk.auth_username or not trunk.auth_password:
+                raise InboundError("Inbound routing for this number has not been securely provisioned yet.")
+            try:
+                fingerprint = json.loads(trunk.metadata or "{}").get("blacksync_inbound_auth_sha256", "")
+                if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+                    raise ValueError("Missing fingerprint")
+            except (ValueError, TypeError, AttributeError):
+                raise InboundError("Secure inbound credential verification is not configured yet.") from None
+            from app.services.signalwire import SignalWireError, verify_inbound_routing
+            try:
+                await verify_inbound_routing(number, trunk.auth_username, fingerprint)
+            except SignalWireError as exc:
+                raise InboundError(str(exc)) from exc
         if trunk.numbers and number not in trunk.numbers:
             await lk.sip.update_inbound_trunk_fields(trunk.sip_trunk_id, numbers=api.ListUpdate(add=[number]))
         agent_name = settings.livekit_agent_name or "closer"
@@ -98,7 +122,10 @@ async def activate(db: AsyncSession, campaign: Campaign) -> PhoneNumber:
         other = await db.get(Campaign, row.inbound_campaign_id)
         if other and other.status == "running":
             other.status = "paused"
-    await ensure_routing(row.number)
+    if row.carrier == "signalwire":
+        await ensure_routing(row.number, signalwire=True)
+    else:
+        await ensure_routing(row.number)
     row.inbound_agent_id, row.inbound_campaign_id = campaign.agent_id, campaign.id
     return row
 

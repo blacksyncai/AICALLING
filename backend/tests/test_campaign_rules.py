@@ -318,7 +318,9 @@ def test_running_campaigns_resume_after_restart(client, agent_id, monkeypatch):
     assert run_id in started and idle_id not in started and started.count(run_id) == 1
 
 
-def test_call_selected_leaves_the_campaign_status_alone(client, agent_id, dialing):
+def test_call_selected_leaves_the_campaign_status_alone(client, agent_id, dialing, monkeypatch):
+    from app.routers import campaigns as cr
+    monkeypatch.setattr(cr, "within_calling_hours", lambda c, now: True)
     camp = client.post("/api/campaigns/", json={"name": "Pick", "agent_id": agent_id}).json()
     a = client.post("/api/contacts", json={"name": "A", "phone": "+14155550111", "campaign_id": camp["id"]}).json()
     r = client.post(f"/api/campaigns/{camp['id']}/call", json={"lead_ids": [a["id"]]})
@@ -419,3 +421,81 @@ def test_a_greeting_ended_as_a_conversation_still_gets_its_retry(client, agent_i
             return (await db.get(Lead, uuid.UUID(lead["id"]))).status
 
     assert asyncio.run(run()) == "voicemail"
+
+
+@pytest.mark.parametrize('before,opening', [
+    ('2026-01-07T16:59:59+00:00', '2026-01-07T17:00:00+00:00'),
+    ('2026-07-08T15:59:59+00:00', '2026-07-08T16:00:00+00:00'),
+    ('2026-03-09T15:59:59+00:00', '2026-03-09T16:00:00+00:00'),
+    ('2026-11-02T16:59:59+00:00', '2026-11-02T17:00:00+00:00'),
+])
+def test_pacific_nine_am_boundary_and_dst(before, opening):
+    campaign = _camp(timezone='America/Los_Angeles')
+    before, opening = datetime.fromisoformat(before), datetime.fromisoformat(opening)
+    assert not within_calling_hours(campaign, before)
+    assert next_window_start(campaign, before) == opening
+    assert within_calling_hours(campaign, opening)
+    # Wall-clock values sent by a browser are never used to determine opening.
+    assert not within_calling_hours(campaign, before.replace(tzinfo=None))
+
+
+def test_invalid_saved_timezone_is_closed_instead_of_eastern_fallback():
+    campaign = _camp(timezone='Invalid/Timezone')
+    now = datetime(2026, 7, 8, 14, tzinfo=UTC)  # Would be inside the old Eastern fallback.
+    assert not within_calling_hours(campaign, now)
+    assert next_window_start(campaign, now) is None
+
+
+def test_shared_dispatch_schedule_guard_reloads_saved_timezone(monkeypatch):
+    import asyncio
+    from app.services import outbound_call as oc
+    campaign = _camp(timezone='America/New_York')
+    now = datetime(2026, 7, 8, 13, tzinfo=UTC)  # 9 AM Eastern, 6 AM Pacific.
+    monkeypatch.setattr(oc, 'datetime', SimpleNamespace(now=lambda tz: now))
+    class DB:
+        async def get(self, model, ident): return campaign
+        async def refresh(self, obj, fields): obj.timezone = 'America/Los_Angeles'
+    with pytest.raises(oc.CampaignScheduleClosed, match='America/Los_Angeles'):
+        asyncio.run(oc._check_campaign_schedule(DB(), uuid.uuid4()))
+    # Calls with no campaign retain their existing immediate-test behavior.
+    asyncio.run(oc._check_campaign_schedule(None, None))
+
+
+def test_selected_contacts_cannot_bypass_saved_pacific_window(client, agent_id, monkeypatch, dialing):
+    from app.routers import campaigns as cr
+    from app.services.outbound_call import outbound_call_service
+    now = datetime(2026, 7, 8, 13, tzinfo=UTC)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None): return now if tz else now.replace(tzinfo=None)
+    monkeypatch.setattr(cr, 'datetime', Clock)
+    camp = client.post('/api/campaigns/', json={'name':'Pacific boundary', 'agent_id':agent_id, 'timezone':'America/Los_Angeles'}).json()
+    contact = client.post('/api/contacts', json={'name':'Pacific test', 'phone':'+14155550993','campaign_id':camp['id']}).json()
+    called=[]
+    async def dispatch(*args, **kwargs): called.append(True)
+    monkeypatch.setattr(outbound_call_service,'dispatch_call',dispatch)
+    result=client.post(f"/api/campaigns/{camp['id']}/call",json={'lead_ids':[contact['id']]})
+    assert result.status_code==409, result.text
+    assert 'America/Los_Angeles' in result.json()['detail']
+    assert not called
+    saved=client.get(f"/api/campaigns/{camp['id']}").json()
+    assert saved['timezone']=='America/Los_Angeles' and saved['total_dialed']==0
+
+
+def test_dispatcher_blocks_campaign_before_context_credits_or_provider(monkeypatch):
+    import asyncio
+    from app.services import outbound_call as oc
+    monkeypatch.setattr(oc.settings, 'signalwire_sip_outbound_trunk_id', 'test-trunk')
+    monkeypatch.setattr(oc, 'datetime', SimpleNamespace(now=lambda tz: datetime(2026, 7, 8, 13, tzinfo=UTC)))
+    campaign = _camp(timezone='America/Los_Angeles')
+    lookups=[]
+    class DB:
+        async def get(self, model, ident):
+            lookups.append(model.__name__)
+            assert model.__name__ == 'Campaign', 'Must not reach credit/account preparation'
+            return campaign
+        async def refresh(self, obj, fields): pass
+    lead=SimpleNamespace(do_not_call=False, campaign_id=uuid.uuid4(), crm_refs={'apollo':'id'})
+    with pytest.raises(oc.CampaignScheduleClosed, match='America/Los_Angeles'):
+        asyncio.run(oc.outbound_call_service._dispatch(lead, DB()))
+    assert lookups == ['Campaign']

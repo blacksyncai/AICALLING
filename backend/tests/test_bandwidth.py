@@ -116,3 +116,56 @@ def test_take_bridge_matches_caller():
     assert bandwidth.take_bridge(BW_NUMBER, "4155550001")["call_log_id"] == "a"
     assert bandwidth.take_bridge(BW_NUMBER, "+14155550001") is None
     assert uuid  # keep import
+
+
+@pytest.mark.parametrize("stored_password", ["old-password", "", "current-password"])
+@pytest.mark.parametrize("missing_number", [False, True])
+def test_existing_bridge_reapplies_password_without_replacing_numbers(monkeypatch, stored_password, missing_number):
+    """Password-only rotations and redacted reads must still refresh digest auth."""
+    import asyncio
+    from types import SimpleNamespace
+    from livekit import api
+
+    for key, value in {
+        "bandwidth_account_id": "account", "bandwidth_client_id": "client",
+        "bandwidth_client_secret": "secret", "bandwidth_application_id": "app",
+        "bandwidth_sip_username": "same-user", "bandwidth_sip_password": "current-password",
+        "livekit_sip_host": "test.sip.livekit.cloud", "livekit_url": "wss://test.livekit.cloud",
+        "livekit_api_key": "key", "livekit_api_secret": "secret",
+    }.items():
+        monkeypatch.setattr(settings, key, value)
+    updates = []
+    closed = []
+    trunk = api.SIPInboundTrunkInfo(sip_trunk_id="ST_bridge", name="Bandwidth bridge",
+        numbers=[BW_NUMBER], auth_username="same-user", auth_password=stored_password)
+
+    class SIP:
+        async def list_inbound_trunk(self, request):
+            return SimpleNamespace(items=[trunk])
+
+        async def update_inbound_trunk_fields(self, trunk_id, **kwargs):
+            updates.append((trunk_id, kwargs))
+
+        async def list_dispatch_rule(self, request):
+            return SimpleNamespace(items=[api.SIPDispatchRuleInfo(trunk_ids=["ST_bridge"])])
+
+    class LK:
+        sip = SIP()
+
+        async def aclose(self):
+            closed.append(True)
+
+    monkeypatch.setattr(api, "LiveKitAPI", lambda **kwargs: LK())
+    numbers = [BW_NUMBER, BW_NUMBER_2] if missing_number else [BW_NUMBER]
+    asyncio.run(bandwidth.ensure_bridge_trunk(numbers))
+    assert len(updates) == 1
+    trunk_id, fields = updates[0]
+    assert trunk_id == "ST_bridge"
+    assert fields["auth_username"] == "same-user"
+    assert fields["auth_password"] == "current-password"
+    if missing_number:
+        assert list(fields["numbers"].add) == [BW_NUMBER_2]
+    else:
+        assert fields["numbers"] is None
+    assert list(trunk.numbers) == [BW_NUMBER]
+    assert closed == [True]

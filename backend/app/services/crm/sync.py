@@ -38,11 +38,11 @@ CALL_HOURS = (8, 21)  # local time window for speed-to-lead calls
 
 def defaults() -> dict:
     # create_contacts is off by default: a test call to your own number shouldn't add a "lead" to the CRM.
-    return {"log_calls": True, "create_contacts": False, "only_connected": False,
+    return {"log_calls": True, "create_contacts": False, "csv_create_fields": False, "only_connected": False,
             "speed_to_lead_agent_id": None, "speed_to_lead_since": None, "activity_agent_id": None,
             # Which calls get logged, and what goes in the CRM note.
             "min_seconds": 0, "skip_outcomes": [], "only_outcomes": [], "only_sentiments": [],
-            "note_summary": True, "note_details": True, "note_link": True}
+            "note_summary": True, "note_details": True, "note_link": True, "note_transcript": True}
 
 
 def conn_settings(conn: CrmConnection) -> dict:
@@ -110,6 +110,8 @@ def call_info(data: dict) -> CallInfo:
 
 
 async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
+    if not getattr(PROVIDERS.get(conn.provider), "can_log_calls", True):
+        return
     cfg = conn_settings(conn)
     call = call_info(data)
     if not cfg["log_calls"] or (cfg["only_connected"] and not call.connected):
@@ -157,6 +159,15 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
         await add_log(db, conn, "call", "ok", f"Logged {call.outcome_label.lower()} call with {c.name or c.phone}."
                       + (f" {moved}." if moved else ""),
                       call_id=uuid.UUID(call.call_id) if call.call_id else None, external_id=ref)
+        if conn.provider == "followupboss" and call.call_id:
+            from app.models.call_log import CallLog
+            from app.services.crm.fub_transcripts import send
+            stored = await db.get(CallLog, uuid.UUID(call.call_id))
+            if stored:
+                receipt = await send(db, conn, stored, str(ref))
+                if receipt["status"] == "sent":
+                    await add_log(db, conn, "transcript", "ok", f"Sent transcript to FUB ({receipt['parts']} parts).",
+                                  call_id=stored.id, external_id=str(ref))
     except (CrmError, KeyError, ValueError, TypeError) as exc:
         log.warning("crm_push_failed", provider=conn.provider, error=str(exc))
         await add_log(db, conn, "call", "error", f"Couldn't log the call with {c.name or c.phone}: {exc}",
@@ -489,12 +500,21 @@ async def prefill_fields(conn: CrmConnection, agent, leads: list[Lead], budget: 
         cf = dict(lead.custom_fields or {})
         cf["crm_fields"] = {**(cf.get("crm_fields") or {}), conn.provider: fields}
         cf["crm_context_at"] = cf.get("crm_context_at") or now
+        provenance = dict(cf.get("crm_variable_values") or {})
+        derived = dict(provenance.get(conn.provider) or {})
         for var, value in crm_vars.resolve(script_vars, fields, mapping).items():
             if var not in crm_vars.BUILT_IN:
-                cf[var] = value
+                if crm_vars.should_use_crm(var, cf.get(var), mapping, derived):
+                    cf[var] = value
+                    derived[var] = value
+                else:
+                    derived.pop(var, None)  # a CSV import/user edit now owns this value
         for key in crm_vars.SHOWN:  # the columns a CSV export would usually carry
-            if fields.get(key) and not cf.get(key):
+            if fields.get(key) and (cf.get(key) is None or cf.get(key) == ""):
                 cf[key] = fields[key]
+                derived[key] = fields[key]
+        provenance[conn.provider] = derived
+        cf["crm_variable_values"] = provenance
         lead.custom_fields = cf
         filled += 1
     return filled

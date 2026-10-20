@@ -136,6 +136,7 @@ export interface Entitlements {
 
 export interface Catalog {
   stripe_ready: boolean;
+  helcim_ready?: boolean;
   plans: Plan[];
   packs: Pack[];
   lookup_funds: { key: string; name: string; amount_cents: number; available: boolean; per_record_cents?: number; records?: number; grant_cents?: number }[];

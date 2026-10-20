@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.account import Membership, Organization, User
 from app.models.billing import BillingCustomer, LookupBalanceTransaction, Purchase
-from app.services.billing import catalog, credits, stripe_api
+from app.services.billing import catalog, credits, helcim_api, stripe_api
 
 log = structlog.get_logger(__name__)
 
@@ -91,6 +91,101 @@ async def _checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, 
     return session["url"]
 
 
+# ── Helcim (Canadian/other customers) ─────────────────────────────────────────
+# One-time purchases only; subscriptions stay on Stripe. The purchase row is
+# created up front (status pending) and fulfilled only when Helcim confirms the
+# payment server-side — never from the browser returning from the hosted page.
+
+def uses_helcim(org: Organization) -> bool:
+    """Canadian/other accounts pay through Helcim when it's configured."""
+    return bool(getattr(org, "billing_country", None) in ("CA", "OTHER")) and helcim_api.ready()
+
+
+async def _helcim_checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, kind: str, item: dict,
+                           credits_n: int, return_path: str) -> str:
+    """Create a pending purchase and a Helcim hosted checkout for it. Returns the checkout URL."""
+    purchase = Purchase(org_id=org.id, kind=kind, pack_key=item["key"], amount_cents=item["amount_cents"],
+                        currency="cad", credits=credits_n, status="pending", created_by=user_id)
+    db.add(purchase)
+    await db.flush()
+    owner = (await db.execute(
+        select(User.email).join(Membership, Membership.user_id == User.id)
+        .where(Membership.org_id == org.id, Membership.role == "owner").limit(1)
+    )).scalar_one_or_none()
+    meta = {"org_id": str(org.id), "purchase_id": str(purchase.id), "purchase_type": kind, "pack": item["key"]}
+    checkout = await helcim_api.create_invoice_checkouts(
+        amount_cents=item["amount_cents"], currency="cad",
+        order_number=f"BS-{purchase.id.hex[:12].upper()}",
+        customer_name=org.name, customer_email=owner,
+        checkout_return_url=app_url(f"{return_path}?checkout=success&purchase={purchase.id}"),
+        checkout_cancel_url=app_url(f"{return_path}?checkout=canceled"),
+        metadata=meta,
+    )
+    url = (checkout.get("checkoutUrl") or (checkout.get("data") or {}).get("checkoutUrl")
+           or (checkout.get("invoiceCheckout") or {}).get("checkoutUrl"))
+    if not url:
+        raise BillingError("Helcim didn't return a checkout URL.")
+    purchase.stripe_checkout_session_id = f"helcim:{(checkout.get('id') or (checkout.get('data') or {}).get('id') or '')}"
+    await db.commit()
+    log.info("helcim_checkout_created", org_id=str(org.id), kind=kind, item=item["key"], purchase_id=str(purchase.id))
+    return url
+
+
+async def _helcim_plan_checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, plan_key: str) -> str:
+    """Start a plan subscription through Helcim recurring payments (CA/OTHER accounts, USD)."""
+    plan = catalog.PLANS[plan_key]
+    from datetime import date
+    owner = (await db.execute(
+        select(User.email).join(Membership, Membership.user_id == User.id)
+        .where(Membership.org_id == org.id, Membership.role == "owner").limit(1)
+    )).scalar_one_or_none()
+    checkout = await helcim_api.create_recurring_payment(
+        amount_cents=plan["amount_cents"], currency="usd",
+        order_number=f"BS-PLAN-{org.id.hex[:10].upper()}",
+        customer_name=org.name, customer_email=owner,
+        frequency="monthly", billing_date=date.today().strftime("%Y-%m-%d"),
+        checkout_return_url=app_url(f"/billing?tab=plans&checkout=success&helcim_plan={plan_key}"),
+        checkout_cancel_url=app_url("/billing?tab=plans&checkout=canceled"),
+        metadata={"org_id": str(org.id), "purchase_type": "plan", "plan": plan_key},
+    )
+    url = (checkout.get("checkoutUrl") or (checkout.get("data") or {}).get("checkoutUrl")
+           or (checkout.get("recurringPayment") or {}).get("checkoutUrl"))
+    if not url:
+        raise BillingError("Helcim didn't return a checkout URL.")
+    log.info("helcim_plan_checkout_created", org_id=str(org.id), plan=plan_key)
+    return url
+
+
+async def fulfill_helcim_purchase(db: AsyncSession, purchase_id: uuid.UUID, *, org_id: uuid.UUID,
+                                  helcim_ref: str | None = None) -> bool:
+    """Grant a Helcim-paid purchase. Same safety rules as Stripe's fulfill(): idempotent, org-checked."""
+    p = await _lock_purchase(db, purchase_id)
+    if p is None or p.org_id != org_id:
+        log.error("helcim_fulfill_mismatch", purchase_id=str(purchase_id), org_id=str(org_id))
+        return False
+    if p.status not in ("pending", "failed"):
+        return False
+    res = await db.execute(update(Purchase).where(Purchase.id == p.id, Purchase.status.in_(("pending", "failed")))
+                           .values(status="paid", fulfilled_at=_now(),
+                                   stripe_payment_intent_id=helcim_ref or p.stripe_payment_intent_id))
+    if res.rowcount != 1:
+        return False
+    org = await db.get(Organization, p.org_id)
+    if p.kind in ("credit_pack", "auto_recharge"):
+        pack = catalog.CREDIT_PACKS.get(p.pack_key or "", {})
+        label = pack.get("name", "Credit pack")
+        await credits.add_lot(db, org, p.credits, source="purchased", kind="purchase",
+                              note=f"{label} — {p.credits:,} credits (Helcim)",
+                              amount_paid_cents=p.amount_cents, purchase_id=p.id, stripe_ref=helcim_ref)
+    elif p.kind == "lookup_funds":
+        grant = p.credits or p.amount_cents
+        await add_lookup_funds(db, org, grant, kind="funding",
+                               note=f"Added ${grant / 100:,.2f} (Helcim)",
+                               purchase_id=p.id, stripe_ref=helcim_ref)
+    log.info("helcim_purchase_fulfilled", purchase_id=str(p.id), kind=p.kind, org_id=str(org.id))
+    return True
+
+
 TRIAL_PACK_LIMIT = 1  # credit packs an account may buy before it's on a plan
 TRIAL_PACK_USED = "You've used the one credit pack available before choosing a plan. Choose a BlackSync AI plan to buy more credits."
 
@@ -120,6 +215,9 @@ async def checkout_credit_pack(db: AsyncSession, org: Organization, user_id: uui
     access = await pack_access(db, org)
     if not access["allowed"]:
         raise BillingError(access["reason"], 402)
+    if uses_helcim(org):
+        return await _helcim_checkout(db, org, user_id, kind="credit_pack", item=pack,
+                                      credits_n=pack["credits"], return_path="/billing")
     try:
         price = await catalog.sellable_price(pack_key)
     except catalog.NotSellable as exc:
@@ -132,6 +230,9 @@ async def checkout_lookup_funds(db: AsyncSession, org: Organization, user_id: uu
     item = catalog.LOOKUP_FUNDS.get(key)
     if not item:
         raise BillingError("Unknown amount.")
+    if uses_helcim(org):
+        return await _helcim_checkout(db, org, user_id, kind="lookup_funds", item=item,
+                                      credits_n=catalog.lookup_grant_cents(item), return_path="/billing")
     try:
         price = await catalog.sellable_price(key)
     except catalog.NotSellable as exc:
@@ -154,6 +255,8 @@ async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID,
     sub = await db.get(BillingSubscription, org.id)
     if sub and sub.status in ("active", "trialing", "past_due", "incomplete"):
         raise BillingError("This account already has a subscription — change plans instead.", 409)
+    if uses_helcim(org):
+        return await _helcim_plan_checkout(db, org, user_id, plan_key=plan_key)
     try:
         price = await catalog.sellable_price(plan_key)
     except catalog.NotSellable as exc:
@@ -209,25 +312,25 @@ def is_number_only(obj: dict | None) -> bool:
     return ((obj or {}).get("metadata") or {}).get("purchase_type") == "phone_number"
 
 
-async def checkout_phone_number(db: AsyncSession, org: Organization, user_id: uuid.UUID, number: str) -> str:
+async def checkout_phone_number(db: AsyncSession, org: Organization, user_id: uuid.UUID, number: str, *, carrier: str = "twilio") -> str:
     """No plan: buy one number on its own for the monthly add-on price (the number is bought once paid)."""
     try:
         price = await catalog.sellable_price(catalog.PHONE_ADDON["key"])
     except catalog.NotSellable as exc:
         raise BillingError(str(exc), 409)
     cid = await ensure_customer(db, org)
-    meta = {"org_id": str(org.id), "purchase_type": "phone_number", "number": number, "user_id": str(user_id)}
+    meta = {"org_id": str(org.id), "purchase_type": "phone_number", "number": number, "user_id": str(user_id), "carrier": carrier}
     session = await stripe_api.create_checkout_session(
         mode="subscription", customer=cid, line_items=[{"price": price, "quantity": 1}],
         metadata=meta, client_reference_id=str(org.id), subscription_data={"metadata": meta},
         success_url=app_url("/phone-numbers?checkout=success"), cancel_url=app_url("/phone-numbers?checkout=canceled"),
-        idempotency_key=f"bs-number-{org.id}-{number}-{int(_now().timestamp() // 600)}",
+        idempotency_key=f"bs-number-{org.id}-{carrier}-{number}-{int(_now().timestamp() // 600)}",
     )
     log.info("number_checkout_created", org_id=str(org.id), number=number)
     return session["url"]
 
 
-async def provision_number(db: AsyncSession, org_id: uuid.UUID, number: str, subscription_id: str) -> None:
+async def provision_number(db: AsyncSession, org_id: uuid.UUID, number: str, subscription_id: str, *, carrier: str = "twilio") -> None:
     """After payment: buy the chosen number (or another in the same area code if it was taken meanwhile)."""
     from app.models.billing import PhoneNumber
     from app.services import telephony
@@ -238,14 +341,17 @@ async def provision_number(db: AsyncSession, org_id: uuid.UUID, number: str, sub
     candidates = [number]
     digits = "".join(ch for ch in number if ch.isdigit())
     area = digits[1:4] if len(digits) == 11 else digits[:3]
-    try:
-        candidates += [n["number"] for n in await telephony.search_available(area)][:5]
-    except Exception:
-        pass
+    # A timeout may have succeeded remotely. Never buy a second SignalWire
+    # number as compensation or silently substitute a different selection.
+    if carrier != "signalwire":
+        try:
+            candidates += [n["number"] for n in await telephony.search_available(area, carrier=carrier)][:5]
+        except Exception:
+            pass
     last_error = None
     for cand in dict.fromkeys(candidates):
         try:
-            row = await telephony.purchase(db, org_id, cand)
+            row = await telephony.purchase(db, org_id, cand, carrier=carrier)
         except Exception as exc:
             last_error = exc
             continue

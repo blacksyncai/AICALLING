@@ -25,7 +25,7 @@ from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.services import entitlements, quiet_hours
 from app.services.accounts import InsufficientCredits, ensure_can_call
-from app.services.outbound_call import LeadBusy
+from app.services.outbound_call import LeadBusy, CampaignScheduleClosed
 from app.services.auth import Context, CtxDep, DbDep
 from app.services.contacts import CsvError, parse_contacts_csv
 
@@ -47,6 +47,9 @@ class CallingRules(BaseModel):
     retry_delay_minutes: int | None = None
     # Minutes to wait before each retry, in order; [] = call once. Overrides the two fields above.
     retry_schedule: list[int] | None = None
+    number_rotation_enabled: bool | None = None
+    caller_number_pool: list[str] | None = None
+    retry_caller_policy: str | None = Field(default=None, pattern="^(same|different)$")
 
 
 class CampaignCreate(CallingRules):
@@ -114,10 +117,7 @@ def _parse_hhmm(value: str) -> time:
 
 
 def _tz(name: str | None) -> ZoneInfo:
-    try:
-        return ZoneInfo(name or DEFAULT_TIMEZONE)
-    except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo(DEFAULT_TIMEZONE)
+    return ZoneInfo(name or DEFAULT_TIMEZONE)
 
 
 def calling_rules(c) -> dict:
@@ -131,6 +131,9 @@ def calling_rules(c) -> dict:
         "max_attempts": c.max_attempts or DEFAULT_MAX_ATTEMPTS,
         "retry_delay_minutes": c.retry_delay_minutes or DEFAULT_RETRY_DELAY,
         "retry_schedule": retry_waits(c),
+        "number_rotation_enabled": bool(getattr(c, "number_rotation_enabled", False)),
+        "caller_number_pool": list(getattr(c, "caller_number_pool", None) or []),
+        "retry_caller_policy": getattr(c, "retry_caller_policy", None) or "same",
     }
 
 
@@ -156,7 +159,10 @@ def _aware(d: datetime) -> datetime:
 
 def within_calling_hours(campaign, now_utc: datetime) -> bool:
     """True if `now_utc` falls inside the campaign's calling window (in its own time zone)."""
-    start, end, days, tz = _window(campaign)
+    try:
+        start, end, days, tz = _window(campaign)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False  # Invalid saved zones must never silently dial in a different zone.
     local = _aware(now_utc).astimezone(tz)
     return local.weekday() in days and start <= local.time().replace(tzinfo=None) < end
 
@@ -169,7 +175,10 @@ def next_window_start(campaign, now_utc: datetime) -> datetime | None:
     now_utc = _aware(now_utc)
     if within_calling_hours(campaign, now_utc):
         return now_utc
-    start, _end, days, tz = _window(campaign)
+    try:
+        start, _end, days, tz = _window(campaign)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
     local = now_utc.astimezone(tz)
     for offset in range(0, 8):
         day: date = local.date() + timedelta(days=offset)
@@ -305,6 +314,23 @@ async def _get_campaign(db, ctx: Context, campaign_id: uuid.UUID) -> Campaign:
     return campaign
 
 
+async def _validate_number_rotation(db, org_id, data, current=None, direction="outbound"):
+    from app.services.telephony import active_numbers
+    enabled = data.get("number_rotation_enabled", bool(getattr(current, "number_rotation_enabled", False)))
+    pool = data.get("caller_number_pool", getattr(current, "caller_number_pool", None) or [])
+    if len(pool) > 20 or len(pool) != len(set(pool)):
+        raise HTTPException(status_code=400, detail="Choose up to 20 distinct caller numbers.")
+    if enabled and (direction == "inbound" or len(pool) < 2):
+        raise HTTPException(status_code=400, detail="Outbound number rotation needs at least two selected numbers.")
+    if pool and (enabled or list(pool) != list(getattr(current, "caller_number_pool", None) or [])):
+        owned = {number.number for number in await active_numbers(db, org_id)}
+        if any(number not in owned for number in pool):
+            raise HTTPException(status_code=400, detail="Every selected caller number must be active on this account.")
+    # Start at A whenever a pool is changed; the cursor itself is never client-editable.
+    if "caller_number_pool" in data and list(pool) != list(getattr(current, "caller_number_pool", None) or []):
+        data["caller_rotation_cursor"] = 0
+
+
 async def _check_agent(db, ctx: Context, agent_id: uuid.UUID | None) -> None:
     if agent_id is not None:
         agent = await db.get(Agent, agent_id)
@@ -357,6 +383,7 @@ async def create_campaign(
         await _check_number(db, ctx, body.phone_number_id)
     rules = body.model_dump(include=set(CallingRules.model_fields), exclude_none=True)
     _validate_rules(rules)
+    await _validate_number_rotation(db, ctx.org.id, rules, direction=body.direction)
     await entitlements.check_concurrency(db, ctx.org, body.max_concurrent_calls)
     campaign = Campaign(
         direction=body.direction,
@@ -407,6 +434,7 @@ async def update_campaign(
         else:
             await _check_number(db, ctx, data["phone_number_id"])
     _validate_rules(data, campaign)
+    await _validate_number_rotation(db, ctx.org.id, data, campaign, campaign.direction or "outbound")
     if data.get("max_concurrent_calls") and data["max_concurrent_calls"] > (campaign.max_concurrent_calls or 1):
         await entitlements.check_concurrency(db, ctx.org, data["max_concurrent_calls"])
     relink = (campaign.direction == "inbound" and campaign.status == "running"
@@ -696,6 +724,8 @@ async def call_selected_leads(
 
     if campaign.status == "cancelled":
         raise HTTPException(status_code=400, detail="This campaign was cancelled — make a new one to call these contacts.")
+    if not within_calling_hours(campaign, datetime.now(timezone.utc)):
+        raise HTTPException(status_code=409, detail=f"This campaign is outside its calling hours in {calling_rules(campaign)['timezone']}. Selected contacts were not dialed.")
     # The campaign's own status is left alone: calling a few picked contacts doesn't start the whole list
     # (a "running" campaign is dialed in full, including after a restart).
     background_tasks.add_task(_dispatch_selected, str(campaign_id), valid_ids, campaign.status)
@@ -728,8 +758,9 @@ async def _dial_selected_one(campaign_uuid: uuid.UUID, lid: str, outbound_call_s
             return True
         try:
             campaign = await db.get(Campaign, campaign_uuid)
-            if campaign:
-                _record_attempt(lead, campaign)
+            if not campaign or not within_calling_hours(campaign, datetime.now(timezone.utc)):
+                return False
+            _record_attempt(lead, campaign)
             await outbound_call_service.dispatch_call(lead, db)
             if campaign:
                 campaign.total_dialed += 1
@@ -737,6 +768,9 @@ async def _dial_selected_one(campaign_uuid: uuid.UUID, lid: str, outbound_call_s
                 await db.commit()
         except InsufficientCredits as exc:
             await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
+            return False
+        except CampaignScheduleClosed:
+            await db.rollback()
             return False
         except LeadBusy:
             await db.rollback()
@@ -986,6 +1020,9 @@ async def _process_call_queue(campaign_id: str) -> None:
                     except InsufficientCredits as exc:
                         await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
                         return
+                    except CampaignScheduleClosed:
+                        await db.rollback()  # A closed/changed schedule is a wait, never a failed attempt.
+                        wait = 1
                     except LeadBusy:
                         await db.rollback()  # already on a call from somewhere else; their result decides what's next
                     except Exception as exc:

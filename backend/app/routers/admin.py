@@ -315,6 +315,13 @@ async def delete_org(org_id: uuid.UUID, body: OrgDelete, admin: AdminDep, db: Db
     if numbers:
         raise HTTPException(status_code=409, detail=f"This account still has {numbers} phone number{'s' if numbers != 1 else ''}. "
                                                     "Release or reassign them first so they don't keep billing in Twilio.")
+    from app.models.number_registration import NumberRegistration
+    from sqlalchemy import or_
+    pending_identity = (await db.execute(select(NumberRegistration.id).where(
+        NumberRegistration.org_id == org.id, NumberRegistration.status != "removed",
+        or_(NumberRegistration.submission_intent_at.is_not(None), NumberRegistration.request_id.is_not(None))).limit(1))).first()
+    if pending_identity:
+        raise HTTPException(status_code=409, detail="Caller ID cleanup is pending. Finish carrier deregistration before deleting this account.")
     conn = await db.get(CalendarConnection, org.id)
     if conn:
         await gcal.revoke(conn)

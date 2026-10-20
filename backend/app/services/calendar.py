@@ -1,12 +1,13 @@
 """
 Cal.com slot lookup + booking, shared by the API playground and the voice worker.
-Falls back to realistic mock slots when Cal.com isn't configured, so booking
-flows can be tested end-to-end without an account.
+Mock slots/receipts require an explicit playground-only allow_mock flag.
+Voice calls fail closed if a real calendar is not configured.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import asyncio
 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -16,6 +17,10 @@ import structlog
 from app.config import settings
 
 log = structlog.get_logger(__name__)
+
+
+class CalendarUnavailable(RuntimeError):
+    """No authoritative availability/booking result; distinct from zero openings."""
 
 def _event_type(event_type_id: str | None) -> str:
     return (event_type_id or settings.calcom_event_type_id or "").strip()
@@ -151,7 +156,8 @@ def choose_slots(starts: list[str], tz: str | None, preferred_date: str = "", ti
 
 async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None,
                       api_key: str | None = None, tz: str | None = None, *, time_of_day: str = "",
-                      time: str = "", exclude: set[str] | None = None, count: int = 3) -> list[dict]:
+                      time: str = "", exclude: set[str] | None = None, count: int = 3,
+                      allow_mock: bool = False) -> list[dict]:
     """Open slots ({start, label}) to offer, from Cal.com's full availability (see choose_slots)."""
     etype, key = _event_type(event_type_id), _key(api_key)
     today = dt.datetime.now(dt.timezone.utc).date()
@@ -164,10 +170,12 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
         pass
 
     if not key or not etype:
+        if not allow_mock:
+            raise CalendarUnavailable("Calendar is not connected")
         starts = _all_mock(start if start > today else today + dt.timedelta(days=1), tz)
     else:
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with asyncio.timeout(8.0), httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.get(
                     "https://api.cal.com/v2/slots",
                     headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-09-04"},
@@ -183,21 +191,28 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
             starts = [(x.get("start") if isinstance(x, dict) else x) for day in data.values() for x in day]
             starts = [x for x in starts if x]
         except Exception as exc:
-            log.warning("calcom_fetch_failed", error=str(exc))
-            return []
+            log.warning("calcom_fetch_failed", error=type(exc).__name__)
+            if allow_mock:
+                return []
+            raise CalendarUnavailable("Availability could not be verified") from exc
     picks = choose_slots(starts, tz, preferred_date, time_of_day, time, exclude, count)
     return [{"start": x, "label": _label(x, tz)} for x in picks]
 
 
 async def create_booking(start: str, email: str, name: str, event_type_id: str | None = None,
-                         api_key: str | None = None, tz: str | None = None) -> str:
-    """Book `start` for the attendee. Returns a booking link ('' on failure)."""
+                         api_key: str | None = None, tz: str | None = None, *, allow_mock: bool = False) -> str:
+    """Return a provider booking receipt; raise on unverified real results.
+
+    The playground may explicitly request simulated receipts and legacy empty
+    failure results. Production voice never opts into that behavior.
+    """
     etype, key = _event_type(event_type_id), _key(api_key)
     if not key or not etype:
-        log.info("calcom_not_configured_mock_booking", email=email)
+        if not allow_mock:
+            raise CalendarUnavailable("Calendar is not connected")
         return f"https://cal.com/mock-booking?start={start}&attendee={email}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with asyncio.timeout(10.0), httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 "https://api.cal.com/v2/bookings",
                 headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-08-13"},
@@ -213,8 +228,10 @@ async def create_booking(start: str, email: str, name: str, event_type_id: str |
         uid = data.get("uid") or data.get("id")
         return f"https://cal.com/booking/{uid}" if uid else ""
     except Exception as exc:
-        log.warning("calcom_booking_failed", error=str(exc))
-        return ""
+        log.warning("calcom_booking_failed", error=type(exc).__name__)
+        if allow_mock:
+            return ""
+        raise CalendarUnavailable("Booking result unavailable; do not retry automatically") from exc
 
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]

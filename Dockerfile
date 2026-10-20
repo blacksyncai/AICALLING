@@ -27,7 +27,8 @@ WORKDIR /app/backend
 COPY backend/requirements.txt .
 RUN pip install -r requirements.txt
 COPY backend/ ./
-RUN python agent_worker.py download-files || echo "model download skipped"
+# A missing turn-detector download must fail the build rather than silently deploy VAD-only calls.
+RUN python agent_worker.py download-files
 
 COPY --from=web /web/.next/standalone /app/web
 COPY --from=web /web/.next/static /app/web/.next/static

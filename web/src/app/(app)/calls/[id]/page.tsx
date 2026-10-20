@@ -133,11 +133,17 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
           </Card>
           {call.metrics && (
             <Card>
-              <CardHeader title="Response time" description={`Average over ${call.metrics.turns} agent turns`} />
+              <CardHeader title="Response time" description={call.metrics.response_metric === "session_state_gap" ? `Observed speech gaps over ${call.metrics.response_gap_samples} turns · excludes carrier playback delay` : call.metrics.response_metric === "unmeasured" ? "No observed response gap available · stage timings below may overlap" : `Pipeline estimate over ${call.metrics.turns} agent turns · stages may overlap`} />
               <div className="p-5">
-                <div className="text-2xl font-semibold tabular-nums">{call.metrics.avg_response.toFixed(2)}s</div>
+                <div className="text-2xl font-semibold tabular-nums">{call.metrics.avg_response == null ? "Not measured" : `${call.metrics.avg_response.toFixed(2)}s`}</div>
                 <dl className="mt-3 space-y-1.5 text-xs">
                   {[
+                    ...(call.metrics.response_metric === "session_state_gap" ? [
+                      ["Typical gap (median)", call.metrics.p50_turn_gap],
+                      ["Slow-tail gap (95th percentile)", call.metrics.p95_turn_gap],
+                      ["Longest gap", call.metrics.max_turn_gap],
+                      ["Interruption recovery", call.metrics.avg_interruption_recovery],
+                    ] : []),
                     ["Waiting for caller to finish", call.metrics.avg_eou],
                     ["AI thinking time", call.metrics.avg_llm_ttft],
                     ["Voice start time", call.metrics.avg_tts_ttfb],

@@ -1,5 +1,5 @@
 """
-Recording a browser test call inside the voice worker (opt-in: "Record this call").
+Recording an opted-in browser test or enabled SignalWire call inside the voice worker.
 
 LiveKit's RecorderIO taps the agent session's audio input (the tester's microphone) and output (the agent's
 voice as it plays) and encodes them, aligned on the playout timeline, into one stereo OGG file on a background
@@ -41,16 +41,19 @@ class CallRecorder:
 
     async def finish(self) -> bool:
         """Close the file and upload it. Safe to call more than once; never raises."""
-        if self._done or self._rec is None:
+        if self._done:
             return False
         self._done = True
+        if self._rec is None:
+            shutil.rmtree(self._dir, ignore_errors=True)
+            return False
         try:
             await asyncio.wait_for(self._rec.aclose(), timeout=30)
             path = self._rec.output_path
             if not path or not path.exists() or path.stat().st_size == 0:
                 log.warning("call_recording_empty", key=self.key)
                 return False
-            await asyncio.to_thread(_upload, path, self.key)
+            await asyncio.wait_for(asyncio.to_thread(_upload, path, self.key), timeout=30)
             log.info("call_recording_saved", key=self.key, bytes=path.stat().st_size)
             return True
         except Exception as exc:

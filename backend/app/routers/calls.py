@@ -120,6 +120,21 @@ _ORDER = {
 }
 
 
+def _range_bound(value: datetime, zone, *, end: bool = False) -> datetime:
+    """Naive picker values use the organization's zone; offset values are exact instants.
+
+    At a repeated DST hour, include both occurrences: earlier start, later end.
+    Reject nonexistent wall times rather than silently moving the user's range.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc)
+    local = value.replace(tzinfo=zone, fold=1 if end else 0)
+    utc = local.astimezone(timezone.utc)
+    if utc.astimezone(zone).replace(tzinfo=None) != value:
+        raise HTTPException(status_code=400, detail="That time does not exist in your account time zone because of daylight saving. Choose another time.")
+    return utc
+
+
 @router.get("/")
 async def list_calls(
     ctx: CtxDep, db: DbDep,
@@ -129,10 +144,19 @@ async def list_calls(
     call_type: str | None = None,
     # A calendar day (YYYY-MM-DD) in the organization's reporting time zone.
     day: Date | None = Query(default=None, alias="date"),
+    started_from: datetime | None = None,
+    started_before: datetime | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     sort: str = Query(default="newest", pattern="^(newest|longest|shortest)$"),
 ):
+    if day and (started_from is not None or started_before is not None):
+        raise HTTPException(status_code=400, detail="Choose a calendar day or a date/time range, not both.")
+    zone = org_zone(ctx.org)
+    lower = _range_bound(started_from, zone) if started_from is not None else None
+    upper = _range_bound(started_before, zone, end=True) if started_before is not None else None
+    if lower is not None and upper is not None and lower >= upper:
+        raise HTTPException(status_code=400, detail="The end must be after the start.")
     stmt = _joined(ctx.org.id)
     count_stmt = select(func.count()).select_from(CallLog).where(CallLog.org_id == ctx.org.id)
     filters = []
@@ -147,6 +171,10 @@ async def list_calls(
     if day:
         start, end = local_day_bounds(day, org_zone(ctx.org))
         filters += [CallLog.started_at >= start, CallLog.started_at < end]
+    if lower is not None:
+        filters.append(CallLog.started_at >= lower)
+    if upper is not None:
+        filters.append(CallLog.started_at < upper)
     for f in filters:
         stmt = stmt.where(f)
         count_stmt = count_stmt.where(f)
