@@ -32,7 +32,8 @@ interface Owned {
   org_name: string | null;
 }
 
-type Mode = "buy" | "import" | "plivo";
+type Mode = "buy" | "import";
+const CARRIER_NAMES: Record<string, string> = { signalwire: "SignalWire", plivo: "Plivo", twilio: "Twilio" };
 
 /** Admin: one account's numbers — buy from Twilio, assign one already owned, or release. */
 export function PhoneNumbersCard({ orgId }: { orgId: string }) {
@@ -47,7 +48,6 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   const [results, setResults] = useState<Available[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [plivoNumber, setPlivoNumber] = useState("");
   const { data: telephony } = useSWR<{ owned: Owned[]; owned_error: string; owned_warnings?: string[] }>(mode === "import" ? "/api/admin/telephony" : null, fetcher);
 
   const openRequest = data?.requests[0];
@@ -65,13 +65,12 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
     }
   }
 
-  async function assign(number: string, how: "purchase" | "import" | "plivo") {
-    if (how === "purchase" && !window.confirm(`Buy ${number} from ${carrier === "signalwire" ? "SignalWire" : "Twilio"} for this account? The provider bills the platform account monthly.`)) return;
+  async function assign(number: string, how: "purchase" | "import") {
+    if (how === "purchase" && !window.confirm(`Buy ${number} from ${CARRIER_NAMES[carrier] ?? "Twilio"} for this account? The provider bills the platform account monthly.`)) return;
     setBusy(number);
     try {
       await post(url, { number, carrier, mode: how, request_id: openRequest?.id });
       setResults(null);
-      if (how === "plivo") setPlivoNumber("");
       await mutate();
       toast(`${number} assigned`);
     } catch (err) {
@@ -158,34 +157,15 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
                 tabs={[
                   { value: "buy", label: "Buy new" },
                   { value: "import", label: "Assign existing" },
-                  { value: "plivo", label: "Plivo number" },
                 ]}
               />
               {mode === "import" && telephony?.owned_warnings?.map((warning) => <Notice key={warning}>{warning}</Notice>)}
-              {mode === "import" && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-zinc-500">Assign numbers already owned in Twilio, Bandwidth or SignalWire. SignalWire currently supports outbound calls.</p><Button size="sm" onClick={() => void refreshSWR("/api/admin/telephony")}>Refresh numbers</Button></div>}
-              {mode === "plivo" ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (plivoNumber.trim()) void assign(plivoNumber.trim(), "plivo");
-                  }}
-                  className="space-y-2"
-                >
-                  <div className="flex items-end gap-2">
-                    <Field label="Number bought in Plivo" className="flex-1">
-                      <Input value={plivoNumber} onChange={(e) => setPlivoNumber(e.target.value)} placeholder="+14155550123" inputMode="tel" />
-                    </Field>
-                    <Button variant="primary" loading={busy === plivoNumber.trim()} disabled={!plivoNumber.trim() || !!busy}>
-                      Add
-                    </Button>
-                  </div>
-                  <p className="text-xs text-zinc-500">Outbound calls from this number go through Plivo. Buy the number in the Plivo console first.</p>
-                </form>
-              ) : mode === "buy" && !carriers.length ? <Notice>Number purchasing is not configured. Use Assign existing.</Notice> : mode === "buy" ? (
+              {mode === "import" && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-zinc-500">Assign numbers already owned in Twilio, Bandwidth, SignalWire or Plivo. SignalWire currently supports outbound calls.</p><Button size="sm" onClick={() => void refreshSWR("/api/admin/telephony")}>Refresh numbers</Button></div>}
+              {mode === "buy" && !carriers.length ? <Notice>Number purchasing is not configured. Use Assign existing.</Notice> : mode === "buy" ? (
                 <>
                   <label className="text-xs text-zinc-500">Number provider
                     <select aria-label="Number provider" className="ml-3 rounded-lg border border-zinc-200 px-3 py-2" value={carrier} disabled={!!busy || searching} onChange={(e) => { setChosenCarrier(e.target.value); setResults(null); }}>
-                      {carriers.map((c) => <option key={c} value={c}>{c === "signalwire" ? "SignalWire · Primary" : "Twilio · Backup"}</option>)}
+                      {carriers.map((c) => <option key={c} value={c}>{c === "signalwire" ? "SignalWire · Primary" : c === "plivo" ? "Plivo" : "Twilio · Backup"}</option>)}
                     </select>
                   </label>
                   {carrier === "signalwire" && <p className="text-xs text-zinc-500">Purchases support outbound calling. Inbound routing is not configured yet.</p>}

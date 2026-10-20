@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     livekit_sip_outbound_trunk_id: str = ""
     # LiveKit outbound trunk for numbers that live with Plivo (Zentrunk); empty = no Plivo calling.
     livekit_sip_plivo_trunk_id: str = ""
+    plivo_auth_id: str = ""
+    plivo_auth_token: str = ""
     livekit_sip_inbound_trunk_id: str = ""
     signalwire_sip_outbound_trunk_id: str = ""
     signalwire_outbound_script_id: str = ""

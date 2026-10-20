@@ -40,7 +40,7 @@ class NumberRequestIn(BaseModel):
 
 
 class PurchaseIn(BaseModel):
-    carrier: Literal["signalwire", "twilio"] | None = None
+    carrier: Literal["signalwire", "twilio", "plivo"] | None = None
     number: str
     label: str = Field(default="", max_length=100)
     # The customer saw and accepted the $3.50/mo charge for a number beyond the plan's included ones.
@@ -48,7 +48,7 @@ class PurchaseIn(BaseModel):
 
 
 class AdminAssign(BaseModel):
-    carrier: Literal["signalwire", "twilio"] | None = None
+    carrier: Literal["signalwire", "twilio", "plivo"] | None = None
     number: str
     mode: str = Field(pattern="^(purchase|import|plivo)$")
     label: str = Field(default="", max_length=100)
@@ -157,7 +157,7 @@ async def _require_self_serve(db) -> None:
 
 
 @router.get("/available")
-async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = "", carrier: Literal["signalwire", "twilio"] | None = None):
+async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = "", carrier: Literal["signalwire", "twilio", "plivo"] | None = None):
     await _require_self_serve(db)
     try:
         return {"numbers": await telephony.search_available(area_code.strip(), carrier=carrier)}
@@ -257,7 +257,7 @@ async def update_telephony_settings(body: TelephonySettings, admin: AdminDep, db
 
 
 @admin_router.get("/phone-numbers/available")
-async def admin_available(_: AdminDep, area_code: str = "", contains: str = "", carrier: Literal["signalwire", "twilio"] | None = None):
+async def admin_available(_: AdminDep, area_code: str = "", contains: str = "", carrier: Literal["signalwire", "twilio", "plivo"] | None = None):
     try:
         return {"numbers": await telephony.search_available(area_code.strip(), contains.strip(), carrier=carrier)}
     except (telephony.TelephonyError, ValueError) as exc:

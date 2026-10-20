@@ -106,8 +106,9 @@ async def trunk_sid() -> str:
 
 
 def purchase_carriers() -> list[str]:
-    from app.services import signalwire
-    return (["signalwire"] if signalwire.ready() else []) + (["twilio"] if settings.twilio_ready else [])
+    from app.services import plivo, signalwire
+    return ((["signalwire"] if signalwire.ready() else []) + (["twilio"] if settings.twilio_ready else [])
+            + (["plivo"] if plivo.ready() else []))
 
 
 def purchase_carrier(carrier: str | None = None) -> str:
@@ -120,6 +121,14 @@ def purchase_carrier(carrier: str | None = None) -> str:
 
 async def search_available(area_code: str = "", contains: str = "", country: str = "US", limit: int = 20, carrier: str | None = None) -> list[dict]:
     selected = purchase_carrier(carrier)
+    if selected == "plivo":
+        from app.services import plivo
+        if country.upper() != "US":
+            raise TelephonyError("Only US local numbers are supported here.")
+        try:
+            return await plivo.search_available(area_code, contains, limit)
+        except plivo.PlivoError as exc:
+            raise TelephonyError(str(exc)) from exc
     if selected == "signalwire":
         from app.services import signalwire
         if country.upper() != "US":
@@ -179,6 +188,13 @@ async def list_owned(warnings: list[str] | None = None) -> list[dict]:
                 warnings.append(warning)
             elif not out:
                 raise TelephonyError(warning) from exc
+    from app.services import plivo
+    if plivo.ready():
+        try:
+            out += await plivo.list_numbers()
+        except plivo.PlivoError as exc:
+            if warnings is not None:
+                warnings.append(str(exc))
     return out
 
 
@@ -279,17 +295,20 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
     if existing:
         raise TelephonyError("That number is already assigned to an account.")
     selected = purchase_carrier(carrier)
-    from app.services import signalwire
+    from app.services import plivo, signalwire
     try:
-        bought = await signalwire.buy(number) if selected == "signalwire" else await _buy(number)
-    except signalwire.SignalWireError as exc:
+        if selected == "plivo":
+            bought = await plivo.buy(number)
+        else:
+            bought = await signalwire.buy(number) if selected == "signalwire" else await _buy(number)
+    except (signalwire.SignalWireError, plivo.PlivoError) as exc:
         raise TelephonyError(str(exc)) from exc
     try:
         if selected == "signalwire":
             await signalwire.allow_number(number)
         row = await _claim_row(db, org_id, number)
         row.provider_sid, row.source, row.label = bought["sid"], "purchased", label.strip()[:100]
-        row.carrier = "signalwire" if selected == "signalwire" else None
+        row.carrier = selected if selected in ("signalwire", "plivo") else None
         await db.flush()
         await _make_default_if_first(db, row)
         from app.services.number_registration import enqueue_number
@@ -299,13 +318,18 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
         log.error("phone_number_save_failed_releasing", number=number)
         await db.rollback()
         try:
-            await signalwire.release(bought["sid"]) if selected == "signalwire" else await _release_twilio(bought["sid"])
+            if selected == "plivo":
+                await plivo.release(bought["sid"])
+            else:
+                await signalwire.release(bought["sid"]) if selected == "signalwire" else await _release_twilio(bought["sid"])
         except Exception:
             log.error("phone_number_release_after_failure_failed", number=number, sid=bought.get("sid"))
         if isinstance(exc, signalwire.SignalWireError):
             raise TelephonyError(str(exc)) from exc
         raise
-    if selected != "signalwire":
+    if selected == "plivo":
+        await _livekit_numbers(add=[number], trunk_id=settings.livekit_sip_plivo_trunk_id)
+    elif selected != "signalwire":
         await _livekit_numbers(add=[number])
         await _inbound_ready(number)
     log.info("phone_number_purchased", org_id=str(org_id), number=number)
@@ -327,7 +351,7 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
             raise TelephonyError(str(exc)) from exc
     row = await _claim_row(db, org_id, number)
     row.provider_sid, row.source, row.label = owned[number]["sid"], "imported", label.strip()[:100]
-    row.carrier = carrier if carrier in ("bandwidth", "signalwire") else None
+    row.carrier = carrier if carrier in ("bandwidth", "signalwire", "plivo") else None
     await db.flush()
     await _make_default_if_first(db, row)
     from app.services.number_registration import enqueue_number
@@ -337,6 +361,8 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
         from app.services import bandwidth
 
         await bandwidth.ensure_bridge_trunk([number])
+    elif row.carrier == "plivo":
+        await _livekit_numbers(add=[number], trunk_id=settings.livekit_sip_plivo_trunk_id)
     elif row.carrier != "signalwire":
         await _livekit_numbers(add=[number])
         await _inbound_ready(number)
@@ -369,6 +395,12 @@ async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool)
             try:
                 await signalwire.release(row.provider_sid)
             except signalwire.SignalWireError as exc:
+                raise TelephonyError(str(exc)) from exc
+        elif row.carrier == "plivo":
+            from app.services import plivo
+            try:
+                await plivo.release(row.provider_sid)
+            except plivo.PlivoError as exc:
                 raise TelephonyError(str(exc)) from exc
         else:
             await _release_twilio(row.provider_sid)
