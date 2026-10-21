@@ -8,7 +8,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import {
-  Briefcase, CalendarCheck, ChevronRight, Copy, Headset, Home, MoreHorizontal, Plus, Search, Sparkles, Trash2, Users, X,
+  Briefcase, CalendarCheck, ChevronRight, Copy, Headset, Home, MoreHorizontal, Pin, PinOff, Plus, Search, Sparkles, Trash2, Users, X,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -103,7 +103,10 @@ function AgentRow({ agent, onChanged }: { agent: Agent; onChanged: () => void })
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-[15px] font-semibold leading-tight tracking-tight text-white group-hover:text-brand-200">{agent.name}</h3>
+        <h3 className="flex items-center gap-1.5 text-[15px] font-semibold leading-tight tracking-tight text-white group-hover:text-brand-200">
+          {agent.pinned && <Pin className="h-3.5 w-3.5 shrink-0 text-brand-300" aria-label="Pinned" />}
+          <span className="truncate">{agent.name}</span>
+        </h3>
         <div className="mt-1 flex items-center gap-1.5 text-[13px]">
           {live && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
           <span className={live ? "text-emerald-400" : "text-zinc-500"}>{live ? "Live" : "Paused"}</span>
@@ -129,6 +132,16 @@ function AgentRow({ agent, onChanged }: { agent: Agent; onChanged: () => void })
             className="absolute right-0 top-9 z-20 w-40 rounded-xl border border-white/10 bg-zinc-900 py-1 shadow-2xl"
             onMouseLeave={() => setMenu(false)}
           >
+            <button
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-200 hover:bg-white/5"
+              onClick={async () => {
+                setMenu(false);
+                await post(`/api/agents/${agent.id}/pin`, { pinned: !agent.pinned }).catch((e) => toast(e.message, "error"));
+                onChanged();
+              }}
+            >
+              {agent.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />} {agent.pinned ? "Unpin" : "Pin to top"}
+            </button>
             <button
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-200 hover:bg-white/5"
               onClick={async () => {

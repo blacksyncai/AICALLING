@@ -9,7 +9,7 @@ import uuid
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.agent.models import RUNTIME_DEFAULT_MODEL
 from app.agent.runtime import agent_to_runtime
@@ -139,6 +139,7 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         "voicemail_action": a.voicemail_action or "hang_up",
         "voicemail_message": a.voicemail_message or "",
         "screener_action": a.screener_action or "answer",
+        "pinned": bool(a.pinned),
         "calcom_key_set": bool(a.calcom_api_key_enc),
         "ai_disclosure": a.ai_disclosure is not False,
         "caller_number": a.caller_number or "",
@@ -190,7 +191,8 @@ async def list_templates(_: CtxDep):
 @router.get("/")
 async def list_agents(ctx: CtxDep, db: DbDep):
     agents = (await db.execute(
-        select(Agent).where(Agent.org_id == ctx.org.id).order_by(Agent.created_at.desc())
+        select(Agent).where(Agent.org_id == ctx.org.id)
+        .order_by(func.coalesce(Agent.pinned, False).desc(), Agent.created_at.desc())
     )).scalars().all()
     rows = await db.execute(
         select(CallLog.agent_id, func.count(), func.coalesce(func.sum(CallLog.duration_seconds), 0))
@@ -345,6 +347,21 @@ async def restore_version(agent_id: uuid.UUID, version_id: uuid.UUID, ctx: CtxDe
     await db.commit()
     await db.refresh(agent)
     return agent_to_dict(agent)
+
+
+class PinRequest(BaseModel):
+    pinned: bool
+
+
+@router.post("/{agent_id}/pin")
+async def pin_agent(agent_id: uuid.UUID, body: PinRequest, ctx: CtxDep, db: DbDep):
+    agent = await _get_agent(db, ctx, agent_id)
+    # Pinning isn't an edit: keep "edited …" as it was.
+    await db.execute(update(Agent).where(Agent.id == agent.id)
+                     .values(pinned=body.pinned or None, updated_at=agent.updated_at))
+    await db.commit()
+    await db.refresh(agent)
+    return {"pinned": bool(agent.pinned)}
 
 
 @router.post("/{agent_id}/duplicate", status_code=201)

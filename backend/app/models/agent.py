@@ -65,6 +65,8 @@ class Agent(Base):
     # When a call screener answers ("say your name and why you're calling"): "answer" (default: say who's
     # calling, wait on the line, then talk to the person) | "hang_up" (treat it like voicemail).
     screener_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Pinned agents list first on the Agents page.
+    pinned: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
     # What the agent does, as a short badge ("Expired Listings"). Set by the builder; when a person
     # edits it, specialty_custom is set and regeneration never overwrites it.

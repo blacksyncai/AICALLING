@@ -403,3 +403,14 @@ def test_admin_adds_a_plivo_number_and_calls_route_through_plivo(client, monkeyp
     n = next(x for x in client.get(f"/api/admin/orgs/{org_id}/phone-numbers").json()["numbers"] if x["number"] == number)
     assert client.delete(f"/api/admin/phone-numbers/{n['id']}").status_code in (200, 204)
     assert added[-1] == ((), (number,), "ST_plivo")
+
+
+def test_pinned_agents_list_first(client):
+    a = client.post("/api/agents/", json={"name": "Older"}).json()
+    b = client.post("/api/agents/", json={"name": "Newer"}).json()
+    assert [x["name"] for x in client.get("/api/agents/").json()][:2] == ["Newer", "Older"]
+    assert client.post(f"/api/agents/{a['id']}/pin", json={"pinned": True}).json() == {"pinned": True}
+    rows = client.get("/api/agents/").json()
+    assert rows[0]["name"] == "Older" and rows[0]["pinned"] is True
+    client.post(f"/api/agents/{a['id']}/pin", json={"pinned": False})
+    assert client.get("/api/agents/").json()[0]["name"] == "Newer"
