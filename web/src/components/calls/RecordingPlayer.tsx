@@ -27,8 +27,8 @@ data.url ? <DownloadRecording callId={callId} /> : undefined
         }
       />
       <div className="p-5">
+        {/* preload "auto": until Safari has the whole OGG file it guesses the length from the first chunk (0:04 for a 7 s call). */}
         {data.url ? (
-          {/* "auto": Safari guesses an OGG file's length from its first chunk (0:04 for a 7 s call) until it has the whole file. */}
           <audio controls preload="auto" src={data.url} className="w-full">
             Your browser can&apos;t play this recording.
           </audio>
