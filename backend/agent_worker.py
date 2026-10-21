@@ -1325,7 +1325,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 log.warning("llm_repeat_cut", room=ctx.room.name, model=model, dropped=dropped[:80])
 
             first_text = True
-            async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat), _cut):
+            heard = getattr(user, "text_content", "") or "" if user else ""
+            async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat, heard), _cut):
                 text = chunk if isinstance(chunk, str) else getattr(getattr(chunk, "delta", None), "content", None)
                 if text and first_text:
                     trace.mark("usable_text_first", speech=speech, turn_key=turn_key)

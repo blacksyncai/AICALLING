@@ -13,7 +13,7 @@ async def _gen(text: str):
         yield text[i:i + 7]
 
 
-def _run(attempts: dict, said: list[str]) -> tuple[str, list]:
+def _run(attempts: dict, said: list[str], heard: str = "") -> tuple[str, list]:
     calls, cut = [], []
 
     def make(nudged: bool):
@@ -21,7 +21,7 @@ def _run(attempts: dict, said: list[str]) -> tuple[str, list]:
         return _gen(attempts[nudged])
 
     async def go():
-        return "".join([c async for c in no_repeats(make, said, cut.append)])
+        return "".join([c async for c in no_repeats(make, said, cut.append, heard)])
 
     return asyncio.run(go()), calls, cut
 
@@ -81,3 +81,12 @@ def test_nudge_goes_into_instructions_and_contact_keeps_last_turn():
     assert NUDGE in n.items[0].text_content and NUDGE not in (c.items[0].text_content or "")
     assert n.items[-1].role == "user"
     assert said_lines(c) == [INTRO]
+
+
+TIMES = "I have Wednesday, October 21 at 10:00 AM or at 2:15 PM. Which works better for you?"
+
+
+def test_asked_to_repeat_the_times_says_them_again():
+    for ask in ("Say the times again.", "What times again?", "Sorry, I didn't catch that", "What times do you have?"):
+        out, calls, cut = _run({False: TIMES, True: "x"}, [TIMES], ask)
+        assert out == TIMES and calls == [False] and not cut, ask

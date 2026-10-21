@@ -26,6 +26,17 @@ NUDGE = (
 _END = re.compile(r"[.?!]+[\"')]*\s+")
 
 
+# The contact asking to hear something again: then repeating it is the right answer.
+_ASKS_AGAIN = re.compile(
+    r"\b(again|repeat|one more time|come again|say that|said that|what was that|what did you say|didn'?t (catch|hear|get)"
+    r"|couldn'?t (hear|catch)|can'?t hear|missed (that|it)|sorry\?|pardon|what times?\b|which times?|what days?\b)",
+    re.I)
+
+
+def asks_again(text: str) -> bool:
+    return bool(_ASKS_AGAIN.search((text or "").replace("’", "'")))
+
+
 def words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", (text or "").lower())
 
@@ -112,10 +123,11 @@ async def _filtered(stream, guard: RepeatGuard, dropped: list[str]):
         yield held
 
 
-async def no_repeats(make_stream, said: list[str], on_repeat=None):
+async def no_repeats(make_stream, said: list[str], on_repeat=None, heard: str = ""):
     """make_stream(nudged: bool) → an LLM node stream. Sentences that repeat earlier lines are dropped unspoken;
-    if that leaves nothing to say, a nudged second attempt is passed through."""
-    if not said:
+    if that leaves nothing to say, a nudged second attempt is passed through. `heard` is the contact's last
+    words: when they asked to hear something again, nothing is held back."""
+    if not said or asks_again(heard):
         async for chunk in make_stream(False):
             yield chunk
         return
