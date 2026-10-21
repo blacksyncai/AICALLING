@@ -106,9 +106,10 @@ async def trunk_sid() -> str:
 
 
 def purchase_carriers() -> list[str]:
+    """Number providers in order: 1 Plivo (default), 2 SignalWire, 3 Twilio (backup)."""
     from app.services import plivo, signalwire
-    return ((["signalwire"] if signalwire.ready() else []) + (["twilio"] if settings.twilio_ready else [])
-            + (["plivo"] if plivo.ready() else []))
+    return ((["plivo"] if plivo.ready() else []) + (["signalwire"] if signalwire.ready() else [])
+            + (["twilio"] if settings.twilio_ready else []))
 
 
 def purchase_carrier(carrier: str | None = None) -> str:
@@ -157,12 +158,19 @@ async def list_owned(warnings: list[str] | None = None) -> list[dict]:
     """Every number in the Twilio account (first 1000), plus the Bandwidth account's numbers."""
     out = []
     if settings.twilio_ready:
-        data = await _request("GET", _account_url("IncomingPhoneNumbers.json"), params={"PageSize": 1000})
-        out = [
-            {"sid": n["sid"], "number": n["phone_number"], "friendly": n.get("friendly_name") or "",
-             "trunk_sid": n.get("trunk_sid") or "", "carrier": "twilio"}
-            for n in data.get("incoming_phone_numbers") or []
-        ]
+        # One carrier failing must not hide the others' numbers.
+        try:
+            data = await _request("GET", _account_url("IncomingPhoneNumbers.json"), params={"PageSize": 1000})
+            out = [
+                {"sid": n["sid"], "number": n["phone_number"], "friendly": n.get("friendly_name") or "",
+                 "trunk_sid": n.get("trunk_sid") or "", "carrier": "twilio"}
+                for n in data.get("incoming_phone_numbers") or []
+            ]
+        except Exception as exc:
+            log.warning("twilio_numbers_failed", error=str(exc)[:200])
+            if warnings is None:
+                raise
+            warnings.append("Couldn't load Twilio numbers.")
     if settings.bandwidth_ready:
         from app.services import bandwidth
 

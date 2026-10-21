@@ -165,7 +165,7 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
                 <>
                   <label className="text-xs text-zinc-500">Number provider
                     <select aria-label="Number provider" className="ml-3 rounded-lg border border-zinc-200 px-3 py-2" value={carrier} disabled={!!busy || searching} onChange={(e) => { setChosenCarrier(e.target.value); setResults(null); }}>
-                      {carriers.map((c) => <option key={c} value={c}>{c === "signalwire" ? "SignalWire · Primary" : c === "plivo" ? "Plivo" : "Twilio · Backup"}</option>)}
+                      {carriers.map((c) => <option key={c} value={c}>{`${carriers.indexOf(c) + 1} · ${CARRIER_NAMES[c] ?? c}${c === "plivo" ? " (default)" : c === "twilio" ? " (backup)" : ""}`}</option>)}
                     </select>
                   </label>
                   {carrier === "signalwire" && <p className="text-xs text-zinc-500">Purchases support outbound calling. Inbound routing is not configured yet.</p>}

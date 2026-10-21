@@ -270,10 +270,10 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
   const [results, setResults] = useState<Available[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [buying, setBuying] = useState<string | null>(null);
-  // Option 2 searches the second carrier only; option 1 keeps the usual order without it.
-  const [line, setLine] = useState<1 | 2>(1);
-  const hasLine2 = carriers.includes("plivo");
-  const searchCarriers = line === 2 && hasLine2 ? ["plivo"] : carriers.filter((c) => c !== "plivo");
+  // Numbered options, never provider names: 1 is the default, the rest are alternatives.
+  const [line, setLine] = useState(0);
+  const pick = Math.min(line, Math.max(carriers.length - 1, 0));
+  const searchCarriers = carriers.length ? [carriers[pick]] : [];
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -321,18 +321,18 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
 
   return (
     <GetNumberCard title="Get a local number" description="Choose a local number for outbound calls.">
-      {hasLine2 && (
+      {carriers.length > 1 && (
         <div className="flex gap-2" role="radiogroup" aria-label="Number option">
-          {([1, 2] as const).map((o) => (
+          {carriers.map((c, i) => (
             <button
-              key={o}
+              key={c}
               type="button"
               role="radio"
-              aria-checked={line === o}
-              onClick={() => { setLine(o); setResults(null); }}
-              className={`h-9 rounded-lg px-4 text-sm font-medium ring-1 ${line === o ? "bg-white text-zinc-900 ring-white" : "bg-transparent text-zinc-300 ring-white/30 hover:ring-white/60"}`}
+              aria-checked={pick === i}
+              onClick={() => { setLine(i); setResults(null); }}
+              className={`h-9 rounded-lg px-4 text-sm font-medium ring-1 ${pick === i ? "bg-white text-zinc-900 ring-white" : "bg-transparent text-zinc-300 ring-white/30 hover:ring-white/60"}`}
             >
-              {o}
+              {i + 1}
             </button>
           ))}
         </div>
