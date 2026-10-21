@@ -37,3 +37,18 @@ def test_pick_slot_understands_tomorrow():
     later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).date().isoformat()
     slots = [{"start": f"{tomorrow}T10:00:00+00:00", "label": "a"}, {"start": f"{later}T10:00:00+00:00", "label": "b"}]
     assert pick_slot(slots, "tomorrow at 10", "UTC")["label"] == "a"
+
+
+def test_josh_rogers_greeting_is_voicemail():
+    from app.agent.runtime import personal_greeting_match, voicemail_greeting_match
+    heard = ("Feel free to leave a voice mail or send a text as I can read those faster. It's a great life. "
+             "Look forward to connecting.")
+    assert voicemail_greeting_match(heard)
+    assert personal_greeting_match("Hey it's Josh, I'll get back to you, send a text if it's quick.")
+
+
+def test_live_people_are_not_voicemail():
+    from app.agent.runtime import personal_greeting_match, voicemail_greeting_match
+    for said in ("Hello?", "Yeah this is Josh, who's calling?", "Can you just send me a text instead?",
+                 "I got your voicemail yesterday, what's this about?"):
+        assert not voicemail_greeting_match(said) and not personal_greeting_match(said), said

@@ -402,6 +402,8 @@ _PERSONAL_STRONG = (
 _PERSONAL_WEAK = (
     "can't answer", "can't talk right now", "can't talk at the moment", "unable to answer", "i'll call you back",
     "i will call you back", "text me", "send me a text", "shoot me a text", "not available right now",
+    "send a text", "read those faster", "respond to texts", "look forward to connecting", "get back to you",
+    "return your call",
 )
 _PERSONAL_GREETING = _PERSONAL_STRONG + _PERSONAL_WEAK
 
@@ -432,6 +434,8 @@ _VOICEMAIL_STRICT = (
     "can't come to the phone", "cannot come to the phone", "leave your name", "leave me your name",
     "leave a brief message", "leave me a brief message", "and a brief message", "leave me a message",
     "leave your number", "your name and number", "your name, number", "name, number and", "name and phone number",
+    "leave a voicemail", "leave a voice mail", "leave me a voicemail", "leave me a voice mail", "feel free to leave",
+    "leave a detailed message", "record a message", "at the beep", "after the tone",
 )
 
 
