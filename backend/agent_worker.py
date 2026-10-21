@@ -884,7 +884,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
                                            cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
                                            time_of_day=time_of_day, time=time,
-                                           exclude={s["start"] for s in run.slots}, count=2)
+                                           exclude={s["start"] for s in run.slots}, count=3)
             except _cal.CalendarUnavailable:
                 if run.trace:
                     run.trace.mark("tool_result", speech=context.speech_handle, tool="check_availability", status="unavailable")
@@ -902,9 +902,11 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             if not found:
                 return ("No new openings for that. Offer a different day or time of day"
                         + (", or one of the times already offered." if run.slots else "."))
-            return ("Open: " + "; ".join(s["label"] for s in found)
-                    + (". Offer both together naturally." if len(found) == 2 else ". Offer this verified time.")
-                    + " Availability will be rechecked before booking.")
+            return ("Open: " + _cal.spoken_offer(found, cfg.get("calendar_timezone"))
+                    + ". Offer them exactly like that, in one short sentence (\"I've got " + _cal.spoken_offer(
+                        found, cfg.get("calendar_timezone")) + ". What works best?\"). Say only the day and time: no "
+                    "month, no date number, no time zone unless they ask. If they ask for the times again, say them "
+                    "again. To book, pass one of these labels: " + "; ".join(s["label"] for s in found) + ".")
 
         async def book_appointment(slot: str, email: str, context: RunContext) -> str:
             """Book one of the slots from check_availability. Confirm the email spelling first.

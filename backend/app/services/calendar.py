@@ -55,6 +55,53 @@ def _label(start_iso: str, tz: str | None = None) -> str:
         return start_iso
 
 
+_NUM = ["twelve", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"]
+_MIN = {15: "fifteen", 30: "thirty", 45: "forty-five"}
+
+
+def _say_time(d: dt.datetime) -> str:
+    """10:00 → "10", 14:15 → "two fifteen", 19:00 → "7 in the evening": how a person says it on the phone."""
+    h12 = d.hour % 12
+    clock = str(h12 or 12) if not d.minute else f"{_NUM[h12]} {_MIN.get(d.minute) or f'{d.minute:02d}'}"
+    if d.hour < 8:
+        return clock + " in the morning"
+    if d.hour >= 18:
+        return clock + " in the evening"
+    return clock
+
+
+def say_day(d: dt.date, today: dt.date) -> str:
+    gap = (d - today).days
+    if gap == 0:
+        return "today"
+    if gap == 1:
+        return "tomorrow"
+    if 1 < gap < 7:
+        return d.strftime("%A")
+    n = d.day
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{d.strftime('%A')} the {n}{suffix}"
+
+
+def spoken_offer(slots: list[dict], tz: str | None = None, now: dt.datetime | None = None) -> str:
+    """The offered times the way a person says them: "tomorrow at 10, 11 or 1, or Thursday at two fifteen".
+    No month, no year, no time zone."""
+    zone = _zone(tz)
+    today = (now or dt.datetime.now(dt.timezone.utc)).astimezone(zone).date()
+    days: dict[str, list[str]] = {}
+    for s in slots:
+        try:
+            d = dt.datetime.fromisoformat(s["start"].replace("Z", "+00:00")).astimezone(zone)
+        except (ValueError, KeyError):
+            continue
+        days.setdefault(say_day(d.date(), today), []).append(_say_time(d))
+
+    def join(xs: list[str]) -> str:
+        return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " or " + xs[-1]
+
+    return ", or ".join(f"{day} at {join(times)}" for day, times in days.items())
+
+
 def mock_slots(preferred_date: str = "", tz: str | None = None) -> list[dict]:
     """Two stable slots (3 PM and 6 PM UTC) on the requested day, or the next weekday."""
     today = dt.datetime.now(dt.timezone.utc).date()
@@ -276,6 +323,9 @@ def pick_slot(slots: list[dict], choice: str, tz: str | None = None, recent: lis
 
     import re
     day = next((d for d in _WEEKDAYS if d in c), None)
+    if not day and ("today" in c or "tomorrow" in c):
+        base = dt.datetime.now(dt.timezone.utc).astimezone(_zone(tz)).date()
+        day = _WEEKDAYS[(base + dt.timedelta(days=1 if "tomorrow" in c else 0)).weekday()]
     iso = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", c)
     hour = _choice_hour(re.sub(r"\b\d{4}-\d{2}-\d{2}\b", " ", c))
     scored = []

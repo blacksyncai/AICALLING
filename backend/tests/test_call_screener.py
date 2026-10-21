@@ -19,3 +19,21 @@ def test_holding_lines_vs_a_person():
     assert not is_screener_hold("Hello?")
     assert not is_screener_hold("Yeah, this is Thai, who's this?")
     assert not is_screener_hold("Hi, sorry, one moment, who is this?")
+
+
+def test_times_are_offered_the_way_people_say_them():
+    import datetime as dt
+    from app.services.calendar import spoken_offer
+    now = dt.datetime(2026, 10, 21, 12, 0, tzinfo=dt.timezone.utc)
+    slots = [{"start": "2026-10-22T14:00:00Z"}, {"start": "2026-10-22T15:00:00Z"}, {"start": "2026-10-22T17:00:00Z"},
+             {"start": "2026-10-23T18:15:00Z"}]
+    assert spoken_offer(slots, "America/New_York", now) == "tomorrow at 10, 11 or 1, or Friday at two fifteen"
+
+
+def test_pick_slot_understands_tomorrow():
+    import datetime as dt
+    from app.services.calendar import pick_slot
+    tomorrow = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).date().isoformat()
+    later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).date().isoformat()
+    slots = [{"start": f"{tomorrow}T10:00:00+00:00", "label": "a"}, {"start": f"{later}T10:00:00+00:00", "label": "b"}]
+    assert pick_slot(slots, "tomorrow at 10", "UTC")["label"] == "a"

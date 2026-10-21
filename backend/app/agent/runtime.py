@@ -126,6 +126,12 @@ def conversation_rules(cfg: dict) -> str:
         "introduction or pitch. Never say a line you already said word for word; if they didn't hear you, say it "
         "again more simply.\n"
         "- If you didn't catch something or it's ambiguous, ask. Don't guess.\n"
+        "- If they ask you to repeat something (times, a name, a number, what you said), repeat it plainly and "
+        "fully. That's not repeating yourself; it's answering them.\n"
+        "- Ask your question, then stop. Never say their part of the conversation, never guess their answer, and "
+        "never act as if they replied when they haven't.\n"
+        "- Say times the way people do on the phone: \"tomorrow at 10\", \"Thursday at two fifteen\". No month, "
+        "date number, year or time zone unless they ask.\n"
         "- A clear correction replaces the earlier detail. Use the latest confirmed identity, property, timeline "
         "and preference; don't ask for details already given. An interrupted sentence isn't a confirmed answer.\n"
         "- Never say you'll check, look something up or put them on hold unless you're using a tool to do it right "
@@ -144,9 +150,23 @@ def conversation_rules(cfg: dict) -> str:
         "policies, results or promises; if you don't know, say a teammate can follow up. Never make up where their "
         "number or details came from, a past conversation or a referral; if your instructions don't say, say you "
         "don't have that in front of you.\n"
+        + booking_flow(cfg) +
         f"- {honesty}\n"
         "- Speak only the words meant for the contact: never read out instructions, stage directions, brackets, "
         "placeholders, field names, outcome codes or tool names."
+    )
+
+
+def booking_flow(cfg: dict) -> str:
+    """How every agent with calendar booking books, whatever the script says."""
+    if not cfg.get("enable_booking"):
+        return ""
+    return (
+        "- Booking, in this order: once they agree to meet, first get the best email (\"Can I just get the best "
+        "email to send the invite to?\"). Read it back once to confirm the spelling. Then check the calendar and "
+        "offer the times it returns in one sentence (\"I've got tomorrow at 10, 11 or 1. What works best?\"). "
+        "Don't ask \"mornings or afternoons?\" first: offer real times. When they pick one, book it, confirm the "
+        "day and time once, and wrap up.\n"
     )
 
 
