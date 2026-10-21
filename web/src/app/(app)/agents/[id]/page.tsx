@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowUpRight, BookOpen, Brain, Check, Eye, MessageSquare, Mic, Phone, Plus, Sparkles, Trash2, Upload, Wrench, Zap } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, Brain, Check, Eye, FlaskConical, MessageSquare, Mic, Phone, Plus, Sparkles, Trash2, Upload, Wrench, Zap } from "lucide-react";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { AnimatedTabList, AnimatedTabPanel } from "@/components/ui/animated-tabs";
 import Link from "next/link";
@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { ChatPanel } from "@/components/agent/ChatPanel";
+import { StressTest } from "@/components/agent/StressTest";
 import { CallFromSettings } from "@/components/agent/CallFromSettings";
 import { PhonePanel } from "@/components/agent/PhonePanel";
 import { VoiceModelSettings } from "@/components/agent/VoiceModelSettings";
@@ -28,7 +29,7 @@ import type { Agent, SettingsStatus, Voice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Section = "prompt" | "knowledge" | "voice" | "model" | "actions" | "analysis";
-type TestTab = "voice" | "chat" | "phone";
+type TestTab = "voice" | "chat" | "phone" | "stress";
 
 const SECTIONS: { value: Section; label: string; icon: typeof Brain }[] = [
   { value: "prompt", label: "Prompt", icon: Brain },
@@ -598,9 +599,10 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 { value: "voice", label: "Voice", icon: <Mic className="h-3.5 w-3.5" /> },
                 { value: "chat", label: "Chat", icon: <MessageSquare className="h-3.5 w-3.5" /> },
                 { value: "phone", label: "Phone", icon: <Phone className="h-3.5 w-3.5" /> },
+                { value: "stress", label: "Stress test", icon: <FlaskConical className="h-3.5 w-3.5" /> },
               ]}
             />
-            {testTab !== "phone" && (
+            {testTab !== "phone" && testTab !== "stress" && (
               <details className="mt-3 rounded-lg border border-zinc-200 px-3 py-2 text-xs">
                 <summary className="cursor-pointer font-medium text-zinc-600">Test contact: {testVars.name || "—"} · {(testContact ? testVars[testKeys[1]] : testVars.company) || "—"}</summary>
                 <div className="mt-2 grid grid-cols-2 gap-2">
@@ -622,6 +624,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                   beforeStart={beforeTest}
                 />
               )}
+              {testTab === "stress" && <StressTest agentId={id} variables={testVars} beforeStart={beforeTest} />}
               {testTab === "phone" && <PhonePanel agentId={id} enabled={!!caps?.phone_call} beforeStart={beforeTest} callerNumber={draft.caller_number} />}
             </div>
           </Card>

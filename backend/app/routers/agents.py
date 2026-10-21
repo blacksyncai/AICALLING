@@ -369,6 +369,36 @@ async def delete_agent(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
     await db.commit()
 
 
+class StressTestRequest(BaseModel):
+    variables: dict = {}
+    scenarios: list[str] = []
+
+
+_stress_runs: dict[str, list[float]] = {}
+STRESS_RUNS_PER_DAY = 20  # each run is ~8 simulated calls on the platform's model credits
+
+
+@router.post("/{agent_id}/stress-test")
+async def stress_test_agent(agent_id: uuid.UUID, body: StressTestRequest, ctx: CtxDep, db: DbDep):
+    """Simulated callers put the agent through tricky situations in text; each call is graded."""
+    import time
+
+    from app.services import stress_test
+    from app.services.llm import LLMNotConfigured
+
+    agent = await _get_agent(db, ctx, agent_id)
+    now = time.time()
+    recent = [t for t in _stress_runs.get(str(ctx.org.id), []) if now - t < 86400]
+    if len(recent) >= STRESS_RUNS_PER_DAY:
+        raise HTTPException(status_code=429, detail="Daily stress-test limit reached. Try again tomorrow.")
+    _stress_runs[str(ctx.org.id)] = [*recent, now]
+    variables = {"name": "Jordan", "first_name": "Jordan", "full_name": "Jordan Lee", **body.variables}
+    try:
+        return await stress_test.run(agent_to_runtime(agent, secrets=True), variables, body.scenarios or None)
+    except LLMNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/{agent_id}/chat")
 async def chat_with_agent(agent_id: uuid.UUID, body: ChatRequest, ctx: CtxDep, db: DbDep):
     """Text playground — same prompt, knowledge and tools as the voice agent."""

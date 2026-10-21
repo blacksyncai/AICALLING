@@ -105,17 +105,23 @@ def _tool_specs(cfg: dict) -> list[dict]:
     return tools
 
 
-async def playground_reply(cfg: dict, variables: dict, history: list[dict], state: dict) -> dict:
+async def playground_reply(cfg: dict, variables: dict, history: list[dict], state: dict,
+                           channel: str = "chat") -> dict:
     """
     One assistant turn for the text playground.
     history: [{"role": "user"|"assistant", "content": str}]
     state:   opaque dict round-tripped by the client (offered slots etc.)
     Returns {"reply", "tool_events", "ended", "outcome", "state"}.
     """
-    messages: list[dict] = [{"role": "system", "content": build_instructions(cfg, variables, channel="chat")}]
+    messages: list[dict] = [{"role": "system", "content": build_instructions(cfg, variables, channel=channel)}]
     first = render_vars(cfg.get("first_message", ""), variables).strip()
+    opening = ""
     if first and (not history or history[0].get("role") != "assistant"):
         messages.append({"role": "assistant", "content": first})
+        opening = first
+    if not history and opening:
+        # Nothing said yet: the saved opening is the agent's first turn.
+        return {"reply": "", "opening": opening, "tool_events": [], "ended": False, "outcome": None, "state": state}
     messages += [{"role": m["role"], "content": m["content"]} for m in history if m.get("content")]
 
     tool_events: list[dict] = []
@@ -159,7 +165,9 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                 state["slots"] = calendar.remember_slots(state.get("slots") or [], slots)
                 if slots:
                     state["last_found"] = slots
-                result = ("Open: " + "; ".join(s["label"] for s in slots)) if slots else \
+                result = ("Open: " + calendar.spoken_offer(slots, cfg.get("calendar_timezone"))
+                          + ". Offer them like that: day and time only. To book, pass one of these labels: "
+                          + "; ".join(s["label"] for s in slots)) if slots else \
                     "No new openings for that. Offer a different day or time of day."
             elif name == "book_appointment":
                 slot = calendar.pick_slot(state.get("slots") or [], args.get("slot", ""), cfg.get("calendar_timezone"),
