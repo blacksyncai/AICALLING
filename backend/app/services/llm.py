@@ -250,7 +250,9 @@ async def analyze_call(transcript: list[dict], extraction_fields: list[dict] | N
 Outcome definitions (pick the single best one):
 - meeting_booked: a meeting/appointment time was confirmed.
 - qualified: the contact meets the agent's criteria but nothing was booked yet.
-- interested: positive interest, wants more info or a follow-up.
+- interested: the contact clearly said yes to what the agent offered or asked for more of it ("yeah, send me
+  that", "sure, I'd like a valuation", "call me next week about it"). NOT interested: confirming who they are,
+  asking who's calling or why, polite curiosity, or answering a question before the offer was even made.
 - callback: a live person, replying to the agent, asked to be called back later / said it's a bad time.
 - not_interested: declined or said no.
 - not_qualified: doesn't fit (wrong size, budget, area, etc.).
@@ -264,6 +266,10 @@ Outcome definitions (pick the single best one):
 - no_answer: ONLY when nobody answered at all; never when the contact said anything.
 - completed: a live conversation happened but none of the above fits (e.g. the contact hung up mid-call
   or the call ended before a clear result).
+
+Be conservative: these outcomes trigger alerts to the business. If the call ended before the contact responded
+to the offer, the outcome is completed. When unsure between a positive outcome (interested, qualified,
+callback) and completed, choose completed.
 
 Return JSON with keys:
 - "summary": 2-3 sentence summary of what happened.
