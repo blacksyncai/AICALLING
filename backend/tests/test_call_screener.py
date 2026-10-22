@@ -81,3 +81,12 @@ def test_language_barrier_and_hung_up_are_outcomes():
 
     assert {"language_barrier", "hung_up"} <= set(CALL_OUTCOMES)
     assert "language_barrier, not not_interested" in _tools_block({}, "phone")
+
+
+def test_screener_that_just_holds_is_recognised():
+    from app.agent.runtime import conversation_rules, is_screener_hold, screener_hold_start
+
+    assert screener_hold_start("Thanks, Kathleen. Please stay on the line.") == "please stay on the line"
+    assert is_screener_hold("Thanks, Kathleen. Please stay on the line.")
+    assert not screener_hold_start("This is Kathleen.") and not is_screener_hold("This is Kathleen.")
+    assert "Call screeners" in conversation_rules({})

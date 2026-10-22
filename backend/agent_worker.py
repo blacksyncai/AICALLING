@@ -1500,6 +1500,26 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 screen["holding"] = screen_action == "answer"  # before its turn completes, so we don't reply to it
                 asyncio.create_task(_answer_screener())
                 return
+            from app.agent.runtime import screener_hold_start
+
+            held = screener_hold_start(text)
+            if held and screen_action == "hang_up":
+                screen["seen"] = True
+                log.info("screener_hold_match", room=ctx.room.name, phrase=held, action=screen_action)
+                asyncio.create_task(_answer_screener())
+                return
+            if held:
+                # It heard the opening and is holding while the person decides: stop talking and wait.
+                screen.update(seen=True, holding=True, since=_time.monotonic())
+                vm["heard"] = ""
+                log.info("screener_hold_match", room=ctx.room.name, phrase=held)
+                run.transcript.append({"role": "tool", "tool": "call_screener", "args": {"action": "wait"},
+                                       "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
+                try:
+                    session.interrupt(force=True)
+                except Exception:
+                    pass
+                return
         first = not vm["heard"].strip()
         vm["heard"] += " " + text
         # A recorded greeting ("Hey, it's Sam, can't talk right now, I'll call you back") is the first

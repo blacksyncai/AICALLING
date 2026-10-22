@@ -117,6 +117,10 @@ def conversation_rules(cfg: dict) -> str:
         honesty = "Never claim to be human. If someone sincerely asks whether you're an AI, say yes."
     return (
         "# HOW TO TALK ON THIS CALL (built-in, always applies — your role and script follow)\n"
+        "- Call screeners: if an automated assistant answers (it asks your name and why you're calling, or says "
+        "\"please stay on the line\" / \"I'll see if they're available\"), it is not the person. Don't pitch to it. "
+        "Answer only what it asks in a few words, then say nothing until the actual person speaks; then start "
+        "your opening from the beginning.\n"
         "- Respond to what they just said before moving on. If they ask something, answer it first, then return to "
         "the goal.\n"
         "- Before every question, check what they've already said on this call, even in passing. If they already "
@@ -482,6 +486,19 @@ _SCREENER_HOLD = (
     "stay on the line", "please hold", "please wait", "one moment", "just a moment", "be with you",
     "connecting you", "see if", "screening", "checking", "trying to reach", "hang on",
 )
+
+
+# A screener that skips the "who's calling?" question and just holds after hearing the opening
+# ("Thanks, Kathleen. Please stay on the line."). Early in a call, a person doesn't say these.
+_SCREENER_HOLD_START = (
+    "please stay on the line", "stay on the line while", "please hold while", "hold while i", "while i see if",
+    "i'll see if", "i will see if", "let them know you're", "let them know you are", "trying to connect you",
+)
+
+
+def screener_hold_start(text: str) -> str | None:
+    t = (text or "").lower().replace("’", "'")
+    return next((h for h in _SCREENER_HOLD_START if h in t), None)
 
 
 def screener_match(text: str) -> str | None:
