@@ -161,6 +161,59 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth:
     return await _scan_view(db, ctx.org.id, row, key)
 
 
+@router.get("/{key}/segments")
+async def segments(key: str, ctx: ManagerDep, db: DbDep):
+    """The CRM's own lists Radar can open whole: ponds, lead sources, stages."""
+    await _require_radar(ctx, db)
+    conn = await _conn(db, ctx.org.id, key)
+    p = PROVIDERS[key]
+    if not getattr(p, "can_segment", False):
+        return {"pond": [], "source": [], "stage": []}
+    _, http = sync.http_for(conn)
+    try:
+        return await p.segment_options(http, conn.config or {})
+    except CrmError as exc:
+        raise HTTPException(status_code=400, detail=f"Couldn't read {p.name}: {exc}") from exc
+
+
+class SegmentIn(BaseModel):
+    kind: str = Field(pattern="^(pond|source|stage)$")
+    value: str = Field(min_length=1, max_length=200)
+    label: str = Field(default="", max_length=200)
+
+
+@router.post("/{key}/segment")
+async def open_segment(key: str, body: SegmentIn, ctx: ManagerDep, db: DbDep):
+    """Everyone in one pond / lead source / stage, as a list to pick from and launch like any Radar play."""
+    await _require_radar(ctx, db)
+    conn = await _conn(db, ctx.org.id, key)
+    p = PROVIDERS[key]
+    if not getattr(p, "can_segment", False):
+        raise HTTPException(status_code=400, detail=f"Opening lists isn't supported for {p.name} yet.")
+    try:
+        _, http = sync.http_for(conn)
+        signals = await p.segment_signals(http, conn.config or {}, body.kind, body.value)
+    except CrmError as exc:
+        raise HTTPException(status_code=400, detail=f"Couldn't read {p.name}: {exc}") from exc
+    dnc = {normalize_phone(x) for x in (await db.execute(select(Lead.phone).where(
+        Lead.org_id == ctx.org.id, Lead.do_not_call.is_(True)))).scalars()}
+    label = body.label or body.value
+    for s in signals:
+        if normalize_phone(s.phone) in dnc:
+            s.dnc = True
+        if body.kind == "pond":
+            s.pond = label
+    noun = {"pond": "pond", "source": "lead source", "stage": "stage"}[body.kind]
+    result = radar.build_segment(signals, f"{label} ({noun})", f"Everyone in the {noun} “{label}” in {p.name}.")
+    result.update(depth="segment", segment={"kind": body.kind, "value": body.value, "label": label}, next=None)
+    row = CrmScan(org_id=ctx.org.id, connection_id=conn.id, result=result)
+    db.add(row)
+    await sync.add_log(db, conn, "import", "ok", f"Radar opened the {noun} “{label}”: {result['plays'][0]['count']} contacts.")
+    await db.commit()
+    await db.refresh(row)
+    return await _scan_view(db, ctx.org.id, row, key)
+
+
 class LaunchIn(BaseModel):
     play: str
     agent_id: uuid.UUID

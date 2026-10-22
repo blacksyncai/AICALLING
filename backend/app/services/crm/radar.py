@@ -105,6 +105,24 @@ def classify(s: Signals, now: dt.datetime) -> tuple[str, str] | None:
     return None
 
 
+def build_segment(signals: list[Signals], title: str, why: str, now: dt.datetime | None = None) -> dict:
+    """Everyone in one CRM list (pond, lead source, stage) as a single play, minus do-not-call."""
+    now = now or dt.datetime.now(UTC)
+    items = []
+    for s in signals:
+        if s.dnc:
+            continue
+        last = s.last_activity_at or s.created_at
+        reason = (f"Last activity {_when(last)}" if last else "In this list") + (f" · {s.deal_stage}" if s.deal_stage else "")
+        items.append({"external_id": s.external_id, "name": s.name, "phone": s.phone, "company": s.company,
+                      "email": s.email, "reason": reason, "stage": s.deal_stage or s.status, "source": s.source,
+                      "pond": s.pond, "tags": s.tags[:20], "created": s.created_at.isoformat() if s.created_at else None,
+                      "calls": None, "contacted": s.contacted, "last_touch": (last or now).isoformat()})
+    return {"scanned": len(signals), "plays": [{"key": "segment", "title": title, "why": why,
+            "suggest": "Pick who to call, or the whole list, and hand them to an agent.", "count": len(items),
+            "items": items}]}
+
+
 def build_plays(signals: list[Signals], now: dt.datetime | None = None) -> dict:
     now = now or dt.datetime.now(UTC)
     groups: dict[str, list[dict]] = {k: [] for k in PLAY_KEYS}

@@ -867,6 +867,50 @@ class FollowUpBoss(Provider):
                 contacted=bool(p.get("contacted")) if p.get("contacted") is not None else None))
         return out
 
+    # ── Radar "open a list": everyone in one pond, lead source or stage ──
+    can_segment = True
+    _SEGMENT_PARAM = {"pond": "assignedPondId", "source": "source", "stage": "stage"}
+
+    async def segment_options(self, http, config) -> dict:
+        from app.services.crm.automation_resources import fub_collection
+
+        async def names(resource, key="name"):
+            try:
+                rows = await fub_collection(http, resource)
+            except Exception:
+                return []
+            return [{"value": str(r["id"]) if resource == "ponds" else str(r.get(key) or ""), "label": str(r.get(key) or "")}
+                    for r in rows if r.get(key)]
+        return {"pond": await names("ponds"), "source": await names("sources"), "stage": await names("stages")}
+
+    async def segment_signals(self, http, config, kind: str, value: str, cap: int = 5000):
+        """Everyone in the pond / lead source / stage (up to cap). The filter is sent to FUB and also checked
+        here, so the list is right even if FUB ignores it (just slower)."""
+        from app.services.crm.radar import Signals
+
+        field = {"pond": "assignedPondId", "source": "source", "stage": "stage"}[kind]
+        people = await self._pages(http, "/v1/people", "people", cap,
+                                   {"sort": "-created", "fields": self._FIELDS, self._SEGMENT_PARAM[kind]: value})
+        out = []
+        for p in people:
+            if str(p.get(field) or "") != str(value):
+                continue
+            phones = [x for x in p.get("phones") or [] if x.get("value")]
+            if not phones:
+                continue
+            tags = {t.lower() for t in p.get("tags") or [] if isinstance(t, str)}
+            stage = p.get("stage") or ""
+            name = p.get("name") or " ".join(x for x in (p.get("firstName"), p.get("lastName")) if x)
+            emails = [x.get("value") for x in p.get("emails") or [] if x.get("value")]
+            out.append(Signals(
+                external_id=str(p["id"]), name=name, phone=phones[0]["value"], email=(emails or [""])[0],
+                created_at=_parse_time(p.get("created")), last_activity_at=_parse_time(p.get("lastActivity") or p.get("updated")),
+                calls_known=False, deal_stage=stage, status=stage,
+                dnc=stage.lower() == "trash" or bool(_DNC_TAGS & tags), source=p.get("source") or "",
+                tags=[t for t in p.get("tags") or [] if isinstance(t, str)],
+                contacted=bool(p.get("contacted")) if p.get("contacted") is not None else None))
+        return out
+
     # ── BlackSync via tags: tag someone "AI Call - <agent>" and the agent calls them ──
     can_install = True
     install_style = "tags"

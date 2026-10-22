@@ -4,6 +4,7 @@ import {
   ArrowRight,
   ChevronsDown,
   Flame,
+  Layers,
   Ghost,
   Gift,
   History,
@@ -141,13 +142,14 @@ interface Play {
   count: number;
   items: Item[];
 }
-type Depth = "quick" | "recent" | "old";
+type Depth = "quick" | "recent" | "old" | "segment";
 interface Scan {
   id: string;
   quick?: boolean;
   depth?: Depth;
   next?: unknown;
   batches?: number;
+  segment?: { kind: string; value: string; label: string };
   provider: string;
   created_at: string;
   scanned: number;
@@ -165,7 +167,10 @@ const DEPTH_LABEL: Record<Depth, string> = {
   quick: "quick scan",
   recent: "full scan",
   old: "old-lead dig",
+  segment: "opened",
 };
+type SegKind = "pond" | "source" | "stage";
+const SEG_LABEL: Record<SegKind, string> = { pond: "Pond", source: "Lead source", stage: "Stage" };
 
 const ICON: Record<string, typeof Flame> = {
   hot: Flame,
@@ -175,6 +180,7 @@ const ICON: Record<string, typeof Flame> = {
   stuck: Hourglass,
   past_client: Gift,
   revive: Sparkles,
+  segment: Layers,
 };
 const TONE: Record<string, string> = {
   hot: "from-red-500/15 text-red-600",
@@ -184,6 +190,7 @@ const TONE: Record<string, string> = {
   stuck: "from-amber-500/15 text-amber-600",
   past_client: "from-emerald-500/15 text-emerald-600",
   revive: "from-zinc-500/15 text-zinc-600",
+  segment: "from-indigo-500/15 text-indigo-600",
 };
 
 export default function RadarPage() {
@@ -214,12 +221,36 @@ export default function RadarPage() {
   const [scanning, setScanning] = useState(false);
   const [scanErr, setScanErr] = useState("");
   const [fresh, setFresh] = useState<Scan | null>(null);
+  // "Open a list": everyone in one CRM pond / lead source / stage.
+  const [listOpen, setListOpen] = useState(false);
+  const [segKind, setSegKind] = useState<SegKind>("pond");
+  const [segValue, setSegValue] = useState("");
 
   const crm = data?.crms.find((c) => c.provider === crmKey) ?? data?.crms[0];
   const scan =
     fresh && crm && fresh.provider === crm.provider
       ? fresh
       : (crm?.last_scan ?? null);
+
+  const { data: segs, error: segErr } = useSWR<Record<SegKind, { value: string; label: string }[]>>(
+    listOpen && crm ? `/api/radar/${crm.provider}/segments` : null,
+    fetcher,
+  );
+  const openList = async () => {
+    if (!crm || !segValue) return;
+    const label = segs?.[segKind]?.find((o) => o.value === segValue)?.label ?? segValue;
+    setScanning(true);
+    setScanErr("");
+    try {
+      setFresh(await post<Scan>(`/api/radar/${crm.provider}/segment`, { kind: segKind, value: segValue, label }));
+      setListOpen(false);
+      void mutate();
+    } catch (e) {
+      setScanErr(e instanceof Error ? e.message : "Couldn't open that list");
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const runScan = async (depth: Depth, more = false) => {
     if (!crm) return;
@@ -243,6 +274,13 @@ export default function RadarPage() {
       action={
         crm && view === "discover" ? (
           <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={scanning}
+              onClick={() => setListOpen((v) => !v)}
+              title="Everyone in one pond, lead source or stage from your CRM"
+            >
+              <Layers className="h-4 w-4" /> Open a list
+            </Button>
             <Button
               disabled={scanning}
               onClick={() => void runScan("quick")}
@@ -375,7 +413,13 @@ export default function RadarPage() {
               ))}
             </Select>
           )}
-          {scan ? (
+          {scan?.segment ? (
+            <p className="text-sm text-zinc-600">
+              <span className="font-semibold text-zinc-900">{total.toLocaleString()}</span> contacts in the{" "}
+              {SEG_LABEL[scan.segment.kind as SegKind]?.toLowerCase() ?? "list"} “{scan.segment.label}” · opened{" "}
+              {timeAgo(scan.created_at)}
+            </p>
+          ) : scan ? (
             <p className="text-sm text-zinc-600">
               <span className="font-semibold text-zinc-900">
                 {total.toLocaleString()}
@@ -402,6 +446,31 @@ export default function RadarPage() {
             </Button>
           ) : null}
         </div>
+        {listOpen && (
+          <Card className="flex flex-wrap items-end gap-3 p-4">
+            <div className="min-w-[150px]">
+              <div className="mb-1 text-xs font-medium text-zinc-600">List type</div>
+              <Select value={segKind} onChange={(e) => { setSegKind(e.target.value as SegKind); setSegValue(""); }}>
+                {(Object.keys(SEG_LABEL) as SegKind[]).map((k) => (
+                  <option key={k} value={k}>{SEG_LABEL[k]}</option>
+                ))}
+              </Select>
+            </div>
+            <div className="min-w-[220px] flex-1">
+              <div className="mb-1 text-xs font-medium text-zinc-600">{SEG_LABEL[segKind]}</div>
+              <Select value={segValue} onChange={(e) => setSegValue(e.target.value)} disabled={!segs}>
+                <option value="">{segs ? (segs[segKind]?.length ? `Choose a ${SEG_LABEL[segKind].toLowerCase()}…` : "None found in your CRM") : "Loading…"}</option>
+                {(segs?.[segKind] ?? []).map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </Select>
+            </div>
+            <Button variant="primary" loading={scanning} disabled={!segValue} onClick={() => void openList()}>
+              Show everyone
+            </Button>
+            {segErr && <p className="w-full text-xs text-red-600">{(segErr as Error).message}</p>}
+          </Card>
+        )}
         {scanErr && <Notice tone="red">{scanErr}</Notice>}
         {scanning && !scan && (
           <Card className="flex items-center gap-3 p-6 text-sm text-zinc-600">
@@ -423,7 +492,7 @@ export default function RadarPage() {
               ))}
             {total === 0 && (
               <Notice tone="green">
-                Nothing urgent — everyone has been worked recently.
+                {scan.segment ? "Nobody in this list has a phone number to call." : "Nothing urgent — everyone has been worked recently."}
               </Notice>
             )}
           </div>
