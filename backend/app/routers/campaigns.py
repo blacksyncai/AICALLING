@@ -110,7 +110,7 @@ MAX_SCHEDULE_RETRIES = 10
 MAX_SCHEDULE_WAIT = 14 * 24 * 60
 
 # Lead outcomes that mean "nobody picked up" — worth another try.
-RETRY_STATUSES = ("no_answer", "voicemail", "failed")
+RETRY_STATUSES = ("no_answer", "voicemail", "screened", "failed")
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 

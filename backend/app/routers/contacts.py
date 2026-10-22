@@ -27,7 +27,7 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
 PIPELINE = ("new", "calling", "interested", "callback", "qualified", "meeting_booked",
-            "not_interested", "not_qualified", "no_answer", "voicemail", "completed", "failed")
+            "not_interested", "not_qualified", "no_answer", "voicemail", "screened", "completed", "failed")
 
 
 class ContactIn(BaseModel):

@@ -496,7 +496,7 @@ def is_screener_hold(text: str) -> bool:
     return "?" not in t and any(h in t for h in _SCREENER_HOLD)  # a person picking up asks ("Hello? Who's this?")
 
 
-NO_CONVERSATION_OUTCOMES = ("no_answer", "voicemail")
+NO_CONVERSATION_OUTCOMES = ("no_answer", "voicemail", "screened")
 
 
 def is_voicemail_text(text: str) -> bool:
@@ -513,7 +513,7 @@ def person_answered(transcript: list[dict] | None) -> bool:
     """True when a live person spoke on the call (not just a voicemail greeting or silence)."""
     if any(t.get("role") == "tool" and t.get("tool") == "voicemail" for t in transcript or []):
         return False  # the call worker detected an answering machine
-    turns = contact_turns(transcript)
+    turns = [t for t in contact_turns(transcript) if not is_screener_hold(t)]  # a screener isn't the person
     if not turns:
         return False
     if all(is_voicemail_text(t) for t in turns):
@@ -533,7 +533,7 @@ def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str
 # ── Hanging up ───────────────────────────────────────────────────────────────
 
 # Outcomes that end the call by nature: hang up whenever the agent decides to.
-_FINAL_OUTCOMES = ("meeting_booked", "not_qualified", "not_interested", "callback", "transferred", "voicemail",
+_FINAL_OUTCOMES = ("meeting_booked", "not_qualified", "not_interested", "callback", "transferred", "voicemail", "screened",
                    "no_answer", "failed", "wrong_number", "do_not_call")
 # Things a contact says when the conversation is wrapping up.
 _ENDING_CUES = (

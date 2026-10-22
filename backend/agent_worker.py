@@ -1355,7 +1355,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     vm = {"detected": False, "heard": "", "speaking": False, "changed": _time.monotonic()}
     vm_action = (cfg.get("voicemail_action") or "hang_up")
     # Call screener: "seen" once one answered; "holding" while we wait for the person to come on the line.
-    screen = {"seen": False, "holding": False}
+    screen = {"seen": False, "holding": False, "passed": False, "since": 0.0}
     screen_action = cfg.get("screener_action") or "answer"
     # Outbound: the opening line answers the contact's "Hello?". Until it's queued, a user turn must not
     # also get its own reply, or the agent says the opening twice back to back.
@@ -1376,7 +1376,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 text = (new_message.text_content or "").strip()
                 if not text or is_screener_hold(text):
                     raise StopResponse()  # the screener is still holding the line: stay quiet
-                screen["holding"] = False
+                screen["holding"], screen["passed"] = False, True
                 log.info("screener_passed", room=ctx.room.name)
                 turn_ctx.add_message(role="system", content=(
                     "The call screener has put the actual person on the line. Greet them naturally and carry on "
@@ -1446,18 +1446,20 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         run.transcript.append({"role": "tool", "tool": "voicemail",
                                "args": {"action": "left_message" if left else "hung_up"},
                                "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
-        if run.outcome_posted and run.outcome not in ("voicemail", "no_answer"):
+        # Screened and the person never came on: not a voicemail (the agent was on the line working).
+        vm_outcome = "screened" if screen["seen"] and not screen["passed"] else "voicemail"
+        if run.outcome_posted and run.outcome not in ("voicemail", "no_answer", "screened"):
             # The agent already ended it as a conversation, but it was a greeting (detection can land a few
             # seconds late). Report again so it's recorded as voicemail and the contact gets their retry.
             if len(contact_turns(run.transcript)) <= 2:
                 run.outcome_posted = False
                 log.info("outcome_corrected_to_voicemail", room=ctx.room.name, was=run.outcome)
-        run.outcome = "voicemail"
+        run.outcome = vm_outcome
         await asyncio.sleep(0.5)
         from app.agent.voicemail_timing import finish_voicemail
         await finish_voicemail(run.t0, cfg.get("voice_tuning"),
             hangup=lambda: _delete_room(ctx.room.name),
-            report=lambda: _post_run_outcome(run, "voicemail"))
+            report=lambda: _post_run_outcome(run, vm_outcome))
 
     async def _answer_screener() -> None:
         try:
@@ -1470,12 +1472,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             vm["detected"] = True
             await _handle_voicemail()
             return
+        screen["since"] = _time.monotonic()
+        # Sound like someone they know who trailed off ("Hey Mark, it's just…"): no name, company or pitch,
+        # so the person picks up to see who it is.
+        first = (variables.get("first_name") or "").strip() or \
+            (variables.get("name") or variables.get("full_name") or "").strip().split(" ")[0]
         try:
-            session.generate_reply(instructions=(
-                "A call-screening assistant answered and asked who is calling. Answer it in one short, casual "
-                "line with your first name and the company, like \"Hey, it's just Zane with Compass Multifamily.\" "
-                "Nothing else: no pitch, no question. Then stay quiet until the person comes on the line."),
-                allow_interruptions=False)
+            session.say(f"Hey {first}, it's just..." if first and first.lower() != "there" else "Hey, it's just...",
+                        allow_interruptions=False)
         except Exception as exc:
             log.warning("screener_reply_failed", error=str(exc)[:200])
 
@@ -1696,12 +1700,24 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         return _on
 
     CHECK_IN_AFTER, HANG_UP_AFTER = 7.0, 8.0  # quiet seconds: check in once, then hang up
+    SCREENER_WAIT = 75.0  # how long to hold for a screened person before giving up
 
     async def _hang_up_on_silence() -> None:
         while True:
             await asyncio.sleep(1)
             if vm["detected"] or session_ref.get("voicemail_detected"):
                 continue  # voicemail handler owns its silent wait and hangup
+            if screen["holding"]:
+                # A screener is holding the line while the person decides (often 30-50 s). Quiet is expected;
+                # don't check in or hang up, unless the person never comes on.
+                if _time.monotonic() - (screen["since"] or run.t0) > SCREENER_WAIT:
+                    log.info("screener_timeout", room=ctx.room.name)
+                    run.outcome = run.outcome or "screened"
+                    _mark_ended()
+                    await _delete_room(ctx.room.name)
+                    return
+                silence["since"] = _time.monotonic()
+                continue
             if run.transferring or run.handed_off:
                 silence["since"] = _time.monotonic()  # on hold for a warm transfer, or handed off
                 continue
@@ -1758,6 +1774,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             outcome = "voicemail"
         else:
             outcome = "no_answer"
+        if screen["seen"] and not screen["passed"] and outcome in ("no_answer", "voicemail"):
+            outcome = "screened"
         await _post_run_outcome(run, outcome)  # first: it's what matters if the job is cut short
         if recorder is not None:
             saved = await recorder.finish()

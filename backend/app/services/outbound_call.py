@@ -622,7 +622,7 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
                 call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript)
         # A corrected outcome must reach the contact too: someone who talked is never left in a redial state,
         # and a "conversation" that was really a voicemail greeting gets the contact their retry.
-        if call_log.lead_id and call_log.outcome not in ("no_answer", "voicemail", "failed"):
+        if call_log.lead_id and call_log.outcome not in ("no_answer", "voicemail", "screened", "failed"):
             from app.routers.campaigns import RETRY_STATUSES
 
             await db.execute(update(Lead).where(Lead.id == call_log.lead_id, Lead.status.in_(RETRY_STATUSES))

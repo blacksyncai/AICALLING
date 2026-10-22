@@ -52,6 +52,7 @@ export const OUTCOME_TONE: Record<string, "green" | "blue" | "amber" | "red" | "
   not_qualified: "gray",
   not_interested: "gray",
   voicemail: "amber",
+  screened: "amber",
   no_answer: "amber",
   failed: "red",
 };
@@ -73,6 +74,8 @@ export function toolLabel(tool: string | undefined, args: Record<string, unknown
       return "Transferred the call";
     case "voicemail":
       return a.action === "left_message" ? "Left a voicemail" : "Reached voicemail";
+    case "call_screener":
+      return a.action === "hang_up" ? "Call screener answered · hung up" : "Call screener answered · waited for the person";
     case "end_call":
       return a.reason === "silence" ? "Ended the call after silence" : "Ended the call" + (str(a.outcome) ? ` · ${humanize(str(a.outcome))}` : "");
     case "qualify_lead":

@@ -24,6 +24,9 @@ CALL_OUTCOMES = (
     "meeting_booked", "qualified", "not_qualified", "interested", "not_interested",
     "callback", "transferred", "voicemail", "no_answer", "completed", "failed",
     "wrong_number", "do_not_call",
+    # A call-screening assistant answered (Google Call Screen, iPhone screening) and the person never came on.
+    # Not a voicemail: the agent talked and waited on the line, so it's billed as a normal call.
+    "screened",
 )
 
 

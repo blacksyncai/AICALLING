@@ -52,3 +52,24 @@ def test_live_people_are_not_voicemail():
     for said in ("Hello?", "Yeah this is Josh, who's calling?", "Can you just send me a text instead?",
                  "I got your voicemail yesterday, what's this about?"):
         assert not voicemail_greeting_match(said) and not personal_greeting_match(said), said
+
+
+def test_screener_lines_are_not_a_person_answering():
+    from app.agent.runtime import person_answered, reconcile_outcome
+
+    screened = [{"role": "user", "text": "Hi, the person you're calling is using a screening service from Google. "
+                                         "Go ahead and say your name and why you're calling."},
+                {"role": "assistant", "text": "Hey Mark, it's just..."},
+                {"role": "user", "text": "Please stay on the line."}]
+    assert not person_answered(screened)
+    assert reconcile_outcome("screened", screened) == "screened"
+    picked_up = screened + [{"role": "user", "text": "Hello? Who is this?"}]
+    assert person_answered(picked_up)
+    assert reconcile_outcome("screened", picked_up) == "completed"
+
+
+def test_screened_is_a_retryable_outcome_billed_like_a_call():
+    from app.models.call_log import CALL_OUTCOMES
+    from app.routers.campaigns import RETRY_STATUSES
+
+    assert "screened" in CALL_OUTCOMES and "screened" in RETRY_STATUSES

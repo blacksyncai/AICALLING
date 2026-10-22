@@ -14,6 +14,7 @@ export const CONTACT_STATUSES = [
   "not_qualified",
   "no_answer",
   "voicemail",
+  "screened",
   "completed",
   "failed",
 ] as const;

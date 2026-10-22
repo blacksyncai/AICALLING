@@ -213,7 +213,7 @@ async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, l
     # A "meaningful conversation": a real back-and-forth (30s+) that wasn't voicemail,
     # or any call that ended with a positive outcome or a follow-up.
     follow_up = {"callback", "interested"}
-    dead = {"voicemail", "no_answer", "failed"}
+    dead = {"voicemail", "no_answer", "screened", "failed"}
 
     def meaningful(c) -> bool:
         if c.outcome in positive or c.outcome in follow_up:

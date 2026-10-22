@@ -109,6 +109,7 @@ export const OUTCOMES = [
   "callback",
   "transferred",
   "voicemail",
+  "screened",
   "no_answer",
   "completed",
   "failed",

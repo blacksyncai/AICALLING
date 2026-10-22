@@ -16,7 +16,7 @@ import { useSession } from "@/lib/session";
 import type { Agent, Call } from "@/lib/types";
 import { formatDateTime, formatDuration, humanize } from "@/lib/utils";
 
-const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "no_answer", "completed", "failed"];
+const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "completed", "failed"];
 const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
 const TYPE_CHIP: Record<string, string> = { outbound: "Outbound calls", inbound: "Inbound calls", web: "Browser tests" };
 const PAGE = 25;

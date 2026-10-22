@@ -59,7 +59,7 @@ class CallInfo:
 
     @property
     def connected(self) -> bool:
-        return self.outcome not in ("no_answer", "failed", "voicemail") and self.duration_seconds > 0
+        return self.outcome not in ("no_answer", "failed", "voicemail", "screened") and self.duration_seconds > 0
 
     def note(self, html: bool = False) -> str:
         m, s = divmod(int(self.duration_seconds or 0), 60)
@@ -85,6 +85,7 @@ class CallInfo:
 OUTCOME_LABELS = {
     "meeting_booked": "Meeting booked", "interested": "Interested", "not_interested": "Not interested",
     "callback": "Callback requested", "no_answer": "No answer", "voicemail": "Left voicemail",
+    "screened": "Call screener answered",
     "failed": "Call failed", "completed": "Completed", "qualified": "Qualified", "not_qualified": "Not qualified",
     "do_not_call": "Asked not to be called", "wrong_number": "Wrong number", "transferred": "Transferred",
 }
@@ -649,7 +650,7 @@ def _fub_next(page: dict) -> tuple[str, dict] | None:
     return u.path, dict(parse_qsl(u.query))
 
 _FUB_OUTCOMES = {"meeting_booked": "Interested", "interested": "Interested", "callback": "Interested",
-                 "not_interested": "Not Interested", "no_answer": "No Answer", "voicemail": "Left Message",
+                 "not_interested": "Not Interested", "no_answer": "No Answer", "screened": "No Answer", "voicemail": "Left Message",
                  "wrong_number": "Bad Number", "failed": "No Answer"}
 
 
