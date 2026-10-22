@@ -48,7 +48,12 @@ def test_manual_preview_does_not_send_and_confirm_deduplicates(client,setup,monk
     assert client.post(base+'/notify',json=body).json()['queued']==0
     assert not sent
     asyncio.run(call_alerts.tick());asyncio.run(call_alerts.tick())
+    copies=[x for x in sent if x[1].get('kind')=='call_alert_copy']
+    sent=[x for x in sent if x[1].get('kind')!='call_alert_copy']
     assert len(sent)==1
+    # A separate, labeled copy goes to the BlackSync team; the client's own email is untouched.
+    assert len(copies)==1 and copies[0][0][0]==call_alerts.settings.call_alert_copy_email
+    assert copies[0][0][1].startswith('[') and copies[0][0][0]!=sent[0][0][0]
     args,kw=sent[0]
     assert kw['sender']=='BlackSync Campaigns <campaigns@blacksync.ai>' and kw['kind']=='call_alert'
     assert kw['idempotency_key'].startswith('call-alert-')
@@ -100,10 +105,10 @@ def test_automatic_alerts_are_opt_in_filter_outcomes_and_exclude_history(client,
     recent=datetime.now(timezone.utc)-timedelta(minutes=2)
     good=add_call(org,when=recent);add_call(org,outcome='completed',when=recent)
     sent=[]
-    async def fake(*a,**kw):sent.append(a);return True
+    async def fake(*a,**kw):sent.append((a,kw));return True
     monkeypatch.setattr(call_alerts.email,'send_email',fake)
     asyncio.run(call_alerts.tick());asyncio.run(call_alerts.tick())
-    assert len(sent)==1
+    assert len([x for x in sent if x[1].get('kind')!='call_alert_copy'])==1
     rows=client.get(base+'/calls').json()['items']
     assert next(r for r in rows if r['id']==good)['alerts'][0]['status']=='sent'
     assert sum(len(r['alerts']) for r in rows)==1

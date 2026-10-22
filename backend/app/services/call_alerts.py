@@ -152,11 +152,25 @@ async def deliver(alert_id):
                 ok = False
             if ok:
                 row.status, row.error, row.sent_at = 'sent', '', now()
+                await send_admin_copy(org, call, data)
             else:
                 row.status = 'failed' if row.attempts >= 5 else 'retry'
                 row.error = 'Email delivery was not confirmed. Check sender verification and email delivery logs.'
                 row.next_at = now()+timedelta(minutes=2 ** row.attempts)
         await db.commit()
+
+
+async def send_admin_copy(org, call, data):
+    """A separate, labeled copy for the BlackSync team. One per call (same key for every recipient's alert), and
+    a failure here never affects the client's alert."""
+    to = (settings.call_alert_copy_email or '').strip()
+    if not to:
+        return
+    try:
+        await email.send_email(to, f'[{org.name}] {data["subject"]}'[:240], data['html'], sender=data['sender'],
+            kind='call_alert_copy', idempotency_key=f'call-alert-copy-{call.id}')
+    except Exception as exc:
+        log.warning('call_alert_copy_failed', call_id=str(call.id), error=type(exc).__name__)
 
 
 async def tick():

@@ -198,6 +198,8 @@ class Settings(BaseSettings):
     # notifications@, team invites from invites@.
     email_from: str = "BlackSync <notifications@blacksync.ai>"
     email_from_calls: str = "BlackSync Campaigns <campaigns@blacksync.ai>"
+    # A separate copy of every client call alert goes here (empty = off). Clients never see it.
+    call_alert_copy_email: str = "blacksync.ai@gmail.com"
     email_from_invites: str = "BlackSync <invites@blacksync.ai>"
 
     # ── Support (in-app help widget) ──────────────────────────────────────────
