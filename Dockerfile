@@ -28,7 +28,11 @@ COPY backend/requirements.txt .
 RUN pip install -r requirements.txt
 COPY backend/ ./
 # A missing turn-detector download must fail the build rather than silently deploy VAD-only calls.
-RUN python agent_worker.py download-files
+# The downloader sometimes crashes on exit (a native panic) after the files are already saved, so retry and
+# then check the model itself instead of trusting the exit code.
+RUN for i in 1 2 3; do python agent_worker.py download-files && break; echo "download-files exited with $?, attempt $i"; done; \
+    find /root/.cache/huggingface -path '*turn-detector*' -name '*.onnx' | grep -q . \
+    || (echo "turn-detector model missing after download" && exit 1)
 
 COPY --from=web /web/.next/standalone /app/web
 COPY --from=web /web/.next/static /app/web/.next/static
