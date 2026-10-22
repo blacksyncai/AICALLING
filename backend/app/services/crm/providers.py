@@ -85,7 +85,7 @@ class CallInfo:
 OUTCOME_LABELS = {
     "meeting_booked": "Meeting booked", "interested": "Interested", "not_interested": "Not interested",
     "callback": "Callback requested", "no_answer": "No answer", "voicemail": "Left voicemail",
-    "screened": "Call screener answered",
+    "screened": "Call screener, no answer", "language_barrier": "Language barrier", "hung_up": "Hung up",
     "failed": "Call failed", "completed": "Completed", "qualified": "Qualified", "not_qualified": "Not qualified",
     "do_not_call": "Asked not to be called", "wrong_number": "Wrong number", "transferred": "Transferred",
 }

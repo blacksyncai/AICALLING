@@ -15,6 +15,8 @@ export const CONTACT_STATUSES = [
   "no_answer",
   "voicemail",
   "screened",
+  "language_barrier",
+  "hung_up",
   "completed",
   "failed",
 ] as const;

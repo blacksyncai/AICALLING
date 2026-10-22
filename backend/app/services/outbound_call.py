@@ -615,7 +615,9 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         # The analyzer's outcome only fills in when the agent didn't pick a specific one — or, when
         # re-analyzing on request, replaces anything but a hard result the agent confirmed.
         replaceable = call_log.outcome in (None, "completed", "failed") or (
-            force and call_log.outcome not in ("meeting_booked", "transferred", "do_not_call"))
+            force and call_log.outcome not in ("meeting_booked", "transferred", "do_not_call")) or (
+            # A "no" the agent logged that was really the contact not speaking the language.
+            call_log.outcome == "not_interested" and result.get("outcome") == "language_barrier")
         if replaceable and result.get("outcome"):
             if call_log.duration_seconds or call_log.outcome != "failed":
                 from app.agent.runtime import reconcile_outcome

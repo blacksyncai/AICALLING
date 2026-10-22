@@ -4,7 +4,7 @@ import { RotateCcw, Send, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { post } from "@/lib/api";
 import type { ChatTurn, ToolEvent } from "@/lib/types";
-import { cn, humanize, toolLabel } from "@/lib/utils";
+import { cn, humanize, toolLabel, outcomeLabel } from "@/lib/utils";
 import { Button, Notice } from "../ui";
 import { AiOrb } from "../ui/ai-orb";
 
@@ -118,7 +118,7 @@ export function ChatPanel({
         )}
         {ended && (
           <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-center text-xs text-zinc-600">
-            Agent ended the call · outcome <span className="font-medium">{humanize(ended)}</span>
+            Agent ended the call · outcome <span className="font-medium">{outcomeLabel(ended)}</span>
           </div>
         )}
       </div>

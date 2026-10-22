@@ -24,7 +24,7 @@ import useSWR from "swr";
 import { Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
-import { cn, humanize, timeAgo } from "@/lib/utils";
+import { cn, humanize, timeAgo, outcomeLabel } from "@/lib/utils";
 
 /** Fire this anywhere (e.g. a sidebar button) to open the palette. */
 export const OPEN_COMMAND_PALETTE = "open-command-palette";
@@ -240,7 +240,7 @@ function Palette({ onClose, manager }: { onClose: () => void; manager: boolean }
         id: `call-${c.id}`,
         group: "Calls",
         label: c.contact_name,
-        hint: [c.outcome ? humanize(c.outcome) : null, c.started_at ? timeAgo(c.started_at) : null].filter(Boolean).join(" · "),
+        hint: [c.outcome ? outcomeLabel(c.outcome) : null, c.started_at ? timeAgo(c.started_at) : null].filter(Boolean).join(" · "),
         icon: PhoneCall,
         href: `/calls/${c.id}`,
         remote: true,

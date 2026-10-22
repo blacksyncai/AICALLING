@@ -12,7 +12,7 @@ import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, Select, Spinner, Textarea, Toggle } from "@/components/ui";
 import { del, fetcher, patch } from "@/lib/api";
 import type { Campaign, Contact, ContactDetail } from "@/lib/types";
-import { cn, formatDateTime, formatDuration, humanize, timeAgo } from "@/lib/utils";
+import { cn, formatDateTime, formatDuration, humanize, timeAgo, outcomeLabel } from "@/lib/utils";
 
 type DetailsForm = { name: string; phone: string; email: string; company: string; role: string; campaign_id: string };
 
@@ -148,7 +148,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
           >
             {statusOptions.map((s) => (
               <option key={s} value={s}>
-                {humanize(s)}
+                {outcomeLabel(s)}
               </option>
             ))}
           </select>

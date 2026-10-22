@@ -13,7 +13,7 @@ import { Button, Card, EmptyState, Input, Notice, PageHeader, Select, Spinner } 
 import { fetcher } from "@/lib/api";
 import type { Campaign, ContactList } from "@/lib/types";
 import { canManage, useSession } from "@/lib/session";
-import { cn, humanize, timeAgo } from "@/lib/utils";
+import { cn, humanize, timeAgo, outcomeLabel } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
 
@@ -192,7 +192,7 @@ export default function ContactsPage() {
                 </Select>
               </div>
               <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
-                {[["", "All", allTotal] as const, ...statusChips.map((s) => [s, humanize(s), counts[s]] as const)].map(([value, label, count]) => (
+                {[["", "All", allTotal] as const, ...statusChips.map((s) => [s, outcomeLabel(s), counts[s]] as const)].map(([value, label, count]) => (
                   <button
                     key={value || "all"}
                     onClick={() => {

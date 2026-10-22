@@ -42,17 +42,33 @@ export function humanize(s: string | null | undefined): string {
   return s.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** How a call outcome or contact status reads in the app ("screened" → "Call screener · no answer"). */
+const OUTCOME_LABEL: Record<string, string> = {
+  completed: "Contacted",
+  screened: "Call screener · no answer",
+  language_barrier: "Language barrier",
+  hung_up: "Hung up",
+  no_answer: "No answer",
+  do_not_call: "Do not call",
+};
+
+export function outcomeLabel(s: string | null | undefined): string {
+  return (s && OUTCOME_LABEL[s]) || humanize(s);
+}
+
 export const OUTCOME_TONE: Record<string, "green" | "blue" | "amber" | "red" | "gray" | "violet"> = {
   meeting_booked: "green",
   qualified: "blue",
   interested: "blue",
   transferred: "violet",
   callback: "amber",
-  completed: "gray",
+  completed: "blue",
   not_qualified: "gray",
   not_interested: "gray",
   voicemail: "amber",
   screened: "amber",
+  language_barrier: "violet",
+  hung_up: "gray",
   no_answer: "amber",
   failed: "red",
 };

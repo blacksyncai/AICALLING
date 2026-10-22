@@ -3,7 +3,7 @@
 import { ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { Fragment } from "react";
-import { OUTCOME_TONE, cn, humanize } from "@/lib/utils";
+import { OUTCOME_TONE, cn, humanize, outcomeLabel } from "@/lib/utils";
 import { pct, type AgentRow, type Analytics, type CampaignRow, type Funnel } from "./types";
 
 const TONE_BG: Record<string, string> = {
@@ -71,7 +71,7 @@ export function OutcomeBars({ outcomes }: { outcomes: Record<string, number> }) 
     <ul className="flex flex-col gap-3">
       {rows.map(([outcome, n]) => (
         <li key={outcome} className="grid grid-cols-[minmax(0,7.5rem)_1fr_auto] items-center gap-3 text-sm">
-          <span className="truncate text-zinc-700">{outcome === "in_progress" ? "In progress" : humanize(outcome)}</span>
+          <span className="truncate text-zinc-700">{outcome === "in_progress" ? "In progress" : outcomeLabel(outcome)}</span>
           <div className="h-2.5 overflow-hidden rounded-full bg-zinc-100">
             <div className={cn("h-full rounded-full", TONE_BG[OUTCOME_TONE[outcome] ?? "gray"])} style={{ width: `${(n / max) * 100}%` }} />
           </div>

@@ -7,7 +7,7 @@ import { useToast } from "@/components/toast";
 import { Button, Field, Input, Modal, Select } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import type { Agent, Campaign } from "@/lib/types";
-import { humanize } from "@/lib/utils";
+import { humanize, outcomeLabel } from "@/lib/utils";
 import { type BulkAction, CONTACT_STATUSES } from "./shared";
 
 type PickerAction = "add_to_campaign" | "set_status" | "add_tag" | "dnc";
@@ -169,7 +169,7 @@ export function BulkActionBar({
               <Select value={value} onChange={(e) => setValue(e.target.value)}>
                 {CONTACT_STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {humanize(s)}
+                    {outcomeLabel(s)}
                   </option>
                 ))}
               </Select>

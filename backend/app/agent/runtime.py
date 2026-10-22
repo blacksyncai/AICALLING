@@ -205,7 +205,8 @@ def guardrails(cfg: dict) -> str:
 
 def _tools_block(cfg: dict, channel: str) -> str:
     lines = ["- end_call(outcome): hangs up. Always say a short goodbye out loud in the same reply first — never "
-             "hang up silently. Use the outcome that best describes the call."]
+             "hang up silently. Use the outcome that best describes the call. If they don't speak or understand your "
+             "language, say a short, kind goodbye and use language_barrier, not not_interested."]
     if cfg.get("enable_booking"):
         lines.append("- check_availability(preferred_date, time_of_day, time): real open times. Only offer times it "
                      "returns. If they want other options (\"anything later?\", \"Thursday afternoon?\"), call it again "
@@ -534,7 +535,7 @@ def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str
 
 # Outcomes that end the call by nature: hang up whenever the agent decides to.
 _FINAL_OUTCOMES = ("meeting_booked", "not_qualified", "not_interested", "callback", "transferred", "voicemail", "screened",
-                   "no_answer", "failed", "wrong_number", "do_not_call")
+                   "no_answer", "failed", "wrong_number", "do_not_call", "language_barrier")
 # Things a contact says when the conversation is wrapping up.
 _ENDING_CUES = (
     "bye", "thank", "thanks", "take care", "have a good", "have a great", "have a nice", "that's all", "that's it",

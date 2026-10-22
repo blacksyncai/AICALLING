@@ -678,7 +678,7 @@ async def _play_continuous_bg(room, control: dict) -> None:
 _END_OUTCOMES = (
     "meeting_booked", "qualified", "not_qualified", "interested", "not_interested",
     "callback", "transferred", "voicemail", "no_answer", "completed", "failed",
-    "wrong_number", "do_not_call",
+    "wrong_number", "do_not_call", "language_barrier",
 )
 
 
@@ -842,7 +842,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         Args:
             outcome: The result of the call. One of meeting_booked, qualified, not_qualified,
                 interested, not_interested, callback, transferred, voicemail, no_answer, wrong_number,
-                do_not_call, completed.
+                do_not_call, language_barrier (they don't speak or understand your language), completed.
         """
         if context.speech_handle.interrupted:
             return "Not ended: the caller interrupted. Respond to their latest turn."

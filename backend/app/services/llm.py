@@ -258,6 +258,11 @@ Outcome definitions (pick the single best one):
 - not_qualified: doesn't fit (wrong size, budget, area, etc.).
 - do_not_call: asked to never be called again / remove them from the list.
 - wrong_number: the person isn't who the agent was trying to reach.
+- language_barrier: a live person answered but couldn't follow or reply in the agent's language (answered in
+  another language, said they don't speak it, or clearly couldn't understand). Use this instead of
+  not_interested when the "no" was really about language.
+- hung_up: a live person answered and hung up during or right after the agent's opening, before responding to
+  what the agent was calling about. Not when they declined first (not_interested) or talked for a while (completed).
 - transferred: handed to a human.
 - voicemail: a voicemail greeting/recording answered and no live person ever replied to the agent. This
   includes personal recorded greetings ("Hey, it's Sam, can't talk right now, I'll call you back / text me")
@@ -265,7 +270,7 @@ Outcome definitions (pick the single best one):
   that doesn't respond to anything the agent said.
 - no_answer: ONLY when nobody answered at all; never when the contact said anything.
 - completed: a live conversation happened but none of the above fits (e.g. the contact hung up mid-call
-  or the call ended before a clear result).
+  after engaging, or the call ended before a clear result).
 
 Be conservative: these outcomes trigger alerts to the business. If the call ended before the contact responded
 to the offer, the outcome is completed. When unsure between a positive outcome (interested, qualified,

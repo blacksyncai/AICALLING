@@ -27,6 +27,10 @@ CALL_OUTCOMES = (
     # A call-screening assistant answered (Google Call Screen, iPhone screening) and the person never came on.
     # Not a voicemail: the agent talked and waited on the line, so it's billed as a normal call.
     "screened",
+    # A live person answered but couldn't hold the call in the agent's language.
+    "language_barrier",
+    # A live person answered and hung up during or right after the opening, before responding to the offer.
+    "hung_up",
 )
 
 

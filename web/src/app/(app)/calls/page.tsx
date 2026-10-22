@@ -14,9 +14,9 @@ import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model"
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import type { Agent, Call } from "@/lib/types";
-import { formatDateTime, formatDuration, humanize } from "@/lib/utils";
+import { formatDateTime, formatDuration, humanize, outcomeLabel } from "@/lib/utils";
 
-const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "completed", "failed"];
+const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "language_barrier", "hung_up", "completed", "failed"];
 const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
 const TYPE_CHIP: Record<string, string> = { outbound: "Outbound calls", inbound: "Inbound calls", web: "Browser tests" };
 const PAGE = 25;
@@ -99,7 +99,7 @@ function CallLogs() {
   if (startedFrom || startedBefore) chips.push({ key: "range", label: `${startedFrom ? rangeText(startedFrom) : "Any time"} → ${startedBefore ? rangeText(startedBefore) : "No end"}`, title: tz ? `Call start times, ${timeZoneLabel(tz)}; end time excluded` : "Call start times; end time excluded" });
   if (date) chips.push({ key: "date", label: formatDay(date), title: tz ? `Calls started on this day, ${timeZoneLabel(tz)}` : undefined });
   if (agentId) chips.push({ key: "agent_id", label: `Agent ${agents?.find((a) => a.id === agentId)?.name ?? "…"}` });
-  if (outcome) chips.push({ key: "outcome", label: OUTCOME_CHIP[outcome] ?? humanize(outcome) });
+  if (outcome) chips.push({ key: "outcome", label: OUTCOME_CHIP[outcome] ?? outcomeLabel(outcome) });
   if (type) chips.push({ key: "call_type", label: TYPE_CHIP[type] ?? humanize(type) });
 
   return (
@@ -143,7 +143,7 @@ function CallLogs() {
           <option value="">All outcomes</option>
           {OUTCOMES.map((o) => (
             <option key={o} value={o}>
-              {o.replace(/_/g, " ")}
+              {outcomeLabel(o)}
             </option>
           ))}
         </Select>

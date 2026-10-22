@@ -110,6 +110,8 @@ export const OUTCOMES = [
   "transferred",
   "voicemail",
   "screened",
+  "language_barrier",
+  "hung_up",
   "no_answer",
   "completed",
   "failed",

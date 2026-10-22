@@ -3,7 +3,7 @@
 import { CheckCircle2, ChevronDown, FlaskConical, XCircle } from "lucide-react";
 import { useState } from "react";
 import { post } from "@/lib/api";
-import { cn, humanize } from "@/lib/utils";
+import { cn, humanize, outcomeLabel } from "@/lib/utils";
 import { Button, Notice } from "../ui";
 import { AiOrb } from "../ui/ai-orb";
 
@@ -101,7 +101,7 @@ export function StressTest({ agentId, variables, beforeStart }: { agentId: strin
                     <p key={i} className="text-xs"><span className="font-medium text-zinc-700">{t.role === "assistant" ? "Agent" : "Caller"}:</span> {t.content}</p>
                   ),
                 )}
-                {r.outcome && <p className="text-[11px] text-zinc-500">Ended · {humanize(r.outcome)}</p>}
+                {r.outcome && <p className="text-[11px] text-zinc-500">Ended · {outcomeLabel(r.outcome)}</p>}
               </div>
             )}
           </div>

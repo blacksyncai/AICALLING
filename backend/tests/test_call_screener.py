@@ -73,3 +73,11 @@ def test_screened_is_a_retryable_outcome_billed_like_a_call():
     from app.routers.campaigns import RETRY_STATUSES
 
     assert "screened" in CALL_OUTCOMES and "screened" in RETRY_STATUSES
+
+
+def test_language_barrier_and_hung_up_are_outcomes():
+    from app.models.call_log import CALL_OUTCOMES
+    from app.agent.runtime import _tools_block
+
+    assert {"language_barrier", "hung_up"} <= set(CALL_OUTCOMES)
+    assert "language_barrier, not not_interested" in _tools_block({}, "phone")
