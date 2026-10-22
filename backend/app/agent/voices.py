@@ -22,6 +22,8 @@ FEATURED_VOICES: list[dict] = [
      "gender": "masculine", "description": "Live voice clone.", "clone": True},
     {"id": "mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
      "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
+    {"id": "91e4713f-2150-4be6-8564-2d121bbd8c10", "name": "Lauren", "gender": "feminine",
+     "description": "Live voice clone.", "clone": True, "language": "en"},
     {"id": "058f0988-5723-49e0-b322-e50034637fe6", "name": "Sofia", "gender": "feminine",
      "description": "Live voice clone.", "clone": True, "language": "en"},
     {"id": "elevenlabs:WkIfOTQgqfIPfV7X7nND", "name": "Sally", "provider": "elevenlabs",
