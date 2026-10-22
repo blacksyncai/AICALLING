@@ -1275,6 +1275,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     # Call screener: "seen" once one answered; "holding" while we wait for the person to come on the line.
     screen = {"seen": False, "holding": False}
     screen_action = cfg.get("screener_action") or "answer"
+    # Outbound: the opening line answers the contact's "Hello?". Until it's queued, a user turn must not
+    # also get its own reply, or the agent says the opening twice back to back.
+    opening = {"pending": call_type == "outbound"}
     vm_message = render_vars(cfg.get("voicemail_message") or "", variables).strip()
 
     class _CallAgent(Agent):
@@ -1282,6 +1285,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             trace.mark("turn_committed", turn_key=trace.turn_key(new_message.text_content or ""))
             if vm["detected"]:
                 raise StopResponse()  # don't talk back to a voicemail greeting
+            if opening["pending"]:
+                log.info("opening_covers_turn", room=ctx.room.name)
+                raise StopResponse()  # the opening line is the reply to their "Hello?"
             if screen["holding"]:
                 from app.agent.runtime import is_screener_hold
 
@@ -1722,6 +1728,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         from app.agent.speech_guard import clean
 
         first = strip_tool_mentions(clean(first))  # the drafted opening skips the reply filter
+    opening["pending"] = False
     try:
         if first:
             session.say(first, allow_interruptions=True)
