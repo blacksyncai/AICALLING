@@ -11,7 +11,7 @@ import { initials, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 /** Platform super-admins only, and only after entering the admin password. Everyone else
- * sees a plain "not found" so the portal isn't advertised. */
+ * is told plainly they don't belong here. */
 export function AdminGuard({ children }: { children: ReactNode }) {
   const { session, loading } = useSession();
   const { data: lock, mutate } = useSWR<{ unlocked: boolean }>(
@@ -28,8 +28,9 @@ export function AdminGuard({ children }: { children: ReactNode }) {
   if (!session.user.is_superadmin) {
     return (
       <div className="mx-auto max-w-md py-24 text-center">
-        <h1 className="text-lg font-semibold">Page not found</h1>
-        <p className="mt-1 text-sm text-zinc-500">This page doesn&apos;t exist or you don&apos;t have access to it.</p>
+        <Lock className="mx-auto h-8 w-8 text-brand-600" />
+        <h1 className="mt-3 font-display text-2xl font-bold tracking-tight">YOU DON&apos;T BELONG HERE</h1>
+        <p className="mt-1 text-sm text-zinc-500">This area is for the BlackSync team only.</p>
       </div>
     );
   }
