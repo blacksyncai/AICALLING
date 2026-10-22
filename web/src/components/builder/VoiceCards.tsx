@@ -29,15 +29,17 @@ import type { VoicesResponse } from "./StepPersonality";
 const PREVIEW_LINE =
   "Hey there, this is a quick preview of how I'll sound on your calls. Does this work for you?";
 
-/** The house voices (Marissa and Hamza, Version 1) — always offered up front. */
+/** The house voices (Marissa, Zain, Lauren, Macco) — always offered up front, in this order. */
 export const HOUSE_VOICES = [
   "97f03c16-fab2-4747-b655-9caefbd68fcf",
   "95280ca0-610a-41c9-8457-1dcec809da61",
+  "91e4713f-2150-4be6-8564-2d121bbd8c10",
+  "378695da-44e9-4fc7-a9cb-efcb0d2037cc",
 ];
 
 /**
  * Four voices to show up front, in a stable order so cards never jump around when one is picked:
- * Marissa and Hamza first, then house voices in the agent's language. A chosen voice that isn't among them
+ * The house voices first, then others in the agent's language. A chosen voice that isn't among them
  * takes the last slot.
  */
 export function suggestedVoices(
