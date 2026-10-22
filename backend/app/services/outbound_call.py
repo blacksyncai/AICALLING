@@ -141,6 +141,14 @@ def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, cal
     return raw
 
 
+def outbound_trunk(carrier: str) -> str:
+    """The LiveKit outbound trunk that dials out through this carrier ("" for Bandwidth, which bridges in)."""
+    if carrier == "bandwidth":
+        return ""
+    return {"signalwire": settings.signalwire_sip_outbound_trunk_id,
+            "plivo": settings.livekit_sip_plivo_trunk_id}.get(carrier, settings.livekit_sip_outbound_trunk_id)
+
+
 _BACKGROUND: set = set()
 
 # SIP codes that mean "nobody picked up" rather than a setup problem.
@@ -387,8 +395,7 @@ class CallService:
             started_at=datetime.now(timezone.utc),
         )
         carrier = await telephony.carrier_of(db, org.id, from_number)
-        trunk_id = {"signalwire": settings.signalwire_sip_outbound_trunk_id,
-                    "plivo": settings.livekit_sip_plivo_trunk_id}.get(carrier, settings.livekit_sip_outbound_trunk_id)
+        trunk_id = outbound_trunk(carrier)
         if carrier != "bandwidth" and not trunk_id:
             raise CallSetupError("The selected carrier outbound trunk isn't configured.")
         record = recordings.enabled_for(agent)
@@ -415,6 +422,10 @@ class CallService:
             call_log.recording_status = "worker_pending"
             metadata = json.dumps({**json.loads(metadata), "record_key": call_log.recording_key,
                                    "worker_recording": True})
+
+        if trunk_id:
+            # How the worker dials a teammate for a warm transfer: same trunk and caller ID as this call.
+            metadata = json.dumps({**json.loads(metadata), "dial": {"trunk_id": trunk_id, "from": from_number or ""}})
 
         # CRM/context, credit checks and metadata preparation can await network work.
         # Re-read the saved rules immediately before committing a real dial.

@@ -29,6 +29,7 @@ _EDITABLE = (
     "language", "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio",
     "enable_booking", "calcom_event_type_id", "calendar_timezone", "transfer_number", "max_duration_seconds",
     "voicemail_action", "voicemail_message", "screener_action",
+    "transfer_mode", "transfer_handoff", "transfer_ring_seconds",
     "extraction_fields", "success_criteria", "builder", "ai_disclosure", "caller_number", "record_calls",
 )
 
@@ -88,6 +89,9 @@ class AgentUpdate(BaseModel):
     voicemail_action: str | None = Field(default=None, pattern="^(hang_up|leave_message|ignore)$")
     voicemail_message: str | None = Field(default=None, max_length=1000)
     screener_action: str | None = Field(default=None, pattern="^(answer|hang_up)$")
+    transfer_mode: str | None = Field(default=None, pattern="^(cold|warm)$")
+    transfer_handoff: str | None = Field(default=None, max_length=1000)
+    transfer_ring_seconds: int | None = Field(default=None, ge=10, le=45)
     max_duration_seconds: int | None = Field(default=None, ge=30, le=3600)
     extraction_fields: list[ExtractionField] | None = None
     success_criteria: str | None = None
@@ -139,6 +143,9 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         "voicemail_action": a.voicemail_action or "hang_up",
         "voicemail_message": a.voicemail_message or "",
         "screener_action": a.screener_action or "answer",
+        "transfer_mode": a.transfer_mode or "cold",
+        "transfer_handoff": a.transfer_handoff or "",
+        "transfer_ring_seconds": a.transfer_ring_seconds or 20,
         "pinned": bool(a.pinned),
         "calcom_key_set": bool(a.calcom_api_key_enc),
         "ai_disclosure": a.ai_disclosure is not False,

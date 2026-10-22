@@ -723,6 +723,8 @@ class _CallRun:
         from app.agent.committed_actions import CommittedActions
         self.actions = CommittedActions()
         self.trace = None  # attached by the configurable session
+        self.transferring = False  # warm transfer in progress: the caller is on hold, so silence is expected
+        self.handed_off = False  # warm transfer connected: the caller and teammate share the room now
 
     def latency_summary(self) -> dict | None:
         avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
@@ -981,6 +983,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             """Transfer the caller to a human teammate. Tell them you're connecting them first."""
             from livekit import api as _lkapi
             from app.agent import call_transfer
+            if cfg.get("transfer_mode") == "warm" and (session_ref.get("dial") or {}).get("trunk_id"):
+                return await _warm_transfer(context)
             sip_identity = call_transfer.caller_identity(ctx.room.remote_participants.values())
             if not sip_identity:
                 log.warning("call_transfer_no_sip_caller", call_log_id=run.call_log_id,
@@ -1038,6 +1042,84 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 if run.trace:
                     run.trace.mark("tool_result", speech=context.speech_handle, tool="transfer_call", status="unknown_no_retry")
                 return "Transfer is not confirmed. Do not retry automatically; offer a teammate callback."
+
+        async def _warm_transfer(context: RunContext) -> str:
+            """Hold the caller, call the teammate and brief them, then put the caller through. If nobody takes
+            it, the caller is back with the agent, which sets up the next step instead."""
+            from livekit.agents.beta.workflows import WarmTransferTask
+            from livekit import rtc
+            from livekit.agents.llm import StopResponse as _Stop, ToolError
+            from app.agent import handoff
+            from app.services.outbound_call import validate_e164
+
+            if run.transferring:
+                return "A transfer is already in progress. Wait for it."
+            try:
+                number = validate_e164(transfer_to)
+            except ValueError:
+                return ("Transfer destination is not a valid phone number. Offer a callback and ask the team to check "
+                        "its transfer setting.")
+            try:  # let "one sec, let me grab someone" finish before the hold music starts
+                await asyncio.wait_for(context.wait_for_playout(), timeout=12)
+            except asyncio.TimeoutError:
+                pass
+            if context.speech_handle.interrupted:
+                return "Transfer cancelled before connecting; respond to what the caller just said."
+            session = session_ref["session"]
+            dial = session_ref["dial"]
+            ring = int(cfg.get("transfer_ring_seconds") or handoff.DEFAULT_RING_SECONDS)
+            task = WarmTransferTask(
+                sip_call_to=number, sip_trunk_id=dial["trunk_id"], sip_number=dial.get("from") or "",
+                ringing_timeout=ring,
+                instructions=handoff.briefing_instructions(cfg, cfg_vars, handoff.history_text(session.history)),
+            )
+
+            def _fail(reason: str) -> None:
+                if not task.done():
+                    task._set_result(ToolError(reason))  # the task's own way to finish and un-hold the caller
+
+            def _caller_left(p) -> None:
+                if p.identity != task._human_agent_identity and getattr(p, "kind", None) == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+                    _fail("caller hung up")
+
+            async def _deadline() -> None:  # ringing plus the handoff conversation, never longer
+                await asyncio.sleep(ring + handoff.BRIEFING_SECONDS)
+                _fail("timed out")
+
+            run.transferring = True
+            log.info("warm_transfer_started", call_log_id=run.call_log_id, ring_seconds=ring)
+            ctx.room.on("participant_disconnected", _caller_left)
+            deadline = asyncio.create_task(_deadline())
+            try:
+                await task
+                error = ""
+            except Exception as exc:
+                error = str(getattr(exc, "message", "") or exc)
+            finally:
+                deadline.cancel()
+                ctx.room.off("participant_disconnected", _caller_left)
+                run.transferring = False
+
+            if not error:
+                log.info("warm_transfer_connected", call_log_id=run.call_log_id)
+                run.outcome, run.handed_off = "transferred", True
+                if run.ended_wall is None:
+                    run.ended_wall = _t.time()  # the agent's part of the call ends here
+                _record("transfer_call", {"to": transfer_to, "mode": "warm"}, {"status": "connected"})
+                run.post_task = asyncio.create_task(_post_run_outcome(run, "transferred"))
+
+                async def _leave() -> None:  # the caller and teammate keep talking without us
+                    await asyncio.sleep(0.5)
+                    session.shutdown(drain=False)
+                asyncio.create_task(_leave())
+                raise _Stop()
+            reason = ("caller_left" if "caller hung up" in error else "voicemail" if "voicemail" in error
+                      else "declined" if "declined" in error else "no_answer")
+            log.info("warm_transfer_not_connected", call_log_id=run.call_log_id, reason=reason, error=error[:120])
+            _record("transfer_call", {"to": transfer_to, "mode": "warm"}, {"status": reason}, success=False)
+            if reason == "caller_left":
+                raise _Stop()
+            return handoff.not_connected(reason, bool(cfg.get("enable_booking")))
 
         tools.append(function_tool(transfer_call))
 
@@ -1214,7 +1296,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session_kwargs["tts_text_transforms"].append(pronounce(tuning["pronunciations"] + BUILT_IN_PRONUNCIATIONS))
 
     session = AgentSession(**session_kwargs)
-    session_ref: dict = {"session": session}
+    session_ref: dict = {"session": session, "dial": metadata.get("dial") or {}}
 
     # Per-turn latency: end-of-turn delay + LLM first token + TTS first audio.
     def _on_metrics(ev) -> None:
@@ -1586,6 +1668,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     async def _enforce_max_duration() -> None:
         await asyncio.sleep(max(30, max_s - 20))
+        if run.handed_off:
+            return  # the caller is talking to the team now
         try:
             session.generate_reply(instructions="We're out of time. Politely wrap up and say goodbye now.")
         except Exception:
@@ -1618,6 +1702,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             await asyncio.sleep(1)
             if vm["detected"] or session_ref.get("voicemail_detected"):
                 continue  # voicemail handler owns its silent wait and hangup
+            if run.transferring or run.handed_off:
+                silence["since"] = _time.monotonic()  # on hold for a warm transfer, or handed off
+                continue
             quiet = silence["agent"] in ("listening", "") and silence["user"] != "speaking"
             if not quiet:
                 continue
@@ -1677,7 +1764,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             if metadata.get("worker_recording"):
                 await _recording_state(metadata, ctx.room.name, "ready" if saved else "failed")
         # If the session died on its own (e.g. a voice error), don't leave the caller on dead air.
-        if call_type != "web" and ctx.room.remote_participants:
+        if call_type != "web" and ctx.room.remote_participants and not run.handed_off:
             await _delete_room(ctx.room.name)
 
     ctx.add_shutdown_callback(_shutdown)

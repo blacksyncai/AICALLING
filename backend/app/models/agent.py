@@ -58,6 +58,12 @@ class Agent(Base):
     # IANA zone the agent speaks booking times in (e.g. America/New_York); blank = UTC.
     calendar_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     transfer_number: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    # "cold" (blank): hand the call straight to transfer_number. "warm": hold the caller, call the teammate,
+    # brief them with transfer_handoff ({{variables}}, [brackets] the agent fills in), then connect them.
+    # If nobody takes it, the agent stays with the caller and books a time or a callback.
+    transfer_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    transfer_handoff: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transfer_ring_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # When an answering machine picks up: "hang_up" (default) | "leave_message" | "ignore" (talk as normal).
     voicemail_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # What to say on "leave_message" ({{variables}} allowed).

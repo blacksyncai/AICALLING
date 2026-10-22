@@ -216,5 +216,11 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
     log.info("inbound_call_routed", to=row.number, agent=agent.name, call_log_id=str(call.id), known_caller=bool(lead))
     cfg = agent_to_runtime(agent, secrets=True)
     cfg["max_duration_seconds"] = min(cfg.get("max_duration_seconds") or 600, max_seconds)
+    from app.services import telephony
+    from app.services.outbound_call import outbound_trunk
+
+    trunk_id = outbound_trunk(await telephony.carrier_of(db, row.org_id, row.number))
     return {"agent": cfg, "agent_id": str(agent.id), "call_type": "inbound",
-            "call_log_id": str(call.id), "variables": variables}
+            "call_log_id": str(call.id), "variables": variables,
+            # How the worker dials a teammate for a warm transfer: out through this number's carrier.
+            **({"dial": {"trunk_id": trunk_id, "from": row.number}} if trunk_id else {})}

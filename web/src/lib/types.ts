@@ -33,6 +33,9 @@ export interface Agent {
   pinned?: boolean;
   voicemail_message?: string;
   transfer_number: string;
+  transfer_mode?: "cold" | "warm";
+  transfer_handoff?: string;
+  transfer_ring_seconds?: number;
   max_duration_seconds: number;
   extraction_fields: ExtractionField[];
   success_criteria: string;

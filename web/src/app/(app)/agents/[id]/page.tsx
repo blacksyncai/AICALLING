@@ -45,7 +45,7 @@ const VARIABLES = ["name", "full_name", "company", "email", "phone", "role"];
 const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
   "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio", "enable_booking",
-  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "voicemail_action", "voicemail_message", "screener_action", "transfer_number", "max_duration_seconds", "extraction_fields", "success_criteria",
+  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "voicemail_action", "voicemail_message", "screener_action", "transfer_number", "transfer_mode", "transfer_handoff", "transfer_ring_seconds", "max_duration_seconds", "extraction_fields", "success_criteria",
   "ai_disclosure", "builder", "caller_number", "record_calls", "specialty",
 ];
 
@@ -509,9 +509,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               {draft.enable_booking && <CalcomSettings draft={draft} set={set} />}
               <VoicemailSettings draft={draft} set={set} />
               <CallFromSettings draft={draft} set={set} />
-              <Field label="Transfer to human (phone calls)" hint="Direct transfer on phone calls only; browser tests cannot transfer. Enter a full number, e.g. +14155550123. The caller hears ringing while your teammate answers.">
-                <Input value={draft.transfer_number} onChange={(e) => set("transfer_number", e.target.value.trim())} placeholder="+14155550123" />
-              </Field>
+              <TransferSettings draft={draft} set={set} />
               <Card className="p-4">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Wrench className="h-4 w-4 text-zinc-400" /> What this agent can do on a call
@@ -527,7 +525,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                   )}
                   {draft.transfer_number && (
                     <li>
-                      Transfer the call to {draft.transfer_number}
+                      {draft.transfer_mode === "warm" ? "Brief a teammate at" : "Transfer the call to"} {draft.transfer_number}
                     </li>
                   )}
                 </ul>
@@ -772,6 +770,73 @@ const SCREENER_OPTIONS: { value: NonNullable<Agent["screener_action"]>; label: s
   { value: "answer", label: "Answer and wait", hint: "Say “Hey, it’s just …”, wait on the line, then talk to the person." },
   { value: "hang_up", label: "Hang up", hint: "Treat it like voicemail." },
 ];
+
+const TRANSFER_OPTIONS: { value: NonNullable<Agent["transfer_mode"]>; label: string; hint: string }[] = [
+  { value: "warm", label: "Introduce the call first", hint: "The caller holds while the agent calls you, tells you who it is and what they want, then connects you. If you don’t pick up, it books a time instead." },
+  { value: "cold", label: "Send it straight through", hint: "The call goes straight to your number. If nobody answers, the call ends." },
+];
+
+const DEFAULT_HANDOFF =
+  "Hey, it's {{agent_name}} from {{business_name}}. I've got {{full_name}} on the line. [One sentence on what they want and anything important they told you.] Want me to put them through?";
+
+/** Handing a phone call to a person on the team. */
+function TransferSettings({ draft, set }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void }) {
+  const mode = draft.transfer_mode ?? "cold";
+  return (
+    <Card className="space-y-4 p-4">
+      <Field label="Transfer to a person (phone calls)" hint="Phone calls only; browser tests can’t transfer. Enter a full number, e.g. +14155550123.">
+        <Input value={draft.transfer_number} onChange={(e) => set("transfer_number", e.target.value.trim())} placeholder="+14155550123" />
+      </Field>
+      {draft.transfer_number && (
+        <>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {TRANSFER_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => set("transfer_mode", o.value)}
+                aria-pressed={mode === o.value}
+                className={cn(
+                  "rounded-xl border p-3 text-left transition-colors",
+                  mode === o.value ? "border-brand-500 bg-brand-50/60 ring-1 ring-brand-500" : "border-zinc-200 hover:border-zinc-300",
+                )}
+              >
+                <div className="text-sm font-medium text-zinc-900">{o.label}</div>
+                <div className="mt-0.5 text-xs text-zinc-500">{o.hint}</div>
+              </button>
+            ))}
+          </div>
+          {mode === "warm" && (
+            <>
+              <Field
+                label="What the agent tells you before connecting"
+                hint="Use {{variables}} like {{full_name}} or {{property_street}}. Put anything the agent should fill in from the call in [brackets]. Leave blank for the default."
+              >
+                <Textarea
+                  rows={3}
+                  value={draft.transfer_handoff ?? ""}
+                  onChange={(e) => set("transfer_handoff", e.target.value)}
+                  placeholder={DEFAULT_HANDOFF}
+                  maxLength={1000}
+                />
+              </Field>
+              <Field label="Ring for" hint="How long to wait for you to pick up before the agent goes back to the caller.">
+                <Select
+                  value={String(draft.transfer_ring_seconds ?? 20)}
+                  onChange={(e) => set("transfer_ring_seconds", Number(e.target.value))}
+                >
+                  {[15, 20, 25, 30].map((s) => (
+                    <option key={s} value={s}>{s} seconds</option>
+                  ))}
+                </Select>
+              </Field>
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
 
 /** What a phone call does when an answering machine picks up. */
 function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void }) {

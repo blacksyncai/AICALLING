@@ -68,12 +68,18 @@ def agent_to_runtime(agent, *, secrets: bool = False) -> dict:
         "calendar_timezone": getattr(agent, "calendar_timezone", None) or "",
         "calcom_key_set": bool(getattr(agent, "calcom_api_key_enc", None)),
         "transfer_number": agent.transfer_number or "",
+        "transfer_mode": getattr(agent, "transfer_mode", None) or "cold",
+        "transfer_handoff": getattr(agent, "transfer_handoff", None) or "",
+        "transfer_ring_seconds": getattr(agent, "transfer_ring_seconds", None) or 0,
         "voicemail_action": getattr(agent, "voicemail_action", None) or "hang_up",
         "voicemail_message": getattr(agent, "voicemail_message", None) or "",
         "screener_action": getattr(agent, "screener_action", None) or "answer",
         "max_duration_seconds": agent.max_duration_seconds or 600,
         "ai_disclosure": getattr(agent, "ai_disclosure", None) is not False,
         "business_name": (getattr(agent, "builder", None) or {}).get("business_name") or "",
+        # The name the agent goes by on calls ("Sofia"), for the warm-transfer handoff.
+        "persona_name": (getattr(agent, "builder", None) or {}).get("persona")
+        or (agent.name or "").split("·")[-1].strip(),
     }
     if secrets:
         from app.services.secret_store import decrypt_value
@@ -214,9 +220,16 @@ def _tools_block(cfg: dict, channel: str) -> str:
                      "unclear, ask them to spell that part. Never guess an email.")
     transfer = bool(cfg.get("transfer_number")) and channel == "phone"
     if transfer:
-        lines.append("- transfer_call(): connects them to a person on the team. Use it when they ask for a person or "
-                     "your instructions say to transfer — don't ask again if they already asked. In the same reply, say one "
-                     "short line like \"Sure, connecting you now.\" If it fails, say so and offer a callback.")
+        if cfg.get("transfer_mode") == "warm":
+            lines.append("- transfer_call(): puts them on a short hold while you call a person on the team and brief them, "
+                         "then connects them. Use it when they ask for a person or your instructions say to transfer — "
+                         "don't ask again if they already asked. In the same reply, say one short line like \"Sure, let me "
+                         "grab someone for you — one sec.\" If the tool says nobody took the call, follow what it says: "
+                         "stay on the line with them and set up the next step. Never end the call because a transfer didn't connect.")
+        else:
+            lines.append("- transfer_call(): connects them to a person on the team. Use it when they ask for a person or "
+                         "your instructions say to transfer — don't ask again if they already asked. In the same reply, say one "
+                         "short line like \"Sure, connecting you now.\" If it fails, say so and offer a callback.")
     cant = ["send texts or emails", "take payments"]
     if not cfg.get("enable_booking"):
         cant.append("book appointments")
