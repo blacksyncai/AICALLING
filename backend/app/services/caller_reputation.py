@@ -13,6 +13,8 @@ from app.services import plivo
 
 log = structlog.get_logger(__name__)
 SWEEP_SECONDS = 1800
+DELAY_SECONDS = 5  # let the purchase settle before registering
+_PENDING: set[asyncio.Task] = set()  # keep post-purchase tasks referenced so they can't be dropped mid-run
 
 
 def _now() -> datetime:
@@ -60,7 +62,7 @@ def register_soon(number_id) -> None:
     """Right after a purchase/import: register the new number without waiting for the next sweep."""
     async def go() -> None:
         try:
-            await asyncio.sleep(5)
+            await asyncio.sleep(DELAY_SECONDS)
             profile = await plivo.reputation_profile()
             if not profile:
                 log.warning("caller_reputation_no_approved_profile", number_id=str(number_id))
@@ -71,7 +73,9 @@ def register_soon(number_id) -> None:
                     await db.commit()
         except Exception as exc:
             log.warning("caller_reputation_register_failed", error=str(exc)[:200])
-    asyncio.create_task(go())
+    task = asyncio.create_task(go())
+    _PENDING.add(task)
+    task.add_done_callback(_PENDING.discard)
 
 
 def start_sweeper() -> asyncio.Task:

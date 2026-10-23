@@ -60,3 +60,37 @@ def test_profile_lookup_matches_plivos_real_list_shape(monkeypatch):
             {'profile_uuid': 'd23f7e75', 'enable_caller_reputation': None, 'caller_reputation_status': 'APPROVED'}]}
     monkeypatch.setattr(plivo, '_request', fake)
     assert asyncio.run(plivo.reputation_profile()) == 'd23f7e75'
+
+
+def test_new_number_registers_right_after_purchase(client, monkeypatch):
+    """The real post-purchase path: register_soon -> profile lookup -> attach -> status saved."""
+    org_id = uuid.UUID(client.get('/api/auth/me').json()['org']['id'])
+    number = f'+1512{uuid.uuid4().int % 10_000_000:07d}'
+    calls = []
+
+    async def fake(method, path, **kw):
+        calls.append((method, path, kw.get('json')))
+        if path == 'Profile/':
+            return {'profiles': [{'profile_uuid': 'prof-9', 'enable_caller_reputation': None,
+                                  'caller_reputation_status': 'APPROVED'}]}
+        if method == 'GET':
+            return {'number': number[1:], 'caller_reputation_status': None, 'caller_reputation_by_carrier': None}
+        return {'caller_reputation_status': 'PENDING',
+                'caller_reputation_by_carrier': {'at&t': {'status': 'PENDING'}, 't-mobile': {'status': 'PENDING'}}}
+    monkeypatch.setattr(plivo, '_request', fake)
+    monkeypatch.setattr(caller_reputation, 'DELAY_SECONDS', 0)
+
+    async def go():
+        async with AsyncSessionLocal() as db:
+            row = PhoneNumber(org_id=org_id, number=number, status='active', source='purchased', carrier='plivo')
+            db.add(row)
+            await db.commit()
+            caller_reputation.register_soon(row.id)
+        for _ in range(50):
+            if not caller_reputation._PENDING:
+                break
+            await asyncio.sleep(0.05)
+    asyncio.run(go())
+    assert ('POST', f'Number/{number[1:]}/', {'caller_reputation': 'enabled', 'profile_uuid': 'prof-9'}) in calls
+    row = next(n for n in client.get('/api/phone-numbers').json()['numbers'] if n['number'] == number)
+    assert row['spam_protection']['status'] == 'PENDING'
