@@ -49,3 +49,14 @@ def test_sweep_registers_new_plivo_numbers_and_shows_progress(client, monkeypatc
     assert not any(n == number for n, _ in enabled)  # already attached: only re-read
     rows = {n['number']: n for n in client.get('/api/phone-numbers').json()['numbers']}
     assert rows[number]['spam_protection']['status'] == 'ACTIVE'
+
+
+def test_profile_lookup_matches_plivos_real_list_shape(monkeypatch):
+    # Plivo's GET Profile/ list omits enable_caller_reputation (seen in production): match on status.
+    async def fake(method, path, **kw):
+        assert (method, path) == ('GET', 'Profile/')
+        return {'api_id': 'x', 'meta': {}, 'profiles': [
+            {'profile_uuid': 'pending-one', 'enable_caller_reputation': None, 'caller_reputation_status': 'PENDING'},
+            {'profile_uuid': 'd23f7e75', 'enable_caller_reputation': None, 'caller_reputation_status': 'APPROVED'}]}
+    monkeypatch.setattr(plivo, '_request', fake)
+    assert asyncio.run(plivo.reputation_profile()) == 'd23f7e75'

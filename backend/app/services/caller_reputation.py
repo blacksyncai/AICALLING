@@ -42,6 +42,8 @@ async def sweep() -> int:
     except plivo.PlivoError as exc:
         log.warning("caller_reputation_profile_failed", error=str(exc)[:200])
         return 0
+    if not profile:
+        log.warning("caller_reputation_no_approved_profile")
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(select(PhoneNumber).where(PhoneNumber.status == "active",
                                                            PhoneNumber.carrier == "plivo"))).scalars().all()
@@ -60,6 +62,8 @@ def register_soon(number_id) -> None:
         try:
             await asyncio.sleep(5)
             profile = await plivo.reputation_profile()
+            if not profile:
+                log.warning("caller_reputation_no_approved_profile", number_id=str(number_id))
             async with AsyncSessionLocal() as db:
                 row = await db.get(PhoneNumber, number_id)
                 if row and row.carrier == "plivo" and row.status == "active":

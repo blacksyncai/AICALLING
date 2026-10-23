@@ -95,9 +95,11 @@ async def release(sid: str) -> None:
 
 async def reputation_profile() -> str:
     """UUID of the account's Profile that carriers approved for Caller Reputation ("" if none yet)."""
+    # The list response has no enable_caller_reputation field, only the status; APPROVED means at
+    # least one carrier approved the business, which is what attaching numbers requires.
     data = await _request("GET", "Profile/")
     for p in data.get("profiles") or data.get("objects") or []:
-        if p.get("enable_caller_reputation") and p.get("caller_reputation_status") == "APPROVED":
+        if p.get("caller_reputation_status") == "APPROVED":
             return str(p.get("profile_uuid") or "")
     return ""
 
