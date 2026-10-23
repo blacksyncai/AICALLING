@@ -1,15 +1,16 @@
-"""Thin async wrapper around the Helcim API v1.
+"""Helcim API v2 (https://devdocs.helcim.com) for Canadian/other customers' one-time purchases.
 
-Canadian/other customers pay through Helcim instead of Stripe. Only one-time
-purchases (credit packs, lookup funds) route here; subscriptions stay on Stripe.
-
-The API key never leaves the backend. Helcim API v1 authenticates per-request
-with an Api-Key header containing "{apiKeyId}:{apiKeySecret}".
+Flow (HelcimPay.js): the backend initializes a checkout and gets a checkoutToken (shown to the
+browser, which opens Helcim's payment modal) and a secretToken (kept server-side). When the modal
+reports success, the browser posts the transaction data back; we confirm it against the
+secretToken hash and Helcim's own record of the transaction before granting anything.
+The API token never leaves the backend.
 """
 from __future__ import annotations
 
-import asyncio
-from functools import partial
+import hashlib
+import hmac
+import json
 
 import httpx
 import structlog
@@ -18,10 +19,15 @@ from app.config import settings
 
 log = structlog.get_logger(__name__)
 
-API_BASE = "https://api.helcim.com/api/v1"
+API_BASE = "https://api.helcim.com/v2"
+CURRENCY = "USD"  # our prices are USD and the Helcim account settles in USD
 
 
 class HelcimNotConfigured(RuntimeError):
+    pass
+
+
+class HelcimError(RuntimeError):
     pass
 
 
@@ -29,104 +35,57 @@ def ready() -> bool:
     return bool(settings.helcim_api_key)
 
 
-def _auth_header() -> str:
-    key = settings.helcim_api_key
-    if not key:
-        raise HelcimNotConfigured("Helcim isn't configured yet.")
-    return key
-
-
-async def _run(fn, *args, **kwargs):
-    return await asyncio.to_thread(partial(fn, *args, **kwargs))
-
-
-async def _request(method: str, path: str, *, json: dict | None = None) -> dict:
+async def _request(method: str, path: str, *, json_body: dict | None = None) -> dict | list:
     if not ready():
         raise HelcimNotConfigured("Helcim isn't configured yet.")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
         resp = await client.request(
-            method, f"{API_BASE}{path}",
-            headers={"Api-Key": _auth_header(), "Accept": "application/json"},
-            json=json,
+            method, f"{API_BASE}{path}", json=json_body,
+            headers={"api-token": settings.helcim_api_key, "accept": "application/json",
+                     "content-type": "application/json"},
         )
-        resp.raise_for_status()
-        if not resp.content:
-            return {}
-        return resp.json()
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except ValueError:
+            detail = resp.text[:200]
+        log.warning("helcim_api_error", path=path, status=resp.status_code, detail=str(detail)[:300])
+        raise HelcimError(f"Helcim error (HTTP {resp.status_code}).")
+    return resp.json() if resp.content else {}
 
 
-async def verify_gateway() -> dict | None:
-    """Confirm the key works (and capture the default gateway id). Returns None when not configured."""
+async def connection_test() -> bool:
     try:
-        data = await _request("GET", "/configuration")
-        return data
-    except HelcimNotConfigured:
-        return None
-    except Exception as exc:
-        log.warning("helcim_verify_failed", error=str(exc)[:200])
-        return None
+        await _request("GET", "/connection-test")
+        return True
+    except (HelcimNotConfigured, HelcimError, httpx.HTTPError):
+        return False
 
 
-async def create_invoice_checkouts(*, amount_cents: int, currency: str, order_number: str,
-                                   customer_name: str, customer_email: str | None,
-                                   checkout_return_url: str, checkout_cancel_url: str,
-                                   metadata: dict) -> dict:
-    """A hosted-payment checkout for a one-time amount.
-
-    Returns Helcim's response including the checkout URL. On success Helcim
-    redirects the customer to checkout_return_url with a hash we verify in the
-    webhook/return handling.
-    """
-    body = {
-        "amount": f"{amount_cents / 100:.2f}",
-        "currency": currency,
-        "orderNumber": order_number,
-        "checkoutReturnUrl": checkout_return_url,
-        "checkoutCancelUrl": checkout_cancel_url,
-        "customerName": customer_name,
-        "customerEmail": customer_email or "",
-        "metadata": metadata,
-    }
-    return await _request("POST", "/configuration/invoice-checkouts", json=body)
+async def initialize_checkout(*, amount_cents: int) -> dict:
+    """A HelcimPay.js purchase session. Returns {"checkoutToken", "secretToken"} (valid 60 minutes)."""
+    data = await _request("POST", "/helcim-pay/initialize", json_body={
+        "paymentType": "purchase", "amount": round(amount_cents / 100, 2), "currency": CURRENCY,
+    })
+    if not isinstance(data, dict) or not data.get("checkoutToken") or not data.get("secretToken"):
+        raise HelcimError("Helcim didn't return a checkout.")
+    return data
 
 
-async def get_invoice_checkout(checkout_id: str) -> dict:
-    """Poll a checkout's status server-side (used to verify completion)."""
-    return await _request("GET", f"/invoice-checkouts/{checkout_id}")
+async def get_transaction(transaction_id: str | int) -> dict:
+    data = await _request("GET", f"/card-transactions/{int(transaction_id)}")
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return data
 
 
-async def create_recurring_payment(*, amount_cents: int, currency: str, order_number: str,
-                                   customer_name: str, customer_email: str | None,
-                                   frequency: str, billing_date: str,
-                                   checkout_return_url: str, checkout_cancel_url: str,
-                                   metadata: dict) -> dict:
-    """A recurring (subscription) charge for plans — CAD/OTHER accounts, USD amounts.
-
-    frequency: "monthly" etc. The first charge runs when the hosted checkout
-    completes; entitlements are granted from the confirmed payment, never the
-    browser redirect. NOTE: endpoint shape verified against Helcim API v1
-    docs; isolate changes here.
-    """
-    body = {
-        "amount": f"{amount_cents / 100:.2f}",
-        "currency": currency,
-        "orderNumber": order_number,
-        "recurringFrequency": frequency,
-        "billingDate": billing_date,
-        "checkoutReturnUrl": checkout_return_url,
-        "checkoutCancelUrl": checkout_cancel_url,
-        "customerName": customer_name,
-        "customerEmail": customer_email or "",
-        "metadata": metadata,
-    }
-    return await _request("POST", "/recurring-payments", json=body)
-
-
-async def get_recurring_payment(recurring_id: str) -> dict:
-    """Poll a recurring payment's status server-side."""
-    return await _request("GET", f"/recurring-payments/{recurring_id}")
-
-
-async def cancel_recurring_payment(recurring_id: str) -> dict:
-    """Stop a recurring plan charge (customer cancels/downgrades)."""
-    return await _request("POST", f"/recurring-payments/{recurring_id}/cancel", json={})
+def hash_matches(data: dict, secret_token: str, given_hash: str) -> bool:
+    """HelcimPay.js integrity check: sha256(JSON-encoded transaction data + secretToken) == hash.
+    Helcim's samples encode compactly (PHP's json_encode escapes "/" and non-ASCII); accept either."""
+    if not (secret_token and given_hash):
+        return False
+    variants = {json.dumps(data, separators=(",", ":"), ensure_ascii=False),
+                json.dumps(data, separators=(",", ":")),
+                json.dumps(data, separators=(",", ":")).replace("/", "\\/")}
+    return any(hmac.compare_digest(hashlib.sha256((v + secret_token).encode()).hexdigest(), given_hash)
+               for v in variants)

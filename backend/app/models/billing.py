@@ -76,6 +76,8 @@ class Purchase(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    # Helcim (CA/OTHER): the HelcimPay.js secretToken for this checkout. Server-only; never returned.
+    provider_secret: Mapped[str | None] = mapped_column(String(256), nullable=True)
     refunded_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # What a refund/dispute couldn't take back because it was already used.
     unrecovered: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

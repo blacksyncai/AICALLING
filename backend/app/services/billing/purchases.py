@@ -92,9 +92,9 @@ async def _checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, 
 
 
 # ── Helcim (Canadian/other customers) ─────────────────────────────────────────
-# One-time purchases only; subscriptions stay on Stripe. The purchase row is
-# created up front (status pending) and fulfilled only when Helcim confirms the
-# payment server-side — never from the browser returning from the hosted page.
+# One-time purchases (credit packs, lookup funds) only; plans stay on Stripe. The purchase row is
+# created up front (pending) with a HelcimPay.js session; it's fulfilled only after confirm_helcim()
+# checks the payment against the session's secret and Helcim's own transaction record.
 
 def uses_helcim(org: Organization) -> bool:
     """Canadian/other accounts pay through Helcim when it's configured."""
@@ -102,58 +102,61 @@ def uses_helcim(org: Organization) -> bool:
 
 
 async def _helcim_checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, kind: str, item: dict,
-                           credits_n: int, return_path: str) -> str:
-    """Create a pending purchase and a Helcim hosted checkout for it. Returns the checkout URL."""
+                           credits_n: int) -> dict:
+    """A pending purchase plus a HelcimPay.js session. Returns what the browser needs to open the modal."""
     purchase = Purchase(org_id=org.id, kind=kind, pack_key=item["key"], amount_cents=item["amount_cents"],
-                        currency="cad", credits=credits_n, status="pending", created_by=user_id)
+                        currency="usd", credits=credits_n, status="pending", created_by=user_id)
     db.add(purchase)
     await db.flush()
-    owner = (await db.execute(
-        select(User.email).join(Membership, Membership.user_id == User.id)
-        .where(Membership.org_id == org.id, Membership.role == "owner").limit(1)
-    )).scalar_one_or_none()
-    meta = {"org_id": str(org.id), "purchase_id": str(purchase.id), "purchase_type": kind, "pack": item["key"]}
-    checkout = await helcim_api.create_invoice_checkouts(
-        amount_cents=item["amount_cents"], currency="cad",
-        order_number=f"BS-{purchase.id.hex[:12].upper()}",
-        customer_name=org.name, customer_email=owner,
-        checkout_return_url=app_url(f"{return_path}?checkout=success&purchase={purchase.id}"),
-        checkout_cancel_url=app_url(f"{return_path}?checkout=canceled"),
-        metadata=meta,
-    )
-    url = (checkout.get("checkoutUrl") or (checkout.get("data") or {}).get("checkoutUrl")
-           or (checkout.get("invoiceCheckout") or {}).get("checkoutUrl"))
-    if not url:
-        raise BillingError("Helcim didn't return a checkout URL.")
-    purchase.stripe_checkout_session_id = f"helcim:{(checkout.get('id') or (checkout.get('data') or {}).get('id') or '')}"
+    try:
+        session = await helcim_api.initialize_checkout(amount_cents=item["amount_cents"])
+    except helcim_api.HelcimError as exc:
+        raise BillingError("Couldn't start the payment. Try again in a moment.", 502) from exc
+    purchase.stripe_checkout_session_id = f"helcim:{session['checkoutToken']}"[:128]
+    purchase.provider_secret = session["secretToken"]
     await db.commit()
     log.info("helcim_checkout_created", org_id=str(org.id), kind=kind, item=item["key"], purchase_id=str(purchase.id))
-    return url
+    return {"helcim": {"checkout_token": session["checkoutToken"], "purchase_id": str(purchase.id)}}
 
 
-async def _helcim_plan_checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, plan_key: str) -> str:
-    """Start a plan subscription through Helcim recurring payments (CA/OTHER accounts, USD)."""
-    plan = catalog.PLANS[plan_key]
-    from datetime import date
-    owner = (await db.execute(
-        select(User.email).join(Membership, Membership.user_id == User.id)
-        .where(Membership.org_id == org.id, Membership.role == "owner").limit(1)
-    )).scalar_one_or_none()
-    checkout = await helcim_api.create_recurring_payment(
-        amount_cents=plan["amount_cents"], currency="usd",
-        order_number=f"BS-PLAN-{org.id.hex[:10].upper()}",
-        customer_name=org.name, customer_email=owner,
-        frequency="monthly", billing_date=date.today().strftime("%Y-%m-%d"),
-        checkout_return_url=app_url(f"/billing?tab=plans&checkout=success&helcim_plan={plan_key}"),
-        checkout_cancel_url=app_url("/billing?tab=plans&checkout=canceled"),
-        metadata={"org_id": str(org.id), "purchase_type": "plan", "plan": plan_key},
-    )
-    url = (checkout.get("checkoutUrl") or (checkout.get("data") or {}).get("checkoutUrl")
-           or (checkout.get("recurringPayment") or {}).get("checkoutUrl"))
-    if not url:
-        raise BillingError("Helcim didn't return a checkout URL.")
-    log.info("helcim_plan_checkout_created", org_id=str(org.id), plan=plan_key)
-    return url
+async def confirm_helcim(db: AsyncSession, org: Organization, purchase_id: uuid.UUID, data: dict) -> str:
+    """The HelcimPay.js modal reported a payment. Grant it only if (1) the hash proves the data came
+    from this checkout session, and (2) Helcim's API shows that transaction approved for this amount,
+    and (3) that transaction hasn't paid for another purchase. Returns the purchase status."""
+    p = await db.get(Purchase, purchase_id)
+    if p is None or p.org_id != org.id or not (p.stripe_checkout_session_id or "").startswith("helcim:"):
+        raise BillingError("Purchase not found.", 404)
+    if p.status == "paid":
+        return "paid"
+    txn_data = data.get("data") if isinstance(data.get("data"), dict) else data
+    given_hash = str(data.get("hash") or txn_data.get("hash") or "")
+    unsigned = {k: v for k, v in txn_data.items() if k != "hash"}
+    txn_id = str(txn_data.get("transactionId") or "")
+    if not txn_id.isdigit():
+        raise BillingError("The payment response was incomplete.", 400)
+    # A hash mismatch is usually JSON-encoding drift, not fraud: fall through to Helcim's own record
+    # (approved, right amount, never applied), which is what actually proves the payment.
+    if not helcim_api.hash_matches(unsigned, p.provider_secret or "", given_hash):
+        log.warning("helcim_hash_mismatch", purchase_id=str(p.id), transaction_id=txn_id)
+    try:
+        txn = await helcim_api.get_transaction(txn_id)
+    except helcim_api.HelcimError as exc:
+        raise BillingError("Couldn't confirm the payment with Helcim yet. Refresh in a minute.", 502) from exc
+    approved = str(txn.get("status") or "").upper() == "APPROVED" and str(txn.get("type") or "").lower() == "purchase"
+    amount_ok = abs(float(txn.get("amount") or 0) - p.amount_cents / 100) < 0.005
+    currency_ok = str(txn.get("currency") or helcim_api.CURRENCY).upper() == helcim_api.CURRENCY
+    if not (approved and amount_ok and currency_ok):
+        log.error("helcim_transaction_mismatch", purchase_id=str(p.id), transaction_id=txn_id,
+                  status=txn.get("status"), amount=txn.get("amount"), currency=txn.get("currency"))
+        raise BillingError("That payment wasn't approved for this amount.", 402)
+    ref = f"helcim:txn:{txn_id}"
+    used = (await db.execute(select(Purchase.id).where(Purchase.stripe_payment_intent_id == ref,
+                                                       Purchase.id != p.id))).first()
+    if used:
+        raise BillingError("That payment was already applied.", 409)
+    await fulfill_helcim_purchase(db, p.id, org_id=org.id, helcim_ref=ref)
+    await db.commit()
+    return "paid"
 
 
 async def fulfill_helcim_purchase(db: AsyncSession, purchase_id: uuid.UUID, *, org_id: uuid.UUID,
@@ -208,7 +211,7 @@ async def pack_access(db: AsyncSession, org: Organization) -> dict:
             "reason": None if left else TRIAL_PACK_USED}
 
 
-async def checkout_credit_pack(db: AsyncSession, org: Organization, user_id: uuid.UUID, pack_key: str) -> str:
+async def checkout_credit_pack(db: AsyncSession, org: Organization, user_id: uuid.UUID, pack_key: str) -> str | dict:
     pack = catalog.CREDIT_PACKS.get(pack_key)
     if not pack:
         raise BillingError("Unknown credit pack.")
@@ -216,8 +219,7 @@ async def checkout_credit_pack(db: AsyncSession, org: Organization, user_id: uui
     if not access["allowed"]:
         raise BillingError(access["reason"], 402)
     if uses_helcim(org):
-        return await _helcim_checkout(db, org, user_id, kind="credit_pack", item=pack,
-                                      credits_n=pack["credits"], return_path="/billing")
+        return await _helcim_checkout(db, org, user_id, kind="credit_pack", item=pack, credits_n=pack["credits"])
     try:
         price = await catalog.sellable_price(pack_key)
     except catalog.NotSellable as exc:
@@ -226,13 +228,13 @@ async def checkout_credit_pack(db: AsyncSession, org: Organization, user_id: uui
                            credits_n=pack["credits"], return_path="/billing")
 
 
-async def checkout_lookup_funds(db: AsyncSession, org: Organization, user_id: uuid.UUID, key: str) -> str:
+async def checkout_lookup_funds(db: AsyncSession, org: Organization, user_id: uuid.UUID, key: str) -> str | dict:
     item = catalog.LOOKUP_FUNDS.get(key)
     if not item:
         raise BillingError("Unknown amount.")
     if uses_helcim(org):
         return await _helcim_checkout(db, org, user_id, kind="lookup_funds", item=item,
-                                      credits_n=catalog.lookup_grant_cents(item), return_path="/billing")
+                                      credits_n=catalog.lookup_grant_cents(item))
     try:
         price = await catalog.sellable_price(key)
     except catalog.NotSellable as exc:
@@ -255,8 +257,6 @@ async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID,
     sub = await db.get(BillingSubscription, org.id)
     if sub and sub.status in ("active", "trialing", "past_due", "incomplete"):
         raise BillingError("This account already has a subscription — change plans instead.", 409)
-    if uses_helcim(org):
-        return await _helcim_plan_checkout(db, org, user_id, plan_key=plan_key)
     try:
         price = await catalog.sellable_price(plan_key)
     except catalog.NotSellable as exc:

@@ -3,12 +3,13 @@
 import { Gift, UserSearch } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import useSWR from "swr";
+import useSWR, { mutate } from "swr";
 import { useToast } from "@/components/toast";
 import { Notice, Spinner } from "@/components/ui";
 import { Card, CardHeader, emptyCls, listCls, rowCls } from "./surface";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
+import { type CheckoutResult, startCheckout } from "@/lib/helcim";
 import { CountryPopup } from "./CountryPopup";
 import { cn } from "@/lib/utils";
 import { type Catalog, type LookupStatus, fmtDateTime, usd } from "./types";
@@ -40,7 +41,13 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
     }
     setBusy(key);
     try {
-      window.location.href = (await post<{ url: string }>("/api/billing/lookups/checkout", { amount: key })).url;
+      const res = await startCheckout(await post<CheckoutResult>("/api/billing/lookups/checkout", { amount: key }));
+      if (res === "redirect") return;
+      if (res) {
+        toast("Payment received. Funds added.", "success");
+        mutate("/api/billing/lookups");
+      }
+      setBusy(null);
     } catch (e) {
       toast((e as Error).message, "error");
       setBusy(null);

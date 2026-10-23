@@ -3,11 +3,12 @@
 import { Coins, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import useSWR from "swr";
+import useSWR, { mutate } from "swr";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Field, Input, Notice, Select, Spinner, Toggle } from "@/components/ui";
 import { Card, CardHeader, emptyCls, listCls, rowCls } from "./surface";
 import { fetcher, post, put } from "@/lib/api";
+import { type CheckoutResult, startCheckout } from "@/lib/helcim";
 import { PillBadge, PricingButton, PricingCard, PricingHeading } from "@/components/ui/pricing";
 import { cn } from "@/lib/utils";
 import { type AutoRechargeCfg, type Catalog, type CreditBreakdown, type LedgerRow, fmtDate, fmtDateTime, usd } from "./types";
@@ -50,7 +51,14 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
     }
     setBuying(pack);
     try {
-      window.location.href = (await post<{ url: string }>("/api/billing/credits/checkout", { pack })).url;
+      const res = await startCheckout(await post<CheckoutResult>("/api/billing/credits/checkout", { pack }));
+      if (res === "redirect") return;
+      if (res) {
+        toast("Payment received. Credits added.", "success");
+        mutate("/api/billing/credits");
+        mutate("/api/billing/catalog");
+      }
+      setBuying(null);
     } catch (e) {
       toast((e as Error).message, "error");
       setBuying(null);

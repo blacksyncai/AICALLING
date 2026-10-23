@@ -299,7 +299,7 @@ async def credits_page(ctx: CtxDep, db: DbDep, limit: int = 50):
 @router.post("/credits/checkout")
 async def credits_checkout(body: PackIn, ctx: ManagerDep, db: DbDep):
     url = await _guard(purchases.checkout_credit_pack(db, ctx.org, ctx.user.id, body.pack))
-    return {"url": url}
+    return url if isinstance(url, dict) else {"url": url}
 
 
 @router.get("/purchases/{purchase_id}")
@@ -361,7 +361,7 @@ async def lookups_page(ctx: CtxDep, db: DbDep):
 @router.post("/lookups/checkout")
 async def lookups_checkout(body: FundsIn, ctx: ManagerDep, db: DbDep):
     url = await _guard(purchases.checkout_lookup_funds(db, ctx.org, ctx.user.id, body.amount))
-    return {"url": url}
+    return url if isinstance(url, dict) else {"url": url}
 
 
 # ── Invoices & payment methods ────────────────────────────────────────────────
@@ -417,73 +417,17 @@ async def set_billing_country(body: BillingCountryIn, ctx: ManagerDep, db: DbDep
     return {"country": body.country}
 
 
-# ── Helcim checkout return: verify server-side, then fulfill ──────────────────
+# ── Helcim (HelcimPay.js): the modal reports the payment, we verify it with Helcim ─
 
-@router.get("/helcim/return")
-async def helcim_return(purchase: str, checkout: str, ctx: ManagerDep, db: DbDep):
-    """The browser returns from Helcim's hosted page. We do NOT trust this redirect:
-    the purchase is fulfilled only after confirming status directly with Helcim's API."""
-    if checkout != "success":
-        return {"status": checkout}
-    try:
-        pid = uuid.UUID(purchase)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Unknown purchase")
-    p = await db.get(Purchase, pid)
-    if p is None or p.org_id != ctx.org.id:
-        raise HTTPException(status_code=404, detail="Purchase not found")
-    if p.status == "paid":
-        return {"status": "paid"}
-    session_id = (p.stripe_checkout_session_id or "").removeprefix("helcim:")
-    if not session_id:
-        return {"status": "pending"}
-    try:
-        data = await helcim_api.get_invoice_checkout(session_id)
-    except Exception as exc:
-        log.warning("helcim_return_verify_failed", purchase=pid, error=str(exc)[:200])
-        return {"status": "pending"}
-    status = (data.get("status") or (data.get("invoiceCheckout") or {}).get("status") or "").lower()
-    if status in ("paid", "completed", "complete"):
-        await purchases.fulfill_helcim_purchase(db, pid, org_id=ctx.org.id, helcim_ref=session_id)
-        await db.commit()
-        return {"status": "paid"}
-    return {"status": status or "pending"}
+class HelcimConfirmIn(BaseModel):
+    purchase_id: uuid.UUID
+    data: dict
 
 
-@router.post("/helcim/webhook")
-async def helcim_webhook(request: Request, db: DbDep):
-    """Helcim webhook: payment completed. Until HELCIM_WEBHOOK_SECRET is set we
-    verify via Helcim's API before fulfilling, so a spoofed call cannot grant credits."""
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid payload")
-    meta = body.get("metadata") or {}
-    try:
-        pid = uuid.UUID(str(meta.get("purchase_id") or ""))
-    except (TypeError, ValueError):
-        pid = None
-    event = body.get("event") or body.get("type") or ""
-    if not pid or event not in ("payment.completed", "invoice.paid", "recurring.payment.completed"):
-        log.info("helcim_webhook_ignored", event=event)
-        return {"received": True}
-    p = await db.get(Purchase, pid)
-    if p is None or p.status == "paid":
-        return {"received": True}
-    session_id = (p.stripe_checkout_session_id or "").removeprefix("helcim:")
-    try:
-        if session_id:
-            data = await helcim_api.get_invoice_checkout(session_id)
-            status = (data.get("status") or (data.get("invoiceCheckout") or {}).get("status") or "").lower()
-            if status not in ("paid", "completed", "complete"):
-                return {"received": True, "verified": False}
-    except Exception as exc:
-        log.warning("helcim_webhook_verify_failed", purchase=pid, error=str(exc)[:200])
-        return {"received": True, "verified": False}
-    await purchases.fulfill_helcim_purchase(db, pid, org_id=p.org_id, helcim_ref=session_id)
-    await db.commit()
-    log.info("helcim_webhook_fulfilled", purchase=str(pid))
-    return {"received": True}
+@router.post("/helcim/confirm")
+async def helcim_confirm(body: HelcimConfirmIn, ctx: ManagerDep, db: DbDep):
+    status = await _guard(purchases.confirm_helcim(db, ctx.org, body.purchase_id, body.data))
+    return {"status": status}
 
 
 # ── Stripe webhook ────────────────────────────────────────────────────────────
