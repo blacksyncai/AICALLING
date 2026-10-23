@@ -831,6 +831,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     hangup=lambda: _delete_room(ctx.room.name),
                     report=lambda: _post_run_outcome(run, run.outcome or outcome))
             else:
+                from app.agent.voicemail_timing import wait_for_voicemail_minimum as _min_wait
+                await _min_wait(run.t0, cfg.get("voice_tuning"))  # never under 7 s connected
                 await _delete_room(ctx.room.name)
         _keep(asyncio.create_task(_go()))
 
@@ -1195,6 +1197,7 @@ async def _draft_opening(cfg: dict, variables: dict) -> str:
 
 
 async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
+    from app.agent.voicemail_timing import wait_for_voicemail_minimum
     import time as _time
     from app.agent.models import llm_endpoint
     from app.agent.runtime import build_instructions, render_vars
@@ -1734,6 +1737,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                     log.info("screener_timeout", room=ctx.room.name)
                     run.outcome = run.outcome or "screened"
                     _mark_ended()
+                    await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))
                     await _delete_room(ctx.room.name)
                     return
                 silence["since"] = _time.monotonic()
@@ -1758,6 +1762,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 run.transcript.append({"role": "tool", "tool": "end_call", "args": {"reason": "silence"},
                                        "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
                 _mark_ended()
+                await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))  # never under 7 s connected
                 await _delete_room(ctx.room.name)
                 return
 

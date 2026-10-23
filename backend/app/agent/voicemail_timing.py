@@ -1,9 +1,13 @@
-"""Minimum connected duration for agent-initiated voicemail hangups."""
+"""Minimum connected duration for every agent-initiated hangup.
+
+Carriers surcharge calls that connect for under ~6 seconds, so the agent never ends a call before
+MIN_CONNECTED_FLOOR seconds after pickup, whatever an agent's saved setting says."""
 import asyncio
 import math
 import time
 
-DEFAULT_MIN_CONNECTED_SECONDS = 6.2
+MIN_CONNECTED_FLOOR = 7.0
+DEFAULT_MIN_CONNECTED_SECONDS = MIN_CONNECTED_FLOOR
 
 
 def minimum_connected_seconds(raw):
@@ -12,7 +16,7 @@ def minimum_connected_seconds(raw):
         value = float(value)
     except (ValueError, TypeError):
         return DEFAULT_MIN_CONNECTED_SECONDS
-    return min(60.0, max(0.0, value)) if math.isfinite(value) else DEFAULT_MIN_CONNECTED_SECONDS
+    return min(60.0, max(MIN_CONNECTED_FLOOR, value)) if math.isfinite(value) else DEFAULT_MIN_CONNECTED_SECONDS
 
 
 async def wait_for_voicemail_minimum(connected_at, tuning, *, clock=time.monotonic, sleep=asyncio.sleep):

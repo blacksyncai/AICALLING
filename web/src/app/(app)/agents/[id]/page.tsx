@@ -865,10 +865,10 @@ function VoicemailSettings({ draft, set }: { draft: Agent; set: <K extends keyof
         ))}
       </div>
       {action !== "ignore" && (
-        <Field label="Minimum connected time (seconds)" hint="Wait silently until this much time has passed since answer before ending a voicemail call. Default: 6.2 seconds. Carrier charges still apply.">
-          <Input type="number" min={0} max={60} step={0.1}
-            value={draft.voice_tuning?.voicemail_min_connected_seconds ?? 6.2}
-            onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value)) set("voice_tuning", { ...draft.voice_tuning, voicemail_min_connected_seconds: Math.min(60, Math.max(0, value)) }); }} />
+        <Field label="Minimum connected time (seconds)" hint="The agent never hangs up sooner than this after pickup (minimum 7 seconds), so carriers don't add short-call surcharges.">
+          <Input type="number" min={7} max={60} step={0.1}
+            value={Math.max(7, draft.voice_tuning?.voicemail_min_connected_seconds ?? 7)}
+            onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value)) set("voice_tuning", { ...draft.voice_tuning, voicemail_min_connected_seconds: Math.min(60, Math.max(7, value)) }); }} />
         </Field>
       )}
       {action === "leave_message" && (
