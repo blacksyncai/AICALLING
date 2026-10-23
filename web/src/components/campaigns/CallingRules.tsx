@@ -144,6 +144,7 @@ type Form = {
   number_rotation_enabled: boolean;
   caller_number_pool: string[];
   retry_caller_policy: "same" | "different";
+  max_calls_per_number_day: number;
   warmup_enabled: boolean;
   warmup_min_gap_seconds: number;
   warmup_max_gap_seconds: number;
@@ -160,6 +161,7 @@ function formFrom(c: Campaign): Form {
     number_rotation_enabled: !!c.number_rotation_enabled,
     caller_number_pool: c.caller_number_pool ?? [],
     retry_caller_policy: c.retry_caller_policy ?? "same",
+    max_calls_per_number_day: c.max_calls_per_number_day ?? 75,
     warmup_enabled: !!c.warmup_enabled,
     warmup_min_gap_seconds: c.warmup_min_gap_seconds ?? 180,
     warmup_max_gap_seconds: c.warmup_max_gap_seconds ?? 300,
@@ -327,6 +329,18 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
                   ? "Same number: the contact sees the caller ID they already saw — it feels familiar, like the same person trying again."
                   : "Different number: we switch to the next number in the pool, so the retry looks like a fresh call from a new line."}
               </p>
+              <Field label="Most calls per number per day">
+                <div className="flex items-center gap-2">
+                  <Input type="number" min={5} max={500} value={form.max_calls_per_number_day}
+                    onChange={(e) => setForm((f) => ({ ...f, max_calls_per_number_day: Number(e.target.value) }))}
+                    className="w-24" aria-label="Most calls per number per day" />
+                  <span className="text-xs text-zinc-500">calls in any 24 hours</span>
+                </div>
+              </Field>
+              <p className="-mt-2 text-xs text-zinc-500">
+                A number that reaches it sits out until it&apos;s under again. A number whose pickups fall well below your other
+                numbers (likely labeled spam) rests for 3 days on its own — see Phone Numbers.
+              </p>
             </div>}
           </div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
@@ -421,7 +435,9 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
             description="Dial slowly with pauses so a fresh number doesn't register as spam. Pairs with number rotation." />
           {form.warmup_enabled && <div className="mt-4 space-y-3">
             <p className="text-xs text-zinc-500">
-              One call at a time, a random gap between calls, and a longer rest after a batch.
+              {form.number_rotation_enabled && form.caller_number_pool.length >= 2
+                ? `Each number rests on its own: after a number makes a call it waits the gap below (and the longer rest after its batch), while the next rested number in your rotation dials right away — about ${form.caller_number_pool.length}× the pace of one number.`
+                : "One call at a time, a random gap between calls, and a longer rest after a batch."}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Gap between calls">

@@ -77,6 +77,8 @@ class Campaign(Base):
     warmup_batch_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warmup_rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     caller_rotation_cursor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Rotation: most calls each number may place in a rolling 24 h (NULL = 75).
+    max_calls_per_number_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # ── Counters ──────────────────────────────────────────────────────────────
     total_targets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

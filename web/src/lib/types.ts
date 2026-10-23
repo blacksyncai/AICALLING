@@ -62,6 +62,17 @@ export interface VoiceTuning {
 
 export interface PhoneNumberItem {
   registration?: { status: string; providers: {provider: string; status: string; prerequisite: string; request_id: string | null}[] };
+  /** Last 7 days of outbound calls from this number, and whether it's resting from campaign rotation. */
+  health?: {
+    dials_7d: number;
+    pickups_7d: number;
+    dials_24h: number;
+    pickup_rate: number | null;
+    avg_talk_seconds: number;
+    low_pickups: boolean;
+    resting_until: string | null;
+    rest_reason: string;
+  };
   carrier?: "twilio" | "bandwidth" | "signalwire";
   id: string;
   number: string;
@@ -126,6 +137,7 @@ export interface Campaign {
   warmup_batch_size?: number | null;
   warmup_rest_seconds?: number | null;
   retry_caller_policy?: "same" | "different";
+  max_calls_per_number_day?: number;
   within_calling_hours: boolean;
   next_window_at: string | null;
   pending_retries: number;

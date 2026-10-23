@@ -121,3 +121,80 @@ def test_rechat_has_official_docs_and_no_fake_connector(client):
     assert provider['native'] is False and provider['can_import'] is False
     r=client.post('/api/integrations/crm/rechat/connect',json={'fields':{'api_key':'not-sent'}})
     assert r.status_code==503
+
+
+def _calls(org, cid, number, n, picked, hours_ago=1):
+    from datetime import datetime, timedelta, timezone
+    async def go():
+        async with AsyncSessionLocal() as db:
+            for i in range(n):
+                db.add(CallLog(org_id=org, campaign_id=cid, from_phone=number, call_type='outbound',
+                               status='completed' if i < picked else 'no_answer',
+                               outcome='completed' if i < picked else 'no_answer',
+                               answered_at=datetime.now(timezone.utc) if i < picked else None,
+                               started_at=datetime.now(timezone.utc) - timedelta(hours=hours_ago),
+                               livekit_room_name=str(uuid.uuid4())))
+            await db.commit()
+    run(go())
+
+
+def test_daily_cap_skips_a_number_that_has_dialed_enough(client, pool):
+    org, numbers = pool
+    cid = campaign(client, numbers, max_calls_per_number_day=5)
+    _calls(org, cid, numbers[0], 5, picked=2)
+    picks = {pick(org, cid) for _ in range(4)}
+    assert numbers[0] not in picks and picks == {numbers[1], numbers[2]}
+
+
+def test_low_pickup_number_is_rested_and_can_be_resumed(client, pool):
+    org, numbers = pool
+    cid = campaign(client, numbers, max_calls_per_number_day=500)
+    _calls(org, cid, numbers[0], 25, picked=1, hours_ago=30)   # 4% pickups: likely labeled spam
+    _calls(org, cid, numbers[1], 25, picked=10, hours_ago=30)  # 40%
+    _calls(org, cid, numbers[2], 25, picked=9, hours_ago=30)   # 36%
+    picks = {pick(org, cid) for _ in range(4)}
+    assert numbers[0] not in picks
+    row = next(n for n in client.get('/api/phone-numbers').json()['numbers'] if n['number'] == numbers[0])
+    assert row['health']['low_pickups'] and row['health']['resting_until'] and row['health']['dials_7d'] == 25
+    assert client.post(f"/api/phone-numbers/{row['id']}/resume").status_code == 200
+    row = next(n for n in client.get('/api/phone-numbers').json()['numbers'] if n['number'] == numbers[0])
+    assert row['health']['resting_until'] is None
+
+
+def test_warm_up_rests_each_number_not_the_whole_campaign(client, pool):
+    from app.routers import campaigns as c
+    from app.services import number_health
+    org, numbers = pool
+    cid = campaign(client, numbers)
+    camp = SimpleNamespace(warmup_enabled=True, number_rotation_enabled=True, caller_number_pool=numbers,
+                           warmup_min_gap_seconds=180, warmup_max_gap_seconds=180, warmup_batch_size=10,
+                           warmup_rest_seconds=900)
+    assert c._per_number_pacing(camp)
+    key = str(cid)
+    first = pick(org, cid)
+    c._rest_number(key, camp, first)
+    blocked, free_at = c._pacing_blocked(key)
+    assert blocked == {first} and free_at is not None
+    # The next pick skips the resting number and dials right away from another.
+    async def next_pick():
+        number_health.pacing_blocked.set(blocked)
+        async with AsyncSessionLocal() as db:
+            n = await campaign_caller_id_for(db, org, None, cid, None)
+            await db.commit()
+            return n
+    second = run(next_pick())
+    assert second != first
+    c._rest_number(key, camp, second)
+    blocked, _ = c._pacing_blocked(key)
+    remaining = set(numbers) - blocked
+    assert len(remaining) == 1
+    # All three resting: the pick says when to try again instead of dialing.
+    c._rest_number(key, camp, remaining.pop())
+    blocked, _ = c._pacing_blocked(key)
+    async def all_blocked():
+        number_health.pacing_blocked.set(blocked)
+        async with AsyncSessionLocal() as db:
+            await campaign_caller_id_for(db, org, None, cid, None)
+    with pytest.raises(number_health.CallersResting):
+        run(all_blocked())
+    c._NUMBER_PACE.pop(key, None)

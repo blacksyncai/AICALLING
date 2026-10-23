@@ -25,7 +25,7 @@ from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.services import entitlements, quiet_hours
 from app.services.accounts import InsufficientCredits, ensure_can_call
-from app.services.outbound_call import LeadBusy, CampaignScheduleClosed
+from app.services.outbound_call import CallersResting, LeadBusy, CampaignScheduleClosed
 from app.services.auth import Context, CtxDep, DbDep
 from app.services.contacts import CsvError, parse_contacts_csv
 
@@ -56,6 +56,7 @@ class CallingRules(BaseModel):
     warmup_batch_size: int | None = Field(default=None, ge=1, le=100)
     warmup_rest_seconds: int | None = Field(default=None, ge=60, le=7200)
     retry_caller_policy: str | None = Field(default=None, pattern="^(same|different)$")
+    max_calls_per_number_day: int | None = Field(default=None, ge=5, le=500)
 
 
 class CampaignCreate(CallingRules):
@@ -145,6 +146,7 @@ def calling_rules(c) -> dict:
         "warmup_batch_size": getattr(c, "warmup_batch_size", None) or 10,
         "warmup_rest_seconds": getattr(c, "warmup_rest_seconds", None) or 900,
         "retry_caller_policy": getattr(c, "retry_caller_policy", None) or "same",
+        "max_calls_per_number_day": getattr(c, "max_calls_per_number_day", None) or 75,
     }
 
 
@@ -943,6 +945,37 @@ _QUEUES: dict[str, asyncio.Task] = {}
 
 # Calls placed under warm-up pacing in this process, for batch-rest counting.
 _WARMUP_CALLS: dict = {}
+# Warm-up with number rotation paces each number on its own: {campaign_id: {number: {"ready": t, "count": n}}}.
+# A number rests after its call while the next rested number in the pool dials straight away.
+_NUMBER_PACE: dict[str, dict[str, dict]] = {}
+
+
+def _per_number_pacing(campaign) -> bool:
+    return bool(getattr(campaign, "warmup_enabled", None) and getattr(campaign, "number_rotation_enabled", None)
+                and len(getattr(campaign, "caller_number_pool", None) or []) >= 2)
+
+
+def _rest_number(campaign_id: str, campaign, number: str | None) -> None:
+    """After `number` places a warm-up call: rest it for the warm-up gap, or the batch rest every N calls."""
+    import time
+    if not number:
+        return
+    st = _NUMBER_PACE.setdefault(campaign_id, {}).setdefault(number, {"ready": 0.0, "count": 0})
+    st["count"] += 1
+    if st["count"] >= (campaign.warmup_batch_size or 10):
+        st["count"] = 0
+        st["ready"] = time.time() + (campaign.warmup_rest_seconds or 900)
+        log.info("warmup_number_rest", campaign_id=campaign_id, number=number, seconds=campaign.warmup_rest_seconds or 900)
+    else:
+        st["ready"] = time.time() + _warmup_gap(campaign)
+
+
+def _pacing_blocked(campaign_id: str) -> tuple[frozenset, float | None]:
+    """Numbers still resting, and the soonest time one is free again."""
+    import time
+    now = time.time()
+    resting = {n: st["ready"] for n, st in _NUMBER_PACE.get(campaign_id, {}).items() if st["ready"] > now}
+    return frozenset(resting), (min(resting.values()) if resting else None)
 
 
 def ensure_queue(campaign_id: str) -> bool:
@@ -1049,13 +1082,27 @@ async def _process_call_queue(campaign_id: str) -> None:
                 else:
                     wait = 0
                     lead_id, prev_attempts = lead.id, lead.attempts or 0
+                    per_number = _per_number_pacing(campaign)
+                    from app.services import number_health
+
+                    blocked, free_at = _pacing_blocked(campaign_id) if per_number else (frozenset(), None)
+                    # Read by the caller-ID pick during this dispatch (this dialer task only); reset every call.
+                    number_health.pacing_blocked.set(blocked)
                     try:
                         _record_attempt(lead, campaign, now)
-                        await outbound_call_service.dispatch_call(lead, db)
+                        call_log = await outbound_call_service.dispatch_call(lead, db)
                         campaign.total_dialed += 1
                         campaign.updated_at = datetime.now(timezone.utc)
                         await db.commit()
                         errors_in_a_row = 0
+                        if per_number:
+                            _rest_number(campaign_id, campaign, getattr(call_log, "from_phone", None))
+                    except CallersResting as exc:
+                        await db.rollback()  # no number may dial right now; this contact wasn't attempted
+                        import time as _t
+                        soonest = min(x for x in (exc.retry_at.timestamp(), free_at) if x is not None)
+                        wait = max(1.0, soonest - _t.time())
+                        log.info("call_queue_callers_resting", campaign_id=campaign_id, seconds=round(wait), reason=str(exc))
                     except InsufficientCredits as exc:
                         await _pause_for_credits(campaign_uuid, str(exc), "plan" if isinstance(exc, entitlements.PlanLimit) else "credits")
                         return
@@ -1095,7 +1142,11 @@ async def _process_call_queue(campaign_id: str) -> None:
         else:
             # Between calls: warm-up pacing waits minutes (with batch rests) instead of
             # the usual brief SIP-saturation gap. Both still honour pause/stop.
-            if getattr(campaign, "warmup_enabled", None):
+            # With a rotation pool, each number rests on its own (see _rest_number), so the
+            # next rested number dials right away instead of the whole campaign waiting.
+            if _per_number_pacing(campaign):
+                await asyncio.sleep(2)
+            elif getattr(campaign, "warmup_enabled", None):
                 _WARMUP_CALLS[campaign_id] = _WARMUP_CALLS.get(campaign_id, 0) + 1
                 batch = campaign.warmup_batch_size or 10
                 if _WARMUP_CALLS[campaign_id] >= batch:

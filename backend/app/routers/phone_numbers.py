@@ -106,14 +106,44 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
     from app.services import entitlements
 
     pricing["included_on_plan"] = await entitlements.included_numbers(db, ctx.org)
+    health = await _health(db, ctx.org.id, numbers)
     return {
         "pricing": pricing,
-        "numbers": [{**telephony.number_to_dict(n), "registration": registration_status.get(n.id)} for n in numbers],
+        "numbers": [{**telephony.number_to_dict(n), "registration": registration_status.get(n.id),
+                     "health": health.get(n.number)} for n in numbers],
         "requests": [_request_to_dict(r) for r in requests],
         "self_serve": bool(cfg["self_serve_numbers"]) and bool(telephony.purchase_carriers()),
         "purchase_carriers": telephony.purchase_carriers(),
         "recordings_enabled": settings.recordings_ready,
     }
+
+
+async def _health(db, org_id: uuid.UUID, numbers) -> dict[str, dict]:
+    """Last 7 days per number: dials, pickup rate, talk time; whether it's resting from campaign rotation."""
+    from datetime import datetime, timezone
+    from app.services import number_health
+
+    per = await number_health.stats(db, org_id, [n.number for n in numbers])
+    low = number_health.low_pickup(per)
+    now = datetime.now(timezone.utc)
+    out = {}
+    for n in numbers:
+        rest = n.rest_until.replace(tzinfo=timezone.utc) if n.rest_until and n.rest_until.tzinfo is None else n.rest_until
+        out[n.number] = {**(per.get(n.number) or {"dials_7d": 0, "pickups_7d": 0, "dials_24h": 0,
+                                                   "pickup_rate": None, "avg_talk_seconds": 0}),
+                         "low_pickups": n.number in low,
+                         "resting_until": rest.isoformat() if rest and rest > now else None,
+                         "rest_reason": (n.rest_reason or "") if rest and rest > now else ""}
+    return out
+
+
+@router.post("/{number_id}/resume")
+async def resume_number(number_id: uuid.UUID, ctx: ManagerDep, db: DbDep):
+    """Put a rested number back into campaign rotation (e.g. after its spam label was disputed)."""
+    row = await _own_number(db, ctx.org.id, number_id)
+    row.rest_until, row.rest_reason = None, None
+    await db.commit()
+    return telephony.number_to_dict(row)
 
 
 @router.patch("/{number_id}")

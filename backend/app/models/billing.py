@@ -209,6 +209,9 @@ class PhoneNumber(Base):
     inbound_campaign_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     # Bought on its own ($3.50/mo subscription, no plan): cancelling that subscription releases the number.
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Taken out of campaign rotation until then ("low_pickups": likely labeled spam). See services/number_health.
+    rest_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rest_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

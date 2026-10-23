@@ -51,6 +51,14 @@ class CampaignScheduleClosed(CallSetupError):
     """Campaign-linked calls must obey the saved campaign timezone and window."""
 
 
+class CallersResting(CallSetupError):
+    """Every number in the campaign's rotation is capped or resting right now; try again at `retry_at`."""
+
+    def __init__(self, message: str, retry_at):
+        super().__init__(message)
+        self.retry_at = retry_at
+
+
 class LeadBusy(CallSetupError):
     """The contact is already being dialed or is on a call — never ring someone twice at once."""
 
@@ -375,10 +383,16 @@ class CallService:
             if not any(n.number == from_number for n in await telephony.active_numbers(db, org.id)):
                 raise CallSetupError("That number isn't on this account — pick one of your phone numbers.")
         else:
+            from app.services import number_health
+
             try:
                 from_number = await telephony.campaign_caller_id_for(db, org.id, agent, campaign_id, lead.id if lead else None)
             except telephony.TelephonyError as exc:
                 raise CallSetupError(str(exc)) from exc
+            except number_health.CallersResting as exc:
+                raise CallersResting({"capped": "Every number in this campaign's rotation has reached today's call limit.",
+                                      "resting": "Every number in this campaign's rotation is resting (low pickups).",
+                                      }.get(exc.reason, "All rotation numbers are pacing."), exc.retry_at) from exc
         call_log = CallLog(
             id=uuid.uuid4(),
             org_id=org.id,

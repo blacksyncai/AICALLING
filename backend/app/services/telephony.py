@@ -476,16 +476,16 @@ async def campaign_caller_id_for(db, org_id, agent, campaign_id, lead_id=None):
     if previous and policy == "same":
         if previous not in pool:
             raise TelephonyError("The previous caller number is no longer in this campaign's active pool. Update the retry policy before redialing.")
-        return previous
+        from app.services import number_health
+
+        if previous not in number_health.pacing_blocked.get():
+            return previous
+        previous = None  # that number is mid warm-up rest: redial from the next free one instead of stalling
     # Cursor updates and the eventual call record commit together. Failed preparation rolls both back.
-    for _ in range(2):
-        cursor = (await db.execute(update(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
-                                 .values(caller_rotation_cursor=func.coalesce(Campaign.caller_rotation_cursor, 0) + 1)
-                                 .returning(Campaign.caller_rotation_cursor))).scalar_one()
-        chosen = pool[(cursor - 1) % len(pool)]
-        if not previous or chosen != previous:
-            return chosen
-    raise TelephonyError("Could not select a different active caller number.")
+    # Skips numbers over their daily cap, resting for low pickups, or still in their warm-up rest.
+    from app.services import number_health
+
+    return await number_health.pick_caller(db, campaign, org_id, pool, previous)
 
 
 async def carrier_of(db: AsyncSession, org_id: uuid.UUID, number: str) -> str:

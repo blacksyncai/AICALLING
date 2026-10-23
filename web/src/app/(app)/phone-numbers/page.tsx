@@ -164,6 +164,19 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
     }
   }
 
+  async function resume(n: PhoneNumberItem) {
+    setBusy(n.id);
+    try {
+      await post(`/api/phone-numbers/${n.id}/resume`, {});
+      refresh();
+      toast(`${n.number} is back in rotation`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rename(n: PhoneNumberItem, label: string) {
     if (label === n.label) return;
     try {
@@ -205,7 +218,13 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
                 ) : (
                   n.label && <div className="text-xs text-zinc-500">{n.label}</div>
                 )}
+                <NumberHealth n={n} />
               </div>
+              {manager && n.health?.resting_until && (
+                <Button size="sm" onClick={() => void resume(n)} loading={busy === n.id}>
+                  Put back in rotation
+                </Button>
+              )}
               {manager && !n.is_default && (
                 <Button size="sm" onClick={() => void makeDefault(n)} loading={busy === n.id}>
                   <Star className="h-3.5 w-3.5" /> Make default
@@ -216,6 +235,35 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
         </ul>
       )}
     </Card>
+  );
+}
+
+/** One line of call health: dials, pickup rate, and a warning when the number is likely labeled spam. */
+function NumberHealth({ n }: { n: PhoneNumberItem }) {
+  const h = n.health;
+  if (!h || h.dials_7d === 0) return <div className="mt-1 text-xs text-zinc-400">No outbound calls in the last 7 days</div>;
+  const rate = h.pickup_rate === null ? "—" : `${Math.round(h.pickup_rate * 100)}%`;
+  return (
+    <div className="mt-1 space-y-1">
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs tabular-nums text-zinc-500">
+        <span>
+          <span className="font-medium text-zinc-700">{rate}</span> picked up
+        </span>
+        <span>{h.dials_7d} calls this week</span>
+        <span>{h.dials_24h} in the last 24h</span>
+        {h.avg_talk_seconds > 0 && <span>{h.avg_talk_seconds}s avg talk</span>}
+      </div>
+      {h.resting_until ? (
+        <div className="text-xs text-amber-700">
+          Resting from campaigns until {new Date(h.resting_until).toLocaleDateString()} — pickups dropped well below your other numbers, so it may be
+          labeled spam. Dispute it, then put it back in rotation.
+        </div>
+      ) : (
+        h.low_pickups && (
+          <div className="text-xs text-amber-700">Pickups are well below your other numbers — it may be labeled spam.</div>
+        )
+      )}
+    </div>
   );
 }
 
