@@ -33,6 +33,7 @@ RUNTIME_DEFAULT_MODEL = "gpt-4.1-nano"
 LLM_MODELS: list[dict] = [
     {
         "id": "gpt-oss-120b",
+        "group": "recommended",
         "name": "BlackSync Super Intelligence · Ultra",
         "provider": "BlackSync",
         "description": "Runs in dedicated AI data centers on wafer-scale supercomputer chips — thousands of tokens a "
@@ -43,6 +44,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "qwen-3.8-27b",
+        "group": "recommended",
         "name": "BlackSync Super Intelligence · Flash",
         "provider": "BlackSync",
         "description": "Same data-center supercomputer hardware, tuned for speed on short, high-volume calls.",
@@ -51,14 +53,77 @@ LLM_MODELS: list[dict] = [
         "recommended_for": ["general"],
     },
     {
-        "id": "qwen/qwen3.8-27b",
-        "locked": True,
-        "name": "BlackSync Ultra Fast",
-        "provider": "BlackSync",
-        "description": "Our quickest brain — the first word in under half a second, so conversations feel instant.",
+        "id": "claude-haiku-5-5",
+        "group": "recommended",
+        "name": "Claude Haiku 5.5",
+        "provider": "Anthropic",
+        "description": "Anthropic's fast model. Natural, concise replies at low latency.",
         "speed": "fast",
         "tags": ["fast"],
         "recommended_for": ["general"],
+    },
+    {
+        "id": "gpt-4.1-mini",
+        "group": "recommended",
+        "name": "GPT-4.1 mini",
+        "description": "Fast and low-cost, good at following call scripts.",
+        "speed": "fast",
+        "tags": ["recommended", "fast"],
+        "recommended_for": ["general"],
+    },
+    {
+        "id": "gpt-4.1",
+        "group": "recommended",
+        "name": "GPT-4.1",
+        "description": "Follows long, complex prompts and uses tools (booking, transfers) most reliably.",
+        "speed": "standard",
+        "tags": ["recommended", "advanced"],
+        "recommended_for": ["booking", "transfer", "complex_scripts"],
+    },
+    {
+        "id": "gpt-4.1-nano",
+        "group": "recommended",
+        "name": "GPT-4.1 nano",
+        "description": "Lowest latency, so replies come fastest. The default for new agents.",
+        "speed": "fast",
+        "tags": ["recommended", "fast"],
+        "recommended_for": [],
+    },
+    {
+        "id": "gpt-4o",
+        "group": "recommended",
+        "name": "GPT-4o",
+        "description": "Previous-generation flagship model.",
+        "speed": "standard",
+        "tags": ["advanced"],
+        "recommended_for": [],
+    },
+    {
+        "id": "gpt-4o-mini",
+        "name": "GPT-4o mini",
+        "description": "Previous-generation small model. Fast and inexpensive.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": [],
+    },
+    {
+        "id": "claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5",
+        "provider": "Anthropic",
+        "description": "Anthropic's most capable voice option. Strong at nuanced, complex conversations and tools.",
+        "speed": "standard",
+        "tags": ["advanced"],
+        "recommended_for": ["complex_scripts"],
+    },
+    {
+        "id": "ministral-3b-latest",
+        "locked": True,
+        "name": "Droq",
+        "provider": "BlackSync",
+        "description": "Our fastest model — shortest pauses, best for simple, high-volume scripts.",
+        "speed": "fast",
+        "tags": ["fast"],
+        "recommended_for": [],
     },
     {
         "id": "ministral-8b-latest",
@@ -69,16 +134,6 @@ LLM_MODELS: list[dict] = [
         "speed": "fast",
         "tags": ["fast"],
         "recommended_for": ["general"],
-    },
-    {
-        "id": "ministral-3b-latest",
-        "locked": True,
-        "name": "BSA Flashlight",
-        "provider": "BlackSync",
-        "description": "The fastest Flash — shortest pauses, best for simple, high-volume scripts.",
-        "speed": "fast",
-        "tags": ["fast"],
-        "recommended_for": [],
     },
     {
         "id": "ministral-14b-latest",
@@ -107,66 +162,18 @@ LLM_MODELS: list[dict] = [
         "provider": "BlackSync",
         "description": "The smartest Flash — handles long scripts, objections and tools well, and replies consistently fast.",
         "speed": "fast",
-        "tags": ["recommended", "fast"],
+        "tags": ["fast"],
         "recommended_for": ["general", "booking", "transfer", "complex_scripts"],
     },
     {
-        "id": "gpt-4.1-mini",
-        "name": "GPT-4.1 mini",
-        "description": "Fast and low-cost, good at following call scripts.",
-        "speed": "fast",
-        "tags": ["recommended", "fast"],
-        "recommended_for": ["general"],
-    },
-    {
-        "id": "gpt-4.1",
-        "name": "GPT-4.1",
-        "description": "Follows long, complex prompts and uses tools (booking, transfers) most reliably.",
-        "speed": "standard",
-        "tags": ["recommended", "advanced"],
-        "recommended_for": ["booking", "transfer", "complex_scripts"],
-    },
-    {
-        "id": "gpt-4.1-nano",
-        "name": "GPT-4.1 nano",
-        "description": "Lowest latency, so replies come fastest. The default for new agents.",
-        "speed": "fast",
-        "tags": ["recommended", "fast"],
-        "recommended_for": [],
-    },
-    {
-        "id": "gpt-4o-mini",
-        "name": "GPT-4o mini",
-        "description": "Previous-generation small model. Fast and inexpensive.",
-        "speed": "fast",
-        "tags": ["fast"],
-        "recommended_for": [],
-    },
-    {
-        "id": "gpt-4o",
-        "name": "GPT-4o",
-        "description": "Previous-generation flagship model.",
-        "speed": "standard",
-        "tags": ["advanced"],
-        "recommended_for": [],
-    },
-    {
-        "id": "claude-haiku-5-5",
-        "name": "Claude Haiku 5.5",
-        "provider": "Anthropic",
-        "description": "Anthropic's fast model. Natural, concise replies at low latency.",
+        "id": "qwen/qwen3.8-27b",
+        "locked": True,
+        "name": "BlackSync Ultra Fast",
+        "provider": "BlackSync",
+        "description": "Our quickest brain — the first word in under half a second, so conversations feel instant.",
         "speed": "fast",
         "tags": ["fast"],
         "recommended_for": ["general"],
-    },
-    {
-        "id": "claude-sonnet-5-5",
-        "name": "Claude Sonnet 5.5",
-        "provider": "Anthropic",
-        "description": "Anthropic's most capable voice option. Strong at nuanced, complex conversations and tools.",
-        "speed": "standard",
-        "tags": ["advanced"],
-        "recommended_for": ["complex_scripts"],
     },
 ]
 
@@ -228,6 +235,7 @@ GROUPS: list[tuple[str, str]] = [
     ("fast", "Fast"),
     ("advanced", "Advanced"),
     ("other", "Other"),
+    ("request", "On request"),
 ]
 
 # Languages the editor offers. Filipino uses Cartesia ink-whisper STT;
@@ -274,7 +282,8 @@ def model_catalog() -> list[dict]:
     already in the curated list (e.g. a model on a custom OpenAI-compatible endpoint).
     """
     models = [
-        {"provider": "OpenAI", **m, "status": "available", "group": m["tags"][0]}
+        {"provider": "OpenAI", **m, "status": "available",
+         "group": "request" if m.get("locked") else m.get("group") or m["tags"][0]}
         for m in LLM_MODELS
         if (not is_anthropic_model(m["id"]) or settings.anthropic_api_key)
         and (m["id"] not in CEREBRAS_MODELS or settings.cerebras_api_key)

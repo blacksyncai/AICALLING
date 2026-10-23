@@ -196,7 +196,7 @@ export function SettingsCard({ org, refresh }: Props) {
           checked={!!org.models_unlocked}
           onChange={(v) => saving !== "models" && save("models", { models_unlocked: v }, v ? "Flash models unlocked" : "Flash models locked")}
           label="Unlock Flash models"
-          description="Lets this account's agents use the on-request BlackSync Flash models (Flash, Flashlight, Flash 2.1, Flash Plus, Flash Pro, Ultra Fast)."
+          description="Lets this account's agents use the on-request BlackSync Flash models (Droq, Flash, Flash 2.1, Flash Plus, Flash Pro, Ultra Fast)."
         />
 
         <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 p-3 sm:flex-row sm:items-center sm:justify-between">

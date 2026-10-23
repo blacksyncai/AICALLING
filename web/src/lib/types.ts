@@ -291,7 +291,7 @@ export interface ModelOption {
   /** Agent traits this model suits: general · booking · transfer · complex_scripts. */
   recommended_for: string[];
   status: string;
-  group: "recommended" | "fast" | "advanced" | "other";
+  group: "recommended" | "fast" | "advanced" | "other" | "request";
   /** Available on request: the account needs it unlocked by the team (Organization.models_unlocked). */
   locked?: boolean;
 }

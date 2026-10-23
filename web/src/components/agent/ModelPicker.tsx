@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils";
 import { Input } from "../ui";
 import { listKeyHandler, usePopover } from "./picker-utils";
 
-const GROUP_ORDER: ModelOption["group"][] = ["recommended", "fast", "advanced", "other"];
-const GROUP_LABELS: Record<ModelOption["group"], string> = { recommended: "Recommended", fast: "Fast", advanced: "Advanced", other: "Other" };
+const GROUP_ORDER: ModelOption["group"][] = ["recommended", "fast", "advanced", "other", "request"];
+const GROUP_LABELS: Record<ModelOption["group"], string> = { recommended: "Recommended", fast: "Fast", advanced: "Advanced", other: "Other", request: "On request" };
 const TRAIT_LABELS: Record<string, string> = {
   general: "general calls",
   booking: "booking",
