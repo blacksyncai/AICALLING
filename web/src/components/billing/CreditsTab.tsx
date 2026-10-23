@@ -44,8 +44,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
 
   async function buy(pack: string, countryOverride?: string) {
     // Ask where they're based the first time; the choice routes Stripe vs Helcim.
-    const country = countryOverride ?? countryData?.country;
-    if (!country) {
+    if (!countryOverride) {
       setAskCountry(pack);
       return;
     }
@@ -139,6 +138,7 @@ export function CreditsTab({ canManage }: { canManage: boolean }) {
 
       <AutoRecharge canManage={canManage} onPlan={access?.on_plan ?? true} packs={cat.packs.filter((p) => p.available)} />
       <CountryPopup
+        initial={countryData?.country}
         open={askCountry !== null}
         onDone={(country) => { const pack = askCountry; setAskCountry(null); if (pack) void buy(pack, country); }}
         onCancel={() => setAskCountry(null)}

@@ -9,6 +9,7 @@ import { Button, Modal, Notice, Spinner } from "@/components/ui";
 import { PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
 import { CountryPopup } from "./CountryPopup";
+import { type CheckoutResult, startCheckout } from "@/lib/helcim";
 import { cn } from "@/lib/utils";
 import { PlanCards, type PlanAction } from "./PlanCards";
 import { Card, CardHeader } from "./surface";
@@ -145,15 +146,20 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
     setBusy(plan.key);
     try {
       if (!live) {
-        const country = planCountry ?? countryData?.country;
-        if (!country) {
+        if (!planCountry) {
           setAskCountry(plan);
           setBusy(null);
           return;
         }
-        const r = await post<{ url: string }>(`/api/billing/plans/${plan.key}/checkout`);
-        window.location.href = r.url;
-        return; // stays busy while the browser leaves for checkout
+        const res = await startCheckout(await post<CheckoutResult>(`/api/billing/plans/${plan.key}/checkout`));
+        if (res === "redirect") return; // stays busy while the browser leaves for checkout
+        if (res) {
+          await Promise.all([mutate(), mutateEnt()]);
+          refresh();
+          toast(`You're now on ${plan.name}`);
+        }
+        setBusy(null);
+        return;
       }
       setPreview({ plan, data: await post<Preview>(`/api/billing/plans/${plan.key}/preview`) });
       setBusy(null);
@@ -398,6 +404,7 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
         )}
       </Modal>
       <CountryPopup
+        initial={countryData?.country}
         open={askCountry !== null}
         onDone={(country) => { const plan = askCountry; setAskCountry(null); if (plan) void choose(plan, country); }}
         onCancel={() => setAskCountry(null)}

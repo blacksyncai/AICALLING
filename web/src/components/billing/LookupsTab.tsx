@@ -34,8 +34,7 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
     );
 
   async function add(key: string, countryOverride?: string) {
-    const country = countryOverride ?? countryData?.country;
-    if (!country) {
+    if (!countryOverride) {
       setAskCountry(key);
       return;
     }
@@ -155,6 +154,7 @@ export function LookupsTab({ canManage }: { canManage: boolean }) {
         )}
       </Card>
     <CountryPopup
+      initial={countryData?.country}
       open={askCountry !== null}
       onDone={(country) => { const key = askCountry; setAskCountry(null); if (key) void add(key, country); }}
       onCancel={() => setAskCountry(null)}

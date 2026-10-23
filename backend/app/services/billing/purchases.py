@@ -92,7 +92,7 @@ async def _checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, *, 
 
 
 # ── Helcim (Canadian/other customers) ─────────────────────────────────────────
-# One-time purchases (credit packs, lookup funds) only; plans stay on Stripe. The purchase row is
+# Credit packs, lookup funds and plans (a Helcim subscription on the saved card). The purchase row is
 # created up front (pending) with a HelcimPay.js session; it's fulfilled only after confirm_helcim()
 # checks the payment against the session's secret and Helcim's own transaction record.
 
@@ -142,8 +142,9 @@ async def confirm_helcim(db: AsyncSession, org: Organization, purchase_id: uuid.
         txn = await helcim_api.get_transaction(txn_id)
     except helcim_api.HelcimError as exc:
         raise BillingError("Couldn't confirm the payment with Helcim yet. Refresh in a minute.", 502) from exc
-    approved = str(txn.get("status") or "").upper() == "APPROVED" and str(txn.get("type") or "").lower() == "purchase"
-    amount_ok = abs(float(txn.get("amount") or 0) - p.amount_cents / 100) < 0.005
+    kind = "verify" if p.kind == "plan" else "purchase"
+    approved = str(txn.get("status") or "").upper() == "APPROVED" and str(txn.get("type") or "").lower() == kind
+    amount_ok = p.kind == "plan" or abs(float(txn.get("amount") or 0) - p.amount_cents / 100) < 0.005
     currency_ok = str(txn.get("currency") or helcim_api.CURRENCY).upper() == helcim_api.CURRENCY
     if not (approved and amount_ok and currency_ok):
         log.error("helcim_transaction_mismatch", purchase_id=str(p.id), transaction_id=txn_id,
@@ -154,8 +155,79 @@ async def confirm_helcim(db: AsyncSession, org: Organization, purchase_id: uuid.
                                                        Purchase.id != p.id))).first()
     if used:
         raise BillingError("That payment was already applied.", 409)
+    if p.kind == "plan":
+        return await _helcim_subscribe(db, org, p, txn)
     await fulfill_helcim_purchase(db, p.id, org_id=org.id, helcim_ref=ref)
     await db.commit()
+    return "paid"
+
+
+async def _helcim_plan_checkout(db: AsyncSession, org: Organization, user_id: uuid.UUID, plan_key: str) -> dict:
+    """A plan through Helcim: the modal saves the card on a new Helcim customer (a $0 verify), then
+    confirm_helcim() subscribes that customer, which charges the first month right away."""
+    plan = catalog.PLANS[plan_key]
+    purchase = Purchase(org_id=org.id, kind="plan", pack_key=plan_key, amount_cents=plan["amount_cents"],
+                        currency="usd", credits=plan["included_credits"], status="pending", created_by=user_id)
+    db.add(purchase)
+    await db.flush()
+    name = (org.name or "BlackSync customer").strip()[:100]
+    try:
+        session = await helcim_api.initialize_checkout(amount_cents=0, payment_type="verify",
+                                                       customer={"contactName": name, "businessName": name})
+    except helcim_api.HelcimError as exc:
+        raise BillingError("Couldn't start the payment. Try again in a moment.", 502) from exc
+    purchase.stripe_checkout_session_id = f"helcim:{session['checkoutToken']}"[:128]
+    purchase.provider_secret = session["secretToken"]
+    await db.commit()
+    log.info("helcim_plan_checkout_created", org_id=str(org.id), plan=plan_key, purchase_id=str(purchase.id))
+    return {"helcim": {"checkout_token": session["checkoutToken"], "purchase_id": str(purchase.id)}}
+
+
+async def _helcim_subscribe(db: AsyncSession, org: Organization, p: Purchase, txn: dict) -> str:
+    """The card is saved: subscribe the customer to the plan and start it once Helcim has charged it."""
+    from zoneinfo import ZoneInfo
+
+    from app.models.billing import BillingSubscription
+    from app.services.billing import subscriptions
+
+    customer_code = str(txn.get("customerCode") or "")
+    if not customer_code:
+        raise BillingError("Helcim didn't save the card. Try again.", 402)
+    row = await db.get(BillingSubscription, org.id)
+    if row and row.status in ("active", "trialing", "past_due"):
+        raise BillingError("This account already has a subscription.", 409)
+    plan = catalog.PLANS[p.pack_key]
+    try:
+        plan_id = await helcim_api.ensure_payment_plan(f"BlackSync {plan['name']} (app)", plan["amount_cents"])
+        sub = await helcim_api.create_subscription(
+            customer_code=customer_code, plan_id=plan_id, amount_cents=plan["amount_cents"],
+            activate=datetime.now(ZoneInfo("America/Edmonton")).date().isoformat(), key=p.id.hex[:25])
+    except helcim_api.HelcimError as exc:
+        raise BillingError("Helcim couldn't start the subscription. Nothing was charged. Try again.", 502) from exc
+    if row is None:
+        row = BillingSubscription(org_id=org.id, stripe_subscription_id=f"helcim:{sub['id']}")
+        db.add(row)
+    row.stripe_subscription_id = f"helcim:{sub['id']}"
+    row.plan_key, row.price_id, row.status = p.pack_key, None, "incomplete"
+    row.cancel_at_period_end, row.custom_credits = False, None
+    row.phone_item_id, row.phone_quantity, row.agent_item_id, row.agent_slots = None, 0, None, 0
+    await db.flush()
+    await subscriptions.sync_helcim(db, org, row, sub)
+    if row.status in ("past_due", "canceled"):
+        # The first month didn't go through: stop the subscription so Helcim doesn't keep retrying.
+        try:
+            await helcim_api.delete_subscription(sub["id"])
+        except helcim_api.HelcimError:
+            log.error("helcim_declined_sub_not_deleted", org_id=str(org.id), subscription=str(sub["id"]))
+        row.status = "incomplete_expired"
+        await db.execute(update(Purchase).where(Purchase.id == p.id).values(status="failed"))
+        await db.commit()
+        log.info("helcim_plan_declined", org_id=str(org.id), plan=p.pack_key, subscription=str(sub["id"]))
+        raise BillingError("Your card was declined for the first month. Try another card.", 402)
+    await db.execute(update(Purchase).where(Purchase.id == p.id).values(
+        status="paid", fulfilled_at=_now(), stripe_payment_intent_id=f"helcim:sub:{sub['id']}"))
+    await db.commit()
+    log.info("helcim_plan_started", org_id=str(org.id), plan=p.pack_key, subscription=str(sub["id"]), status=row.status)
     return "paid"
 
 
@@ -245,7 +317,7 @@ async def checkout_lookup_funds(db: AsyncSession, org: Organization, user_id: uu
                            return_path="/billing")
 
 
-async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID, plan_key: str) -> str:
+async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID, plan_key: str) -> str | dict:
     from app.models.billing import BillingSubscription
 
     if plan_key not in catalog.PLANS:
@@ -257,6 +329,8 @@ async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID,
     sub = await db.get(BillingSubscription, org.id)
     if sub and sub.status in ("active", "trialing", "past_due", "incomplete"):
         raise BillingError("This account already has a subscription — change plans instead.", 409)
+    if uses_helcim(org):
+        return await _helcim_plan_checkout(db, org, user_id, plan_key)
     try:
         price = await catalog.sellable_price(plan_key)
     except catalog.NotSellable as exc:

@@ -128,7 +128,10 @@ async def lifespan(app: FastAPI):
     registration_task = start_registration_worker() if settings.run_startup_jobs and settings.number_registration_worker_enabled else asyncio.create_task(asyncio.sleep(0))
     from app.services.caller_reputation import start_sweeper as start_reputation_sweeper
     reputation_task = start_reputation_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services.billing.subscriptions import start_helcim_sweeper
+    helcim_task = start_helcim_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     yield
+    helcim_task.cancel()
     reputation_task.cancel()
     registration_task.cancel()
     rec_task.cancel()

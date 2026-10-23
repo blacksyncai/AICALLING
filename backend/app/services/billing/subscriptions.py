@@ -141,10 +141,16 @@ async def on_invoice_paid(db: AsyncSession, inv: dict) -> uuid.UUID | None:
 # ── Customer actions ──────────────────────────────────────────────────────────
 
 
+def is_helcim(row: BillingSubscription | None) -> bool:
+    return bool(row and (row.stripe_subscription_id or "").startswith("helcim:"))
+
+
 async def _live_sub(db: AsyncSession, org_id: uuid.UUID) -> tuple[BillingSubscription, dict]:
     row = await db.get(BillingSubscription, org_id)
     if row is None or row.status not in LIVE:
         raise BillingError("There's no active subscription on this account.", 409)
+    if is_helcim(row):
+        raise BillingError("Your plan is billed through Helcim. Message support and we'll change it for you.", 409)
     sub = await stripe_api.retrieve_subscription(row.stripe_subscription_id)
     return row, sub
 
@@ -221,6 +227,9 @@ async def grant_included_extra(db: AsyncSession, org: Organization, n: int, *, r
 
 
 async def set_cancel(db: AsyncSession, org_id: uuid.UUID, cancel: bool) -> BillingSubscription:
+    row = await db.get(BillingSubscription, org_id)
+    if is_helcim(row) and row.status in LIVE:
+        return await _cancel_helcim(db, row, cancel)
     row, sub = await _live_sub(db, org_id)
     updated = await stripe_api.set_cancel_at_period_end(sub["id"], cancel)
     row = await sync_from_stripe(db, updated, org_id)
@@ -338,7 +347,7 @@ async def phone_summary(db: AsyncSession, org_id: uuid.UUID) -> dict:
 async def sync_phone_quantity(db: AsyncSession, org_id: uuid.UUID) -> None:
     """Bill max(0, active numbers − included) on the subscription. No subscription = nothing billed."""
     row = await db.get(BillingSubscription, org_id)
-    if row is None or row.status not in LIVE or not stripe_api.ready():
+    if row is None or row.status not in LIVE or not stripe_api.ready() or is_helcim(row):
         return
     summary = await phone_summary(db, org_id)
     if summary["billable"] == row.phone_quantity:
@@ -361,7 +370,7 @@ async def charge_for_new_number(db: AsyncSession, org_id: uuid.UUID) -> bool:
     prorated charge now. Raises BillingError if the payment fails (the number isn't bought). Returns
     whether the quantity changed (so a failed purchase can undo it with sync_phone_quantity)."""
     row = await db.get(BillingSubscription, org_id)
-    if row is None or row.status not in LIVE or not stripe_api.ready():
+    if row is None or row.status not in LIVE or not stripe_api.ready() or is_helcim(row):
         return False
     summary = await phone_summary(db, org_id)
     wanted = max(0, summary["active"] + 1 - summary["included"])
@@ -394,3 +403,89 @@ async def portal_url(db: AsyncSession, org_id: uuid.UUID) -> str:
     if not cid:
         raise BillingError("Add a payment first — there's no billing profile yet.", 409)
     return await stripe_api.create_portal_session(customer=cid, return_url=app_url("/billing?tab=invoices"))
+
+
+# ── Helcim subscriptions (Canada / other) ─────────────────────────────────────
+# Helcim charges the saved card monthly on its own. We read its subscription to keep our row in step and grant
+# each paid cycle's included credits once (keyed by Helcim's timesBilled).
+
+
+def _helcim_date(v: str | None) -> datetime | None:
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc) if v else None
+    except ValueError:
+        return None
+
+
+async def sync_helcim(db: AsyncSession, org: Organization, row: BillingSubscription, sub: dict | None = None) -> None:
+    from app.services.billing import helcim_api
+
+    now = datetime.now(timezone.utc)
+    if row.cancel_at_period_end:
+        if row.current_period_end is None or row.current_period_end <= now:
+            row.status = "canceled"
+        return
+    sub = sub or await helcim_api.get_subscription(row.stripe_subscription_id.removeprefix("helcim:"))
+    times = int(sub.get("timesBilled") or 0)
+    if str(sub.get("status") or "").lower() != "active":
+        row.status = "canceled"
+    elif str(sub.get("hasFailedPayments") or "").lower() == "true":
+        row.status = "past_due"
+    elif times >= 1:
+        row.status = "active"
+        row.current_period_end = _helcim_date(sub.get("dateBilling")) or row.current_period_end
+        if row.plan_key in catalog.PLANS:
+            await grant_included(db, org, plan_key=row.plan_key, invoice_id=f"helcim:sub:{sub.get('id')}:{times}",
+                                 period_end=row.current_period_end)
+    else:
+        row.status = "incomplete"  # the first charge hasn't run yet
+    await db.flush()
+
+
+async def _cancel_helcim(db: AsyncSession, row: BillingSubscription, cancel: bool) -> BillingSubscription:
+    from app.services.billing import helcim_api
+
+    if not cancel:
+        if row.cancel_at_period_end:
+            raise BillingError("A canceled Helcim plan can't be resumed. Start a new plan when this one ends.", 409)
+        return row
+    await helcim_api.delete_subscription(row.stripe_subscription_id.removeprefix("helcim:"))  # no more charges
+    row.cancel_at_period_end = True  # keeps the plan until the paid month runs out
+    await db.commit()
+    log.info("helcim_plan_canceled", org_id=str(row.org_id))
+    return row
+
+
+async def sweep_helcim(db: AsyncSession) -> int:
+    """Renewals, failed payments and ended plans for every Helcim subscription."""
+    rows = (await db.execute(select(BillingSubscription).where(
+        BillingSubscription.stripe_subscription_id.like("helcim:%"),
+        BillingSubscription.status.in_(("active", "past_due", "incomplete", "trialing"))))).scalars().all()
+    for row in rows:
+        try:
+            org = await db.get(Organization, row.org_id)
+            await sync_helcim(db, org, row)
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            log.warning("helcim_sync_failed", org_id=str(row.org_id), error=str(exc)[:200])
+    return len(rows)
+
+
+def start_helcim_sweeper():
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.services.billing import helcim_api
+
+    async def loop():
+        while True:
+            if helcim_api.ready():
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await sweep_helcim(db)
+                except Exception as exc:
+                    log.warning("helcim_sweep_failed", error=str(exc)[:200])
+            await asyncio.sleep(3600)
+
+    return asyncio.create_task(loop())

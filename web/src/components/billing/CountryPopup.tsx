@@ -8,18 +8,18 @@ import { post } from "@/lib/api";
  * other accounts pay through Helcim. The choice is remembered on the account —
  * we ask only until it's set, and it can be changed any time from the banner.
  */
-export function CountryPopup({ open, onDone, onCancel }: { open: boolean; onDone: (country: string) => void; onCancel: () => void }) {
-  const [country, setCountry] = useState("US");
+export function CountryPopup({ open, onDone, onCancel, initial }: { open: boolean; onDone: (country: string) => void; onCancel: () => void; initial?: string | null }) {
+  const [country, setCountry] = useState(initial || "US");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setCountry("US");
+      setCountry(initial || "US");
       setError(null);
       setBusy(false);
     }
-  }, [open]);
+  }, [open, initial]);
 
   if (!open) return null;
 

@@ -224,7 +224,7 @@ class PlanChange(BaseModel):
 @router.post("/plans/{plan_key}/checkout")
 async def plan_checkout(plan_key: str, ctx: ManagerDep, db: DbDep):
     url = await _guard(purchases.checkout_plan(db, ctx.org, ctx.user.id, plan_key))
-    return {"url": url}
+    return url if isinstance(url, dict) else {"url": url}
 
 
 @router.post("/plans/{plan_key}/preview")
