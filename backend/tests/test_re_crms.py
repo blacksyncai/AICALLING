@@ -142,3 +142,72 @@ def test_sierra(api):
     leads = run(p.list_contacts(http, {}, limit=10, since=dt.datetime(2026, 10, 13, tzinfo=dt.timezone.utc)))
     assert [(c.external_id, c.stage) for c in leads] == [("40", "New")]
     assert api["seen"][-1].url.params["leadCreationDateFrom"] == "10/13/2026"
+
+
+def test_totalexpert(api):
+    from app.services.crm.http import TotalExpertHttp
+
+    TotalExpertHttp._tokens.clear()
+    p = PROVIDERS["totalexpert"]
+    cfg = {"client_id": "cid", "owner": "jane.lo"}
+    http = p.native_http("sec", cfg)
+    tokens = iter(["t1", "t2"])
+    state = {"expired": False}
+
+    def handler(req):
+        path = req.url.path
+        if path == "/v1/token":
+            assert req.headers["authorization"].startswith("Basic ")
+            return httpx.Response(200, json={"access_token": next(tokens), "expires_in": 3600})
+        if state["expired"] and req.headers["authorization"] == "Bearer t1":
+            return httpx.Response(401, json={"error": "expired"})
+        if req.method == "GET" and path == "/v1/contacts":
+            flt = req.url.params.get("filter", "")
+            if flt == "email=ann@x.com":
+                return httpx.Response(200, json={"items": [], "links": {"next": None}})
+            if flt == "phone_cell=(415)555-0101":
+                return httpx.Response(200, json={"items": [{"id": 77}], "links": {"next": None}})
+            if flt.startswith("phone_"):
+                return httpx.Response(200, json={"items": [], "links": {"next": None}})
+            page = int(req.url.params.get("page[number]", 1))
+            rows = [{"id": 1, "first_name": "Ann", "last_name": "Lee", "phone_cell": "(415)555-0101", "ok_to_call": 1},
+                    {"id": 2, "first_name": "No", "last_name": "Phone"}] if page == 1 else \
+                [{"id": 3, "first_name": "Bo", "last_name": "Diaz", "phone_home": "(415)555-0102", "ok_to_call": 0}]
+            return httpx.Response(200, json={"items": rows, "links": {"next": 2 if page == 1 else None}})
+        if req.method == "POST" and path == "/v1/contacts":
+            return httpx.Response(201, json={"id": 88})
+        if req.method == "POST" and path == "/v1/contact-notes":
+            return httpx.Response(201, json={"id": 5})
+        if req.method == "PATCH" and path == "/v1/contacts/77":
+            return httpx.Response(200, json=[])
+        return httpx.Response(404, json={})
+
+    api["handler"] = handler
+    assert run(p.verify(http, cfg)) == "Total Expert (jane.lo)"
+    assert run(p.find_or_create(http, cfg, Contact("Ann Lee", "+14155550101", "ann@x.com"), create=False)) == "77"
+    assert run(p.find_or_create(http, cfg, Contact("Cy", "+14155550199"), create=True)) == "88"
+    body = json.loads(api["seen"][-1].content)
+    assert body == {"source": "BlackSync AI", "first_name": "Cy", "last_name": "Lead", "phone_cell": "(415)555-0199",
+                    "owner": {"username": "jane.lo"}}
+
+    state["expired"] = True  # token expires: fetch a new one and retry
+    run(p.log_call(http, cfg, "77", CALL))
+    note = json.loads(api["seen"][-1].content)
+    assert api["seen"][-1].headers["authorization"] == "Bearer t2"
+    assert note["contact"] == {"id": 77} and note["type_id"] == 7 and "Wants a tour" in note["note"]
+    assert note["owner"] == {"username": "jane.lo"}
+
+    contacts = run(p.list_contacts(http, cfg))
+    assert [(c.external_id, c.dnc) for c in contacts] == [("1", False), ("3", True)]
+    run(p.mark_dnc(http, cfg, "77"))
+    assert json.loads(api["seen"][-1].content) == {"ok_to_call": 0}
+
+
+def test_totalexpert_bad_credentials(api):
+    from app.services.crm.http import TotalExpertHttp
+
+    TotalExpertHttp._tokens.clear()
+    api["handler"] = lambda req: httpx.Response(401, json={"error": "invalid_client"})
+    p = PROVIDERS["totalexpert"]
+    with pytest.raises(CrmError, match="client ID and secret"):
+        run(p.verify(p.native_http("bad", {"client_id": "x"}), {}))

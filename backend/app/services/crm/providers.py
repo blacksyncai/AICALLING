@@ -2631,9 +2631,113 @@ class BoomTown(Provider):
 
 
 
+def _te_phone(phone: str) -> str:
+    d = _digits10(phone)
+    return f"({d[:3]}){d[3:6]}-{d[6:]}" if len(d) == 10 else phone
+
+
+class TotalExpert(Provider):
+    """Total Expert (mortgage CRM) public API v1. Client ID + secret from Total Expert support; an org-admin
+    credential also needs the loan officer (owner) that new contacts and notes belong to."""
+
+    key, name = "totalexpert", "Total Expert"
+    description = "Log every AI call as a note on the contact, create contacts and import contacts to call."
+    auth_fields = [
+        AuthField("client_id", "Client ID", secret=False,
+                  help="Ask Total Expert support or your account manager for API client credentials."),
+        AuthField("api_key", "Client secret"),
+        AuthField("owner", "Owner username (admin credentials only)", secret=False, placeholder="jane.lo",
+                  help="Only if your credentials are an organization admin's: the loan officer whose contacts "
+                       "and notes BlackSync creates. Leave empty for a user's own credentials."),
+    ]
+    docs_url = "https://documenter.getpostman.com/view/1929166/total-expert-public-api/6Z2RYyU"
+
+    def native_http(self, secret, config):
+        from app.services.crm.http import TotalExpertHttp
+
+        if not (config.get("client_id") or "").strip():
+            raise CrmError("Paste your Total Expert client ID.")
+        return TotalExpertHttp(config["client_id"].strip(), secret)
+
+    @staticmethod
+    def _owner(config: dict) -> dict:
+        owner = (config.get("owner") or "").strip()
+        return {"owner": {"email": owner} if "@" in owner else {"username": owner}} if owner else {}
+
+    @staticmethod
+    def _contact(r: dict) -> Contact | None:
+        phone = next((r.get(k) for k in ("phone_cell", "phone_home", "phone_office") if r.get(k)), "")
+        if not phone:
+            return None
+        name = " ".join(x for x in (r.get("first_name"), r.get("last_name")) if x)
+        return Contact(name, str(phone), r.get("email") or "", r.get("employer_name") or "", str(r.get("id")),
+                       _parse_time(r.get("creation_date") or r.get("internal_created_at")),
+                       dnc=r.get("ok_to_call") in (False, 0, "0"))
+
+    async def _first(self, http, flt: str) -> str | None:
+        try:
+            res = await http.request("GET", "/contacts", params={"filter": flt, "page[size]": 1})
+        except CrmError as exc:
+            if exc.status in (400, 422):  # filter not supported for this field
+                return None
+            raise
+        rows = (res or {}).get("items") or []
+        return str(rows[0]["id"]) if rows else None
+
+    async def verify(self, http, config):
+        await http.request("GET", "/contacts", params={"page[number]": 1, "page[size]": 1})
+        owner = (config.get("owner") or "").strip()
+        return f"Total Expert ({owner})" if owner else "Total Expert account"
+
+    async def find_or_create(self, http, config, c, create):
+        if c.email and (cid := await self._first(http, f"email={c.email}")):
+            return cid
+        if c.phone:
+            for field_name in ("phone_cell", "phone_home"):
+                if cid := await self._first(http, f"{field_name}={_te_phone(c.phone)}"):
+                    return cid
+        if not create:
+            return None
+        first, last = split_name(c.name)
+        body = {"source": "BlackSync AI", "first_name": first or "Unknown", "last_name": last or "Lead",
+                "phone_cell": _te_phone(c.phone), **self._owner(config)}
+        if c.email:
+            body["email"] = c.email
+        res = await http.request("POST", "/contacts", json=body)
+        cid = (res or {}).get("id")
+        return str(cid) if cid else None
+
+    async def log_call(self, http, config, external_id, call):
+        await http.request("POST", "/contact-notes", json={
+            "title": f"BlackSync AI call: {call.outcome_label}"[:100], "note": call.note(html=True),
+            "type_id": 7 if call.connected else 1,  # 7 = Contacted, 1 = General Note
+            "contact": {"id": int(external_id)}, **self._owner(config)})
+
+    async def mark_dnc(self, http, config, external_id):
+        await http.request("PATCH", f"/contacts/{external_id}", json={"ok_to_call": 0})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out: list[Contact] = []
+        params: dict = {"page[size]": 100, "sort": "-internal_created_at"}
+        if since:
+            params["filter"] = "internal_created_at_start=" + since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        page = 1
+        while len(out) < limit:
+            res = await http.request("GET", "/contacts", params={**params, "page[number]": page})
+            rows = (res or {}).get("items") or []
+            for r in rows:
+                c = self._contact(r)
+                if c and not (since and c.created_at and c.created_at <= since):
+                    out.append(c)
+            if not rows or not ((res or {}).get("links") or {}).get("next"):
+                break
+            page += 1
+        return out[:limit]
+
+
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
-    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), Rechat(), BoomTown(), GoogleSheets(), Slack(),
+    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), Rechat(), BoomTown(), TotalExpert(), GoogleSheets(), Slack(),
 )}
 
 

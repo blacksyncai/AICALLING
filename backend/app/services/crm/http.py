@@ -172,3 +172,41 @@ class SalesforceHttp(BaseHttp):
                 raise
             await self.refresh()  # the access token expired — get a new one and try once more
             return await super().request(method, path, params=params, json=json)
+
+
+class TotalExpertHttp(BaseHttp):
+    """Total Expert REST: the customer's client ID + secret get a bearer token (client credentials, ~1 h).
+    Cached per client ID and fetched again on a 401."""
+
+    BASE = "https://public.totalexpert.net/v1"
+    _tokens: dict[str, str] = {}
+
+    def __init__(self, client_id: str, client_secret: str):
+        self.client_id, self.client_secret = client_id, client_secret
+
+    def _prepare(self, path):
+        return (self.BASE + path, {"Accept": "application/json",
+                                   "Authorization": f"Bearer {self._tokens.get(self.client_id, '')}"}, {}, None)
+
+    async def refresh(self) -> None:
+        async with self.client_factory() as client:
+            try:
+                resp = await client.post(self.BASE + "/token", json={"grant_type": "client_credentials"},
+                                         auth=httpx.BasicAuth(self.client_id, self.client_secret))
+            except httpx.HTTPError as exc:
+                raise CrmError(f"Couldn't reach Total Expert: {exc.__class__.__name__}") from exc
+        token = (resp.json() if resp.content else {}).get("access_token") if resp.status_code < 400 else None
+        if not token:
+            raise CrmError("Total Expert didn't accept that client ID and secret.", 401)
+        self._tokens[self.client_id] = token
+
+    async def request(self, method, path, *, params=None, json=None):
+        if not self._tokens.get(self.client_id):
+            await self.refresh()
+        try:
+            return await super().request(method, path, params=params, json=json)
+        except CrmError as exc:
+            if exc.status != 401:
+                raise
+            await self.refresh()
+            return await super().request(method, path, params=params, json=json)

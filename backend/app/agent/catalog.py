@@ -926,6 +926,7 @@ _CRMS: list[tuple[str, str, list[str]]] = [
     ("boldtrail", "BoldTrail / kvCORE", ["real_estate"]),
     ("gohighlevel", "GoHighLevel", ["home_services", "real_estate", "healthcare", "insurance",
                                     "professional_services", "automotive", "other"]),
+    ("totalexpert", "Total Expert", ["mortgage"]),
     ("hubspot", "HubSpot", ["professional_services", "financial_services", "recruiting", "logistics", "other"]),
     ("salesforce", "Salesforce", ["financial_services", "insurance", "mortgage", "logistics", "automotive", "other"]),
     ("zoho_crm", "Zoho CRM", ["professional_services", "home_services", "logistics", "other"]),

@@ -106,7 +106,7 @@ const DOMAIN: Record<string, string> = {
   followupboss: "followupboss.com", close: "close.com", hubspot: "hubspot.com", highlevel: "gohighlevel.com",
   pipedrive: "pipedrive.com", salesforce: "salesforce.com", zoho: "zoho.com", attio: "attio.com",
   google_sheets: "sheets.google.com", slack: "slack.com", boldtrail: "kvcore.com", lofty: "lofty.com",
-  sierra: "sierrainteractive.com", oracle_sales: "oracle.com", realgeeks: "realgeeks.com", boomtown: "boomtownroi.com", brivity: "brivity.com", apollo: "apollo.io", rechat: "rechat.com",
+  sierra: "sierrainteractive.com", oracle_sales: "oracle.com", realgeeks: "realgeeks.com", boomtown: "boomtownroi.com", brivity: "brivity.com", apollo: "apollo.io", rechat: "rechat.com", totalexpert: "totalexpert.com",
 };
 
 export function Logo({ p }: { p: Provider }) {

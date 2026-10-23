@@ -27,7 +27,7 @@ def test_every_crm_has_shared_contact_tools(provider):
     assert {'list_contacts','find_contact','create_contact'} <= actions
     assert 'delete_contact' not in actions
     assert ('create_pipeline' in actions) == (provider in {'close','hubspot','pipedrive','followupboss'})
-    assert ('mark_dnc' in actions) == (provider in {'followupboss','highlevel','salesforce'})
+    assert ('mark_dnc' in actions) == (provider in {'followupboss','highlevel','salesforce','totalexpert'})
 
 
 @pytest.mark.parametrize('provider',[key for key,p in PROVIDERS.items() if p.category=='crm'])
