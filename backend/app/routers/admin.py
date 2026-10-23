@@ -81,6 +81,8 @@ class OrgPatch(BaseModel):
     # Lead Finder on/off.
     lead_finder_enabled: bool | None = None
     lead_credits_unlimited: bool | None = None
+    # Flash-family models available to this account's agents.
+    models_unlocked: bool | None = None
 
 
 class LeadCreditGrant(BaseModel):
@@ -281,6 +283,8 @@ async def update_org(org_id: uuid.UUID, body: OrgPatch, _: AdminDep, db: DbDep):
         org.lead_finder_enabled = body.lead_finder_enabled
     if body.lead_credits_unlimited is not None:
         org.lead_credits_unlimited = body.lead_credits_unlimited
+    if body.models_unlocked is not None:
+        org.models_unlocked = body.models_unlocked
     await db.commit()
     return org_to_dict(org)
 

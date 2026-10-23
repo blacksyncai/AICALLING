@@ -17,6 +17,12 @@ from __future__ import annotations
 
 from app.config import settings
 
+# Flash-family models are available on request: an account needs them unlocked by the team
+# (Admin → account → "Unlock Flash models") before an agent can be switched to one.
+def requires_unlock(model_id: str | None) -> bool:
+    return any(m["id"] == model_id and m.get("locked") for m in LLM_MODELS)
+
+
 # What the runtime falls back to when an agent has no model set
 # (app/agent/runtime.py, agent_worker.py).
 RUNTIME_DEFAULT_MODEL = "gpt-4.1-nano"
@@ -46,6 +52,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "qwen/qwen3.8-27b",
+        "locked": True,
         "name": "BlackSync Ultra Fast",
         "provider": "BlackSync",
         "description": "Our quickest brain — the first word in under half a second, so conversations feel instant.",
@@ -55,6 +62,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "ministral-8b-latest",
+        "locked": True,
         "name": "BlackSync Flash",
         "provider": "BlackSync",
         "description": "Quick, natural replies and reliable call tools (booking, transfers, hang-up) at low cost.",
@@ -64,6 +72,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "ministral-3b-latest",
+        "locked": True,
         "name": "BSA Flashlight",
         "provider": "BlackSync",
         "description": "The fastest Flash — shortest pauses, best for simple, high-volume scripts.",
@@ -73,6 +82,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "ministral-14b-latest",
+        "locked": True,
         "name": "BlackSync Flash 2.1",
         "provider": "BlackSync",
         "description": "The smartest Flash — follows longer scripts and objections better, still fast.",
@@ -82,6 +92,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "mistral-small-latest",
+        "locked": True,
         "name": "BlackSync Flash Plus",
         "provider": "BlackSync",
         "description": "A bigger Flash: sharper answers and better instruction-following, with the same quick replies.",
@@ -91,6 +102,7 @@ LLM_MODELS: list[dict] = [
     },
     {
         "id": "mistral-medium-latest",
+        "locked": True,
         "name": "BlackSync Flash Pro",
         "provider": "BlackSync",
         "description": "The smartest Flash — handles long scripts, objections and tools well, and replies consistently fast.",

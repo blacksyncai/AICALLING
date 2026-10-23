@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, ChevronDown, Crown, Loader2, Search } from "lucide-react";
+import { Check, ChevronDown, Crown, Loader2, Lock, Search } from "lucide-react";
+import { useSession } from "@/lib/session";
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
@@ -101,6 +102,9 @@ export function ModelPicker({
   // Same per-model credit rates billing uses (admin-editable).
   const { data: rates } = useSWR<{ model_rates: Record<string, number> }>("/api/billing/rates", fetcher, { revalidateOnFocus: false });
   const rateOf = (id: string) => rates?.model_rates[id];
+  // Flash-family models are on request: locked until the team unlocks them for this account.
+  const { session } = useSession();
+  const isLocked = (m: ModelOption) => !!m.locked && !session?.org?.models_unlocked && m.id !== value;
 
   const models = useMemo(() => {
     const list: ModelOption[] = catalog?.models?.length ? catalog.models : fallbackIds.map(customModel).map((m) => ({ ...m, provider: "", description: "" }));
@@ -133,6 +137,11 @@ export function ModelPicker({
     requestAnimationFrame(() => searchRef.current?.focus());
   }
   function choose(id: string) {
+    const m = models.find((x) => x.id === id);
+    if (m && isLocked(m)) {
+      window.dispatchEvent(new Event("open-support"));  // ask the team to unlock it
+      return;
+    }
     onChange(id);
     if (!inline) close();
   }
@@ -225,9 +234,11 @@ export function ModelPicker({
                           aria-selected={isSel}
                           onClick={() => choose(m.id)}
                           onMouseMove={() => active !== i && setActive(i)}
+                          aria-disabled={isLocked(m) || undefined}
                           className={cn(
                             "mx-1.5 flex cursor-pointer items-start gap-2 rounded-lg px-3 py-2.5 transition-colors",
                             isBlackSync(m) && "bs-model-row",
+                            isLocked(m) && "opacity-60",
                             i === active && "bg-zinc-50",
                             isSel && "bg-brand-50 ring-1 ring-brand-500/40",
                           )}
@@ -246,6 +257,11 @@ export function ModelPicker({
                               {m.tags.includes("recommended") && (
                                 <span className="rounded bg-brand-50 px-1.5 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-100">Recommended</span>
                               )}
+                              {isLocked(m) && (
+                                <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 text-[10px] font-semibold text-zinc-600">
+                                  <Lock className="h-2.5 w-2.5" /> On request
+                                </span>
+                              )}
                               {fits(m) && (
                                 <span
                                   className="rounded bg-emerald-50 px-1.5 text-[10px] font-semibold text-emerald-700"
@@ -258,6 +274,11 @@ export function ModelPicker({
                             {m.description && (
                               <div className={cn("mt-1 text-xs leading-relaxed", isBlackSync(m) ? "bs-desc font-semibold text-zinc-700" : "text-zinc-500")}>
                                 {m.description}
+                              </div>
+                            )}
+                            {isLocked(m) && (
+                              <div className="mt-1 text-xs font-medium text-brand-700">
+                                Available on request — tap to message support, answer a few quick questions, and we&apos;ll unlock it.
                               </div>
                             )}
                           </div>

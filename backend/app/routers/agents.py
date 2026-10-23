@@ -240,6 +240,11 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
     agent = await _get_agent(db, ctx, agent_id)
     before = _prompt_state(agent)
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    from app.agent.models import requires_unlock
+
+    if (changes.get("llm_model") and changes["llm_model"] != agent.llm_model
+            and requires_unlock(changes["llm_model"]) and not ctx.org.models_unlocked):
+        raise HTTPException(status_code=403, detail="That model is available on request. Contact support to unlock it.")
     if "transfer_number" in changes:
         from app.services.outbound_call import validate_e164
         try:

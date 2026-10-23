@@ -143,12 +143,12 @@ export function LedgerCard({ org }: { org: AdminOrgDetail }) {
 export function SettingsCard({ org, refresh }: Props) {
   const toast = useToast();
   const [name, setName] = useState(org.name);
-  const [saving, setSaving] = useState<"name" | "unlimited" | "status" | null>(null);
+  const [saving, setSaving] = useState<"name" | "unlimited" | "models" | "status" | null>(null);
   const [confirmStatus, setConfirmStatus] = useState(false);
 
   useEffect(() => setName(org.name), [org.name]);
 
-  const save = async (key: "name" | "unlimited" | "status", body: Record<string, unknown>, msg: string) => {
+  const save = async (key: "name" | "unlimited" | "models" | "status", body: Record<string, unknown>, msg: string) => {
     setSaving(key);
     try {
       await patch(`/api/admin/orgs/${org.id}`, body);
@@ -190,6 +190,13 @@ export function SettingsCard({ org, refresh }: Props) {
           onChange={(v) => saving !== "unlimited" && save("unlimited", { unlimited_credits: v }, v ? "Unlimited credits on" : "Unlimited credits off")}
           label="Unlimited credits"
           description="Calls aren't blocked when the balance runs out. Usage is still recorded."
+        />
+
+        <Toggle
+          checked={!!org.models_unlocked}
+          onChange={(v) => saving !== "models" && save("models", { models_unlocked: v }, v ? "Flash models unlocked" : "Flash models locked")}
+          label="Unlock Flash models"
+          description="Lets this account's agents use the on-request BlackSync Flash models (Flash, Flashlight, Flash 2.1, Flash Plus, Flash Pro, Ultra Fast)."
         />
 
         <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 p-3 sm:flex-row sm:items-center sm:justify-between">

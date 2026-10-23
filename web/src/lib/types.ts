@@ -292,6 +292,8 @@ export interface ModelOption {
   recommended_for: string[];
   status: string;
   group: "recommended" | "fast" | "advanced" | "other";
+  /** Available on request: the account needs it unlocked by the team (Organization.models_unlocked). */
+  locked?: boolean;
 }
 
 export interface ModelCatalog {
@@ -335,6 +337,8 @@ export interface Org {
   /** IANA time zone used for reports (days on the dashboard, the call-log day filter). */
   timezone?: string | null;
   lead_finder_enabled?: boolean;
+  /** Request-only (Flash) models unlocked for this account by the team. */
+  models_unlocked?: boolean;
   /** Industry chosen at free-trial onboarding (agent catalog key). */
   industry?: string | null;
   onboarding?: { goals?: string[]; other_goal?: string; team_size?: string | null; trial_credits?: number } | null;

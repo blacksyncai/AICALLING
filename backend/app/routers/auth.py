@@ -65,6 +65,7 @@ def org_to_dict(o: Organization) -> dict:
         "unlimited_credits": o.unlimited_credits,
         "timezone": o.timezone or DEFAULT_TIMEZONE,
         "lead_finder_enabled": o.lead_finder_enabled is not False,
+        "models_unlocked": o.models_unlocked is True,
         "industry": o.industry,
         "onboarding": o.onboarding or None,
         "lead_credits": o.lead_credits_balance or 0,

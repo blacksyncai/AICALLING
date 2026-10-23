@@ -243,6 +243,10 @@ async def run_generation(draft_id: uuid.UUID, org_id: uuid.UUID, user_id: uuid.U
             await stage("save")
             agent = _agent_from_result(org.id, draft, data, ctx, result,
                                        await generator.knowledge_for(db, org.id))
+            from app.agent.models import requires_unlock
+
+            if requires_unlock(agent.llm_model) and not org.models_unlocked:
+                agent.llm_model = RUNTIME_DEFAULT_MODEL  # a request-only model this account hasn't unlocked
             db.add(agent)
             await db.flush()
             await snapshot(db, agent, "generated", user_id, note="Built with AI")
