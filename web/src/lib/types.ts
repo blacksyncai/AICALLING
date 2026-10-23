@@ -28,6 +28,8 @@ export interface Agent {
   calcom_api_key?: string;
   calcom_key_set?: boolean;
   calendar_timezone?: string;
+  /** Write-only: copy this agent's calendar to every agent on the account (and new agents). Default on. */
+  calendar_all_agents?: boolean;
   voicemail_action?: "hang_up" | "leave_message" | "ignore";
   screener_action?: "answer" | "hang_up";
   pinned?: boolean;

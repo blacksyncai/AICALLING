@@ -247,6 +247,9 @@ async def run_generation(draft_id: uuid.UUID, org_id: uuid.UUID, user_id: uuid.U
 
             if requires_unlock(agent.llm_model) and not org.models_unlocked:
                 agent.llm_model = RUNTIME_DEFAULT_MODEL  # a request-only model this account hasn't unlocked
+            from app.services import agent_calendar
+
+            await agent_calendar.apply_default(db, agent)
             db.add(agent)
             await db.flush()
             await snapshot(db, agent, "generated", user_id, note="Built with AI")

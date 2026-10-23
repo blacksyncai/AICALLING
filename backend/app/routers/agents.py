@@ -85,6 +85,7 @@ class AgentUpdate(BaseModel):
     # Write-only: "" removes the saved key.
     calcom_api_key: str | None = Field(default=None, max_length=200)
     calendar_timezone: str | None = Field(default=None, max_length=64)
+    calendar_all_agents: bool | None = None  # copy this agent's calendar to every agent (and new ones)
     transfer_number: str | None = None
     voicemail_action: str | None = Field(default=None, pattern="^(hang_up|leave_message|ignore)$")
     voicemail_message: str | None = Field(default=None, max_length=1000)
@@ -218,6 +219,9 @@ async def create_agent(body: AgentCreate, ctx: CtxDep, db: DbDep):
     if (agent.status or "active") == "active" and agent.template not in entitlements.EXEMPT_TEMPLATES:
         await entitlements.check_agent_activation(db, ctx.org)
     agent.org_id = ctx.org.id
+    from app.services import agent_calendar
+
+    await agent_calendar.apply_default(db, agent)
     db.add(agent)
     await db.commit()
     log.info("agent_created", agent_id=str(agent.id), template=body.template)
@@ -308,10 +312,16 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
                 raise HTTPException(status_code=400, detail="That number isn't on this account.")
         else:
             changes["caller_number"] = None
+    everywhere = changes.pop("calendar_all_agents", False)
     for key, value in changes.items():
         setattr(agent, key, value)
     if _prompt_state(agent) != before:
         await snapshot(db, agent, "edited", ctx.user.id)
+    if everywhere and agent.calcom_event_type_id:
+        from app.services import agent_calendar
+
+        n = await agent_calendar.use_everywhere(db, ctx.org.id, agent)
+        log.info("calendar_copied_to_agents", org_id=str(ctx.org.id), agents=n)
     await db.commit()
     await db.refresh(agent)
     return agent_to_dict(agent)

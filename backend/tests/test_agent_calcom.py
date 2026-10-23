@@ -40,3 +40,27 @@ def test_runtime_includes_key_only_server_side(monkeypatch):
 def test_slot_labels_use_agent_timezone():
     assert calendar._label("2026-10-13T19:00:00Z", "America/New_York") == "Tuesday, October 13 at 3:00 PM EDT"
     assert calendar._label("2026-10-13T19:00:00Z") == "Tuesday, October 13 at 7:00 PM UTC"
+
+
+def test_one_calendar_for_all_agents(client, make_client, monkeypatch):
+    from tests.test_accounts import _login, _new_account
+
+    monkeypatch.setattr(settings, "secrets_encryption_key", Fernet.generate_key().decode())
+    _, email = _new_account(client, name="Calendar Co")
+    c = _login(make_client, email)
+    a = c.post("/api/agents", json={"template": "blank"}).json()
+    b = c.post("/api/agents", json={"template": "blank"}).json()
+    assert c.patch(f"/api/agents/{a['id']}", json={
+        "enable_booking": True, "calcom_api_key": "cal_live_k1", "calcom_event_type_id": "111",
+        "calendar_timezone": "America/Toronto", "calendar_all_agents": True}).status_code == 200
+    other = c.get(f"/api/agents/{b['id']}").json()
+    assert other["calcom_event_type_id"] == "111" and other["calcom_key_set"] and other["calendar_timezone"] == "America/Toronto"
+    new = c.post("/api/agents", json={"template": "blank"}).json()  # agents made later start with it
+    assert new["calcom_event_type_id"] == "111" and new["calcom_key_set"]
+
+    # Unticked: only this agent changes.
+    c.patch(f"/api/agents/{b['id']}", json={"calcom_event_type_id": "222", "calendar_all_agents": False})
+    assert c.get(f"/api/agents/{a['id']}").json()["calcom_event_type_id"] == "111"
+    # Another account never gets it.
+    _, email2 = _new_account(client, name="Other Calendar Co")
+    assert _login(make_client, email2).post("/api/agents", json={"template": "blank"}).json()["calcom_event_type_id"] == ""

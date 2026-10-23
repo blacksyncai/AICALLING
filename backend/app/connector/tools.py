@@ -481,6 +481,9 @@ async def create_agent(s: Session, args: dict) -> dict:
                         "structure), then try again.")
     agent = new_agent_from_template("blank", str(args.get("name") or "New agent")[:80])
     agent.org_id, agent.status = ctx.org.id, "paused"
+    from app.services import agent_calendar
+
+    await agent_calendar.apply_default(s.db, agent)
     s.db.add(agent)
     await s.db.commit()
     fields = {k: args[k] for k in ("first_message", "description", "voice_id", "transfer_number",

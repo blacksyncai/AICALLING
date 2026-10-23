@@ -55,7 +55,10 @@ function pickEditable(a: Agent) {
 
 /** PATCH body: editable fields, leaving out builder fields the backend didn't send. */
 function patchBody(a: Agent) {
-  return Object.fromEntries(Object.entries(pickEditable(a)).filter(([k, v]) => v !== undefined && !(k === "builder" && v === null)));
+  const body = Object.fromEntries(Object.entries(pickEditable(a)).filter(([k, v]) => v !== undefined && !(k === "builder" && v === null)));
+  // One calendar for the account unless they unticked it: saving copies it to every agent.
+  if (a.enable_booking && a.calcom_event_type_id && a.calendar_all_agents !== false) body.calendar_all_agents = true;
+  return body;
 }
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -756,6 +759,18 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
         </Field>
         <TimezonePicker value={tz} onChange={(v) => set("calendar_timezone", v)} />
       </div>
+      <label className="flex items-start gap-2 text-sm text-zinc-700">
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 accent-brand-600"
+          checked={draft.calendar_all_agents !== false}
+          onChange={(e) => set("calendar_all_agents", e.target.checked)}
+        />
+        <span>
+          Use this calendar for all my agents
+          <span className="block text-xs text-zinc-500">Saving copies it to every agent, and new agents start with it.</span>
+        </span>
+      </label>
     </Card>
   );
 }

@@ -9,17 +9,17 @@ import { post } from "@/lib/api";
  * we ask only until it's set, and it can be changed any time from the banner.
  */
 export function CountryPopup({ open, onDone, onCancel, initial }: { open: boolean; onDone: (country: string) => void; onCancel: () => void; initial?: string | null }) {
-  const [country, setCountry] = useState(initial || "US");
+  const [country, setCountry] = useState("US");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setCountry(initial || "US");
+      setCountry("US");
       setError(null);
       setBusy(false);
     }
-  }, [open, initial]);
+  }, [open]);
 
   if (!open) return null;
 

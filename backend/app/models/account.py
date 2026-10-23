@@ -38,6 +38,8 @@ class Organization(Base):
     lead_finder_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Flash-family models (app.agent.models.requires_unlock) unlocked for this account by the team.
     models_unlocked: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Cal.com calendar new agents start with: {event_type_id, api_key_enc, timezone} (set from an agent's editor).
+    calendar_default: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Free-trial onboarding answers: industry key (agent catalog) and {"goals", "team_size", ...}.
     industry: Mapped[str | None] = mapped_column(String(64), nullable=True)
     onboarding: Mapped[dict | None] = mapped_column(JSON, nullable=True)
