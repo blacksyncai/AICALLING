@@ -1,6 +1,6 @@
 "use client";
 
-import { Hash, Phone, Search, Star } from "lucide-react";
+import { Clock, Hash, Phone, Search, ShieldCheck, Star } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
@@ -218,6 +218,7 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
                 ) : (
                   n.label && <div className="text-xs text-zinc-500">{n.label}</div>
                 )}
+                <SpamProtection n={n} />
                 <NumberHealth n={n} />
               </div>
               {manager && n.health?.resting_until && (
@@ -235,6 +236,34 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
         </ul>
       )}
     </Card>
+  );
+}
+
+/** Plivo numbers are registered with AT&T and T-Mobile automatically so calls are less likely to show "Spam Likely". */
+function SpamProtection({ n }: { n: PhoneNumberItem }) {
+  const p = n.spam_protection;
+  if (!p) return null;
+  const carrierName = (c: string) => (c === "at&t" ? "AT&T" : c === "t-mobile" ? "T-Mobile" : c);
+  if (p.status === "ACTIVE") {
+    const on = Object.entries(p.carriers).filter(([, v]) => v.status === "ACTIVE").map(([c]) => carrierName(c));
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-xs text-emerald-700">
+        <ShieldCheck className="h-3.5 w-3.5" /> Spam protection active{on.length ? ` · ${on.join(", ")}` : ""}
+      </div>
+    );
+  }
+  if (p.status === "FAILED") {
+    const why = Object.values(p.carriers).find((v) => v.status === "FAILED")?.reason;
+    return (
+      <div className="mt-1 text-xs text-red-600">
+        Spam protection registration didn&apos;t go through{why ? `: ${why}` : ""}. We&apos;ll retry — message us in the chat if it stays.
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-xs text-amber-700">
+      <Clock className="h-3.5 w-3.5" /> Registering with AT&amp;T and T-Mobile for spam protection — give us a few hours.
+    </div>
   );
 }
 

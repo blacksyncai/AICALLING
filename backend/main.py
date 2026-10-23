@@ -126,7 +126,10 @@ async def lifespan(app: FastAPI):
                 else asyncio.create_task(asyncio.sleep(0)))
     from app.services.number_registration import start_worker as start_registration_worker
     registration_task = start_registration_worker() if settings.run_startup_jobs and settings.number_registration_worker_enabled else asyncio.create_task(asyncio.sleep(0))
+    from app.services.caller_reputation import start_sweeper as start_reputation_sweeper
+    reputation_task = start_reputation_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     yield
+    reputation_task.cancel()
     registration_task.cancel()
     rec_task.cancel()
     followup_task.cancel()

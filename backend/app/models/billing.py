@@ -212,6 +212,11 @@ class PhoneNumber(Base):
     # Taken out of campaign rotation until then ("low_pickups": likely labeled spam). See services/number_health.
     rest_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rest_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Plivo Caller Reputation (AT&T / T-Mobile spam-label registration): NOT_REGISTERED | PENDING | ACTIVE |
+    # FAILED, the per-carrier detail, and when it was last read. See services/caller_reputation.
+    reputation_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reputation_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reputation_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

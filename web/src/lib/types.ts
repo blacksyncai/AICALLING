@@ -62,6 +62,11 @@ export interface VoiceTuning {
 
 export interface PhoneNumberItem {
   registration?: { status: string; providers: {provider: string; status: string; prerequisite: string; request_id: string | null}[] };
+  /** Plivo numbers: AT&T / T-Mobile spam-label registration (null for other carriers). */
+  spam_protection?: {
+    status: "NOT_REGISTERED" | "PENDING" | "ACTIVE" | "FAILED";
+    carriers: Record<string, { status: string; reason: string; reason_code: string }>;
+  } | null;
   /** Last 7 days of outbound calls from this number, and whether it's resting from campaign rotation. */
   health?: {
     dials_7d: number;

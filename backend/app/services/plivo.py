@@ -86,3 +86,34 @@ async def release(sid: str) -> None:
     if not re.fullmatch(r"\+1\d{10}", number):
         raise PlivoError("Invalid Plivo number.")
     await _request("DELETE", f"Number/{number[1:]}/")
+
+
+# ── Caller Reputation (AT&T / T-Mobile spam-label registration) ───────────────
+# The business is registered once as a Plivo Profile; each number is then attached to it.
+# https://www.plivo.com/docs/voice/concepts/caller-reputation
+
+
+async def reputation_profile() -> str:
+    """UUID of the account's Profile that carriers approved for Caller Reputation ("" if none yet)."""
+    data = await _request("GET", "Profile/")
+    for p in data.get("profiles") or data.get("objects") or []:
+        if p.get("enable_caller_reputation") and p.get("caller_reputation_status") == "APPROVED":
+            return str(p.get("profile_uuid") or "")
+    return ""
+
+
+def _reputation(data: dict) -> dict:
+    by = {carrier: {"status": (v or {}).get("status") or "", "reason": (v or {}).get("reason") or "",
+                    "reason_code": (v or {}).get("reason_code") or ""}
+          for carrier, v in (data.get("caller_reputation_by_carrier") or {}).items()}
+    return {"status": data.get("caller_reputation_status") or "NOT_REGISTERED", "carriers": by}
+
+
+async def reputation_status(number: str) -> dict:
+    return _reputation(await _request("GET", f"Number/{number.lstrip('+')}/"))
+
+
+async def enable_reputation(number: str, profile_uuid: str) -> dict:
+    data = await _request("POST", f"Number/{number.lstrip('+')}/",
+                          json={"caller_reputation": "enabled", "profile_uuid": profile_uuid})
+    return _reputation(data)

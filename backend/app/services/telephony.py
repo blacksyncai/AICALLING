@@ -337,6 +337,8 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
         raise
     if selected == "plivo":
         await _livekit_numbers(add=[number], trunk_id=settings.livekit_sip_plivo_trunk_id)
+        from app.services.caller_reputation import register_soon
+        register_soon(row.id)  # AT&T / T-Mobile spam-label registration under the account's business profile
     elif selected != "signalwire":
         await _livekit_numbers(add=[number])
         await _inbound_ready(number)
@@ -371,6 +373,8 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
         await bandwidth.ensure_bridge_trunk([number])
     elif row.carrier == "plivo":
         await _livekit_numbers(add=[number], trunk_id=settings.livekit_sip_plivo_trunk_id)
+        from app.services.caller_reputation import register_soon
+        register_soon(row.id)
     elif row.carrier != "signalwire":
         await _livekit_numbers(add=[number])
         await _inbound_ready(number)
@@ -502,5 +506,9 @@ def number_to_dict(n: PhoneNumber) -> dict:
         "id": str(n.id), "number": n.number, "label": n.label, "source": n.source or "assigned",
         "carrier": n.carrier or "twilio",
         "is_default": bool(n.is_default), "status": n.status,
+        # Plivo numbers: AT&T / T-Mobile spam-label registration progress (None for other carriers).
+        "spam_protection": ({"status": getattr(n, "reputation_status", None) or "PENDING",
+                             "carriers": getattr(n, "reputation_detail", None) or {}}
+                            if n.carrier == "plivo" else None),
         "created_at": n.created_at.isoformat() if n.created_at else None,
     }
