@@ -323,6 +323,7 @@ async def checkout_phone_number(db: AsyncSession, org: Organization, user_id: uu
     session = await stripe_api.create_checkout_session(
         mode="subscription", customer=cid, line_items=[{"price": price, "quantity": 1}],
         metadata=meta, client_reference_id=str(org.id), subscription_data={"metadata": meta},
+        allow_promotion_codes=True,  # number discount codes (e.g. a reduced monthly price) entered at checkout
         success_url=app_url("/phone-numbers?checkout=success"), cancel_url=app_url("/phone-numbers?checkout=canceled"),
         idempotency_key=f"bs-number-{org.id}-{carrier}-{number}-{int(_now().timestamp() // 600)}",
     )
