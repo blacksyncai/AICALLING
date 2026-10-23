@@ -43,7 +43,6 @@ DEFAULTS: dict = {
     "free_test_minutes": 10,
     # Free calling credits for a self-serve signup (no card).
     "trial_credits": 30,
-    "max_numbers_per_org": 5,
     # Entitlements for accounts without a paid plan (free trial). "teams" keeps today's access; "solo" is stricter.
     "no_plan_entitlements": "teams",
     # Plans whose accounts can use Radar (paid or admin-assigned). Accounts without a plan get the demo preview.

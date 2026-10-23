@@ -98,7 +98,7 @@ def test_self_serve_off_means_request_then_admin_fulfills(client, make_client, t
     assert mine["requests"][0]["status"] == "fulfilled" and len(mine["numbers"]) == 1
 
 
-def test_self_serve_purchase_respects_limit(client, make_client, twilio, monkeypatch):
+def test_self_serve_purchase_has_no_number_limit(client, make_client, twilio, monkeypatch):
     from app.services.billing import subscriptions
 
     n, n2 = _num(), _num()
@@ -124,7 +124,9 @@ def test_self_serve_purchase_respects_limit(client, make_client, twilio, monkeyp
 
         monkeypatch.setattr(subscriptions, "phone_summary", on_plan)
         assert owner.post("/api/phone-numbers/purchase", json={"number": n}).status_code == 201
-        assert owner.post("/api/phone-numbers/purchase", json={"number": n2}).status_code == 400
+        # No cap on how many: past the plan's included numbers it only asks to confirm the monthly charge.
+        r = owner.post("/api/phone-numbers/purchase", json={"number": n2})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "confirm_charge"
     finally:
         client.patch("/api/admin/telephony/settings", json={"self_serve_numbers": False, "max_numbers_per_org": 5})
 

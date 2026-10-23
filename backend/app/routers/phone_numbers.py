@@ -57,7 +57,6 @@ class AdminAssign(BaseModel):
 
 class TelephonySettings(BaseModel):
     self_serve_numbers: bool | None = None
-    max_numbers_per_org: int | None = Field(default=None, ge=0, le=100)
 
 
 def _request_to_dict(r: PhoneNumberRequest) -> dict:
@@ -88,12 +87,6 @@ async def _own_number(db, org_id: uuid.UUID, number_id: uuid.UUID) -> PhoneNumbe
     return row
 
 
-async def _room_for_another(db, org_id: uuid.UUID) -> None:
-    limit = int(await settings_store.get(db, "max_numbers_per_org") or 0)
-    if len(await telephony.active_numbers(db, org_id)) >= limit:
-        raise HTTPException(status_code=400, detail=f"This account already has the maximum of {limit} numbers.")
-
-
 # ── Customer ──────────────────────────────────────────────────────────────────
 
 
@@ -119,7 +112,6 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
         "requests": [_request_to_dict(r) for r in requests],
         "self_serve": bool(cfg["self_serve_numbers"]) and bool(telephony.purchase_carriers()),
         "purchase_carriers": telephony.purchase_carriers(),
-        "max_numbers": int(cfg["max_numbers_per_org"] or 0),
         "recordings_enabled": settings.recordings_ready,
     }
 
@@ -168,7 +160,6 @@ async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = "", car
 @router.post("/purchase", status_code=201)
 async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
     await _require_self_serve(db)
-    await _room_for_another(db, ctx.org.id)
     from app.services.billing.subscriptions import phone_summary
 
     try:
@@ -220,7 +211,7 @@ async def telephony_status(_: AdminDep, db: DbDep):
         "recordings_ready": settings.recordings_ready,
         "trunk_sid": "", "trunk_error": "", "owned": [], "owned_error": "", "owned_warnings": [],
         "settings": {k: v for k, v in (await settings_store.get_all(db)).items()
-                     if k in ("self_serve_numbers", "max_numbers_per_org")},
+                     if k == "self_serve_numbers"},
         "open_requests": [],
     }
     reqs = (await db.execute(
@@ -253,7 +244,7 @@ async def update_telephony_settings(body: TelephonySettings, admin: AdminDep, db
     for key, value in body.model_dump(exclude_none=True).items():
         await settings_store.set_value(db, key, value, admin.id, reason="Phone number settings")
     await db.commit()
-    return {k: v for k, v in (await settings_store.get_all(db)).items() if k in ("self_serve_numbers", "max_numbers_per_org")}
+    return {k: v for k, v in (await settings_store.get_all(db)).items() if k == "self_serve_numbers"}
 
 
 @admin_router.get("/phone-numbers/available")

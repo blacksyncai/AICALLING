@@ -87,7 +87,6 @@ export default function PhoneNumbersPage() {
       </div>
     );
 
-  const full = data.numbers.length >= data.max_numbers;
   const getNumber = data.self_serve ? (
     <BuyNumber carriers={data.purchase_carriers || ["twilio"]} pricing={data.pricing} refresh={() => void mutate()} />
   ) : (
@@ -107,7 +106,7 @@ export default function PhoneNumbersPage() {
         </div>
       )}
       <PageHeader title="Phone numbers" description="The numbers your agents call from. Pick a default, or set one per agent under Agent → Actions." />
-      {manager && !full && data.numbers.length === 0 && <div className="mb-6">{getNumber}</div>}
+      {manager && data.numbers.length === 0 && <div className="mb-6">{getNumber}</div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <NumbersList numbers={data.numbers} manager={manager} refresh={() => void mutate()} />
         {manager && (
@@ -123,11 +122,7 @@ export default function PhoneNumbersPage() {
                 persistKey="phone-shared-line"
               />
             )}
-            {full ? (
-              <Card className="p-5 text-sm text-zinc-600">This account has reached its limit of {data.max_numbers} numbers. Contact support for more.</Card>
-            ) : (
-              data.numbers.length > 0 && getNumber
-            )}
+            {data.numbers.length > 0 && getNumber}
             <TextingCard />
             {data.requests.length > 0 && (
               <Card>

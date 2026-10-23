@@ -16,7 +16,7 @@ interface Telephony {
   trunk_error: string;
   owned: { sid: string; number: string; friendly: string; on_trunk: boolean; org_id: string | null; org_name: string | null }[];
   owned_error: string;
-  settings: { self_serve_numbers: boolean; max_numbers_per_org: number };
+  settings: { self_serve_numbers: boolean };
   open_requests: { id: string; area_code: string; org_id: string; org_name: string; created_at: string | null }[];
 }
 
@@ -80,19 +80,6 @@ export function TelephonyTab() {
               label="Customers can buy numbers themselves"
               description="Off: customers send a request and you assign a number from their account page."
             />
-            <Field label="Max numbers per account">
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                defaultValue={data.settings.max_numbers_per_org}
-                onBlur={(e) => {
-                  const n = Number(e.target.value);
-                  if (Number.isInteger(n) && n !== data.settings.max_numbers_per_org) void save({ max_numbers_per_org: n });
-                }}
-                className="w-28"
-              />
-            </Field>
           </div>
         </Card>
         <Card>
