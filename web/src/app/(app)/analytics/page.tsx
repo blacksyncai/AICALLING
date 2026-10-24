@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { bestHours, describeHours, toLocalHours } from "@/components/analytics/hours";
-import { BestTimeCard, CallsHero, FunnelCard, KpiTiles, OutcomesCard, ReachGauge } from "@/components/analytics/Bento";
-import { AgentTable, CampaignTable, SentimentBar } from "@/components/analytics/Panels";
+import { BestTimeCard, CallsHero, FunnelCard, KpiTiles, MoodCard, OutcomesCard, ReachGauge } from "@/components/analytics/Bento";
+import { AgentTable, CampaignTable } from "@/components/analytics/Panels";
 import type { Analytics } from "@/components/analytics/types";
 import { Button, Card, CardHeader, EmptyState, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
@@ -30,6 +30,11 @@ export default function AnalyticsPage() {
   }
 
   const f = data?.funnel;
+  // Leaderboards only earn space once there's something to compare.
+  const boards = [
+    ...(data && !data.locked?.includes("by_agent") && data.by_agent.length >= 2 ? [{ title: "Agent leaderboard", body: <AgentTable rows={data.by_agent} /> }] : []),
+    ...(data && data.by_campaign.length >= 2 ? [{ title: "Campaign leaderboard", body: <CampaignTable rows={data.by_campaign} /> }] : []),
+  ];
 
   return (
     <div className="flex flex-col gap-6">
@@ -71,47 +76,21 @@ export default function AnalyticsPage() {
         </Card>
       ) : (
         <>
-          <div className="rounded-[32px] bg-[#0b0b0c] p-3 sm:p-4">
-            <div className="grid grid-cols-12 gap-3">
-              <CallsHero data={data} />
-              <ReachGauge data={data} />
-              <KpiTiles data={data} />
-              <FunnelCard funnel={f} />
-              <OutcomesCard outcomes={data.outcomes} />
-              <BestTimeCard hours={hours} best={best} />
-            </div>
+          <div className="grid grid-cols-12 gap-4">
+            <CallsHero data={data} />
+            <ReachGauge data={data} />
+            <KpiTiles data={data} />
+            <FunnelCard funnel={f} />
+            <OutcomesCard outcomes={data.outcomes} />
+            <BestTimeCard hours={hours} best={best} />
+            <MoodCard sentiment={data.sentiment} className={cn("col-span-12", boards.length === 1 && "lg:col-span-4")} />
+            {boards.map((b) => (
+              <Card key={b.title} className={cn("col-span-12 min-w-0 rounded-[26px]", boards.length === 1 ? "lg:col-span-8" : "xl:col-span-6")}>
+                <CardHeader title={b.title} description="Ranked by meetings booked" />
+                <div className="pt-1">{b.body}</div>
+              </Card>
+            ))}
           </div>
-
-          <div className="grid gap-6 xl:grid-cols-2">
-            <Card className="min-w-0">
-              <CardHeader title="Agent leaderboard" description="Ranked by meetings booked" />
-              <div className="pt-1">
-                {data.locked?.includes("by_agent") ? (
-                  <div className="px-6 pb-6 pt-2 text-sm text-zinc-600">
-                    Compare agents side by side with team analytics on the Teams plan.{" "}
-                    <Link href="/billing?tab=plans&plan=teams" className="font-medium text-brand-700 hover:text-brand-800">
-                      See Teams
-                    </Link>
-                  </div>
-                ) : (
-                  <AgentTable rows={data.by_agent} />
-                )}
-              </div>
-            </Card>
-            <Card className="min-w-0">
-              <CardHeader title="Campaign leaderboard" description="Ranked by meetings booked" />
-              <div className="pt-1">
-                <CampaignTable rows={data.by_campaign} />
-              </div>
-            </Card>
-          </div>
-
-          <Card className="min-w-0">
-            <CardHeader title="Prospect mood" description="How people felt on the call, from the AI's read of each conversation" />
-            <div className="p-5">
-              <SentimentBar sentiment={data.sentiment} />
-            </div>
-          </Card>
         </>
       )}
     </div>
