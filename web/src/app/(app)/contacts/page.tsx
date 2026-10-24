@@ -14,7 +14,7 @@ import { Button, Card, EmptyState, Input, Notice, PageHeader, Select, Spinner } 
 import { fetcher } from "@/lib/api";
 import type { Campaign, ContactList } from "@/lib/types";
 import { canManage, useSession } from "@/lib/session";
-import { cn, timeAgo, outcomeLabel } from "@/lib/utils";
+import { cn, formatPhone, timeAgo, outcomeLabel } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
 const PIPELINE = ["new", "interested", "callback", "meeting_booked"];
@@ -22,12 +22,6 @@ const PIPELINE = ["new", "interested", "callback", "meeting_booked"];
 /** 84 → "1:24" */
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
-/** +15419625730 → (541) 962-5730; anything else as stored. */
-function formatPhone(p: string) {
-  const d = (p || "").replace(/\D/g, "");
-  const n = d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
-  return n.length === 10 ? `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}` : p;
-}
 
 export default function ContactsPage() {
   const router = useRouter();

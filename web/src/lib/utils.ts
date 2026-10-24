@@ -103,3 +103,10 @@ export function toolLabel(tool: string | undefined, args: Record<string, unknown
       return null;
   }
 }
+
+/** +15419625730 → (541) 962-5730; anything else as stored. */
+export function formatPhone(p: string | null | undefined): string {
+  const d = (p || "").replace(/\D/g, "");
+  const n = d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
+  return n.length === 10 ? `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}` : p || "";
+}
