@@ -2,15 +2,16 @@
 
 /**
  * Agents as a dark stacked list — remixed from the "stacked list" pattern for BlackSync:
- * real agents instead of sample members, lucide icons, our brand colors, and a bottom
- * "directory" bar that springs open into the full (searchable) list incl. paused agents.
+ * real agents instead of sample members, lucide icons and our brand colors. Tabs split live agents
+ * from drafts (anything not switched on yet), and a draft can be activated right from its row.
  */
 
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import {
-  Briefcase, CalendarCheck, ChevronRight, Copy, Headset, Home, MoreHorizontal, Pin, PinOff, Plus, Search, Sparkles, Trash2, Users, X,
+  Briefcase, CalendarCheck, ChevronRight, Copy, Headset, Home, MoreHorizontal, Pin, PinOff, Plus, Power, Search, Sparkles, Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useToast } from "@/components/toast";
 import { del, post } from "@/lib/api";
@@ -83,8 +84,26 @@ function RoleBadge({ agent }: { agent: Agent }) {
 function AgentRow({ agent, onChanged }: { agent: Agent; onChanged: () => void }) {
   const toast = useToast();
   const [menu, setMenu] = useState(false);
+  const router = useRouter();
+  const [activating, setActivating] = useState(false);
   const live = agent.status === "active";
   const calls = agent.stats?.calls ?? 0;
+
+  // Go live; if something still needs fixing, open the agent where it lists them (with "Ignore and launch").
+  async function activate() {
+    setActivating(true);
+    try {
+      await post(`/api/agent-builder/agents/${agent.id}/launch`);
+      toast(`${agent.name} is live`);
+      onChanged();
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.startsWith("Fix these")) router.push(`/agents/${agent.id}?activate=1`);
+      else toast(msg, "error");
+    } finally {
+      setActivating(false);
+    }
+  }
 
   return (
     <motion.div
@@ -108,8 +127,8 @@ function AgentRow({ agent, onChanged }: { agent: Agent; onChanged: () => void })
           <span className="truncate">{agent.name}</span>
         </h3>
         <div className="mt-1 flex items-center gap-1.5 text-[13px]">
-          {live && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
-          <span className={live ? "text-emerald-400" : "text-zinc-500"}>{live ? "Live" : "Paused"}</span>
+          <span className={cn("h-1.5 w-1.5 rounded-full", live ? "bg-emerald-400" : "bg-amber-400")} />
+          <span className={live ? "text-emerald-400" : "text-amber-300"}>{live ? "Live" : "Draft"}</span>
           <span className="truncate text-zinc-500">
             · {calls} {calls === 1 ? "call" : "calls"} · edited {timeAgo(agent.updated_at)}
           </span>
@@ -118,6 +137,16 @@ function AgentRow({ agent, onChanged }: { agent: Agent; onChanged: () => void })
       <div className="hidden sm:block">
         <RoleBadge agent={agent} />
       </div>
+      {!live && (
+        <button
+          type="button"
+          onClick={activate}
+          disabled={activating}
+          className="relative z-10 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-emerald-500 px-3 text-xs font-semibold text-white shadow-[0_4px_14px_-4px_rgba(16,185,129,0.7)] transition hover:bg-emerald-400 active:scale-95 disabled:opacity-60"
+        >
+          <Power className="h-3.5 w-3.5" /> {activating ? "Activating…" : "Activate"}
+        </button>
+      )}
       <div className="relative z-10">
         <button
           type="button"
@@ -186,128 +215,89 @@ function SearchBox({ value, onChange, placeholder, autoFocus }: { value: string;
   );
 }
 
-export function AgentStack({ agents, onChanged, onNew }: { agents: Agent[]; onChanged: () => void; onNew: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const [query, setQuery] = useState("");
-  const [dirQuery, setDirQuery] = useState("");
+export type AgentView = "live" | "drafts" | "all";
 
-  const live = useMemo(() => agents.filter((a) => a.status === "active" && matches(a, query)), [agents, query]);
+export function AgentStack({ agents, onChanged, onNew, view, onView }: {
+  agents: Agent[]; onChanged: () => void; onNew: () => void; view: AgentView; onView: (v: AgentView) => void;
+}) {
+  const [query, setQuery] = useState("");
   const liveCount = agents.filter((a) => a.status === "active").length;
-  const directory = useMemo(() => agents.filter((a) => matches(a, dirQuery)), [agents, dirQuery]);
+  const counts: Record<AgentView, number> = { live: liveCount, drafts: agents.length - liveCount, all: agents.length };
+  const shown = useMemo(
+    () => agents.filter((a) => (view === "all" || (view === "live") === (a.status === "active")) && matches(a, query)),
+    [agents, query, view],
+  );
+  const tabs: { key: AgentView; label: string }[] = [
+    { key: "live", label: "Live" },
+    { key: "drafts", label: "Drafts" },
+    { key: "all", label: "All" },
+  ];
 
   return (
-    <div className="relative mx-auto flex min-h-[560px] w-full max-w-3xl flex-col overflow-hidden rounded-[32px] bg-zinc-950 pb-24 shadow-[0_24px_60px_-24px_rgba(33,27,24,0.55)] ring-1 ring-white/10">
+    <div className="relative mx-auto flex min-h-[480px] w-full max-w-3xl flex-col overflow-hidden rounded-[32px] bg-zinc-950 pb-6 shadow-[0_24px_60px_-24px_rgba(33,27,24,0.55)] ring-1 ring-white/10">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(600px_260px_at_0%_0%,rgba(236,101,60,0.16),transparent_70%)]" />
 
       <div className="relative p-6 pb-3 sm:p-8 sm:pb-3">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 font-display text-lg font-semibold tracking-tight text-white">
-            Live agents
-            <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-normal text-zinc-300">{liveCount}</span>
-          </h2>
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div role="tablist" aria-label="Agents" className="flex rounded-full bg-white/[0.06] p-1 ring-1 ring-inset ring-white/[0.06]">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={view === t.key}
+                onClick={() => onView(t.key)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition",
+                  view === t.key ? "bg-white text-zinc-900 shadow" : "text-zinc-400 hover:text-white",
+                )}
+              >
+                {t.key === "live" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
+                {t.key === "drafts" && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />}
+                {t.label}
+                <span className={cn("rounded-full px-1.5 text-xs tabular-nums", view === t.key ? "bg-zinc-100 text-zinc-600" : "bg-white/10 text-zinc-400")}>{counts[t.key]}</span>
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={onNew}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-b from-brand-500 to-brand-600 text-white shadow-[0_4px_14px_-2px_rgba(236,101,60,0.6)] transition active:scale-95"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-brand-500 to-brand-600 text-white shadow-[0_4px_14px_-2px_rgba(236,101,60,0.6)] transition active:scale-95"
             aria-label="New agent"
           >
             <Plus className="h-[18px] w-[18px]" strokeWidth={2.5} />
           </button>
         </div>
-        <SearchBox value={query} onChange={setQuery} placeholder="Search agents…" />
-      </div>
-
-      <div className="relative flex-1 px-6 sm:px-8">
-        <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.04 } } }}>
-          {live.map((a) => (
-            <AgentRow key={`live-${a.id}`} agent={a} onChanged={onChanged} />
-          ))}
-        </motion.div>
-        {live.length === 0 && (
-          <p className="py-10 text-center text-sm text-zinc-500">
-            {query ? "No live agents match your search." : "No live agents — open the directory below to switch one on."}
-          </p>
+        <SearchBox value={query} onChange={setQuery} placeholder={view === "drafts" ? "Search drafts…" : "Search agents…"} />
+        {view === "drafts" && counts.drafts > 0 && (
+          <p className="mt-3 text-xs text-zinc-500">Drafts aren&apos;t taking calls yet. Test them, then hit Activate to put them live.</p>
         )}
       </div>
 
-      {/* Directory: a bar that springs open into the full list. */}
-      <motion.div
-        initial={false}
-        animate={{
-          height: expanded ? "calc(100% - 20px)" : "68px",
-          width: expanded ? "calc(100% - 20px)" : "calc(100% - 40px)",
-          bottom: expanded ? "10px" : "20px",
-          left: expanded ? "10px" : "20px",
-          borderRadius: expanded ? "26px" : "22px",
-        }}
-        transition={{ type: "spring", stiffness: 240, damping: 30, mass: 0.8 }}
-        className="group/bar absolute z-30 flex flex-col overflow-hidden bg-zinc-900 ring-1 ring-white/10"
-        style={{ cursor: expanded ? "default" : "pointer" }}
-        onClick={() => !expanded && setExpanded(true)}
-      >
-        <div className={cn("flex h-[68px] shrink-0 items-center justify-between px-3", expanded ? "border-b border-white/[0.06]" : "hover:bg-white/[0.03]")}>
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/[0.06] text-zinc-300 ring-1 ring-inset ring-white/10 transition-transform group-hover/bar:scale-105">
-              <Users className="h-5 w-5" />
-            </span>
-            <div>
-              <h4 className="text-[15px] font-medium leading-none text-white">Agent directory</h4>
-              <p className="mt-1.5 text-xs leading-none text-zinc-500">
-                {agents.length} {agents.length === 1 ? "agent" : "agents"} · {agents.length - liveCount} paused
-              </p>
-            </div>
-          </div>
-          {expanded ? (
-            <button
-              type="button"
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/[0.06] text-zinc-400 transition hover:text-white active:scale-90"
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpanded(false);
-              }}
-              aria-label="Close directory"
-            >
-              <X className="h-[18px] w-[18px]" />
-            </button>
-          ) : (
-            <div className="flex -space-x-3 pr-1">
-              {agents.slice(0, 3).map((a) => (
-                <Avatar key={`sum-${a.id}`} agent={a} size="sm" />
-              ))}
-              {agents.length > 3 && (
-                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-xs text-zinc-300 ring-2 ring-zinc-900">
-                  +{agents.length - 3}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="flex min-h-0 flex-1 flex-col">
-          <AnimatePresence>
-            {expanded && (
-              <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="px-5 py-4">
-                <SearchBox value={dirQuery} onChange={setDirQuery} placeholder="Search all agents…" autoFocus />
-              </motion.div>
+      <div className="relative flex-1 px-6 sm:px-8">
+        <motion.div key={view} initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.04 } } }}>
+          {shown.map((a) => (
+            <AgentRow key={a.id} agent={a} onChanged={onChanged} />
+          ))}
+        </motion.div>
+        {shown.length === 0 && (
+          <div className="py-10 text-center text-sm text-zinc-500">
+            {query ? (
+              "No agents match your search."
+            ) : view === "live" ? (
+              <>
+                No live agents yet.{" "}
+                {counts.drafts > 0 && (
+                  <button type="button" onClick={() => onView("drafts")} className="font-medium text-brand-300 hover:text-brand-200">
+                    View your {counts.drafts} draft{counts.drafts === 1 ? "" : "s"} →
+                  </button>
+                )}
+              </>
+            ) : (
+              "No drafts — every agent is live."
             )}
-          </AnimatePresence>
-          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 pb-3">
-            <motion.div
-              initial="hidden"
-              animate={expanded ? "visible" : "hidden"}
-              variants={{
-                visible: { transition: { staggerChildren: 0.03, delayChildren: 0.1 } },
-                hidden: { transition: { staggerChildren: 0.02, staggerDirection: -1 } },
-              }}
-            >
-              {directory.map((a) => (
-                <AgentRow key={`dir-${a.id}`} agent={a} onChanged={onChanged} />
-              ))}
-            </motion.div>
-            {expanded && directory.length === 0 && <p className="py-8 text-center text-sm text-zinc-500">No agents match “{dirQuery}”.</p>}
           </div>
-        </div>
-      </motion.div>
+        )}
+      </div>
     </div>
   );
 }

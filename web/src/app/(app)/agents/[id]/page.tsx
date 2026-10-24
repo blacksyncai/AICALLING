@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowUpRight, BookOpen, Brain, Check, Eye, FlaskConical, MessageSquare, Mic, Phone, Plus, Sparkles, Trash2, Upload, Wrench, Zap } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, Brain, Check, Eye, FlaskConical, MessageSquare, Mic, Pause, Phone, Plus, Power, Sparkles, Trash2, Upload, Wrench, Zap } from "lucide-react";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { AnimatedTabList, AnimatedTabPanel } from "@/components/ui/animated-tabs";
 import Link from "next/link";
@@ -107,6 +107,19 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
   } = useSWR<Readiness>(readinessUrl, fetcher, { revalidateOnFocus: true, shouldRetryOnError: false });
   const [justCreated, setJustCreated] = useState(false);
   const [blockersOpen, setBlockersOpen] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+  // Activate from the agents list lands here (?activate=1) when something still needs fixing: show the list.
+  const wantsActivate = useRef(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("activate") !== "1") return;
+    wantsActivate.current = true;
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+  useEffect(() => {
+    if (!wantsActivate.current || !readiness) return;
+    wantsActivate.current = false;
+    if (readiness.checks.some((c) => c.status === "blocker")) setBlockersOpen(true);
+  }, [readiness]);
   const [rawPrompt, setRawPrompt] = useState(false);
   const [openReadiness, setOpenReadiness] = useState(0);
   const testPanelRef = useRef<HTMLDivElement>(null);
@@ -226,13 +239,26 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
     requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
-  function toggleStatus() {
+  // Activate / Pause save straight away (with any other edits), so "live" means live.
+  async function setLive(next: "active" | "paused", force = false) {
     if (!draft) return;
-    if (draft.status !== "active" && blockers.length > 0) {
+    if (next === "active" && !force && blockers.length > 0) {
       setBlockersOpen(true);
       return;
     }
-    set("status", draft.status === "active" ? "paused" : "active");
+    setStatusSaving(true);
+    try {
+      const updated = await patch<Agent>(`/api/agents/${id}`, patchBody({ ...draft, status: next }));
+      await mutate(updated, false);
+      setDraft(updated);
+      setBlockersOpen(false);
+      refreshReadiness();
+      toast(next === "active" ? `${updated.name} is live` : `${updated.name} is paused`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setStatusSaving(false);
+    }
   }
 
   function scrollToTest() {
@@ -261,13 +287,28 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
           className="min-w-0 flex-1 rounded-md bg-transparent px-1 text-lg font-semibold focus:bg-zinc-50 focus:outline-none"
           aria-label="Agent name"
         />
-        <button
-          onClick={toggleStatus}
-          title="Paused agents can still be tested, but campaigns shouldn't use them"
-          aria-label={`Status: ${draft.status === "active" ? "Active" : "Paused"}. Click to ${draft.status === "active" ? "pause" : "activate"}.`}
-        >
-          <Badge tone={draft.status === "active" ? "green" : "gray"}>{draft.status === "active" ? "Active" : "Paused"}</Badge>
-        </button>
+        {saved?.status === "active" ? (
+          <>
+            <Badge tone="green">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live
+            </Badge>
+            <Button onClick={() => setLive("paused")} loading={statusSaving} title="Stop new calls. You can still test it.">
+              {!statusSaving && <Pause className="h-4 w-4" />} Pause
+            </Button>
+          </>
+        ) : (
+          <>
+            <Badge tone="amber">Draft</Badge>
+            <button
+              type="button"
+              onClick={() => setLive("active")}
+              disabled={statusSaving}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 active:scale-[.98] disabled:opacity-60"
+            >
+              <Power className="h-4 w-4" /> {statusSaving ? "Activating…" : "Activate"}
+            </button>
+          </>
+        )}
         <Button variant="primary" onClick={() => save().then((ok) => ok && toast("Agent saved"))} loading={saving} disabled={!dirty}>
           {!saving && <Check className="h-4 w-4" />}
           {dirty ? "Save changes" : "Saved"}
@@ -632,15 +673,18 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      <Modal open={blockersOpen} onClose={() => setBlockersOpen(false)} title="Fix these before going live">
+      <Modal open={blockersOpen} onClose={() => setBlockersOpen(false)} title="Before this agent goes live">
         <p className="text-sm text-zinc-600">
-          This agent can&apos;t be set to Active yet. You can keep testing it while it&apos;s paused.
+          We found {blockers.length === 1 ? "something" : "a few things"} worth fixing first. You can fix {blockers.length === 1 ? "it" : "them"} now, or launch anyway.
         </p>
         <div className="mt-2">
           <CheckList checks={blockers} onSection={goToSection} />
         </div>
-        <div className="mt-4 flex justify-end">
-          <Button onClick={() => setBlockersOpen(false)}>Got it</Button>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Button onClick={() => setBlockersOpen(false)}>Fix first</Button>
+          <Button variant="primary" onClick={() => setLive("active", true)} loading={statusSaving}>
+            {!statusSaving && <Power className="h-4 w-4" />} Ignore and launch
+          </Button>
         </div>
       </Modal>
     </div>

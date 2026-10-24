@@ -10,7 +10,7 @@ import { fetcher } from "@/lib/api";
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { canManage, displayName, initials, signOut, switchOrg, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { openCommandPalette } from "./CommandPalette";
@@ -91,6 +91,23 @@ function NavLink({
       ) : badge && !collapsed && (
         <span className={cn("rounded-full px-1.5 py-px text-[10px] font-semibold text-white", badgeTone === "red" ? "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.55)]" : "bg-brand-500 shadow-[0_0_10px_rgba(249,115,22,0.55)]")}>{badge}</span>
       )}
+    </Link>
+  );
+}
+
+/** Under Agents: a way to the agents that aren't live yet, so nobody wonders where they went. */
+function DraftsLink({ onClick }: { onClick: () => void }) {
+  const { data } = useSWR<{ status: string }[]>("/api/agents/", fetcher);
+  const drafts = data?.filter((a) => a.status !== "active").length ?? 0;
+  return (
+    <Link
+      href="/agents?view=drafts"
+      onClick={onClick}
+      className="relative z-10 ml-[22px] flex h-7 items-center gap-2 border-l border-white/10 pl-[19px] text-[12.5px] font-medium text-zinc-500 transition-colors hover:text-zinc-200"
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-amber-400/80" />
+      <span className="flex-1">Drafts</span>
+      {drafts > 0 && <span className="rounded-full bg-white/[0.07] px-1.5 text-[10px] tabular-nums text-zinc-400">{drafts}</span>}
     </Link>
   );
 }
@@ -362,8 +379,11 @@ export function Sidebar() {
                 ))}
               <div className="space-y-0.5">
                 {items.map((n) => (
-                  <NavLink key={n.href} href={n.href} label={n.label} icon={n.icon} badge={n.badge} badgeTone={n.badgeTone}
-                    locked={!!n.feature && !!ent && !ent.limits[n.feature]} collapsed={collapsed} onClick={close} onHover={onHover} />
+                  <Fragment key={n.href}>
+                    <NavLink href={n.href} label={n.label} icon={n.icon} badge={n.badge} badgeTone={n.badgeTone}
+                      locked={!!n.feature && !!ent && !ent.limits[n.feature]} collapsed={collapsed} onClick={close} onHover={onHover} />
+                    {n.href === "/agents" && !collapsed && <DraftsLink onClick={close} />}
+                  </Fragment>
                 ))}
               </div>
             </div>

@@ -834,12 +834,13 @@ def readiness(agent, org) -> dict:
     else:
         add("account", "Account active", "ok", "Your account is active.")
 
-    if (agent.system_prompt or "").strip() and (agent.first_message or "").strip():
-        add("prompt", "Instructions and greeting", "ok", "The agent has instructions and an opening line.")
+    # A blank opening line is fine (the editor even suggests it for outbound): the agent opens on its own.
+    if (agent.system_prompt or "").strip():
+        add("prompt", "Instructions and greeting", "ok", "The agent has instructions"
+            + (" and an opening line." if (agent.first_message or "").strip() else "; it opens the call in its own words."))
     else:
-        missing = "instructions" if not (agent.system_prompt or "").strip() else "opening line"
         add("prompt", "Instructions and greeting", "blocker",
-            f"The agent is missing its {missing}. Add it in the agent editor.", href)
+            "The agent is missing its instructions. Add them in the agent editor.", href)
 
     if settings.voice_ready:
         add("voice", "Voice service", "ok", "The voice service is connected.")
