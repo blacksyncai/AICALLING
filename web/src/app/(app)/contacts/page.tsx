@@ -1,11 +1,12 @@
 "use client";
 
-import { CalendarCheck, ChevronLeft, ChevronRight, FileUp, PhoneCall, Plug, Plus, Search, Sparkles, Timer, Users } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, FileUp, Kanban, List, PhoneCall, Plug, Plus, Search, Sparkles, Timer, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { AddContactModal } from "@/components/contacts/AddContactModal";
 import { BulkActionBar } from "@/components/contacts/BulkActionBar";
+import { ContactsBoard } from "@/components/contacts/ContactsBoard";
 import { CrmImportModal } from "@/components/contacts/CrmImportModal";
 import { ImportContactsModal } from "@/components/contacts/ImportContactsModal";
 import { CONTACT_STATUSES, ContactAvatar, DncBadge, StatusPill, TagChip } from "@/components/contacts/shared";
@@ -41,6 +42,19 @@ export default function ContactsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [crmOpen, setCrmOpen] = useState(false);
   const [crmKey, setCrmKey] = useState<string | undefined>();
+  const [view, setView] = useState<"list" | "board">("list");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("contacts-view") === "board") setView("board");
+    } catch {}
+  }, []);
+  const switchView = (v: "list" | "board") => {
+    setView(v);
+    setSelected(new Set());
+    try {
+      localStorage.setItem("contacts-view", v);
+    } catch {}
+  };
   // /contacts?import=close (from Integrations) opens the CRM importer for that CRM.
   useEffect(() => {
     const k = new URLSearchParams(window.location.search).get("import");
@@ -200,7 +214,7 @@ export default function ContactsPage() {
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-700">
                     <Users className="h-4 w-4" />
                   </span>
-                  <h2 className="truncate font-semibold text-zinc-900">{dnc ? "Do-Not-Call" : status ? outcomeLabel(status) : "All contacts"}</h2>
+                  <h2 className="truncate font-semibold text-zinc-900">{view === "board" ? "Pipeline" : dnc ? "Do-Not-Call" : status ? outcomeLabel(status) : "All contacts"}</h2>
                   <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-500">{total.toLocaleString()}</span>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
@@ -216,9 +230,25 @@ export default function ContactsPage() {
                       </option>
                     ))}
                   </Select>
+                  <div className="flex shrink-0 rounded-full bg-zinc-100 p-1" role="group" aria-label="View">
+                    {([["list", List, "List"], ["board", Kanban, "Board"]] as const).map(([v, Icon, label]) => (
+                      <button
+                        key={v}
+                        onClick={() => switchView(v)}
+                        aria-pressed={view === v}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                          view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800",
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
+              {view === "list" && <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
                 {[["", "All", allTotal] as const, ...statusChips.map((s) => [s, outcomeLabel(s), counts[s] ?? 0] as const)].map(([value, label, count]) => {
                   const on = status === value && (!!value || !dnc);
                   return (
@@ -251,12 +281,13 @@ export default function ContactsPage() {
                     <span className={cn("rounded-full px-1.5 tabular-nums", dnc ? "bg-white/15 text-white" : "bg-white text-red-500")}>{dncCount}</span>
                   </button>
                 )}
-              </div>
+              </div>}
               {selected.size > 0 && <BulkActionBar ids={[...selected]} campaigns={campaigns} onClear={() => setSelected(new Set())} onDone={() => mutate()} />}
             </div>
 
-            {/* Table */}
-            {items.length === 0 ? (
+            {view === "board" ? (
+              <ContactsBoard q={q} campaignId={campaignId} counts={counts} onChanged={() => mutate()} />
+            ) : items.length === 0 ? (
               <div className="px-5 py-12 text-center text-sm text-zinc-500">
                 {isLoading ? <Spinner className="mx-auto" /> : filtered ? "No contacts match these filters." : "No contacts on this page."}
               </div>
@@ -357,7 +388,7 @@ export default function ContactsPage() {
             )}
 
             {/* Pagination */}
-            {total > 0 && (
+            {view === "list" && total > 0 && (
               <div className="flex items-center justify-between gap-3 border-t border-zinc-100 px-5 py-3.5 text-xs text-zinc-500">
                 <span>
                   Showing <span className="font-medium text-zinc-800">{from.toLocaleString()}</span>–<span className="font-medium text-zinc-800">{to.toLocaleString()}</span> of{" "}
