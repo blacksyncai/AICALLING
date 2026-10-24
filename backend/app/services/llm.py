@@ -250,10 +250,12 @@ async def analyze_call(transcript: list[dict], extraction_fields: list[dict] | N
 Outcome definitions (pick the single best one):
 - meeting_booked: a meeting/appointment time was confirmed.
 - qualified: the contact meets the agent's criteria but nothing was booked yet.
-- interested: the contact clearly said yes to what the agent offered or asked for more of it ("yeah, send me
-  that", "sure, I'd like a valuation", "call me next week about it"). NOT interested: confirming who they are,
-  asking who's calling or why, polite curiosity, or answering a question before the offer was even made.
-- callback: a live person, replying to the agent, asked to be called back later / said it's a bad time.
+- interested: the contact responded positively to what the agent offered: said yes, wanted to hear more,
+  asked how it works / what it costs / next steps, or agreed to receive details ("yeah, send me that", "sure,
+  I'd like a valuation", "how much is it?", "sounds good, tell me more"). NOT interested: only confirming who
+  they are, asking who's calling or why, or answering a question before the offer was even made.
+- callback: a follow-up is needed: a live person asked to be called back later, said it's a bad time / they're
+  busy / driving, wants to think about it or check with someone, or asked for a text or email to look at later.
 - not_interested: declined or said no.
 - not_qualified: doesn't fit (wrong size, budget, area, etc.).
 - do_not_call: asked to never be called again / remove them from the list.
@@ -269,12 +271,12 @@ Outcome definitions (pick the single best one):
   — that is voicemail, NOT callback. Signs: the contact's only words are one monologue right after pickup
   that doesn't respond to anything the agent said.
 - no_answer: ONLY when nobody answered at all; never when the contact said anything.
-- completed: a live conversation happened but none of the above fits (e.g. the contact hung up mid-call
-  after engaging, or the call ended before a clear result).
+- completed: a live conversation happened but the contact never reacted to what the agent was calling about
+  (e.g. the call dropped mid-pitch) and none of the above fits.
 
-Be conservative: these outcomes trigger alerts to the business. If the call ended before the contact responded
-to the offer, the outcome is completed. When unsure between a positive outcome (interested, qualified,
-callback) and completed, choose completed.
+Once the contact reacted to the offer, pick the outcome that matches that reaction (interested, callback,
+not_interested, ...); don't fall back to completed. Don't invent interest: a "maybe later" is callback, not
+interested.
 
 Return JSON with keys:
 - "summary": 2-3 sentence summary of what happened.

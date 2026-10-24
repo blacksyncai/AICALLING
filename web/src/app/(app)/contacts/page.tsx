@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarCheck, ChevronLeft, ChevronRight, FileUp, PhoneCall, Plug, Plus, Search, Sparkles, Users } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, FileUp, PhoneCall, Plug, Plus, Search, Sparkles, Timer, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
@@ -16,6 +16,10 @@ import { canManage, useSession } from "@/lib/session";
 import { cn, timeAgo, outcomeLabel } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
+const PIPELINE = ["new", "interested", "callback", "meeting_booked"];
+
+/** 84 → "1:24" */
+const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
 /** +15419625730 → (541) 962-5730; anything else as stored. */
 function formatPhone(p: string) {
@@ -91,8 +95,8 @@ export default function ContactsPage() {
 
   const statusChips = useMemo(() => {
     const order = [...CONTACT_STATUSES] as string[];
-    return Object.keys(counts)
-      .filter((s) => counts[s] > 0)
+    // The pipeline stages always show (even at 0) so it's clear where people land.
+    return [...new Set([...PIPELINE, ...Object.keys(counts).filter((s) => counts[s] > 0)])]
       .sort((a, b) => (order.indexOf(a) === -1 ? 99 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 99 : order.indexOf(b)));
   }, [counts]);
 
@@ -110,7 +114,7 @@ export default function ContactsPage() {
   const summary = [
     { label: "Total contacts", value: allTotal, sub: `${(counts.new ?? 0).toLocaleString()} not called yet`, icon: Users, tone: "bg-zinc-900 text-white" },
     { label: "Interested", value: counts.interested ?? 0, sub: contacted ? `of ${contacted.toLocaleString()} reached` : "Wants to hear more", icon: Sparkles, tone: "bg-blue-50 text-blue-600" },
-    { label: "Callback", value: counts.callback ?? 0, sub: "Asked us to call back", icon: PhoneCall, tone: "bg-amber-50 text-amber-600" },
+    { label: "Follow-up", value: counts.callback ?? 0, sub: "Call back later or sent info", icon: PhoneCall, tone: "bg-amber-50 text-amber-600" },
     { label: "Meeting booked", value: counts.meeting_booked ?? 0, sub: "On the calendar", icon: CalendarCheck, tone: "bg-emerald-50 text-emerald-600" },
   ];
 
@@ -215,7 +219,7 @@ export default function ContactsPage() {
                 </div>
               </div>
               <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
-                {[["", "All", allTotal] as const, ...statusChips.map((s) => [s, outcomeLabel(s), counts[s]] as const)].map(([value, label, count]) => {
+                {[["", "All", allTotal] as const, ...statusChips.map((s) => [s, outcomeLabel(s), counts[s] ?? 0] as const)].map(([value, label, count]) => {
                   const on = status === value && (!!value || !dnc);
                   return (
                     <button
@@ -318,7 +322,15 @@ export default function ContactsPage() {
                         </td>
                         <td className="whitespace-nowrap px-3 py-3 tabular-nums text-zinc-600">{formatPhone(c.phone)}</td>
                         <td className="px-3 py-3">
-                          <StatusPill status={c.status} label={outcomeLabel(c.status)} />
+                          <div className="flex items-center gap-2">
+                            <StatusPill status={c.status} label={outcomeLabel(c.status)} />
+                            {!!c.last_call_seconds && (
+                              <span className="inline-flex items-center gap-1 text-xs tabular-nums text-zinc-400" title="Length of the last call">
+                                <Timer className="h-3 w-3" />
+                                {clock(c.last_call_seconds)}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="max-w-[170px] px-3 py-3">
                           {(c.campaign_name || c.tags.length === 0) && (

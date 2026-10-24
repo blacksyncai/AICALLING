@@ -44,7 +44,8 @@ export function humanize(s: string | null | undefined): string {
 
 /** How a call outcome or contact status reads in the app ("screened" → "Call screener · no answer"). */
 const OUTCOME_LABEL: Record<string, string> = {
-  completed: "Contacted",
+  completed: "Talked, no decision",
+  callback: "Follow-up",
   screened: "Call screener · no answer",
   language_barrier: "Language barrier",
   hung_up: "Hung up",

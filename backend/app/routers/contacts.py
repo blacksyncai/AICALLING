@@ -184,8 +184,18 @@ async def list_contacts(
     names = dict((await db.execute(
         select(Campaign.id, Campaign.name).where(Campaign.org_id == ctx.org.id)
     )).all())
+    # How long each contact's latest call lasted (the little timer next to their status).
+    last_call: dict = {}
+    if rows:
+        calls = (await db.execute(
+            select(CallLog.lead_id, CallLog.duration_seconds)
+            .where(CallLog.org_id == ctx.org.id, CallLog.lead_id.in_([l.id for l in rows]))
+            .order_by(CallLog.started_at.desc()))).all()
+        for lead_id, secs in calls:
+            last_call.setdefault(lead_id, int(secs or 0))
     return {
-        "items": [contact_to_dict(l, names.get(l.campaign_id)) for l in rows],
+        "items": [{**contact_to_dict(l, names.get(l.campaign_id)), "last_call_seconds": last_call.get(l.id)}
+                  for l in rows],
         "total": total,
         "page": page,
         "page_size": page_size,
