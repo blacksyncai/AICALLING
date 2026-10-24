@@ -3,10 +3,11 @@
 import { CalendarCheck, CalendarDays, ChevronRight, Clock, Globe, Info, MessageSquare, PhoneCall, PhoneIncoming, PhoneOutgoing, Timer, UserCheck, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Fragment, Suspense, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { ContactAvatar, StatusPill } from "@/components/contacts/shared";
+import { BentoCard } from "@/components/analytics/Bento";
 import type { Analytics } from "@/components/analytics/types";
 import { CallAudioProvider, PlayButton } from "@/components/calls/CallAudio";
 import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
@@ -239,7 +240,7 @@ function CallLogs() {
             <table className="w-full min-w-[980px] text-sm">
               <thead className="text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
                 <tr className="border-b border-zinc-100">
-                  <th className="px-5 py-3">Contact</th>
+                  <th className="px-5 py-3">Call</th>
                   <th className="px-3 py-3">Number</th>
                   <th className="px-3 py-3">Outcome</th>
                   <th className="px-3 py-3">Length</th>
@@ -249,14 +250,26 @@ function CallLogs() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100/80">
-                {data.items.map((c) => (
-                  <tr key={c.id} onClick={() => router.push(`/calls/${c.id}`)} className="group cursor-pointer transition-colors hover:bg-zinc-50/80">
-                    <td className="max-w-[300px] px-5 py-3">
+                {data.items.map((c, i) => {
+                  const day = dayLabel(c.started_at, tz);
+                  const showDay = !sort && (i === 0 || dayLabel(data.items[i - 1].started_at, tz) !== day);
+                  return (
+                  <Fragment key={c.id}>
+                  {showDay && (
+                    <tr className="bg-zinc-50/70">
+                      <td colSpan={7} className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">{day}</td>
+                    </tr>
+                  )}
+                  <tr onClick={() => router.push(`/calls/${c.id}`)} className="group cursor-pointer transition-colors hover:bg-orange-50/40">
+                    <td className="max-w-[380px] px-5 py-3.5">
                       <div className="flex min-w-0 items-center gap-3" title={c.summary ?? undefined}>
                         <CallAvatar call={c} />
                         <span className="min-w-0">
-                          <span className="block truncate font-semibold text-zinc-900">{callName(c)}</span>
-                          <span className="block truncate text-xs text-zinc-400">{c.agent_name ?? "—"}{c.campaign_name ? ` · ${c.campaign_name}` : ""}</span>
+                          <span className="flex min-w-0 items-baseline gap-2">
+                            <span className="truncate font-semibold text-zinc-900">{callName(c)}</span>
+                            <span className="truncate text-xs text-zinc-400">{c.agent_name ?? "—"}{c.campaign_name ? ` · ${c.campaign_name}` : ""}</span>
+                          </span>
+                          {c.summary && <span className="mt-0.5 block truncate text-xs text-zinc-500">{c.summary}</span>}
                         </span>
                       </div>
                     </td>
@@ -280,7 +293,9 @@ function CallLogs() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -354,42 +369,91 @@ function CallOutcome({ call: c }: { call: Call }) {
 
 function Length({ sec }: { sec: number | null | undefined }) {
   if (!sec) return <span className="text-xs text-zinc-300">—</span>;
+  // A short bar so long conversations stand out at a glance (full at 5 minutes).
+  const w = Math.min(100, Math.max(6, (sec / 300) * 100));
   return (
-    <span className="inline-flex items-center gap-1 text-xs tabular-nums text-zinc-600">
-      <Timer className="h-3 w-3 text-zinc-400" />
+    <span className="inline-flex items-center gap-2 text-xs tabular-nums text-zinc-700">
+      <span className="h-1 w-12 overflow-hidden rounded-full bg-zinc-100">
+        <span className={cn("block h-full rounded-full", sec >= 60 ? "bg-gradient-to-r from-orange-400 to-amber-300" : "bg-zinc-300")} style={{ width: `${w}%` }} />
+      </span>
       {formatDuration(sec)}
     </span>
   );
 }
 
-/** This week at a glance, above the list. */
+/** "Today", "Yesterday" or the date, in the account's time zone. */
+function dayLabel(iso: string | null | undefined, tz?: string | null): string {
+  if (!iso) return "Earlier";
+  const key = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: tz || undefined });
+  const d = new Date(iso);
+  const today = new Date();
+  const y = new Date(today.getTime() - 86400000);
+  if (key(d) === key(today)) return "Today";
+  if (key(d) === key(y)) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", timeZone: tz || undefined });
+}
+
+/** This week at a glance: the same lit glass as Analytics, with the daily trend in the hero. */
 function WeekStats() {
   const { data } = useSWR<Analytics>("/api/analytics?days=7", fetcher, { refreshInterval: 60000 });
-  if (!data) return null;
+  if (!data) return <div className="mb-5 h-[172px] animate-pulse rounded-[28px] bg-zinc-900/90" />;
   const f = data.funnel;
   const o = data.outcomes;
   const total = Object.values(o).reduce((a, b) => a + b, 0);
   const noPerson = ["voicemail", "no_answer", "failed", "screened", "in_progress"].reduce((a, k) => a + (o[k] ?? 0), 0);
   const reached = Math.max(0, total - noPerson);
-  const cards = [
-    { label: "Calls this week", value: f.dialed.toLocaleString(), sub: `${data.total_minutes.toLocaleString()} min of talk time`, icon: PhoneCall, tone: "bg-zinc-900 text-white" },
-    { label: "Reached a person", value: `${total ? Math.round((reached / total) * 100) : 0}%`, sub: `${reached.toLocaleString()} real conversations`, icon: UserCheck, tone: "bg-blue-50 text-blue-600" },
-    { label: "Avg call length", value: formatDuration(data.avg_talk_seconds), sub: "Calls that picked up", icon: Clock, tone: "bg-amber-50 text-amber-600" },
-    { label: "Meetings booked", value: f.booked.toLocaleString(), sub: "Last 7 days", icon: CalendarCheck, tone: "bg-emerald-50 text-emerald-600" },
+  const reach = total ? Math.round((reached / total) * 100) : 0;
+  const days = (data.by_day ?? []).slice(-7);
+  const tiles = [
+    { label: "Reached a person", value: `${reach}%`, sub: `${reached.toLocaleString()} conversations`, icon: UserCheck, bar: reach },
+    { label: "Avg call length", value: formatDuration(data.avg_talk_seconds), sub: "Calls that picked up", icon: Clock },
+    { label: "Meetings booked", value: f.booked.toLocaleString(), sub: "Last 7 days", icon: CalendarCheck, gold: true },
   ];
   return (
-    <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {cards.map((s) => (
-        <Card key={s.label} className="rounded-2xl p-4 transition-shadow hover:shadow-md sm:p-5">
-          <div className="flex items-center gap-2.5">
-            <span className={cn("flex h-8 w-8 items-center justify-center rounded-full", s.tone)}>
-              <s.icon className="h-4 w-4" />
-            </span>
-            <span className="text-[13px] font-medium leading-tight text-zinc-600 sm:text-sm">{s.label}</span>
+    <div className="relative mb-5 overflow-hidden rounded-[28px] bg-[#0a0a0b] p-2.5 shadow-[0_30px_60px_-36px_rgba(0,0,0,.6)] sm:p-3">
+      <div className="pointer-events-none absolute -left-24 top-[10%] h-[260px] w-[420px] rounded-full bg-[#e2541f] opacity-[.3] blur-[100px]" />
+      <div className="pointer-events-none absolute right-[-8%] top-[20%] h-[240px] w-[380px] rounded-full bg-[#7c5cff] opacity-[.16] blur-[110px]" />
+      <div className="relative grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-[1.5fr_1fr_1fr_1fr]">
+        <BentoCard glow="ember" grain className="col-span-2 lg:col-span-1">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-[13px] font-medium text-white/85"><PhoneCall className="h-4 w-4" /> Calls this week</div>
+              <div className="mt-2 text-[44px] font-extralight leading-none tracking-[-.045em] tabular-nums">{f.dialed.toLocaleString()}</div>
+              <div className="mt-1.5 text-xs text-white/60">{data.total_minutes.toLocaleString()} min of talk time</div>
+            </div>
+            <Spark days={days} />
           </div>
-          <div className="mt-3 font-display text-3xl font-semibold tabular-nums tracking-tight text-zinc-900">{s.value}</div>
-          <div className="mt-0.5 truncate text-xs text-zinc-400">{s.sub}</div>
-        </Card>
+        </BentoCard>
+        {tiles.map((t, i) => (
+          <BentoCard key={t.label} className={cn(i === tiles.length - 1 && "col-span-2 lg:col-span-1")}>
+            <div className="flex items-center gap-2 text-[12.5px] font-medium text-white/70">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10"><t.icon className="h-3.5 w-3.5" /></span>
+              <span className="leading-tight">{t.label}</span>
+            </div>
+            <div className={cn("mt-3 text-[32px] font-extralight leading-none tracking-[-.04em] tabular-nums", t.gold && "text-[#ffd84d]")}>{t.value}</div>
+            {t.bar != null ? (
+              <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-[#ff8a57] to-[#ffd84d]" style={{ width: `${t.bar}%` }} /></div>
+            ) : (
+              <div className="mt-1.5 truncate text-xs text-white/40">{t.sub}</div>
+            )}
+          </BentoCard>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Seven little bars: calls per day, today on the right. */
+function Spark({ days }: { days: { date: string; dialed: number; booked: number }[] }) {
+  if (days.length < 2) return null;
+  const max = Math.max(1, ...days.map((d) => d.dialed));
+  return (
+    <div className="flex h-16 items-end gap-1.5 pt-1" aria-hidden="true">
+      {days.map((d, i) => (
+        <div key={d.date} className="flex flex-col items-center gap-1" title={`${formatDay(d.date)}: ${d.dialed} calls`}>
+          <div className={cn("w-2.5 rounded-full", i === days.length - 1 ? "bg-white" : "bg-white/35")} style={{ height: `${Math.max(8, (d.dialed / max) * 52)}px` }} />
+          {d.booked > 0 ? <span className="h-1.5 w-1.5 rounded-full bg-[#ffd84d]" /> : <span className="h-1.5 w-1.5" />}
+        </div>
       ))}
     </div>
   );
