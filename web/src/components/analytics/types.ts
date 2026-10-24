@@ -12,6 +12,7 @@ export type Analytics = {
   locked?: string[];
   by_campaign: CampaignRow[];
   by_hour: HourRow[];
+  by_day?: { date: string; dialed: number; connected: number; booked: number }[];
   sentiment: { positive: number; neutral: number; negative: number };
   avg_talk_seconds: number;
   total_minutes: number;

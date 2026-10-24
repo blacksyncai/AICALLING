@@ -114,6 +114,16 @@ async def analytics(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, 
         h["calls"] += 1
         h["connected"] += _connected(c)
 
+    # Day by day (UTC) for the trend chart, oldest first, every day in the window.
+    by_day = {(now - timedelta(days=i)).date().isoformat(): {"dialed": 0, "connected": 0, "booked": 0}
+              for i in range(days - 1, -1, -1)}
+    for c in calls:
+        d = by_day.get(_aware(c.started_at).date().isoformat())
+        if d is not None:
+            d["dialed"] += 1
+            d["connected"] += _connected(c)
+            d["booked"] += c.outcome == "meeting_booked"
+
     sentiment = {"positive": 0, "neutral": 0, "negative": 0}
     for c in calls:
         s = (c.sentiment or "").strip().lower()
@@ -133,6 +143,7 @@ async def analytics(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, 
         "locked": [] if team else ["by_agent"],
         "by_campaign": campaigns_out,
         "by_hour": by_hour,
+        "by_day": [{"date": k, **v} for k, v in by_day.items()],
         "sentiment": sentiment,
         "avg_talk_seconds": round(talk / len(connected)) if connected else 0,
         "total_minutes": round(talk / 60, 1),
