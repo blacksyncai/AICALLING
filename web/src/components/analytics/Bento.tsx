@@ -10,7 +10,6 @@ import { pct, type Analytics, type Funnel } from "./types";
    accents and a single yellow for the moments that matter. Charts are plain SVG. */
 
 const ORANGE = "#ff8a57";
-const AMBER = "#fbbf24";
 const GOLD = "#ffd84d";
 const NO_PERSON = new Set(["voicemail", "no_answer", "failed", "screened", "in_progress"]);
 
@@ -18,22 +17,36 @@ const NO_PERSON = new Set(["voicemail", "no_answer", "failed", "screened", "in_p
 const NOISE =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
 
-type Tone = "hero" | "dark";
+type Glow = { top: string; base: string; bottom: string; core: string };
+/** Gradient cards: light at the top edge, saturated in the middle, a dark blurred core underneath. */
+const GLOW: Record<string, Glow> = {
+  ember: { top: "#ffb48a", base: "#e0561f", bottom: "#ff8a57", core: "#3a1004" },
+  graph: { top: "#9a9aa8", base: "#3a3a44", bottom: "#55555f", core: "#060608" },
+  amber: { top: "#ffe2a6", base: "#e8900c", bottom: "#f6b23c", core: "#2b1600" },
+  copper: { top: "#f6bf96", base: "#c2683a", bottom: "#dc8a5c", core: "#1d0b05" },
+  green: { top: "#a6e8c8", base: "#2f8a68", bottom: "#4fa784", core: "#051a12" },
+};
 
-export function BentoCard({ tone = "dark", className, children }: { tone?: Tone; className?: string; children: ReactNode }) {
+/** `glow` = a gradient card; without it the card is frosted glass over the lit canvas. */
+export function BentoCard({ glow, grain, className, children }: { glow?: keyof typeof GLOW; grain?: boolean; className?: string; children: ReactNode }) {
+  const g = glow ? GLOW[glow] : null;
   return (
     <section
       className={cn(
-        "relative min-w-0 overflow-hidden rounded-[24px] text-white",
-        tone === "hero"
-          ? "bg-[linear-gradient(155deg,#e2724a_0%,#c4501f_42%,#8f3412_100%)] shadow-[0_30px_60px_-30px_rgba(196,80,31,.65)]"
-          : "border border-white/[.07] bg-[linear-gradient(180deg,#1a1a1d_0%,#121214_100%)] shadow-[0_24px_48px_-32px_rgba(0,0,0,.9)]",
+        "relative min-w-0 overflow-hidden rounded-[26px] text-white",
+        g ? "shadow-[0_30px_60px_-34px_rgba(0,0,0,.8)]" : "border border-white/[.1] bg-white/[.055] backdrop-blur-2xl",
         className,
       )}
     >
-      {tone === "hero" && <div className="pointer-events-none absolute inset-0 opacity-[.13] mix-blend-overlay" style={{ backgroundImage: NOISE }} />}
-      <div className="pointer-events-none absolute inset-0 rounded-[inherit] shadow-[inset_0_1px_0_rgba(255,255,255,.09)]" />
-      <div className="relative flex h-full flex-col p-5 sm:p-6">{children}</div>
+      {g && (
+        <>
+          <div className="absolute inset-0" style={{ background: `linear-gradient(180deg,${g.top} 0%,${g.base} 36%,${g.base} 74%,${g.bottom} 100%)` }} />
+          <div className="absolute inset-x-[10%] bottom-[-6%] top-[16%] rounded-[90px] blur-[60px]" style={{ background: g.core }} />
+        </>
+      )}
+      {grain && <div className="pointer-events-none absolute inset-0 opacity-[.12] mix-blend-overlay" style={{ backgroundImage: NOISE }} />}
+      <div className="pointer-events-none absolute inset-0 z-10 rounded-[inherit] shadow-[inset_0_1px_0_rgba(255,255,255,.2),inset_0_0_0_1px_rgba(255,255,255,.06)]" />
+      <div className="relative z-[2] flex h-full flex-col p-5 sm:p-6">{children}</div>
     </section>
   );
 }
@@ -102,7 +115,7 @@ export function CallsHero({ data }: { data: Analytics }) {
     [f.booked.toLocaleString(), f.booked === 1 ? "meeting" : "meetings"],
   ];
   return (
-    <BentoCard tone="hero" className="col-span-12 h-[390px] lg:col-span-8">
+    <BentoCard glow="ember" grain className="col-span-12 h-[390px] lg:col-span-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <Ttl>Calls placed</Ttl>
         <div className="flex items-center gap-4 text-[11px] text-white/70">
@@ -184,7 +197,7 @@ export function ReachGauge({ data }: { data: Analytics }) {
     { label: "No answer", n: none, color: "rgba(255,255,255,.18)" },
   ];
   return (
-    <BentoCard className="col-span-12 h-[390px] sm:col-span-6 lg:col-span-4">
+    <BentoCard glow="graph" className="col-span-12 h-[390px] sm:col-span-6 lg:col-span-4">
       <div className="flex items-center justify-between">
         <Ttl>Who picked up</Ttl>
         <Sub>{total.toLocaleString()} calls</Sub>
@@ -233,9 +246,9 @@ export function KpiTiles({ data }: { data: Analytics }) {
   const tile = "col-span-12 h-[164px] sm:col-span-6 lg:col-span-3";
   return (
     <>
-      <BentoCard className={cn(tile, "bg-[radial-gradient(120%_90%_at_0%_100%,rgba(226,84,31,.28),transparent_60%),linear-gradient(180deg,#1a1a1d,#121214)]")}>
+      <BentoCard glow="amber" className={tile}>
         <div className="flex items-center justify-between"><Cap>Meetings booked</Cap><Sub>{pct(f.booked, person)}% of reached</Sub></div>
-        <Big className="mt-auto text-[56px] font-thin" style={{ color: "#ffb38f", textShadow: "0 0 24px rgba(255,138,87,.65)" }}>
+        <Big className="mt-auto text-[56px] font-thin" style={{ textShadow: "0 0 28px rgba(255,255,255,.55)" }}>
           {f.booked.toLocaleString()}
         </Big>
         <Sub className="mt-2">{f.qualified.toLocaleString()} interested or better</Sub>
@@ -279,7 +292,7 @@ const STEPS: { key: keyof Funnel; label: string }[] = [
 export function FunnelCard({ funnel }: { funnel: Funnel }) {
   const top = funnel.dialed || 1;
   return (
-    <BentoCard className="col-span-12 h-[360px] lg:col-span-5">
+    <BentoCard glow="copper" className="col-span-12 h-[360px] lg:col-span-5">
       <Ttl>From dial to meeting</Ttl>
       <Sub className="mt-1">How many calls make it through each step</Sub>
       <ol className="mt-auto flex flex-col gap-[18px]">
@@ -288,16 +301,16 @@ export function FunnelCard({ funnel }: { funnel: Funnel }) {
           const prev = i ? funnel[STEPS[i - 1].key] : 0;
           return (
             <li key={s.key} className="grid grid-cols-[6.25rem_1fr_4.5rem] items-center gap-4">
-              <span className="truncate text-[13px] text-white/75">{s.label}</span>
-              <div className="h-2 overflow-hidden rounded-full bg-white/[.06]">
+              <span className="truncate text-[13px] text-white/85">{s.label}</span>
+              <div className="h-2 overflow-hidden rounded-full bg-black/25">
                 <div
                   className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${Math.max(v ? 2.5 : 0, (v / top) * 100)}%`, background: `linear-gradient(90deg,#e2541f,${ORANGE} 55%,${AMBER})`, boxShadow: "0 0 12px rgba(255,138,87,.35)" }}
+                  style={{ width: `${Math.max(v ? 2.5 : 0, (v / top) * 100)}%`, background: s.key === "booked" ? GOLD : "linear-gradient(90deg,#ffe2cc,#fff)", boxShadow: s.key === "booked" ? `0 0 12px ${GOLD}` : "0 0 10px rgba(255,255,255,.35)" }}
                 />
               </div>
               <span className="text-right">
                 <span className="text-[13px] tabular-nums">{v.toLocaleString()}</span>
-                {i > 0 && <span className="block text-[10.5px] tabular-nums text-white/35">{pct(v, prev)}% of prev</span>}
+                {i > 0 && <span className="block text-[10.5px] tabular-nums text-white/55">{pct(v, prev)}% of prev</span>}
               </span>
             </li>
           );
@@ -348,11 +361,11 @@ export function BestTimeCard({ hours, best }: { hours: LocalHour[]; best: number
   const [hover, setHover] = useState<LocalHour | null>(null);
   const shown = hover ?? (best.length ? best.map((b) => hours[b]).sort((a, b) => b.rate - a.rate)[0] : null);
   return (
-    <BentoCard className="col-span-12 h-[360px] sm:col-span-6 lg:col-span-3">
+    <BentoCard glow="green" className="col-span-12 h-[360px] sm:col-span-6 lg:col-span-3">
       <Ttl>Best time to call</Ttl>
       <Big className="mt-4 text-[44px] font-thin">{shown ? `${shortHour(shown.hour)}m` : "—"}</Big>
       <div className="mt-2 flex gap-2 text-xs">
-        <span style={{ color: ORANGE }}>{shown ? `${Math.round(shown.rate * 100)}% pick up` : "Not enough calls yet"}</span>
+        <span style={{ color: GOLD }}>{shown ? `${Math.round(shown.rate * 100)}% pick up` : "Not enough calls yet"}</span>
         {shown && <span className="text-white/35">· {shown.calls} calls</span>}
       </div>
       <div className="mt-auto flex h-[132px] items-end gap-[5px]" onMouseLeave={() => setHover(null)}>
@@ -361,17 +374,17 @@ export function BestTimeCard({ hours, best }: { hours: LocalHour[]; best: number
           const active = hover?.hour === h.hour;
           return (
             <div key={h.hour} className="flex h-full min-w-0 flex-1 flex-col items-center gap-1.5" onMouseEnter={() => setHover(h)}>
-              <div className="relative w-full max-w-[10px] flex-1 overflow-hidden rounded-full bg-white/[.05]">
+              <div className="relative w-full max-w-[10px] flex-1 overflow-hidden rounded-full bg-black/20">
                 <div
                   className="absolute inset-x-0 bottom-0 rounded-full transition-all duration-700"
                   style={{
                     height: `${(h.rate / max) * 100}%`,
-                    background: isBest || active ? `linear-gradient(180deg,${AMBER},${ORANGE})` : "rgba(255,255,255,.22)",
-                    boxShadow: isBest ? "0 0 10px rgba(255,138,87,.5)" : undefined,
+                    background: isBest || active ? GOLD : "rgba(255,255,255,.6)",
+                    boxShadow: isBest ? `0 0 10px ${GOLD}` : undefined,
                   }}
                 />
               </div>
-              <span className={cn("h-3 text-[9px] tabular-nums", isBest ? "text-white/80" : "text-white/25")}>{h.hour % 3 === 0 ? shortHour(h.hour) : ""}</span>
+              <span className={cn("h-3 text-[9px] tabular-nums", isBest ? "text-white" : "text-white/45")}>{h.hour % 3 === 0 ? shortHour(h.hour) : ""}</span>
             </div>
           );
         })}

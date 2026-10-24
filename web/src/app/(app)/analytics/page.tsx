@@ -77,7 +77,10 @@ export default function AnalyticsPage() {
       ) : (
         <>
           <div className="relative overflow-hidden rounded-[32px] bg-[#0a0a0b] p-3 shadow-[0_40px_80px_-40px_rgba(0,0,0,.6)] sm:p-4">
-            <div className="pointer-events-none absolute -left-40 -top-40 h-[480px] w-[480px] rounded-full bg-[#e2541f] opacity-[.12] blur-[120px]" />
+            {/* soft light behind the frosted cards */}
+            <div className="pointer-events-none absolute -left-32 top-[30%] h-[420px] w-[520px] rounded-full bg-[#e2541f] opacity-[.32] blur-[110px]" />
+            <div className="pointer-events-none absolute right-[-10%] top-[38%] h-[380px] w-[460px] rounded-full bg-[#7c5cff] opacity-[.18] blur-[120px]" />
+            <div className="pointer-events-none absolute bottom-[-12%] left-[35%] h-[360px] w-[520px] rounded-full bg-[#f59e0b] opacity-[.22] blur-[120px]" />
             <div className="relative grid grid-cols-12 gap-3 sm:gap-4">
               <CallsHero data={data} />
               <ReachGauge data={data} />
