@@ -156,11 +156,9 @@ async def platform_overview(_: AdminDep, db: DbDep):
 
 @router.get("/orgs")
 async def list_orgs(_: AdminDep, db: DbDep, q: str = ""):
-    stmt = select(Organization).order_by(Organization.created_at.desc())
-    if q.strip():
-        stmt = stmt.where(Organization.name.ilike(f"%{q.strip()}%"))
-    orgs = (await db.execute(stmt)).scalars().all()
-    from app.models.billing import PhoneNumber
+    orgs = (await db.execute(select(Organization).order_by(Organization.created_at.desc()))).scalars().all()
+    from app.models.billing import BillingSubscription, PhoneNumber
+    from app.services.billing import catalog
 
     usage = await _usage_by_org(db, datetime.now(timezone.utc) - timedelta(days=30))
     all_time = await _usage_by_org(db, datetime(1970, 1, 1, tzinfo=timezone.utc))
@@ -175,10 +173,24 @@ async def list_orgs(_: AdminDep, db: DbDep, q: str = ""):
             .where(Membership.role == "owner").order_by(Membership.created_at.desc())
         )).all()
     }
+    last_call = dict((await db.execute(
+        select(CallLog.org_id, func.max(CallLog.started_at)).group_by(CallLog.org_id))).all())
+    subs = {r.org_id: r for r in (await db.execute(select(BillingSubscription))).scalars()}
+    needle = q.strip().lower()
     out = []
     for o in orgs:
         owner = owners.get(o.id)
+        # Search matches the account name or the owner's email.
+        if needle and needle not in (o.name or "").lower() and not (owner and needle in (owner.email or "").lower()):
+            continue
+        sub = subs.get(o.id)
+        plan = (catalog.PLANS.get(sub.plan_key or "", {}).get("name") or sub.plan_key) \
+            if sub and sub.status in ("active", "trialing", "past_due") else None
+        lc = last_call.get(o.id)
         out.append({
+            "plan": plan,
+            "plan_status": sub.status if sub else None,
+            "last_call_at": (lc.replace(tzinfo=timezone.utc) if lc and lc.tzinfo is None else lc).isoformat() if lc else None,
             **org_to_dict(o),
             "owner": {"name": owner.full_name, "email": owner.email} if owner else None,
             "members": members.get(o.id, 0),

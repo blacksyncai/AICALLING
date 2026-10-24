@@ -13,7 +13,7 @@ import { ManagePlanModal } from "./ManagePlan";
 import { PhoneNumbersCard } from "./PhoneNumbersCard";
 import { fmt } from "./shared";
 
-type Adjust = { org: AdminOrg; kind: "credits" | "lookup"; sign: 1 | -1 };
+export type Adjust = { org: AdminOrg; kind: "credits" | "lookup"; sign: 1 | -1 };
 
 /** Admin accounts as one card per client: key numbers up top, every common action one click away. */
 export function ClientCards({ orgs, onChanged }: { orgs: AdminOrg[]; onChanged: () => void }) {
@@ -197,7 +197,7 @@ function Action({ onClick, icon, tone, children, loading, disabled }: {
 
 const PRESETS = { credits: [60, 300, 1000], lookup: [5, 10, 25] } as const;
 
-function AdjustModal({ adjust, onClose, onDone }: { adjust: Adjust | null; onClose: () => void; onDone: () => void }) {
+export function AdjustModal({ adjust, onClose, onDone }: { adjust: Adjust | null; onClose: () => void; onDone: () => void }) {
   const toast = useToast();
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");

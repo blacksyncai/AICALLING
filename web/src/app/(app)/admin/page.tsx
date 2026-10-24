@@ -2,9 +2,9 @@
 
 import { BookOpen, Building2, CreditCard, Hash, LifeBuoy, Lock, Mail, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { ClientCards } from "@/components/admin/ClientCards";
+import { ClientsTable } from "@/components/admin/ClientsTable";
 import { NewAccountModal } from "@/components/admin/NewAccountModal";
 import { PlaybooksTab } from "@/components/admin/playbooks";
 import { BillingAdminTab } from "@/components/admin/BillingAdminTab";
@@ -46,6 +46,24 @@ function AdminPortal() {
   }, []);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  // Keyboard: "/" jumps to search, "n" starts a new account (not while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || el.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (e.key === "/") {
+        e.preventDefault();
+        setTab("accounts");
+        setTimeout(() => searchRef.current?.focus(), 0);
+      } else if (e.key === "n") {
+        e.preventDefault();
+        setCreating(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [q, setQ] = useState("");
 
   useEffect(() => {
@@ -81,8 +99,8 @@ function AdminPortal() {
             >
               <Lock className="h-4 w-4" /> Lock
             </Button>
-            <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" /> New account
+            <Button variant="primary" onClick={() => setCreating(true)} title="New account (N)">
+              <Plus className="h-4 w-4" /> New account <kbd className="ml-1 rounded bg-white/20 px-1.5 text-[10px] font-medium">N</kbd>
             </Button>
           </div>
         }
@@ -115,7 +133,8 @@ function AdminPortal() {
         {tab === "accounts" && (
           <div className="relative w-full sm:w-72">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search accounts or owner email" className="pl-9" aria-label="Search accounts" />
+            <Input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && (setQuery(""), e.currentTarget.blur())} placeholder="Search name or owner email" className="rounded-full! pl-9 pr-9" aria-label="Search accounts" />
+            <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-zinc-50 px-1.5 text-[10px] font-medium text-zinc-400">/</kbd>
           </div>
         )}
       </div>
@@ -145,7 +164,7 @@ function AdminPortal() {
             />
           </Card>
         ) : (
-          <ClientCards orgs={orgs.orgs} onChanged={() => void mutateOrgs()} />
+          <ClientsTable orgs={orgs.orgs} onChanged={() => { void mutateOrgs(); void mutateOverview(); }} />
         )
       ) : tab === "users" ? (
         <UsersTable />

@@ -507,6 +507,10 @@ export interface AdminOrg extends Org {
   all_time?: Usage;
   phone_numbers?: number;
   lookup_balance_cents?: number;
+  /** Plan name while a subscription is live, else null. */
+  plan?: string | null;
+  plan_status?: string | null;
+  last_call_at?: string | null;
 }
 
 export interface AdminOrgDetail extends Org, Team {
