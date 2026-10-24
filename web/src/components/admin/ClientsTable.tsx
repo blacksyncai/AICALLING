@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Bot, ChevronRight, Crown, Hash, LogIn, Minus, MoreHorizontal, Plus, Wallet } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, ChevronRight, Crown, Hash, LayoutGrid, List, LogIn, Minus, MoreHorizontal, Plus, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui";
@@ -9,12 +9,12 @@ import { patch } from "@/lib/api";
 import { switchOrg } from "@/lib/session";
 import type { AdminOrg } from "@/lib/types";
 import { cn, parseDate, timeAgo } from "@/lib/utils";
-import { AdjustModal, type Adjust } from "./ClientCards";
+import { AdjustModal, ClientCards, type Adjust } from "./ClientCards";
 import { ManagePlanModal } from "./ManagePlan";
 import { PhoneNumbersCard } from "./PhoneNumbersCard";
 import { fmt } from "./shared";
 
-/* Every client in one dense, sortable table: filter to what needs attention, act from the row. */
+/* Every client as cards (default) or one dense, sortable table: filter to what needs attention, act from the card or row. */
 
 const LOW = 10;
 const DAY = 86_400_000;
@@ -58,6 +58,18 @@ export function ClientsTable({ orgs, onChanged }: { orgs: AdminOrg[]; onChanged:
   const [planFor, setPlanFor] = useState<AdminOrg | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [view, setViewState] = useState<"cards" | "table">("cards");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("admin-clients-view") === "table") setViewState("table");
+    } catch {}
+  }, []);
+  const setView = (v: "cards" | "table") => {
+    setViewState(v);
+    try {
+      localStorage.setItem("admin-clients-view", v);
+    } catch {}
+  };
 
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.key, orgs.filter(f.test).length])) as Record<Filter, number>, [orgs]);
   const rows = useMemo(() => {
@@ -107,27 +119,62 @@ export function ClientsTable({ orgs, onChanged }: { orgs: AdminOrg[]; onChanged:
     </th>
   );
 
+  const switcher = (
+    <div className="flex shrink-0 rounded-full bg-zinc-100 p-0.5" role="tablist" aria-label="View">
+      {([["cards", LayoutGrid, "Cards"], ["table", List, "Table"]] as const).map(([v, Icon, label]) => (
+        <button
+          key={v}
+          role="tab"
+          aria-selected={view === v}
+          onClick={() => setView(v)}
+          className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition", view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+        >
+          <Icon className="h-3.5 w-3.5" /> {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const pills = FILTERS.map((f) => {
+    const on = filter === f.key;
+    const n = counts[f.key];
+    if (f.key !== "all" && f.key !== filter && n === 0) return null;
+    return (
+      <button
+        key={f.key}
+        onClick={() => setFilter(f.key)}
+        className={cn(
+          "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+          on ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200/70",
+        )}
+      >
+        {f.label}
+        <span className={cn("rounded-full px-1.5 tabular-nums", on ? "bg-white/15" : cn("bg-white", f.tone ?? "text-zinc-500"))}>{n}</span>
+      </button>
+    );
+  });
+
+  if (view === "cards") {
+    return (
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-zinc-200/80 bg-white px-4 py-3 shadow-xs">
+          <div className="-mx-1 flex min-w-0 flex-1 gap-1.5 overflow-x-auto px-1">{pills}</div>
+          {switcher}
+        </div>
+        {rows.length === 0 ? (
+          <p className="py-12 text-center text-sm text-zinc-500">Nothing here — every client is fine on this one.</p>
+        ) : (
+          <ClientCards orgs={rows} onChanged={onChanged} />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-xs">
-      <div className="-mx-1 flex gap-1.5 overflow-x-auto border-b border-zinc-100 px-5 py-3">
-        {FILTERS.map((f) => {
-          const on = filter === f.key;
-          const n = counts[f.key];
-          if (f.key !== "all" && f.key !== filter && n === 0) return null;
-          return (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                on ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200/70",
-              )}
-            >
-              {f.label}
-              <span className={cn("rounded-full px-1.5 tabular-nums", on ? "bg-white/15" : cn("bg-white", f.tone ?? "text-zinc-500"))}>{n}</span>
-            </button>
-          );
-        })}
+      <div className="flex min-w-0 items-center gap-3 border-b border-zinc-100 px-5 py-3">
+        <div className="-mx-1 flex min-w-0 flex-1 gap-1.5 overflow-x-auto px-1">{pills}</div>
+        {switcher}
       </div>
 
       {rows.length === 0 ? (
