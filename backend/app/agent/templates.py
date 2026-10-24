@@ -8,6 +8,8 @@ custom CSV columns) at call time.
 
 from __future__ import annotations
 
+from app.agent.models import RUNTIME_DEFAULT_MODEL
+
 _VOICE_RULES = """
 # VOICE RULES
 - This is a live phone call. Keep every turn to one or two short sentences.
@@ -129,7 +131,7 @@ get going. Keep it to a few minutes unless they have more questions.
     ],
     "success_criteria": "Successful if the caller shared what they want to use BlackSync for.",
     "enable_booking": False,
-    "llm_model": "gpt-4.1-nano",
+    "llm_model": RUNTIME_DEFAULT_MODEL,
     "max_duration_seconds": 420,
     "voice_id": "97f03c16-fab2-4747-b655-9caefbd68fcf",  # Marissa M (house clone)
 }
@@ -169,8 +171,7 @@ Qualify the prospect and book a 30-minute demo.
         ],
         "success_criteria": "Successful if a demo was booked or the prospect explicitly agreed to a follow-up meeting.",
         "enable_booking": True,
-        # Booking flows need reliable tool use; the mini model sometimes narrates instead of booking.
-        "llm_model": "gpt-4.1",
+        "llm_model": RUNTIME_DEFAULT_MODEL,
     },
     {
         "template": "appointment_setter",
@@ -198,7 +199,7 @@ Book the caller an appointment.
         ],
         "success_criteria": "Successful if an appointment time was agreed.",
         "enable_booking": True,
-        "llm_model": "gpt-4.1",
+        "llm_model": RUNTIME_DEFAULT_MODEL,
     },
     {
         "template": "real_estate",

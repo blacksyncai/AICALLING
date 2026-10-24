@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 
+from app.agent.models import RUNTIME_DEFAULT_MODEL
+
 _VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 
 
@@ -57,7 +59,7 @@ def agent_to_runtime(agent, *, secrets: bool = False) -> dict:
         "first_message": agent.first_message or "",
         "knowledge_base": agent.knowledge_base or "",
         "language": agent.language or "en",
-        "llm_model": agent.llm_model or "gpt-4.1-nano",
+        "llm_model": agent.llm_model or RUNTIME_DEFAULT_MODEL,
         "temperature": agent.temperature if agent.temperature is not None else 0.5,
         "voice_id": agent.voice_id or "",
         "voice_speed": agent.voice_speed or 1.0,

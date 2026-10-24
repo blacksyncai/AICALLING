@@ -25,7 +25,9 @@ def requires_unlock(model_id: str | None) -> bool:
 
 # What the runtime falls back to when an agent has no model set
 # (app/agent/runtime.py, agent_worker.py).
-RUNTIME_DEFAULT_MODEL = "gpt-4.1-nano"
+# BlackSync Super Intelligence · Ultra (first in the picker); it runs on Cerebras, so without that key
+# fall back to the OpenAI model that always works.
+RUNTIME_DEFAULT_MODEL = "gpt-oss-120b" if settings.cerebras_api_key else "gpt-4.1-nano"
 
 # id, name, description, speed (only where known), tags, recommended_for.
 # `recommended_for` uses agent traits the editor knows about:
