@@ -76,21 +76,28 @@ export default function AnalyticsPage() {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-12 gap-4">
-            <CallsHero data={data} />
-            <ReachGauge data={data} />
-            <KpiTiles data={data} />
-            <FunnelCard funnel={f} />
-            <OutcomesCard outcomes={data.outcomes} />
-            <BestTimeCard hours={hours} best={best} />
-            <MoodCard sentiment={data.sentiment} className={cn("col-span-12", boards.length === 1 && "lg:col-span-4")} />
-            {boards.map((b) => (
-              <Card key={b.title} className={cn("col-span-12 min-w-0 rounded-[26px]", boards.length === 1 ? "lg:col-span-8" : "xl:col-span-6")}>
-                <CardHeader title={b.title} description="Ranked by meetings booked" />
-                <div className="pt-1">{b.body}</div>
-              </Card>
-            ))}
+          <div className="relative overflow-hidden rounded-[32px] bg-[#0a0a0b] p-3 shadow-[0_40px_80px_-40px_rgba(0,0,0,.6)] sm:p-4">
+            <div className="pointer-events-none absolute -left-40 -top-40 h-[480px] w-[480px] rounded-full bg-[#e2541f] opacity-[.12] blur-[120px]" />
+            <div className="relative grid grid-cols-12 gap-3 sm:gap-4">
+              <CallsHero data={data} />
+              <ReachGauge data={data} />
+              <KpiTiles data={data} />
+              <FunnelCard funnel={f} />
+              <OutcomesCard outcomes={data.outcomes} />
+              <BestTimeCard hours={hours} best={best} />
+              <MoodCard sentiment={data.sentiment} className="col-span-12" />
+            </div>
           </div>
+          {boards.length > 0 && (
+            <div className="grid grid-cols-12 gap-4">
+              {boards.map((b) => (
+                <Card key={b.title} className={cn("col-span-12 min-w-0", boards.length === 2 && "xl:col-span-6")}>
+                  <CardHeader title={b.title} description="Ranked by meetings booked" />
+                  <div className="pt-1">{b.body}</div>
+                </Card>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
