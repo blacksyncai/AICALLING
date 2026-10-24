@@ -30,11 +30,13 @@ export interface ImportResult {
 }
 
 const AVATAR_TONES = [
-  "bg-orange-100 text-orange-800",
-  "bg-amber-100 text-amber-800",
-  "bg-stone-200 text-stone-700",
-  "bg-rose-100 text-rose-800",
-  "bg-emerald-100 text-emerald-800",
+  "bg-orange-500 text-white",
+  "bg-amber-500 text-white",
+  "bg-zinc-800 text-white",
+  "bg-rose-500 text-white",
+  "bg-emerald-600 text-white",
+  "bg-sky-600 text-white",
+  "bg-violet-500 text-white",
 ];
 
 export function initials(name: string) {
@@ -50,7 +52,7 @@ export function ContactAvatar({ name, size = "md" }: { name: string; size?: "md"
     <span
       className={cn(
         "flex shrink-0 items-center justify-center rounded-full font-semibold",
-        size === "lg" ? "h-12 w-12 text-base" : "h-8 w-8 text-xs",
+        size === "lg" ? "h-12 w-12 text-base" : "h-9 w-9 text-[11px]",
         tone,
       )}
     >
@@ -67,6 +69,26 @@ export function statusTone(status: string) {
 
 export function StatusBadge({ status }: { status: string }) {
   return <Badge tone={statusTone(status)}>{humanize(status)}</Badge>;
+}
+
+const PILL: Record<string, string> = {
+  blue: "bg-blue-50 text-blue-700 ring-blue-600/10 [--dot:var(--color-blue-500)]",
+  brand: "bg-brand-50 text-brand-700 ring-brand-600/10 [--dot:var(--color-brand-500)]",
+  green: "bg-emerald-50 text-emerald-700 ring-emerald-600/10 [--dot:var(--color-emerald-500)]",
+  amber: "bg-amber-50 text-amber-700 ring-amber-600/10 [--dot:var(--color-amber-500)]",
+  red: "bg-red-50 text-red-700 ring-red-600/10 [--dot:var(--color-red-500)]",
+  violet: "bg-violet-50 text-violet-700 ring-violet-600/10 [--dot:var(--color-violet-500)]",
+  gray: "bg-zinc-100 text-zinc-600 ring-zinc-500/10 [--dot:var(--color-zinc-400)]",
+};
+
+/** Status as a soft pill with a coloured dot (the contacts table). */
+export function StatusPill({ status, label }: { status: string; label: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset", PILL[statusTone(status)] ?? PILL.gray)}>
+      <span className="h-1.5 w-1.5 rounded-full bg-[var(--dot)]" />
+      {label}
+    </span>
+  );
 }
 
 export function DncBadge({ className }: { className?: string }) {
