@@ -532,7 +532,15 @@ function PlayCard({
     (crm.installs.find((i) => agents.some((a) => a.id === i.agent_id))
       ?.agent_id ||
       "");
-  const [busy, setBusy] = useState<"pipeline" | "campaign" | null>(null);
+  const [busy, setBusy] = useState<"pipeline" | "campaign" | "existing" | null>(null);
+  const [showExisting, setShowExisting] = useState(false);
+  const [campaignId, setCampaignId] = useState("");
+  const { data: campaignData, error: campaignError, isLoading: campaignsLoading } = useSWR<{
+    campaigns: { id: string; name: string; agent_id: string; status: string; direction?: string }[];
+  }>(showExisting ? "/api/campaigns/" : null, fetcher);
+  const eligibleCampaigns = (campaignData?.campaigns ?? []).filter((c) =>
+    !!c.agent_id && ["draft", "paused", "running"].includes(c.status) && c.direction !== "inbound");
+  const targetCampaign = eligibleCampaigns.find((c) => c.id === campaignId);
   const [result, setResult] = useState<{
     tone: "green" | "red";
     text: React.ReactNode;
@@ -612,8 +620,9 @@ function PlayCard({
       return n;
     });
 
-  const launch = async (mode: "pipeline" | "campaign") => {
-    if (!agentId || !chosen.length) return;
+  const launch = async (mode: "pipeline" | "campaign" | "existing") => {
+    const callingAgent = mode === "existing" ? targetCampaign?.agent_id : agentId;
+    if (!callingAgent || !chosen.length) return;
     setBusy(mode);
     setResult(null);
     try {
@@ -623,10 +632,12 @@ function PlayCard({
         pipeline?: string;
         campaign_id?: string;
         contacts?: number;
+        skipped?: number;
       }>(`/api/radar/scans/${scanId}/launch`, {
         play: play.key,
-        agent_id: agentId,
-        mode,
+        agent_id: callingAgent,
+        mode: mode === "existing" ? "campaign" : mode,
+        ...(mode === "existing" ? { campaign_id: campaignId } : {}),
         external_ids: chosen.map((i) => i.external_id),
       });
       setResult(
@@ -639,12 +650,12 @@ function PlayCard({
               tone: "green",
               text: (
                 <>
-                  Campaign ready with {r.contacts} contacts.{" "}
+                  {mode === "existing" ? `Added ${r.contacts} contacts. ${r.skipped || 0} already assigned contacts skipped.` : `Campaign ready with ${r.contacts} contacts.`}{" "}
                   <Link
                     className="font-medium underline"
                     href={`/campaigns/${r.campaign_id}`}
                   >
-                    Review and start it →
+                    {mode === "existing" ? "View campaign →" : "Review and start it →"}
                   </Link>
                 </>
               ),
@@ -872,7 +883,7 @@ function PlayCard({
             <Button
               variant="primary"
               loading={busy === "pipeline"}
-              disabled={!agentId || !chosen.length}
+              disabled={!agentId || !chosen.length || !!busy}
               onClick={() => void launch("pipeline")}
             >
               Queue {chosen.length || ""} in {crm.name}{" "}
@@ -892,14 +903,32 @@ function PlayCard({
           <Button
             variant={installed ? "secondary" : "primary"}
             loading={busy === "campaign"}
-            disabled={!agentId || !chosen.length}
+            disabled={!agentId || !chosen.length || !!busy}
             onClick={() => void launch("campaign")}
           >
             {chosen.length
               ? `Make a campaign of ${chosen.length}`
               : "Make a campaign"}
           </Button>
+          <Button variant="secondary" disabled={!chosen.length || !!busy} onClick={() => setShowExisting(!showExisting)}>
+            Add to existing campaign
+          </Button>
         </div>
+        {showExisting && (
+          <div className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3">
+            <Select value={campaignId} onChange={(e) => setCampaignId(e.target.value)} aria-label="Existing campaign">
+              <option value="">{campaignsLoading ? "Loading campaigns…" : "Choose an existing campaign…"}</option>
+              {eligibleCampaigns.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.status}</option>)}
+            </Select>
+            {campaignError && <p role="alert" className="text-xs text-red-600">Couldn't load campaigns. Close and reopen this option to try again.</p>}
+            {!campaignsLoading && !campaignError && !eligibleCampaigns.length && <p className="text-xs text-zinc-500">No draft, paused, or running outbound campaigns available.</p>}
+            <p className="text-xs text-zinc-500">Uses the campaign’s existing agent and calling settings. Contacts already assigned to a campaign are skipped.</p>
+            {targetCampaign?.status === "running" && <p className="text-xs text-amber-700">This campaign is running. Added contacts can be called during its saved calling hours.</p>}
+            <Button variant="primary" loading={busy === "existing"} disabled={!targetCampaign || !chosen.length || !!busy} onClick={() => void launch("existing")}>
+              Add {chosen.length || "selected"} to campaign
+            </Button>
+          </div>
+        )}
         {!chosen.length && (
           <p className="text-xs text-zinc-500">
             Tick the people to call — or “Select all shown” after filtering.

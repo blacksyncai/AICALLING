@@ -220,6 +220,7 @@ class LaunchIn(BaseModel):
     mode: str = Field(pattern="^(pipeline|campaign)$")
     external_ids: list[str] | None = None  # a subset; default = the whole play
     campaign_name: str = Field(default="", max_length=120)
+    campaign_id: uuid.UUID | None = None
 
 
 @router.post("/scans/{scan_id}/launch")
@@ -229,8 +230,20 @@ async def launch(scan_id: uuid.UUID, body: LaunchIn, ctx: ManagerDep, db: DbDep)
     if not row or row.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Scan not found")
     conn = await db.get(CrmConnection, row.connection_id)
+    campaign = None
+    if body.campaign_id:
+        if body.mode != "campaign":
+            raise HTTPException(400, "Choose campaign mode to add to an existing campaign.")
+        campaign = await db.scalar(select(Campaign).where(
+            Campaign.id == body.campaign_id, Campaign.org_id == ctx.org.id).with_for_update())
+        if not campaign:
+            raise HTTPException(404, "Campaign not found")
+        if campaign.status not in ("draft", "paused", "running") or campaign.direction == "inbound":
+            raise HTTPException(400, "Choose a draft, paused, or running outbound campaign.")
+        if campaign.agent_id != body.agent_id:
+            raise HTTPException(400, "Use the existing campaign's agent.")
     agent = await db.get(Agent, body.agent_id)
-    if not conn or not agent or agent.org_id != ctx.org.id:
+    if not conn or conn.org_id != ctx.org.id or not agent or agent.org_id != ctx.org.id:
         raise HTTPException(status_code=404, detail="Agent not found")
     play = next((pl for pl in row.result.get("plays") or [] if pl["key"] == body.play), None)
     if not play:
@@ -262,24 +275,31 @@ async def launch(scan_id: uuid.UUID, body: LaunchIn, ctx: ManagerDep, db: DbDep)
         await db.commit()
         return {"queued": done, "failed": failed, "pipeline": inst["pipeline"]["name"]}
 
-    # Campaign: contacts (with CRM context on dial) in a new draft campaign for this agent.
-    campaign = Campaign(id=uuid.uuid4(), org_id=ctx.org.id, agent_id=agent.id, status="draft",
-                        name=(body.campaign_name or f"{play['title']} · {p.name}")[:120],
-                        description=f"From Radar: {play['why']}")
-    db.add(campaign)
-    contacts = [Contact(i["name"], i["phone"], i.get("email") or "", i.get("company") or "", i["external_id"]) for i in items]
+    # Import selected contacts into a new draft or the explicitly chosen campaign.
+    existing_campaign = campaign is not None
+    if campaign is None:
+        campaign = Campaign(id=uuid.uuid4(), org_id=ctx.org.id, agent_id=agent.id, status="draft",
+                            name=(body.campaign_name or f"{play['title']} · {p.name}")[:120],
+                            description=f"From Radar: {play['why']}")
+        db.add(campaign)
+    contacts = [Contact(i["name"], i["phone"], i.get("email") or "", i.get("company") or "", i["external_id"], dnc=bool(i.get("dnc"))) for i in items]
     created, _ = await sync.save_contacts(db, conn, contacts, f"Radar: {play['title']}")
     phones = {normalize_phone(c.phone) for c in contacts}
     leads = (await db.execute(select(Lead).where(Lead.org_id == ctx.org.id))).scalars().all()
     picked = []
+    skipped = 0
     for lead in leads:
         if normalize_phone(lead.phone) in phones and not lead.do_not_call:
+            if existing_campaign and lead.campaign_id is not None:
+                skipped += 1
+                continue
             lead.campaign_id = campaign.id
             lead.status = "new" if lead.status in (None, "", "completed") else lead.status
             picked.append(lead)
     n = len(picked)
+    campaign.total_targets = (campaign.total_targets or 0) + n
     # The agent's {{variables}} (address, price, assigned agent…) straight from the CRM, visible on the contacts.
     await sync.prefill_fields(conn, agent, picked)
-    await sync.add_log(db, conn, "import", "ok", f"Radar made a campaign of {n} from “{play['title']}”.")
+    await sync.add_log(db, conn, "import", "ok", f"Radar {'added' if existing_campaign else 'imported'} {n} contacts into campaign “{campaign.name}” from “{play['title']}”.")
     await db.commit()
-    return {"campaign_id": str(campaign.id), "contacts": n}
+    return {"campaign_id": str(campaign.id), "contacts": n, "skipped": skipped, "existing_campaign": existing_campaign}
