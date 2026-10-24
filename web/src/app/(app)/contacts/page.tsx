@@ -292,7 +292,35 @@ export default function ContactsPage() {
                 {isLoading ? <Spinner className="mx-auto" /> : filtered ? "No contacts match these filters." : "No contacts on this page."}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              {/* Phones: one card per contact instead of a sideways-scrolling table. */}
+              <ul className={cn("divide-y divide-zinc-100 sm:hidden", isLoading && "opacity-60")}>
+                {items.map((c) => (
+                  <li key={c.id}>
+                    <button onClick={() => router.push(`/contacts/${c.id}`)} className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-zinc-50">
+                      <ContactAvatar name={c.name || c.phone} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate font-semibold text-zinc-900">{c.name || "Unnamed"}</span>
+                          {c.do_not_call && <DncBadge />}
+                        </div>
+                        <div className="truncate text-xs text-zinc-500">{[c.company, c.role].filter(Boolean).join(" · ") || formatPhone(c.phone)}</div>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <StatusPill status={c.status} label={outcomeLabel(c.status)} />
+                          {!!c.last_call_seconds && (
+                            <span className="inline-flex items-center gap-1 text-xs tabular-nums text-zinc-400">
+                              <Timer className="h-3 w-3" />
+                              {clock(c.last_call_seconds)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="shrink-0 self-start pt-0.5 text-[11px] text-zinc-400">{c.last_called_at ? timeAgo(c.last_called_at) : "Never"}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="hidden overflow-x-auto sm:block">
                 <table className="w-full min-w-[900px] text-sm">
                   <thead className="text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
                     <tr className="border-b border-zinc-100">
@@ -385,6 +413,7 @@ export default function ContactsPage() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
 
             {/* Pagination */}

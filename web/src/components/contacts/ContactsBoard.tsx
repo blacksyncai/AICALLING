@@ -114,11 +114,12 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
           ["--muted-foreground" as string]: "#71717a",
         }}
       >
-        <div className="grid min-w-[1180px] auto-cols-fr grid-flow-col gap-4">
+        {/* Phones: one column at a time, swipe to the next. */}
+        <div className="grid snap-x snap-mandatory auto-cols-[82vw] grid-flow-col gap-3 sm:min-w-[1180px] sm:snap-none sm:auto-cols-fr sm:gap-4">
           {columns.map((col) => {
             const total = (counts[col.id] ?? 0) + (moved[col.id] ?? 0);
             return (
-              <div key={col.id} className="flex h-[calc(100vh-360px)] min-h-[420px] flex-col rounded-2xl bg-zinc-50/80 p-3 ring-1 ring-zinc-100">
+              <div key={col.id} className="flex h-[70vh] min-h-[420px] snap-start flex-col rounded-2xl bg-zinc-50/80 p-3 ring-1 ring-zinc-100 sm:h-[calc(100vh-360px)]">
                 <Column
                   column={{ ...col, count: Math.max(total, col.cards.length) }}
                   dragState={dragState}
