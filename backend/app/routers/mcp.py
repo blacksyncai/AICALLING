@@ -37,7 +37,10 @@ INSTRUCTIONS = (
     "have none), scan_website or add_knowledge, get_script_guide, then write the agent's full script with the user and save it with create_agent, a test with "
     "call_with_agent to their own phone, launch_agent, add_contacts, create_campaign and start_campaign. Ask before "
     "anything that places calls or changes the account, and confirm phone numbers before calling them. Never invent "
-    "results: read calls with list_calls / get_call."
+    "results: read calls with list_calls / get_call. Lead Finder (lookup_property, bulk_lookup_*) finds property owners' "
+    "phones to save as contacts; Radar (radar_scan, radar_play, radar_launch) finds who to call now in a connected CRM. "
+    "Anything that costs money (lookups past the free ones, numbers) answers needs_confirmation first: tell the user "
+    "the price and only repeat the call with the confirmation once they agree."
 )
 # Tools an assistant may still have in an old, cached tool list.
 RETIRED = {name: ("This BlackSync tool was replaced. Write the script yourself and save it with create_agent "

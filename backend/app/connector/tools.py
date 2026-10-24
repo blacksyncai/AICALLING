@@ -765,6 +765,600 @@ async def get_billing(s: Session, args: dict) -> dict:
             "manage_url": link("/billing")}
 
 
+# ── Shared helpers for the tools below ────────────────────────────────────────
+
+
+def _refusal(resp) -> dict:
+    """Some endpoints answer a refusal as a JSONResponse (with a code the app acts on) instead of raising."""
+    import json
+
+    try:
+        return json.loads(resp.body)
+    except (ValueError, AttributeError):
+        return {"detail": "That didn't work."}
+
+
+def _ids(args: dict, key: str, most: int = 500) -> list[uuid.UUID]:
+    raw = args.get(key) or []
+    if not isinstance(raw, list) or not raw:
+        raise ToolError(f"{key} needs at least one id.")
+    return [_uuid({"id": x}, "id") for x in raw[:most]]
+
+
+IDS = {"type": "array", "items": STR, "minItems": 1, "maxItems": 500, "description": "Contact ids (from list tools)."}
+CRM = {"type": "string", "description": "The CRM's key, e.g. followupboss, hubspot, close (from list_crm_integrations)."}
+
+
+def _crm_key(args: dict) -> str:
+    key = str(args.get("crm") or "").strip().lower()
+    if not key:
+        raise ToolError("crm is required (see list_crm_integrations).")
+    return key
+
+
+# ── Contacts (more) ───────────────────────────────────────────────────────────
+
+
+@tool("get_contact", "Get a contact", "One contact in full, with every call made to them (outcome, summary, length).",
+      {"contact_id": ID}, ["contact_id"])
+async def get_contact_tool(s: Session, args: dict) -> dict:
+    from app.routers.contacts import get_contact
+
+    c = await get_contact(_uuid(args, "contact_id"), s.need_account(), s.db)
+    return {**c, "url": link(f"/contacts/{c['id']}")}
+
+
+@tool("update_contact", "Edit a contact",
+      """Changes a contact's details, pipeline status (e.g. interested, callback, meeting_booked, not_interested),
+tags, notes, campaign or Do-Not-Call flag. Only the fields you pass change.""",
+      {"contact_id": ID, "name": STR, "phone": STR, "email": STR, "company": STR, "role": STR, "notes": STR,
+       "status": STR, "tags": {"type": "array", "items": STR}, "campaign_id": ID,
+       "do_not_call": {"type": "boolean"}},
+      ["contact_id"], read_only=False, idempotent=True)
+async def update_contact_tool(s: Session, args: dict) -> dict:
+    from app.routers.contacts import ContactPatch, update_contact
+
+    fields = {k: v for k, v in args.items() if k != "contact_id" and v is not None}
+    try:
+        body = ContactPatch(**fields)
+    except ValueError as exc:
+        raise ToolError(f"Check the values: {exc}")
+    return _contact_brief(await update_contact(_uuid(args, "contact_id"), body, s.need_account(), s.db))
+
+
+@tool("bulk_update_contacts", "Update many contacts",
+      """Applies one change to many contacts: add_to_campaign (queues them to be called), set_status, add_tag,
+dnc_on or dnc_off.""",
+      {"contact_ids": IDS, "action": {"type": "string", "enum": ["add_to_campaign", "set_status", "add_tag", "dnc_on", "dnc_off"]},
+       "campaign_id": ID, "status": STR, "tag": STR},
+      ["contact_ids", "action"], read_only=False, idempotent=True)
+async def bulk_update_contacts(s: Session, args: dict) -> dict:
+    from app.routers.contacts import BulkAction, bulk_action
+
+    action = str(args.get("action") or "")
+    if action not in ("add_to_campaign", "set_status", "add_tag", "dnc_on", "dnc_off"):
+        raise ToolError("Unknown action.")
+    return await bulk_action(BulkAction(ids=_ids(args, "contact_ids"), action=action,
+                                        campaign_id=_uuid(args, "campaign_id", False), status=args.get("status"),
+                                        tag=args.get("tag")), s.need_account(), s.db)
+
+
+@tool("call_contact", "Call a contact now",
+      "Places a real call right now: the agent calls this contact. Uses calling credits. Confirm with the user first.",
+      {"contact_id": ID, "agent_id": ID}, ["contact_id", "agent_id"], read_only=False, destructive=True, open_world=True)
+async def call_contact_tool(s: Session, args: dict) -> dict:
+    from app.routers.contacts import CallContact, call_contact
+
+    out = await call_contact(_uuid(args, "contact_id"), CallContact(agent_id=_uuid(args, "agent_id")),
+                             s.need_account(), s.db)
+    return {**out, "next_step": "When the call ends, get_call shows the transcript and outcome."}
+
+
+# ── Campaigns (more) ──────────────────────────────────────────────────────────
+
+
+@tool("update_campaign", "Edit a campaign",
+      """Changes a campaign's name, agent, calling hours (HH:MM in its time zone), days (0=Mon … 6=Sun), time zone,
+retries, concurrency or caller number. Only the fields you pass change.""",
+      {"campaign_id": ID, "name": STR, "description": STR, "agent_id": ID,
+       "call_window_start": STR, "call_window_end": STR,
+       "call_days": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 6}},
+       "timezone": STR, "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+       "retry_delay_minutes": {"type": "integer", "minimum": 1},
+       "max_concurrent_calls": {"type": "integer", "minimum": 1, "maximum": 20}, "phone_number_id": ID},
+      ["campaign_id"], read_only=False, idempotent=True)
+async def update_campaign_tool(s: Session, args: dict) -> dict:
+    from app.routers.campaigns import CampaignUpdate, update_campaign
+
+    fields = {k: v for k, v in args.items() if k != "campaign_id" and v is not None}
+    try:
+        body = CampaignUpdate(**fields)
+    except ValueError as exc:
+        raise ToolError(f"Check the values: {exc}")
+    out = await update_campaign(_uuid(args, "campaign_id"), body, s.need_account(), s.db)
+    return _campaign_brief(out.get("campaign", out) if isinstance(out, dict) else out)
+
+
+@tool("list_campaign_contacts", "Contacts in a campaign",
+      "The contacts in one campaign with their status (filter by status, e.g. new, no_answer, interested).",
+      {"campaign_id": ID, "status": STR, "limit": LIMIT}, ["campaign_id"])
+async def list_campaign_contacts(s: Session, args: dict) -> dict:
+    from app.routers.campaigns import list_campaign_leads
+
+    out = await list_campaign_leads(_uuid(args, "campaign_id"), s.need_account(), s.db, status=args.get("status") or None,
+                                    page=1, page_size=_int(args, "limit", 20, 1, 100))
+    items = out.get("leads") or out.get("items") or []
+    return {"total": out.get("total"), "by_status": out.get("status_counts"),
+            "contacts": [_contact_brief(c) for c in items]}
+
+
+@tool("call_campaign_contacts", "Call picked contacts now",
+      """Dials the given contacts from a campaign right now (within its calling hours), without starting the whole
+campaign. Uses calling credits. Confirm with the user first.""",
+      {"campaign_id": ID, "contact_ids": IDS}, ["campaign_id", "contact_ids"],
+      read_only=False, destructive=True, open_world=True)
+async def call_campaign_contacts(s: Session, args: dict) -> dict:
+    from app.routers.campaigns import CallSelectedRequest, call_selected_leads
+
+    bg = BackgroundTasks()
+    out = await call_selected_leads(_uuid(args, "campaign_id"), CallSelectedRequest(lead_ids=_ids(args, "contact_ids")),
+                                    bg, s.need_account(), s.db)
+    await _schedule(bg)
+    return {"dialing": out.get("dispatched"), "skipped_dnc": out.get("skipped_dnc")}
+
+
+# ── Meetings and call follow-up ───────────────────────────────────────────────
+
+
+@tool("list_meetings", "Booked meetings",
+      "Meetings the agents booked (newest first) with contact, time and status, plus show-rate stats.",
+      {"upcoming_only": {"type": "boolean", "description": "Only meetings still scheduled."}, "limit": LIMIT})
+async def list_meetings_tool(s: Session, args: dict) -> dict:
+    from app.routers.meetings import list_meetings
+
+    out = await list_meetings(s.need_account(), s.db, status="upcoming" if args.get("upcoming_only") else "all",
+                              limit=_int(args, "limit", 20, 1, 100))
+    return {"total": out["total"], "stats": out["stats"], "meetings": out["items"]}
+
+
+@tool("update_meeting", "Update a meeting",
+      "Marks a booked meeting completed, no_show or cancelled, or moves it (start as ISO 8601 with offset).",
+      {"call_id": {"type": "string", "description": "The meeting's call_id (from list_meetings)."},
+       "status": {"type": "string", "enum": ["scheduled", "completed", "no_show", "cancelled"]},
+       "start": {"type": "string", "description": "e.g. 2026-11-03T15:00:00-05:00"},
+       "duration_minutes": {"type": "integer", "minimum": 5, "maximum": 480}},
+      ["call_id"], read_only=False, idempotent=True)
+async def update_meeting_tool(s: Session, args: dict) -> dict:
+    from app.routers.meetings import MeetingUpdate, update_meeting
+
+    fields = {k: args[k] for k in ("status", "start", "duration_minutes") if args.get(k) is not None}
+    try:
+        body = MeetingUpdate(**fields)
+    except ValueError as exc:
+        raise ToolError(f"Check the values: {exc}")
+    return await update_meeting(_uuid(args, "call_id"), body, s.need_account(), s.db)
+
+
+@tool("reanalyze_call", "Re-read a call",
+      "Runs the post-call analysis again (outcome, summary, details collected), e.g. after changing the agent.",
+      {"call_id": ID}, ["call_id"], read_only=False, idempotent=True)
+async def reanalyze_call_tool(s: Session, args: dict) -> dict:
+    from app.routers.calls import reanalyze_call
+
+    bg = BackgroundTasks()
+    out = await reanalyze_call(_uuid(args, "call_id"), bg, s.need_account(), s.db)
+    await _schedule(bg)
+    return {**out, "next_step": "Give it a minute, then get_call shows the new outcome."}
+
+
+# ── Lead Finder (property owner lookups) ──────────────────────────────────────
+
+
+def _lookup_out(out: dict) -> dict:
+    lk = out.get("lookup", out)
+    return {**lk, "url": link("/lead-finder")}
+
+
+def _pay_needed(body: dict) -> dict:
+    """Turn a 402 from Lead Finder into a clear answer: ask the user to accept the price, or say why it can't run."""
+    if body.get("code") == "confirm_price":
+        price = body.get("price_cents") or 0
+        return {"needs_confirmation": True, "price_cents": price, "count": body.get("count"),
+                "total_cents": body.get("total_cents"), "balance_cents": body.get("balance_cents"),
+                "message": f"Today's free lookups are used up. Each new lookup costs ${price / 100:.2f}. "
+                           f"Ask the user, then call again with expected_price_cents={price}."}
+    raise ToolError(body.get("detail") or "Lead Finder couldn't run that.")
+
+
+@tool("lead_finder_status", "Lead Finder balance",
+      "Whether Lead Finder is on, free lookups left today, lookup credits, balance and the price per lookup.")
+async def lead_finder_status(s: Session, args: dict) -> dict:
+    from app.routers.lead_finder import get_usage
+
+    return {**await get_usage(s.need_account(), s.db), "url": link("/lead-finder")}
+
+
+@tool("lookup_property", "Find a property's owner",
+      """Looks up who owns a US property and their phone numbers and emails. Pass the full address as one line
+("123 Main St, Erie, PA 16503") or street/city/state/zip. A saved result is free; a new one uses a free daily
+lookup or a lookup credit. If it answers needs_confirmation, tell the user the price and only call again with
+expected_price_cents once they agree.""",
+      {"address": {"type": "string", "description": "Full address on one line."}, "street": STR, "city": STR,
+       "state": STR, "zip": STR, "expected_price_cents": {"type": "integer", "minimum": 0}},
+      read_only=False, open_world=True)
+async def lookup_property(s: Session, args: dict) -> dict:
+    from fastapi.responses import JSONResponse
+
+    from app.routers.lead_finder import LookupRequest, create_lookup
+    from app.services import lead_finder as lf
+
+    parts = {k: str(args.get(k) or "").strip() for k in ("street", "city", "state", "zip")}
+    if args.get("address") and not parts["street"]:
+        parsed = lf.parse_full_address(str(args["address"])[:400])
+        parts = {k: str(parsed.get(k) or "") for k in parts}
+    if not parts["street"]:
+        raise ToolError("Give the property address (street, city, state).")
+    out = await create_lookup(LookupRequest(**parts, expected_price_cents=args.get("expected_price_cents")),
+                              s.need_account(), s.db)
+    if isinstance(out, JSONResponse):
+        return _pay_needed(_refusal(out))
+    return {**_lookup_out(out), "cached": out.get("cached"),
+            "next_step": "save_lookup_to_contacts adds the owner to Contacts so an agent can call them."}
+
+
+@tool("list_property_lookups", "Recent property lookups", "The latest single-address owner lookups.", {"limit": LIMIT})
+async def list_property_lookups(s: Session, args: dict) -> dict:
+    from app.routers.lead_finder import list_lookups
+
+    return await list_lookups(s.need_account(), s.db, limit=_int(args, "limit", 20, 1, 100))
+
+
+@tool("get_property_lookup", "Open a property lookup", "One saved lookup with the owner's phones and emails (free).",
+      {"lookup_id": ID}, ["lookup_id"])
+async def get_property_lookup(s: Session, args: dict) -> dict:
+    from app.routers.lead_finder import get_lookup
+
+    return _lookup_out(await get_lookup(_uuid(args, "lookup_id"), s.need_account(), s.db))
+
+
+@tool("save_lookup_to_contacts", "Save an owner as a contact",
+      "Adds the owner from a lookup to Contacts (no duplicates), optionally straight into a campaign.",
+      {"lookup_id": ID, "campaign_id": ID}, ["lookup_id"], read_only=False, idempotent=True)
+async def save_lookup_to_contacts(s: Session, args: dict) -> dict:
+    from app.routers.contacts import BulkAction, bulk_action
+    from app.routers.lead_finder import save_as_lead
+
+    ctx = s.need_account()
+    out = await save_as_lead(_uuid(args, "lookup_id"), ctx, s.db)
+    campaign_id = _uuid(args, "campaign_id", False)
+    if campaign_id:
+        await bulk_action(BulkAction(ids=[uuid.UUID(out["lead_id"])], action="add_to_campaign", campaign_id=campaign_id),
+                          ctx, s.db)
+    return {"contact_id": out["lead_id"], "created": out["created"], "in_campaign": str(campaign_id) if campaign_id else None}
+
+
+@tool("bulk_lookup_prepare", "Prepare a bulk owner lookup",
+      """Reads a CSV of addresses (columns like street, city, state, zip, or one address column) and says how many
+are new and what it will cost. Nothing is looked up or charged yet: bulk_lookup_start runs it.""",
+      {"csv": {"type": "string", "description": "CSV text with a header row."}, "filename": STR}, ["csv"],
+      read_only=False)
+async def bulk_lookup_prepare(s: Session, args: dict) -> dict:
+    from app.routers.lead_finder import BatchUpload, upload_batch
+
+    text = str(args.get("csv") or "")
+    if not text.strip():
+        raise ToolError("csv is required.")
+    try:
+        body = BatchUpload(filename=str(args.get("filename") or "addresses.csv")[:255], text=text)
+    except ValueError:
+        raise ToolError("That file is too big. Split it into smaller parts.")
+    out = await upload_batch(body, s.need_account(), s.db)
+    keep = ("id", "valid", "invalid", "cached_rows", "new_rows", "pay_with", "price_cents", "max_total_cents",
+            "enough_credits")
+    return {**{k: out.get(k) for k in keep}, "invalid": (out.get("invalid") or [])[:20],
+            "next_step": "Tell the user the cost, then bulk_lookup_start with this id."}
+
+
+@tool("bulk_lookup_start", "Run a bulk owner lookup",
+      """Runs a prepared bulk lookup in the background. Uses lookup credits or balance for every new address.
+Confirm the cost with the user first; if it answers needs_confirmation, call again with expected_price_cents.""",
+      {"batch_id": ID, "expected_price_cents": {"type": "integer", "minimum": 0}}, ["batch_id"],
+      read_only=False, destructive=True, open_world=True)
+async def bulk_lookup_start(s: Session, args: dict) -> dict:
+    from fastapi.responses import JSONResponse
+
+    from app.routers.lead_finder import BatchStart, start_batch
+
+    bg = BackgroundTasks()
+    out = await start_batch(_uuid(args, "batch_id"), bg, s.need_account(), s.db,
+                            BatchStart(expected_price_cents=args.get("expected_price_cents")))
+    if isinstance(out, JSONResponse):
+        return _pay_needed(_refusal(out))
+    await _schedule(bg)
+    return {**out, "next_step": "get_bulk_lookup shows progress; save_bulk_to_contacts adds the owners found."}
+
+
+@tool("get_bulk_lookup", "Bulk lookup progress",
+      "A bulk lookup's progress and its rows (owner found or not). Without batch_id, lists recent bulk lookups.",
+      {"batch_id": ID, "limit": LIMIT})
+async def get_bulk_lookup(s: Session, args: dict) -> dict:
+    from app.routers.lead_finder import get_batch, list_batches
+
+    if not args.get("batch_id"):
+        return await list_batches(s.need_account(), s.db)
+    out = await get_batch(_uuid(args, "batch_id"), s.need_account(), s.db, offset=0, limit=_int(args, "limit", 20, 1, 100))
+    out.pop("usage", None)
+    return out
+
+
+@tool("save_bulk_to_contacts", "Save bulk owners as contacts",
+      "Adds every owner found in a bulk lookup to Contacts (no duplicates), optionally into a campaign.",
+      {"batch_id": ID, "campaign_id": ID}, ["batch_id"], read_only=False, idempotent=True)
+async def save_bulk_to_contacts(s: Session, args: dict) -> dict:
+    from sqlalchemy import select
+
+    from app.models.lead_finder import PropertyLookup
+    from app.routers.contacts import BulkAction, bulk_action
+    from app.routers.lead_finder import save_batch_leads
+
+    ctx = s.need_account()
+    batch_id = _uuid(args, "batch_id")
+    out = await save_batch_leads(batch_id, ctx, s.db)
+    campaign_id = _uuid(args, "campaign_id", False)
+    if campaign_id:
+        ids = list((await s.db.execute(select(PropertyLookup.lead_id).where(
+            PropertyLookup.batch_id == batch_id, PropertyLookup.org_id == ctx.org.id,
+            PropertyLookup.lead_id.is_not(None)))).scalars())
+        if ids:
+            await bulk_action(BulkAction(ids=ids, action="add_to_campaign", campaign_id=campaign_id), ctx, s.db)
+        out["in_campaign"] = len(ids)
+    return out
+
+
+# ── Radar (who to call now, from the connected CRM) ───────────────────────────
+
+_RADAR_ITEM = ("external_id", "name", "phone", "company", "reason", "stage", "source", "last_touch", "calls")
+
+
+def _radar_item(i: dict) -> dict:
+    bs = i.get("bs") or {}
+    out = {k: i.get(k) for k in _RADAR_ITEM if i.get(k) not in (None, "", [])}
+    if i.get("dnc"):
+        out["dnc"] = True
+    if bs:
+        out["blacksync"] = {k: bs[k] for k in ("campaign", "calls", "last_outcome", "verified") if bs.get(k)}
+    return out
+
+
+def _radar_summary(scan: dict, per_play: int = 5) -> dict:
+    return {"scan_id": scan.get("id"), "crm": scan.get("provider"), "scanned": scan.get("scanned"),
+            "depth": scan.get("depth"), "more_to_scan": bool(scan.get("next")),
+            "plays": [{"play": pl["key"], "title": pl.get("title"), "why": pl.get("why"), "count": pl.get("count"),
+                       "top": [_radar_item(i) for i in pl.get("items", [])[:per_play]]}
+                      for pl in scan.get("plays") or [] if pl.get("count")],
+            "url": link("/radar")}
+
+
+@tool("radar_overview", "Radar",
+      """Radar finds the people worth calling now in the connected CRM (hot leads, stale follow-ups, old leads).
+Shows each CRM Radar can read, its BlackSync pipelines, and the last scan's plays.""")
+async def radar_overview(s: Session, args: dict) -> dict:
+    from app.routers.radar import overview
+
+    out = await overview(s.need_manager(), s.db)
+    return {"crms": [{"crm": c["provider"], "name": c["name"], "account": c["account_label"], "pipelines": c["installs"],
+                      "last_scan": _radar_summary(c["last_scan"]) if c.get("last_scan") else None} for c in out["crms"]],
+            "url": link("/radar")}
+
+
+@tool("radar_scan", "Scan the CRM with Radar",
+      """Scans a connected CRM and groups people into plays worth calling now. depth: quick (newest), recent
+(recent activity, default) or old (oldest first, to revive old leads). Pass continue_from (an earlier scan_id)
+to read the next batch of a big CRM.""",
+      {"crm": CRM, "depth": {"type": "string", "enum": ["quick", "recent", "old"]},
+       "continue_from": {"type": "string", "description": "scan_id to extend."}},
+      ["crm"], read_only=False, open_world=True)
+async def radar_scan(s: Session, args: dict) -> dict:
+    from app.routers.radar import scan
+
+    out = await scan(_crm_key(args), s.need_manager(), s.db, depth=str(args.get("depth") or ""),
+                     continue_from=_uuid(args, "continue_from", False))
+    return {**_radar_summary(out), "next_step": "radar_play lists everyone in a play; radar_launch calls them."}
+
+
+@tool("radar_play", "People in a Radar play", "Everyone in one play of a Radar scan (paged).",
+      {"scan_id": ID, "play": {"type": "string", "description": "The play key from radar_scan."},
+       "offset": {"type": "integer", "minimum": 0}, "limit": LIMIT}, ["scan_id", "play"])
+async def radar_play(s: Session, args: dict) -> dict:
+    from app.models.crm import CrmConnection, CrmScan
+    from app.routers.radar import _require_radar, _scan_view
+
+    ctx = s.need_manager()
+    await _require_radar(ctx, s.db)
+    row = await s.db.get(CrmScan, _uuid(args, "scan_id"))
+    if not row or row.org_id != ctx.org.id:
+        raise ToolError("Scan not found.")
+    conn = await s.db.get(CrmConnection, row.connection_id)
+    view = await _scan_view(s.db, ctx.org.id, row, conn.provider if conn else "")
+    pl = next((p for p in view.get("plays") or [] if p["key"] == args.get("play")), None)
+    if not pl:
+        raise ToolError(f"No play {args.get('play')!r} in that scan. Plays: "
+                        + ", ".join(p["key"] for p in view.get("plays") or []))
+    start, n = _int(args, "offset", 0, 0, 100000), _int(args, "limit", 20, 1, 100)
+    return {"play": pl["key"], "title": pl.get("title"), "why": pl.get("why"), "count": pl.get("count"),
+            "offset": start, "people": [_radar_item(i) for i in pl["items"][start:start + n]]}
+
+
+@tool("radar_list_segments", "CRM lists Radar can open",
+      "The CRM's own ponds, lead sources and stages, which radar_open_segment turns into a list to call.",
+      {"crm": CRM}, ["crm"])
+async def radar_list_segments(s: Session, args: dict) -> dict:
+    from app.routers.radar import segments
+
+    return await segments(_crm_key(args), s.need_manager(), s.db)
+
+
+@tool("radar_open_segment", "Open a CRM list in Radar",
+      "Pulls everyone in one pond, lead source or stage into a Radar play you can launch.",
+      {"crm": CRM, "kind": {"type": "string", "enum": ["pond", "source", "stage"]},
+       "value": {"type": "string", "description": "The segment's value from radar_list_segments."}, "label": STR},
+      ["crm", "kind", "value"], read_only=False, open_world=True)
+async def radar_open_segment(s: Session, args: dict) -> dict:
+    from app.routers.radar import SegmentIn, open_segment
+
+    try:
+        body = SegmentIn(kind=str(args.get("kind") or ""), value=str(args.get("value") or ""),
+                         label=str(args.get("label") or ""))
+    except ValueError as exc:
+        raise ToolError(f"Check the values: {exc}")
+    return _radar_summary(await open_segment(_crm_key(args), body, s.need_manager(), s.db))
+
+
+@tool("radar_launch", "Call a Radar play",
+      """Calls the people in a Radar play with an agent. mode campaign makes a draft campaign of them (start it with
+start_campaign); mode pipeline drops them into the agent's BlackSync pipeline in the CRM, where calling starts
+on its own. Pass external_ids to call only some. Confirm with the user first.""",
+      {"scan_id": ID, "play": STR, "agent_id": ID, "mode": {"type": "string", "enum": ["campaign", "pipeline"]},
+       "external_ids": {"type": "array", "items": STR}, "campaign_name": STR},
+      ["scan_id", "play", "agent_id", "mode"], read_only=False, destructive=True, open_world=True)
+async def radar_launch(s: Session, args: dict) -> dict:
+    from app.routers.radar import LaunchIn, launch
+
+    ids = args.get("external_ids")
+    try:
+        body = LaunchIn(play=str(args.get("play") or ""), agent_id=_uuid(args, "agent_id"), mode=str(args.get("mode") or ""),
+                        external_ids=[str(x) for x in ids] if isinstance(ids, list) and ids else None,
+                        campaign_name=str(args.get("campaign_name") or "")[:120])
+    except ValueError as exc:
+        raise ToolError(f"Check the values: {exc}")
+    out = await launch(_uuid(args, "scan_id"), body, s.need_manager(), s.db)
+    if out.get("campaign_id"):
+        out["url"] = link(f"/campaigns/{out['campaign_id']}")
+        out["next_step"] = "The campaign is a draft: start_campaign begins calling."
+    return out
+
+
+# ── CRM integrations ──────────────────────────────────────────────────────────
+
+
+@tool("list_crm_integrations", "Connected CRMs", "The CRMs and tools connected to this account and what each can do.")
+async def list_crm_integrations(s: Session, args: dict) -> dict:
+    from app.routers.crm import overview
+
+    out = await overview(s.need_manager(), s.db)
+    names = {p["key"]: p for p in out["providers"]}
+    conns = []
+    for c in out["connections"]:
+        p = names.get(c.get("provider"), {})
+        conns.append({"crm": c.get("provider"), "name": p.get("name"), "account": c.get("account_label"),
+                      "status": c.get("status"), "can_import": p.get("can_import"),
+                      "last_synced_at": c.get("last_synced_at"), "last_error": c.get("last_error")})
+    return {"connected": conns, "available": sorted(names), "url": link("/integrations")}
+
+
+@tool("crm_import_options", "CRM import filters", "The filters a CRM import can use (tags, stages, sources, lists…).",
+      {"crm": CRM}, ["crm"])
+async def crm_import_options(s: Session, args: dict) -> dict:
+    from app.routers.crm import import_options
+
+    return await import_options(_crm_key(args), s.need_manager(), s.db)
+
+
+@tool("crm_import_contacts", "Import contacts from a CRM",
+      """Brings contacts from a connected CRM into BlackSync, optionally into a campaign. filters use the keys and
+values from crm_import_options. preview=true only counts them (nothing is imported).""",
+      {"crm": CRM, "filters": {"type": "object", "description": "e.g. {\"tags\": [\"Seller\"], \"stage\": \"Lead\"}"},
+       "skip_contacted": {"type": "boolean", "description": "Leave out people BlackSync already called."},
+       "tag": {"type": "string", "description": "Tag to put on the imported contacts."},
+       "limit": {"type": "integer", "minimum": 1, "maximum": 2000}, "campaign_id": ID,
+       "preview": {"type": "boolean"}},
+      ["crm"], read_only=False, open_world=True)
+async def crm_import_contacts(s: Session, args: dict) -> dict:
+    from app.routers.crm import ImportIn, import_contacts, import_preview
+
+    try:
+        body = ImportIn(filters=args.get("filters") or {}, skip_contacted=bool(args.get("skip_contacted")),
+                        list_tag=str(args.get("tag") or "")[:60], limit=_int(args, "limit", 500, 1, 2000),
+                        campaign_id=str(args["campaign_id"]) if args.get("campaign_id") else None)
+    except ValueError as exc:
+        raise ToolError(f"Check the filters: {exc}")
+    key, ctx = _crm_key(args), s.need_manager()
+    if args.get("preview"):
+        out = await import_preview(key, body, ctx, s.db)
+        if isinstance(out, dict) and isinstance(out.get("sample"), list):
+            out["sample"] = out["sample"][:10]
+        return out
+    return await import_contacts(key, ctx, s.db, body)
+
+
+@tool("crm_activity", "CRM sync log", "The latest sync activity for a CRM: calls logged, imports, errors.",
+      {"crm": CRM, "limit": LIMIT}, ["crm"])
+async def crm_activity(s: Session, args: dict) -> dict:
+    from app.routers.crm import activity
+
+    out = await activity(_crm_key(args), s.need_manager(), s.db)
+    return {"items": out["items"][:_int(args, "limit", 20, 1, 50)]}
+
+
+# ── Phone numbers (more) ──────────────────────────────────────────────────────
+
+
+@tool("search_phone_numbers", "Find numbers to buy", "Phone numbers available to buy, optionally in an area code.",
+      {"area_code": {"type": "string", "description": "3 digits, e.g. 512."}})
+async def search_phone_numbers(s: Session, args: dict) -> dict:
+    from app.routers.phone_numbers import available_numbers
+
+    out = await available_numbers(s.need_manager(), s.db, area_code=str(args.get("area_code") or ""), carrier=None)
+    return {"numbers": (out.get("numbers") or [])[:20]}
+
+
+@tool("buy_phone_number", "Buy a phone number",
+      """Buys a number for the account. A number beyond the plan's included ones is charged monthly: if it answers
+needs_confirmation, tell the user the price and only call again with confirm_charge=true once they agree.""",
+      {"number": {"type": "string", "description": "From search_phone_numbers, e.g. +15125550123."}, "label": STR,
+       "confirm_charge": {"type": "boolean"}},
+      ["number"], read_only=False, destructive=True, open_world=True)
+async def buy_phone_number(s: Session, args: dict) -> dict:
+    from fastapi.responses import JSONResponse
+
+    from app.routers.phone_numbers import PurchaseIn, purchase_number
+
+    body = PurchaseIn(number=str(args.get("number") or ""), label=str(args.get("label") or "")[:100],
+                      confirm_charge=bool(args.get("confirm_charge")))
+    try:
+        out = await purchase_number(body, s.need_manager(), s.db)
+    except HTTPException as exc:
+        if exc.status_code == 409 and isinstance(exc.detail, dict) and exc.detail.get("code") == "confirm_charge":
+            return {"needs_confirmation": True, "unit_cents": exc.detail.get("unit_cents"),
+                    "message": exc.detail.get("message")}
+        raise
+    if isinstance(out, JSONResponse):
+        url = _refusal(out).get("checkout_url")
+        return {"needs_payment": True, "checkout_url": url,
+                "message": "This account has no plan, so the number is bought through checkout. Send the user this link."}
+    return out
+
+
+@tool("update_phone_number", "Edit a phone number",
+      "Renames a number, makes it the default caller ID, or puts a rested (spam-flagged) number back into rotation.",
+      {"number_id": ID, "label": STR, "make_default": {"type": "boolean"},
+       "resume": {"type": "boolean", "description": "End its rest so campaigns use it again."}},
+      ["number_id"], read_only=False, idempotent=True)
+async def update_phone_number(s: Session, args: dict) -> dict:
+    from app.routers.phone_numbers import NumberPatch, resume_number, update_number
+
+    ctx, number_id = s.need_manager(), _uuid(args, "number_id")
+    out = None
+    if args.get("label") is not None or args.get("make_default"):
+        out = await update_number(number_id, NumberPatch(label=args.get("label"), is_default=bool(args.get("make_default")) or None),
+                                  ctx, s.db)
+    if args.get("resume"):
+        out = await resume_number(number_id, ctx, s.db)
+    if out is None:
+        raise ToolError("Pass label, make_default or resume.")
+    return out
+
+
 # ── search / fetch (the standard pair some assistants use for lookups) ────────
 
 
