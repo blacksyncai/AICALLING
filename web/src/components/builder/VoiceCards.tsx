@@ -29,10 +29,11 @@ import type { VoicesResponse } from "./StepPersonality";
 const PREVIEW_LINE =
   "Hey there, this is a quick preview of how I'll sound on your calls. Does this work for you?";
 
-/** The house voices (Marissa, Zain, Lauren, Macco) — always offered up front, in this order. */
+/** House suggestions in display order; Mia is the third option. */
 export const HOUSE_VOICES = [
   "97f03c16-fab2-4747-b655-9caefbd68fcf",
   "95280ca0-610a-41c9-8457-1dcec809da61",
+  "26def8d4-b397-4d79-b5f1-d554d16ba4fe",
   "91e4713f-2150-4be6-8564-2d121bbd8c10",
   "378695da-44e9-4fc7-a9cb-efcb0d2037cc",
 ];
