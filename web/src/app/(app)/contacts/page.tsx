@@ -231,8 +231,10 @@ export default function ContactsPage() {
                         onClick={() => switchView(v)}
                         aria-pressed={view === v}
                         className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                          view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800",
+                          "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2",
+                          v === "board"
+                            ? view === v ? "bg-red-600 text-white shadow-sm ring-2 ring-red-200" : "bg-red-100 text-red-700 shadow-sm ring-1 ring-red-400 hover:bg-red-200"
+                            : view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800",
                         )}
                       >
                         <Icon className="h-3.5 w-3.5" />

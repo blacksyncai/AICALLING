@@ -4,6 +4,7 @@ import { Clock, Hash, Phone, Search, ShieldCheck, Star } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
+import { PhoneNumberPerformance } from "@/components/phone/PhoneNumberPerformance";
 import { TextingCard } from "@/components/phone/TextingCard";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, PageHeader, Spinner } from "@/components/ui";
@@ -106,6 +107,7 @@ export default function PhoneNumbersPage() {
         </div>
       )}
       <PageHeader title="Phone numbers" description="The numbers your agents call from. Pick a default, or set one per agent under Agent → Actions." />
+      <PhoneNumberPerformance numbers={data.numbers} />
       {manager && data.numbers.length === 0 && <div className="mb-6">{getNumber}</div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <NumbersList numbers={data.numbers} manager={manager} refresh={() => void mutate()} />
