@@ -18,6 +18,8 @@ class EmailMessage(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     resend_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    notification_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    from_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     to_email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)  # lower-cased
     subject: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     # welcome | catchup | walkthrough | platform_invite | team_invite | support | auth | signup_alert | other

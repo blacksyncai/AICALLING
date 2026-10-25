@@ -122,7 +122,7 @@ def test_radar_from_the_assistant(client, make_client, http_mock):  # noqa: F811
         people, err = _tool(anon, token, "radar_play", {"scan_id": scan["scan_id"], "play": "never_called"})
         assert not err and people["count"] == 1 and len(people["people"]) == 1
         over, _ = _tool(anon, token, "radar_overview")
-        assert over["crms"][0]["last_scan"]["scan_id"] == scan["scan_id"]
+        assert next(c for c in over["crms"] if c["crm"] == "close")["last_scan"]["scan_id"] == scan["scan_id"]
 
         agent = client.post("/api/agents/", json={"template": "blank"}).json()
         out, err = _tool(anon, token, "radar_launch", {"scan_id": scan["scan_id"], "play": "unreached",

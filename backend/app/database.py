@@ -80,6 +80,9 @@ def _add_missing_columns(sync_conn) -> None:
             col_type = col.type.compile(dialect=sync_conn.dialect)
             sync_conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {col_type}'))
 
+    if "email_messages" in existing_tables:
+        sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_messages_notification_key ON email_messages (notification_key)"))
+
     # create_all() only builds indexes together with brand-new tables, so add
     # report indexes to existing tables here (idempotent on SQLite and Postgres).
     if "call_logs" in existing_tables:

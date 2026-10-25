@@ -91,10 +91,35 @@ async def history(db, org_id, page, search='', outcome=''):
     notifications = (await db.execute(select(CallAlert).where(CallAlert.org_id == org_id,
         CallAlert.call_id.in_([c.id for c,_ in rows])))).scalars().all() if rows else []
     users = {str(u.id): u.full_name or u.email for u in await alerts.members(db, org_id)}
-    return {'page':page,'items':[{'id':str(c.id),'name':name or c.to_phone,'outcome':c.outcome or c.status,
-        'summary':(c.summary or '')[:1200],'started_at':c.started_at.isoformat(),
-        'alerts':[{'id':str(n.id),'user':users.get(str(n.user_id),'Former member'),'status':n.status,'error':n.error}
-                  for n in notifications if n.call_id == c.id]} for c,name in rows]}
+    from app.models.email_message import EmailMessage
+    from app.routers.admin_emails import _track, _iso
+    keys = [f'call-alert-{n.id}' for n in notifications] + [f'call-alert-copy-{c.id}' for c, _ in rows]
+    messages = (await db.scalars(select(EmailMessage).where(EmailMessage.notification_key.in_(keys))
+                               .order_by(EmailMessage.sent_at))).all() if keys else []
+    by_key = {m.notification_key: m for m in messages}
+    def delivery(key):
+        m = by_key.get(key)
+        return ({**_track(m), 'provider_id': m.resend_id, 'to': m.to_email, 'from': m.from_email} if m else None)
+    def copy_for(call):
+        tracked = delivery(f'call-alert-copy-{call.id}')
+        attempts = [n for n in notifications if n.call_id == call.id and n.copy_status]
+        # Provider receipt is authoritative; otherwise retain the last recorded attempt.
+        successes = [n for n in attempts if n.copy_status == 'sent']
+        candidates = successes or attempts
+        last = max(candidates, key=lambda n: n.copy_attempted_at or n.created_at) if candidates else None
+        return {'status': tracked['status'] if tracked else (last.copy_status if last else 'unknown'),
+                'to': tracked['to'] if tracked else (last.copy_to if last else None),
+                'error': '' if tracked else (last.copy_error if last else ''),
+                'attempted_at': _iso(last.copy_attempted_at) if last else None, 'delivery': tracked}
+    return {'page': page, 'items': [{'id': str(c.id), 'name': name or c.to_phone, 'outcome': c.outcome or c.status,
+        'summary': (c.summary or '')[:1200], 'started_at': c.started_at.isoformat(), 'internal_copy': copy_for(c),
+        'alerts': [{'id': str(n.id), 'user': users.get(str(n.user_id), 'Former member'), 'status': n.status,
+                    'error': n.error, 'automatic': n.automatic, 'attempts': n.attempts,
+                    'created_at': _iso(n.created_at), 'sent_at': _iso(n.sent_at),
+                    'recipient': (n.message_payload or {}).get('to'), 'sender': (n.message_payload or {}).get('sender'),
+                    'delivery': delivery(f'call-alert-{n.id}')} for n in notifications if n.call_id == c.id]}
+        for c, name in rows]}
+
 
 async def preview(db, org_id, body):
     org = await org_for(db, org_id)

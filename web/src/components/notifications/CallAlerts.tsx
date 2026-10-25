@@ -1,4 +1,5 @@
 "use client";
+import { CallNotificationHistory, type AlertEvidence, type CopyEvidence } from "./CallNotificationHistory";
 import { BellRing, CheckCircle2, Mail, Send } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -280,7 +281,7 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
   const [query, setQuery] = useState("");
   const [recipientSearch, setRecipientSearch] = useState("");
   const [outcome, setOutcome] = useState("");
-  const [browse, setBrowse] = useState(false);
+  const [browse, setBrowse] = useState(true);
   const recipientsEdited = useRef(false);
   useEffect(() => {
     if (prefs && !recipientsEdited.current) {
@@ -307,7 +308,8 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
       outcome: string;
       summary: string;
       started_at: string;
-      alerts: { id: string; user: string; status: string; error: string }[];
+      alerts: AlertEvidence[];
+      internal_copy?: CopyEvidence;
     }[];
   }>(showResults ? historyUrl : null, fetcher, { refreshInterval: 10000 });
   const selected = { call_ids: calls, user_ids: users };
@@ -316,12 +318,11 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
       <div className="flex items-start justify-between gap-3 border-b p-5">
         <div>
           <h2 className="flex items-center gap-2 font-semibold">
-            <Send size={17} className="text-brand-600" /> Notify someone about a
-            past call
+            <Send size={17} className="text-brand-600" /> Notification history
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Find a contact by name or phone, choose their call, and review the
-            notification before sending.
+            Client alerts, delivery results, and the BlackSync copy in one place.
+            Select calls below to preview a new notification.
           </p>
         </div>
         <Badge tone="gray">Admin</Badge>
@@ -458,35 +459,13 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
                   </span>
                 </span>
               </label>
-              <div className="ml-6 mt-2 flex flex-wrap gap-2">
-                {c.alerts.map((a) => (
-                  <span
-                    key={a.id}
-                    title={a.error}
-                    className="text-xs text-zinc-500"
-                  >
-                    {a.user}: {a.status}
-                    {a.error ? ` · ${a.error}` : ""}
-                    {["failed", "retry"].includes(a.status) && (
-                      <button
-                        type="button"
-                        className="ml-2 font-semibold text-brand-600 underline"
-                        onClick={async () => {
-                          try {
-                            await post(`${base}/deliveries/${a.id}/retry`);
-                            setMessage("Notification queued for retry.");
-                            void mutate();
-                          } catch (e) {
-                            setMessage((e as Error).message);
-                          }
-                        }}
-                      >
-                        Retry email
-                      </button>
-                    )}
-                  </span>
-                ))}
-              </div>
+              <CallNotificationHistory alerts={c.alerts} internalCopy={c.internal_copy} onRetry={async (id) => {
+                try {
+                  await post(`${base}/deliveries/${id}/retry`);
+                  setMessage("Notification queued for retry.");
+                  void mutate();
+                } catch (e) { setMessage((e as Error).message); }
+              }} />
             </div>
           ))}
         </div>

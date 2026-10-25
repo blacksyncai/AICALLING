@@ -40,20 +40,29 @@ async def send_email(to: str, subject: str, html_body: str, sender: str | None =
         resend_id = (resp.json() or {}).get("id")
     except Exception:
         resend_id = None
-    if resend_id:
-        await _record(resend_id, to, subject, kind)
+    if not isinstance(resend_id, str) or not resend_id.strip():
+        log.warning("email_send_unconfirmed", reason="missing provider receipt")
+        return False
+    await _record(resend_id, to, subject, kind, notification_key=idempotency_key, sender=sender or settings.email_from)
     return True
 
 
-async def _record(resend_id: str, to: str, subject: str, kind: str) -> None:
+async def _record(resend_id: str, to: str, subject: str, kind: str, *, notification_key: str | None = None, sender: str | None = None) -> None:
     """Remember the message so Resend's delivered / opened / clicked events can be matched to it."""
     from app.database import AsyncSessionLocal
     from app.models.email_message import EmailMessage
 
     try:
         async with AsyncSessionLocal() as db:
-            db.add(EmailMessage(resend_id=resend_id, to_email=to.strip().lower()[:320], subject=subject[:300],
-                                kind=kind[:32]))
+            from sqlalchemy import select
+            row = await db.scalar(select(EmailMessage).where(EmailMessage.resend_id == resend_id))
+            if row is None:
+                row = EmailMessage(resend_id=resend_id, to_email=to.strip().lower()[:320], subject=subject[:300], kind=kind[:32])
+                db.add(row)
+            # A delivery webhook may arrive before the send receipt. Preserve its status.
+            row.kind, row.subject = kind[:32], subject[:300]
+            row.notification_key = notification_key[:160] if notification_key else None
+            row.from_email = sender[:320] if sender else None
             await db.commit()
     except Exception as exc:  # tracking must never break sending
         log.warning("email_record_failed", error=str(exc)[:200])

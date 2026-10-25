@@ -152,7 +152,10 @@ async def deliver(alert_id):
                 ok = False
             if ok:
                 row.status, row.error, row.sent_at = 'sent', '', now()
-                await send_admin_copy(org, call, data)
+                await db.commit()  # persist client success independently of the optional internal copy
+                copy = await send_admin_copy(org, call, data)
+                row.copy_status, row.copy_to = copy['status'], copy['to']
+                row.copy_error, row.copy_attempted_at = copy['error'], now()
             else:
                 row.status = 'failed' if row.attempts >= 5 else 'retry'
                 row.error = 'Email delivery was not confirmed. Check sender verification and email delivery logs.'
@@ -165,12 +168,15 @@ async def send_admin_copy(org, call, data):
     a failure here never affects the client's alert."""
     to = (settings.call_alert_copy_email or '').strip()
     if not to:
-        return
+        return {'status': 'disabled', 'to': '', 'error': ''}
     try:
-        await email.send_email(to, f'[{org.name}] {data["subject"]}'[:240], data['html'], sender=data['sender'],
+        ok = await email.send_email(to, f'[{org.name}] {data["subject"]}'[:240], data['html'], sender=data['sender'],
             kind='call_alert_copy', idempotency_key=f'call-alert-copy-{call.id}')
+        return {'status': 'sent' if ok else 'unconfirmed', 'to': to,
+                'error': '' if ok else 'Internal copy send was not confirmed; check provider logs before retrying.'}
     except Exception as exc:
         log.warning('call_alert_copy_failed', call_id=str(call.id), error=type(exc).__name__)
+        return {'status': 'unconfirmed', 'to': to, 'error': 'Internal copy send was not confirmed.'}
 
 
 async def tick():

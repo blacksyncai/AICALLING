@@ -1216,10 +1216,12 @@ async def radar_open_segment(s: Session, args: dict) -> dict:
 
 @tool("radar_launch", "Call a Radar play",
       """Calls the people in a Radar play with an agent. mode campaign makes a draft campaign of them (start it with
-start_campaign); mode pipeline drops them into the agent's BlackSync pipeline in the CRM, where calling starts
+start_campaign). Pass campaign_id to add to an existing draft, paused, or running outbound campaign;
+use that campaign's agent_id. Assigned contacts are skipped. A running campaign may call new contacts during saved hours.
+mode pipeline drops them into the agent's BlackSync pipeline in the CRM, where calling starts
 on its own. Pass external_ids to call only some. Confirm with the user first.""",
       {"scan_id": ID, "play": STR, "agent_id": ID, "mode": {"type": "string", "enum": ["campaign", "pipeline"]},
-       "external_ids": {"type": "array", "items": STR}, "campaign_name": STR},
+       "external_ids": {"type": "array", "items": STR}, "campaign_name": STR, "campaign_id": {**ID, "description": "Optional existing outbound campaign. Uses its current agent and settings; assigned contacts are skipped."}},
       ["scan_id", "play", "agent_id", "mode"], read_only=False, destructive=True, open_world=True)
 async def radar_launch(s: Session, args: dict) -> dict:
     from app.routers.radar import LaunchIn, launch
@@ -1227,14 +1229,16 @@ async def radar_launch(s: Session, args: dict) -> dict:
     ids = args.get("external_ids")
     try:
         body = LaunchIn(play=str(args.get("play") or ""), agent_id=_uuid(args, "agent_id"), mode=str(args.get("mode") or ""),
-                        external_ids=[str(x) for x in ids] if isinstance(ids, list) and ids else None,
+                        external_ids=[str(x) for x in ids] if isinstance(ids, list) else None,
+                        campaign_id=_uuid(args, "campaign_id", False),
                         campaign_name=str(args.get("campaign_name") or "")[:120])
     except ValueError as exc:
         raise ToolError(f"Check the values: {exc}")
     out = await launch(_uuid(args, "scan_id"), body, s.need_manager(), s.db)
     if out.get("campaign_id"):
         out["url"] = link(f"/campaigns/{out['campaign_id']}")
-        out["next_step"] = "The campaign is a draft: start_campaign begins calling."
+        out["next_step"] = ("Added to the existing campaign without changing its settings or status. Running campaigns can call during saved hours."
+                            if out.get("existing_campaign") else "The campaign is a draft: start_campaign begins calling.")
     return out
 
 
@@ -1415,3 +1419,100 @@ async def fetch(s: Session, args: dict) -> dict:
 
     return {"id": args["id"], "title": data.get("name") or data.get("title") or args["id"],
             "text": json.dumps(data, default=str, ensure_ascii=False)[:20000], "url": data.get("url"), "metadata": {"type": kind}}
+
+
+# Radar rule tools use the exact dashboard validation/permissions/entitlements.
+def _rule_tool_schema():
+    from app.services.crm.automation_schema import RuleIn
+    schema = RuleIn.model_json_schema()
+    definitions = schema.get("$defs", {})
+    def expand(value):
+        if isinstance(value, list):
+            return [expand(x) for x in value]
+        if not isinstance(value, dict):
+            return value
+        if "$ref" in value:
+            return expand(definitions[value["$ref"].rsplit("/", 1)[-1]])
+        return {k: expand(v) for k, v in value.items() if k != "$defs"}
+    return expand(schema)
+
+
+RULE_SCHEMA = _rule_tool_schema()
+
+
+def _rule_body(args):
+    from pydantic import ValidationError
+    from app.services.crm.automation_schema import RuleIn
+    try:
+        return RuleIn.model_validate(args.get("rule") or {})
+    except ValidationError as exc:
+        raise ToolError("Invalid automation rule. Use the exact source and destination IDs from radar_automation_resources; provide a supported condition and one to four actions.") from exc
+
+
+@tool("radar_list_automations", "Radar automation rules", "List this account's saved rules, statuses, versions, sources and CRM connections.")
+async def radar_list_automations(s: Session, args: dict) -> dict:
+    from app.routers.radar_automations import list_rules
+    return await list_rules(s.need_manager(), s.db)
+
+
+@tool("radar_automation_resources", "Radar rule destinations", "Read actual agents, campaigns, ponds, CRM stages and pipelines for building a rule. Never invent IDs.", {"crm": STR}, ["crm"], open_world=True)
+async def radar_automation_resources(s: Session, args: dict) -> dict:
+    from app.routers.radar_automations import resources
+    return await resources(_crm_key(args), s.need_manager(), s.db)
+
+
+@tool("radar_preview_automation", "Preview a Radar rule", "Validate a rule and preview matching calls without activating it or writing to the CRM.", {"rule": RULE_SCHEMA}, ["rule"], open_world=True)
+async def radar_preview_automation(s: Session, args: dict) -> dict:
+    from app.routers.radar_automations import preview
+    return await preview(_rule_body(args), s.need_manager(), s.db)
+
+
+@tool("radar_save_automation", "Save a Radar draft rule", "Create a draft, or edit rule_id. Editing an active rule returns it to draft and requires explicit reactivation. Confirm changes with the user first. Does not activate or run a rule.",
+      {"rule": RULE_SCHEMA, "rule_id": ID}, ["rule"], read_only=False)
+async def radar_save_automation(s: Session, args: dict) -> dict:
+    from app.routers.radar_automations import save_rule, edit_rule
+    ctx = s.need_manager()
+    body = _rule_body(args)
+    key = _uuid(args, "rule_id", False)
+    return await edit_rule(key, body, ctx, s.db) if key else await save_rule(body, ctx, s.db)
+
+
+@tool("radar_set_automation_state", "Activate or pause a Radar rule", "Activation enables future matching CRM actions. Explain the rule and obtain approval before repeating with confirmed=true. Pausing stops future work; completed actions remain.",
+      {"rule_id": ID, "status": {"type": "string", "enum": ["active", "paused"]}, "confirmed": {"type": "boolean"}},
+      ["rule_id", "status"], read_only=False, destructive=True, open_world=True)
+async def radar_set_automation_state(s: Session, args: dict) -> dict:
+    from app.routers.radar_automations import owned_rule, require, state, StateIn
+    ctx = s.need_manager()
+    await require(ctx, s.db)
+    key = _uuid(args, "rule_id")
+    await owned_rule(s.db, ctx.org.id, key)
+    if args.get("status") not in ("active", "paused"):
+        raise ToolError("Choose active or paused.")
+    if args.get("confirmed") is not True:
+        return {"needs_confirmation": True, "rule_id": str(key), "status": args["status"], "writes_performed": False}
+    return await state(key, StateIn(status=args["status"]), ctx, s.db)
+
+
+@tool("radar_automation_activity", "Radar rule execution history", "Read this account's recent automation executions, errors, retries and confirmed results.")
+async def radar_automation_activity(s: Session, args: dict) -> dict:
+    from app.routers.radar_automations import activity
+    return await activity(s.need_manager(), s.db)
+
+
+@tool("radar_run_automation", "Apply a rule to selected past calls", "Queues matching selected past calls for an active rule. This can change CRM records, but places no phone calls. Preview first and obtain approval before confirmed=true. Does not process all past calls.",
+      {"rule_id": ID, "call_ids": {"type": "array", "items": ID, "minItems": 1, "maxItems": 100}, "confirmed": {"type": "boolean"}},
+      ["rule_id", "call_ids"], read_only=False, destructive=True, open_world=True)
+async def radar_run_automation(s: Session, args: dict) -> dict:
+    from app.routers.radar_automations import owned_rule, require, run_selected, RunIn
+    from pydantic import ValidationError
+    ctx = s.need_manager()
+    await require(ctx, s.db)
+    key = _uuid(args, "rule_id")
+    await owned_rule(s.db, ctx.org.id, key)
+    try:
+        body = RunIn(call_ids=args.get("call_ids") or [])
+    except ValidationError as exc:
+        raise ToolError("Select one to 100 valid call IDs.") from exc
+    if args.get("confirmed") is not True:
+        return {"needs_confirmation": True, "rule_id": str(key), "call_ids": [str(x) for x in body.call_ids], "writes_performed": False}
+    return await run_selected(key, body, ctx, s.db)

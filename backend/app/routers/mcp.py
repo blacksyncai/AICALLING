@@ -39,6 +39,9 @@ INSTRUCTIONS = (
     "anything that places calls or changes the account, and confirm phone numbers before calling them. Never invent "
     "results: read calls with list_calls / get_call. Lead Finder (lookup_property, bulk_lookup_*) finds property owners' "
     "phones to save as contacts; Radar (radar_scan, radar_play, radar_launch) finds who to call now in a connected CRM. "
+    "Radar automation rules: list with radar_list_automations, read actual destinations with radar_automation_resources, "
+    "preview with radar_preview_automation, and save drafts with radar_save_automation. Activation or applying rules "
+    "to past calls requires explicit user approval and confirmed=true. "
     "Anything that costs money (lookups past the free ones, numbers) answers needs_confirmation first: tell the user "
     "the price and only repeat the call with the confirmation once they agree."
 )

@@ -180,7 +180,7 @@ def test_email_service_passes_resend_idempotency_header(setup,monkeypatch):
     import httpx
     from app.services import email
     captured=[]
-    async def record(*args):pass
+    async def record(*args, **kwargs):pass
     def handler(request):captured.append(request);return httpx.Response(200,json={'id':'test-email-id'})
     factory=httpx.AsyncClient
     monkeypatch.setattr(email.httpx,'AsyncClient',lambda **kw:factory(transport=httpx.MockTransport(handler)))
