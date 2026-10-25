@@ -137,7 +137,7 @@ export const gentleSpring = {
 function Tag({ label, variant }: TagProps) {
   const v = TAG_VARIANTS[variant] || TAG_VARIANTS.feature;
   return (
-    <span className="inline-block rounded-[6px] px-[7px] py-[2.5px] font-semibold text-[10.5px] leading-snug tracking-wide" style={{ backgroundColor: v.bg, color: v.color }}>
+    <span data-slot="kanban-tag" data-variant={variant} className="inline-block rounded-[6px] px-[7px] py-[2.5px] font-semibold text-[10.5px] leading-snug tracking-wide" style={{ backgroundColor: v.bg, color: v.color }}>
       {label}
     </span>
   );
@@ -190,6 +190,7 @@ function Card({ card, isDone, index, onDragStart, onDragEnd, isDragging, onClick
   return (
     <motion.div
       animate="animate"
+      data-slot="kanban-card"
       className="not-prose flex cursor-grab select-none flex-col gap-1.5 active:cursor-grabbing"
       draggable
       exit="exit"
@@ -328,16 +329,16 @@ export function Column({ column, onDrop, dragState, setDragState, onCardClick }:
   );
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col">
+    <div data-slot="kanban-column" className="flex h-full min-h-0 min-w-0 flex-col">
       {/* Header */}
-      <motion.div animate={{ opacity: 1, y: 0 }} className="mb-[14px] flex items-center gap-[7px] px-[2px]" initial={{ opacity: 0, y: -4 }} transition={{ ...gentleSpring, delay: 0.05 }}>
+      <motion.div animate={{ opacity: 1, y: 0 }} data-slot="kanban-column-header" className="mb-[14px] flex items-center gap-[7px] px-[2px]" initial={{ opacity: 0, y: -4 }} transition={{ ...gentleSpring, delay: 0.05 }}>
         {column.icon ?? meta.icon}
         <span className="font-bold text-[13px] tracking-[-0.01em]" style={{ color: "var(--foreground)" }}>
           {column.title}
         </span>
         <motion.span
           animate={{ scale: 1, opacity: 1 }}
-          className="ml-auto font-semibold text-[12.5px] tabular-nums"
+          data-slot="kanban-count" className="ml-auto font-semibold text-[12.5px] tabular-nums"
           initial={{ scale: 0.6, opacity: 0 }}
           key={column.count ?? column.cards.length}
           style={{ color: "var(--muted-foreground)" }}
@@ -350,7 +351,7 @@ export function Column({ column, onDrop, dragState, setDragState, onCardClick }:
       {/* Card list — flex-1 so drop target spans full column below header (short / empty columns) */}
       <motion.div
         animate={{ backgroundColor: dragOver ? "rgba(59,130,246,0.045)" : "rgba(0,0,0,0)", scale: dragOver ? 1.012 : 1 }}
-        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-2xl p-0.5"
+        data-slot="kanban-card-list" className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-2xl p-0.5"
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}

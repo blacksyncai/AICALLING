@@ -1,5 +1,7 @@
 "use client";
 
+import { Kanban } from "lucide-react";
+import styles from "./contacts-board.module.css";
 import { MotionConfig } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -106,20 +108,19 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
   return (
     <MotionConfig transition={gentleSpring}>
       <div
-        className="overflow-x-auto px-4 pb-5 pt-4 sm:px-5"
-        style={{
-          ["--muted" as string]: "#ffffff",
-          ["--border" as string]: "rgba(24,24,27,.08)",
-          ["--foreground" as string]: "#18181b",
-          ["--muted-foreground" as string]: "#71717a",
-        }}
+        className={styles.board}
+        aria-label="Contact pipeline board"
       >
-        {/* Phones: one column at a time, swipe to the next. */}
-        <div className="grid snap-x snap-mandatory auto-cols-[82vw] grid-flow-col gap-3 sm:min-w-[1180px] sm:snap-none sm:auto-cols-fr sm:gap-4">
+        <div className={styles.header}>
+          <div className={styles.heading}><span className={styles.boardIcon}><Kanban size={17} aria-hidden="true" /></span><div><h2>Contact board</h2><p>Your conversations, one stage at a time.</p></div></div>
+          <span className={styles.hint}>Drag a card to move stages</span>
+        </div>
+        <div className={styles.scroller} tabIndex={0} aria-label="Pipeline stages, scroll horizontally">
+        <div className={styles.columns}>
           {columns.map((col) => {
             const total = (counts[col.id] ?? 0) + (moved[col.id] ?? 0);
             return (
-              <div key={col.id} className="flex h-[70vh] min-h-[420px] snap-start flex-col rounded-2xl bg-zinc-50/80 p-3 ring-1 ring-zinc-100 sm:h-[calc(100vh-360px)]">
+              <div key={col.id} className={styles.column} style={{ ["--stage-color" as string]: STAGES.find((s) => s.status === col.id)?.color }}>
                 <Column
                   column={{ ...col, count: Math.max(total, col.cards.length) }}
                   dragState={dragState}
@@ -127,10 +128,11 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
                   onDrop={onDrop}
                   setDragState={setDragState}
                 />
-                {total > col.cards.length && <div className="pt-2 text-center text-[11px] text-zinc-400">Showing {col.cards.length} of {total.toLocaleString()}</div>}
+                {total > col.cards.length && <div className={styles.more}>Showing {col.cards.length} of {total.toLocaleString()}</div>}
               </div>
             );
           })}
+        </div>
         </div>
       </div>
     </MotionConfig>
