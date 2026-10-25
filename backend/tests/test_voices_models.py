@@ -49,7 +49,8 @@ def _by_id(body):
 
 
 HOUSE_CLONES = [f["id"] for f in FEATURED_VOICES if f.get("clone")]
-HOUSE_STOCK = [f["id"] for f in FEATURED_VOICES if not f.get("clone")]
+HOUSE_PREMIUM = [f["id"] for f in FEATURED_VOICES if f.get("clone") or f.get("category") == "premium"]
+HOUSE_STOCK = [f["id"] for f in FEATURED_VOICES if f["id"] not in HOUSE_PREMIUM]
 
 
 def test_categories_premium_is_clones_standard_is_curated(client, cartesia):
@@ -57,7 +58,7 @@ def test_categories_premium_is_clones_standard_is_curated(client, cartesia):
     assert body["source"] == "cartesia"
     voices = _by_id(body)
     # Premium = cloned voices (house clones + the account's own clones).
-    for vid in HOUSE_CLONES + ["own-1"]:
+    for vid in HOUSE_PREMIUM + ["own-1"]:
         assert voices[vid]["category"] == "premium"
     # Standard = the curated house voices only — not Cartesia's whole public library.
     for vid in HOUSE_STOCK:
@@ -67,7 +68,7 @@ def test_categories_premium_is_clones_standard_is_curated(client, cartesia):
     cats = {c["key"]: c for c in body["categories"]}
     assert cats["premium"]["label"] == "Premium Human Voices"
     assert cats["standard"]["label"] == "Standard AI Voices"
-    assert cats["premium"]["count"] == len(HOUSE_CLONES) + 1
+    assert cats["premium"]["count"] == len(HOUSE_PREMIUM) + 1
     assert cats["standard"]["count"] == len(HOUSE_STOCK)
     ids = [v["id"] for v in body["voices"]]
     assert len(ids) == len(set(ids)) and ids[0] in HOUSE_CLONES
@@ -134,7 +135,7 @@ def test_fallback_without_key(client, monkeypatch):
     assert body["voices"]
     assert all(v["preview"] is False for v in body["voices"])
     cats = {c["key"]: c["count"] for c in body["categories"]}
-    assert cats["premium"] == len(HOUSE_CLONES)
+    assert cats["premium"] == len(HOUSE_PREMIUM)
     assert cats["standard"] == len(HOUSE_STOCK)
 
 
@@ -268,3 +269,12 @@ def test_new_agents_default_to_marissa(client):
     for template in ("blank", "sales_sdr"):
         agent = client.post("/api/agents/", json={"template": template}).json()
         assert agent["voice_id"] == marissa, template
+
+
+def test_mia_is_third_premium_family_without_claiming_clone(client, cartesia):
+    voices = client.get("/api/settings/voices").json()["voices"]
+    rows = list(dict.fromkeys(v.get("family") or v["name"] for v in voices if v["category"] == "premium"))
+    assert rows[:4] == ["Marissa M", "Zain", "Mia", "Lauren"]
+    mia = next(v for v in voices if v["id"] == "26def8d4-b397-4d79-b5f1-d554d16ba4fe")
+    assert mia["category"] == "premium"
+    assert mia["is_clone"] is False

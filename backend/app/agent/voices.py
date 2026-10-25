@@ -3,9 +3,9 @@ House voices — the named Cartesia voices offered as one-click options in the
 agent editor, in picker order. New agents default to DEFAULT_VOICE_ID (Marissa M).
 
 Voice picker categories (app/routers/settings.py):
-- Premium: cloned voices only — entries marked "clone" here, voices owned/cloned
+- Premium: entries marked "clone" or category "premium" here, voices owned/cloned
   in the Cartesia account, and any ids in PREMIUM_VOICE_IDS.
-- Standard: the other house voices here plus any ids in STANDARD_VOICE_IDS.
+- Standard: the remaining house voices here plus any ids in STANDARD_VOICE_IDS.
 The rest of Cartesia's public library isn't listed (a voice id can still be pasted).
 Language/accent come from the live Cartesia catalog; nothing here is a guess about them.
 """
@@ -22,6 +22,7 @@ FEATURED_VOICES: list[dict] = [
      "gender": "masculine", "description": "Live voice clone.", "clone": True},
     {"id": "mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "name": "Zain · Version 2", "family": "Zain", "tone": "Version 2",
      "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
+    {"id": "26def8d4-b397-4d79-b5f1-d554d16ba4fe", "name": "Mia", "gender": "feminine", "category": "premium"},
     {"id": "91e4713f-2150-4be6-8564-2d121bbd8c10", "name": "Lauren", "gender": "feminine",
      "description": "Live voice clone.", "clone": True, "language": "en"},
     {"id": "058f0988-5723-49e0-b322-e50034637fe6", "name": "Sofia", "gender": "feminine",
@@ -41,7 +42,6 @@ FEATURED_VOICES: list[dict] = [
     {"id": "mistral:01a13477-ce35-7031-84e8-71a1f7a51cbd", "name": "Leena · Version 2", "family": "Leena", "tone": "Version 2",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "a7b6afa8-fa7f-4b0d-ba37-6cb8d8014919", "name": "Don"},
-    {"id": "26def8d4-b397-4d79-b5f1-d554d16ba4fe", "name": "Mia", "gender": "feminine"},
     {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "name": "Jena"},
     {"id": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", "name": "Sarah"},
     {"id": "f786b574-daa5-4673-aa0c-cbe3e8534c02", "name": "Kate"},

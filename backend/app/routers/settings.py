@@ -104,8 +104,8 @@ def _ids(raw: str) -> list[str]:
 
 
 def _premium_ids(owned_ids: set[str]) -> list[str]:
-    """Cloned voices: house clones, the account's own voices, PREMIUM_VOICE_IDS."""
-    clones = [v["id"] for v in FEATURED_VOICES if v.get("clone")]
+    """House premium selections, account-owned voices, and PREMIUM_VOICE_IDS."""
+    clones = [v["id"] for v in FEATURED_VOICES if v.get("clone") or v.get("category") == "premium"]
     return list(dict.fromkeys(clones + sorted(owned_ids) + _ids(settings.premium_voice_ids)))
 
 
