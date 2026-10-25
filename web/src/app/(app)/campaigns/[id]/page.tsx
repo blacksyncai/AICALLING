@@ -305,6 +305,12 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         </div>
       )}
 
+      {campaign.status === "paused" && campaign.pause_reason === "number_released" && (
+        <div className="mb-6 max-w-2xl"><Notice tone="amber">
+          A phone number used by this campaign was released. Choose active caller numbers in Calling rules before resuming.
+        </Notice></div>
+      )}
+
       {campaign.status === "paused" && campaign.pause_reason === "setup" && (
         <div className="mb-6 max-w-2xl">
           <Notice tone="amber">

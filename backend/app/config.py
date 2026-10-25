@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     livekit_sip_plivo_trunk_id: str = ""
     plivo_auth_id: str = ""
     plivo_auth_token: str = ""
+    plivo_inventory_sync_enabled: bool = True
     livekit_sip_inbound_trunk_id: str = ""
     signalwire_sip_outbound_trunk_id: str = ""
     signalwire_outbound_script_id: str = ""

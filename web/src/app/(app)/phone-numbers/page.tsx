@@ -77,7 +77,7 @@ export default function PhoneNumbersPage() {
     const t = setTimeout(() => setPolling(false), 60_000);
     return () => clearTimeout(t);
   }, [returned]);
-  const { data, mutate, error } = useSWR<MyPhoneNumbers>("/api/phone-numbers", fetcher, { refreshInterval: polling ? 3000 : 0 });
+  const { data, mutate, error } = useSWR<MyPhoneNumbers>("/api/phone-numbers", fetcher, { refreshInterval: polling ? 3000 : 30000 });
 
   if (error) return <Notice tone="red">{error.message}</Notice>;
   if (!data)

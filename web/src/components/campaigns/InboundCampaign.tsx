@@ -95,6 +95,9 @@ export function InboundCampaign({ campaign, calls, agents, onChange }: { campaig
         </div>
       </div>
 
+      {campaign.pause_reason === "number_released" && (
+        <div className="mb-6"><Notice tone="amber">This campaign’s phone number was released. Select an active number before going live again.</Notice></div>
+      )}
       {!live && number && campaign.status !== "cancelled" && (
         <div className="mb-6">
           <Notice tone="amber">

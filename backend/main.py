@@ -130,7 +130,10 @@ async def lifespan(app: FastAPI):
     reputation_task = start_reputation_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.billing.subscriptions import start_helcim_sweeper
     helcim_task = start_helcim_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services.plivo_inventory import start_worker as start_plivo_inventory
+    inventory_task = start_plivo_inventory() if settings.run_startup_jobs and settings.plivo_inventory_sync_enabled else asyncio.create_task(asyncio.sleep(0))
     yield
+    inventory_task.cancel()
     helcim_task.cancel()
     reputation_task.cancel()
     registration_task.cancel()

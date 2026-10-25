@@ -7,7 +7,9 @@ from app.config import settings
 
 
 class PlivoError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def ready() -> bool:
@@ -30,7 +32,7 @@ async def _request(method: str, path: str, **kw) -> dict:
             msg = r.json().get("error") or ""
         except ValueError:
             msg = ""
-        raise PlivoError(f"Plivo error (HTTP {r.status_code}){': ' + str(msg)[:200] if msg else ''}.")
+        raise PlivoError(f"Plivo error (HTTP {r.status_code}){': ' + str(msg)[:200] if msg else ''}.", status_code=r.status_code)
     try:
         return r.json() if r.content else {}
     except ValueError:
@@ -119,3 +121,39 @@ async def enable_reputation(number: str, profile_uuid: str) -> dict:
     data = await _request("POST", f"Number/{number.lstrip('+')}/",
                           json={"caller_reputation": "enabled", "profile_uuid": profile_uuid})
     return _reputation(data)
+
+
+async def inventory_numbers() -> set[str]:
+    """Complete account inventory, including non-voice numbers. Partial data is an error."""
+    if not settings.plivo_auth_id or not settings.plivo_auth_token:
+        raise PlivoError("Plivo inventory credentials are not configured.")
+    found: set[str] = set()
+    for page in range(50):
+        data = await _request("GET", "Number/", params={"limit": 20, "offset": page * 20})
+        objects, meta = data.get("objects"), data.get("meta")
+        if not isinstance(objects, list) or not isinstance(meta, dict) or "next" not in meta:
+            raise PlivoError("Incomplete Plivo inventory response; no local numbers changed.")
+        for item in objects:
+            number = "+" + str(item.get("number") or "").lstrip("+") if isinstance(item, dict) else ""
+            if not re.fullmatch(r"\+[1-9]\d{7,14}", number) or number in found:
+                raise PlivoError("Invalid or repeated Plivo inventory entry.")
+            found.add(number)
+        if not meta["next"]:
+            if meta.get("total_count") is not None and int(meta["total_count"]) != len(found):
+                raise PlivoError("Plivo inventory count did not match; no local numbers changed.")
+            return found
+        if not objects:
+            raise PlivoError("Plivo inventory pagination is incomplete.")
+    raise PlivoError("Plivo inventory pagination limit reached; no local numbers changed.")
+
+
+async def number_exists(number: str) -> bool:
+    try:
+        data = await _request("GET", f"Number/{number.lstrip('+')}/")
+    except PlivoError as exc:
+        if exc.status_code == 404:
+            return False
+        raise
+    if "+" + str(data.get("number") or "").lstrip("+") != number:
+        raise PlivoError("Plivo number ownership could not be verified.")
+    return True

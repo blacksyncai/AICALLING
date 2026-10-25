@@ -220,7 +220,7 @@ async def _release_twilio(sid: str) -> None:
 
 
 async def _livekit_numbers(add: list[str] | None = None, remove: list[str] | None = None,
-                           trunk_id: str | None = None) -> None:
+                           trunk_id: str | None = None, strict: bool = False) -> None:
     """Keep a LiveKit outbound trunk's number list in step (it's the allowed caller-ID list)."""
     from livekit import api
 
@@ -228,6 +228,8 @@ async def _livekit_numbers(add: list[str] | None = None, remove: list[str] | Non
 
     trunk_id = trunk_id or settings.livekit_sip_outbound_trunk_id
     if not trunk_id or not settings.livekit_ready:
+        if strict:
+            raise TelephonyError("Media cleanup is not configured.")
         return
     lk = _lk()
     try:
@@ -236,6 +238,8 @@ async def _livekit_numbers(add: list[str] | None = None, remove: list[str] | Non
         )
     except Exception as exc:  # caller ID still works when the trunk doesn't restrict numbers
         log.warning("livekit_trunk_numbers_update_failed", error=str(exc), add=add, remove=remove)
+        if strict:
+            raise TelephonyError("Media cleanup failed; retry required.") from exc
     finally:
         await lk.aclose()
 
@@ -284,6 +288,7 @@ async def _claim_row(db: AsyncSession, org_id: uuid.UUID, number: str) -> PhoneN
         row.org_id, row.status, row.released_at = org_id, "active", None
         row.created_at = datetime.now(timezone.utc)
         row.label, row.is_default = "", None
+        row.provider_missing_since, row.provider_check_account, row.provider_cleanup_pending = None, None, False
         return row
     row = PhoneNumber(id=uuid.uuid4(), org_id=org_id, number=number)
     db.add(row)
@@ -317,6 +322,7 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
         row = await _claim_row(db, org_id, number)
         row.provider_sid, row.source, row.label = bought["sid"], "purchased", label.strip()[:100]
         row.carrier = selected if selected in ("signalwire", "plivo") else None
+        row.provider_check_account = settings.plivo_auth_id if row.carrier == "plivo" else None
         await db.flush()
         await _make_default_if_first(db, row)
         from app.services.number_registration import enqueue_number
@@ -362,6 +368,7 @@ async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: 
     row = await _claim_row(db, org_id, number)
     row.provider_sid, row.source, row.label = owned[number]["sid"], "imported", label.strip()[:100]
     row.carrier = carrier if carrier in ("bandwidth", "signalwire", "plivo") else None
+    row.provider_check_account = settings.plivo_auth_id if row.carrier == "plivo" else None
     await db.flush()
     await _make_default_if_first(db, row)
     from app.services.number_registration import enqueue_number
@@ -389,6 +396,7 @@ async def add_plivo_number(db: AsyncSession, org_id: uuid.UUID, number: str, lab
     number = normalize(number)
     row = await _claim_row(db, org_id, number)
     row.provider_sid, row.source, row.label, row.carrier = None, "imported", label.strip()[:100], "plivo"
+    row.provider_check_account = settings.plivo_auth_id
     await db.flush()
     await _make_default_if_first(db, row)
     await db.commit()
@@ -397,7 +405,7 @@ async def add_plivo_number(db: AsyncSession, org_id: uuid.UUID, number: str, lab
     return row
 
 
-async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool) -> None:
+async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool, sync_media: bool = True) -> None:
     """Remove a number from its account; purchased numbers can also be released back to Twilio."""
     if row.status != "active":
         return
@@ -428,7 +436,7 @@ async def release(db: AsyncSession, row: PhoneNumber, *, return_to_twilio: bool)
         if rest:
             rest[0].is_default = True
     await db.commit()
-    if row.carrier not in ("signalwire", "bandwidth"):
+    if sync_media and row.carrier not in ("signalwire", "bandwidth"):
         await _livekit_numbers(remove=[row.number],
                                trunk_id=settings.livekit_sip_plivo_trunk_id if row.carrier == "plivo" else None)
     log.info("phone_number_released", org_id=str(row.org_id), number=row.number, returned=return_to_twilio)

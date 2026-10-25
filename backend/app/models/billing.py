@@ -219,6 +219,9 @@ class PhoneNumber(Base):
     reputation_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     reputation_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reputation_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_check_account: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_cleanup_pending: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
