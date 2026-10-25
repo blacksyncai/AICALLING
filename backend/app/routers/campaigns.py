@@ -391,6 +391,14 @@ async def get_campaign(
     return await _campaign_out(db, campaign)
 
 
+@router.get("/{campaign_id}/forecast")
+async def campaign_forecast(campaign_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    """Read-only next-call/redial eligibility from saved rules and actual contact state."""
+    from app.services.campaign_forecast import forecast
+    campaign = await _get_campaign(db, ctx, campaign_id)
+    return await forecast(db, campaign, ctx.org)
+
+
 @router.post("/", status_code=201)
 async def create_campaign(
     body: CampaignCreate,

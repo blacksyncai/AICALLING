@@ -156,6 +156,14 @@ def dialing(monkeypatch):
     """Pretend phone calling is set up and capture dials instead of placing them."""
     from app.config import Settings, settings
     from app.services.outbound_call import call_service
+    from app.routers import campaigns
+    # Dial/DNC behavior must not depend on the weekday the test runner is started.
+    class BusinessTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 10, 14, 15, 0, tzinfo=UTC)
+            return value.astimezone(tz) if tz else value.replace(tzinfo=None)
+    monkeypatch.setattr(campaigns, "datetime", BusinessTime)
 
     monkeypatch.setattr(settings, "livekit_sip_outbound_trunk_id", "ST_test")
     monkeypatch.setattr(Settings, "phone_ready", property(lambda self: True))

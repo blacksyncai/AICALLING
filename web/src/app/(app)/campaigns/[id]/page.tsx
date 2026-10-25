@@ -8,6 +8,7 @@ import useSWR from "swr";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { InboundCampaign } from "@/components/campaigns/InboundCampaign";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
+import { CampaignForecast } from "@/components/campaigns/CampaignForecast";
 import { CallingRulesCard, CallingStatus } from "@/components/campaigns/CallingRules";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Modal, Notice, Select, Spinner, Textarea } from "@/components/ui";
@@ -386,6 +387,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         </div>
       </Card>
 
+      <CampaignForecast campaign={campaign} rulesDirty={rulesDirty} />
       <CallingRulesCard campaign={campaign} onSaved={refreshCampaign} onDirtyChange={setRulesDirty} />
 
       <Card

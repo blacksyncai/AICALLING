@@ -1,0 +1,13 @@
+# Upcoming campaign calls and redials
+
+Campaign detail includes a read-only forecast at GET /api/campaigns/{id}/forecast, scoped through the existing account authorization. It reads actual candidate contact statuses, attempt counts and stored next_attempt_at values. Campaign eligibility/defaults, retry limits and saved timezone are shared with the dialer. No calls, status repairs, attempts, credits or campaign settings are modified.
+
+First calls and eligible unanswered retries are counted separately. Do-not-call, answered/non-retry outcomes, exhausted attempts and completed/cancelled campaigns are excluded. Calling contacts await an outcome; stale unanswered calls are represented using the existing recovery policy without changing their rows. Live call counts and the plan concurrency cap are included.
+
+Times are earliest eligibility, not reserved dial times. The service intersects the campaign’s saved local calling days/hours with the existing contact-local quiet-hours rules. Retry due times outside the window move to the next permitted window, including weekends and daylight-saving changes. Unknown phone zones follow existing dialer behavior. The dialer polls quiet-hours blockers periodically, so the actual call can be later than the exact opening. Capacity, credits, caller-number rests, daily caps and in-process warm-up pacing can delay actual calls; future call durations/outcomes are unknown. This feature does not pretend to predict those exactly.
+
+The first 12 hourly eligibility groups and first 20 contact details are returned with complete aggregate counts. The full relative retry plan is shown separately; later retries remain conditional on unanswered eligible outcomes and remaining tries, not guaranteed future calls. Draft/paused campaigns show conditional previews; they do not schedule calls. Unsaved settings have a clear warning. All timestamps are UTC on the API and formatted explicitly in the campaign timezone, independent of browser timezone.
+
+No database migration. Frontend refreshes periodically and on campaign/rule updates. Tests cover Pacific scheduling, changed DST offset, retry due-time rollover, quiet-hours intersection, attempt/DNC exclusion, stale-call read-only behavior, inactive campaign state and tenant isolation. Browser fixtures use sample data in Tokyo and New York contexts to verify identical Pacific labels. No live calls placed.
+
+Rollback: revert this feature commit; it has no durable scheduling state to undo. The existing weekday-sensitive DNC fixture is pinned to a weekday business time so nondeterministic test runner dates cannot bypass or falsely fail its assertions.
