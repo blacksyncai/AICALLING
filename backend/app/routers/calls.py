@@ -237,7 +237,7 @@ async def overview(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, l
         }
 
     per_day: dict[str, dict] = {}
-    for i in range(min(days, 90) - 1, -1, -1):
+    for i in range((2 if days == 1 else min(days, 90)) - 1, -1, -1):
         key = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         per_day[key] = {"date": key, "calls": 0, "connected": 0, "booked": 0}
     for c in cur:

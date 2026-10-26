@@ -12,7 +12,7 @@ import { Button, Card, CardHeader, EmptyState, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const RANGES = [7, 30, 90] as const;
+const RANGES = [1, 7, 30, 90] as const;
 
 export default function AnalyticsPage() {
   const [days, setDays] = useState<(typeof RANGES)[number]>(30);
@@ -41,7 +41,7 @@ export default function AnalyticsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
-          <p className="mt-1 text-sm text-zinc-500">How your phone calls turn into meetings, last {days} days.</p>
+          <p className="mt-1 text-sm text-zinc-500">How your phone calls turn into meetings, last {days === 1 ? "24 hours" : `${days} days`}.</p>
         </div>
         <div className="flex gap-0.5 rounded-2xl bg-zinc-900 p-1" role="group" aria-label="Date range">
           {RANGES.map((r) => (
@@ -51,7 +51,7 @@ export default function AnalyticsPage() {
               className={cn("min-w-11 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors", days === r ? "bg-white text-zinc-900" : "text-white/55 hover:text-white")}
               aria-pressed={days === r}
             >
-              {r}d
+              {r === 1 ? "24h" : `${r}d`}
             </button>
           ))}
         </div>
@@ -65,7 +65,7 @@ export default function AnalyticsPage() {
         <Card>
           <EmptyState
             icon={<BarChart3 className="h-5 w-5" />}
-            title={`No phone calls in the last ${days} days`}
+            title={`No phone calls in the last ${days === 1 ? "24 hours" : `${days} days`}`}
             description="Once your agents start calling, you'll see where calls drop off, which agents and campaigns book the most meetings, and the best hours to call."
             action={
               <Link href="/campaigns">

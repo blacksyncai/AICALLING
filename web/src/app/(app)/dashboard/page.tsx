@@ -17,7 +17,7 @@ import type { Agent, Call, Campaign, Overview, SettingsStatus } from "@/lib/type
 import { CAMPAIGN_TONE, OUTCOME_TONE, cn, formatDuration, timeAgo } from "@/lib/utils";
 
 
-const RANGES = [7, 30, 90] as const;
+const RANGES = [1, 7, 30, 90] as const;
 
 function greeting() {
   const h = new Date().getHours();
@@ -30,7 +30,7 @@ function Trend({ now, before, days, invert = false, format = "pct" }: { now: num
   if (!before) return <span className="text-zinc-500">New this period</span>;
   const delta = format === "pts" ? (now - before) * 100 : ((now - before) / before) * 100;
   const rounded = Math.round(delta);
-  if (rounded === 0) return <span className="text-zinc-500">Flat vs previous {days}d</span>;
+  if (rounded === 0) return <span className="text-zinc-500">Flat vs previous {days === 1 ? "24h" : `${days}d`}</span>;
   const good = invert ? rounded < 0 : rounded > 0;
   const Icon = rounded > 0 ? ArrowUpRight : ArrowDownRight;
   return (
@@ -39,7 +39,7 @@ function Trend({ now, before, days, invert = false, format = "pct" }: { now: num
       {rounded > 0 ? "+" : ""}
       {rounded}
       {format === "pts" ? " pts" : "%"}
-      <span className="ml-1 font-normal text-zinc-500">vs previous {days}d</span>
+      <span className="ml-1 font-normal text-zinc-500">vs previous {days === 1 ? "24h" : `${days}d`}</span>
     </span>
   );
 }
@@ -48,7 +48,7 @@ function Trend({ now, before, days, invert = false, format = "pct" }: { now: num
 function heroDelta(now: number, before: number, days: number) {
   if (!before) return now ? "new this period" : "no calls yet";
   const d = Math.round(((now - before) / before) * 100);
-  return d === 0 ? `flat vs previous ${days}d` : `${d > 0 ? "+" : ""}${d}% vs previous ${days}d`;
+  return d === 0 ? `flat vs previous ${days === 1 ? "24h" : `${days}d`}` : `${d > 0 ? "+" : ""}${d}% vs previous ${days === 1 ? "24h" : `${days}d`}`;
 }
 
 const ACTIVITY_VERB: Record<string, string> = {
@@ -127,7 +127,7 @@ export default function DashboardPage() {
                 className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", days === r ? "bg-zinc-900 text-white" : "text-zinc-600 hover:text-zinc-900")}
                 aria-pressed={days === r}
               >
-                {r}d
+                {r === 1 ? "24h" : `${r}d`}
               </button>
             ))}
           </div>
@@ -183,7 +183,7 @@ export default function DashboardPage() {
           <StatsBento
             hero={{
               label: "Calls placed",
-              badge: `Last ${days} days`,
+              badge: `Last ${days === 1 ? "24 hours" : `${days} days`}`,
               value: overview.total_calls.toLocaleString(),
               note: (
                 <>
@@ -216,7 +216,7 @@ export default function DashboardPage() {
                 icon: Users,
                 note: overview.new_leads ? (
                   <span className="text-zinc-500">
-                    <span className="font-medium text-emerald-700">+{overview.new_leads.toLocaleString()}</span> added in the last {days}d
+                    <span className="font-medium text-emerald-700">+{overview.new_leads.toLocaleString()}</span> added in the last {days === 1 ? "24h" : `${days}d`}
                   </span>
                 ) : (
                   <Link href="/contacts" className="text-zinc-500 hover:text-brand-700">Import contacts →</Link>
@@ -363,7 +363,7 @@ function CallPerformance({ overview, days }: { overview: Overview; days: number 
     <section>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-semibold">Call performance</h3>
-        <span className="text-xs text-zinc-500">Last {days} days</span>
+        <span className="text-xs text-zinc-500">Last {days === 1 ? "24 hours" : `${days} days`}</span>
       </div>
       <ScoreCards
         items={[

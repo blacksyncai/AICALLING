@@ -116,7 +116,7 @@ async def analytics(ctx: CtxDep, db: DbDep, days: int = Query(default=30, ge=1, 
 
     # Day by day (UTC) for the trend chart, oldest first, every day in the window.
     by_day = {(now - timedelta(days=i)).date().isoformat(): {"dialed": 0, "connected": 0, "booked": 0}
-              for i in range(days - 1, -1, -1)}
+              for i in range((2 if days == 1 else days) - 1, -1, -1)}
     for c in calls:
         d = by_day.get(_aware(c.started_at).date().isoformat())
         if d is not None:

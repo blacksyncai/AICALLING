@@ -162,3 +162,32 @@ def test_calendar_booked_meeting_uses_agent_calendar_timezone():
 
     text = build_instructions({"calendar_timezone": "America/New_York"}, {}, channel="phone")
     assert "(America/New_York)" in text
+
+
+def test_24_hour_dashboard_and_analytics_include_yesterday(client, make_client, monkeypatch):
+    from app.routers import calls, analytics
+    import tests.test_meetings_analytics as test_module
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 10, 26, 12, tzinfo=timezone.utc)
+            return value if tz else value.replace(tzinfo=None)
+
+    org, email = _new_account(client, name="24 hour reporting")
+    owner = _login(make_client, email)
+    agent = owner.get("/api/agents/").json()[0]
+    monkeypatch.setattr(test_module, "datetime", Clock)
+    monkeypatch.setattr(calls, "datetime", Clock)
+    monkeypatch.setattr(analytics, "datetime", Clock)
+    _seed(org["id"], agent["id"], [
+        {"outcome": "meeting_booked", "duration_seconds": 60, "ago": timedelta(hours=h)}
+        for h in [1, 23, 25, 49]
+    ])
+    dashboard = owner.get("/api/calls/overview?days=1").json()
+    assert dashboard["total_calls"] == 2
+    assert dashboard["previous"]["total_calls"] == 1
+    assert sum(d["calls"] for d in dashboard["calls_per_day"]) == 2
+    report = owner.get("/api/analytics?days=1").json()
+    assert report["funnel"]["dialed"] == 2
+    assert sum(d["dialed"] for d in report["by_day"]) == 2
