@@ -15,6 +15,7 @@ import { canManage, displayName, initials, signOut, switchOrg, useSession } from
 import { cn } from "@/lib/utils";
 import { openCommandPalette } from "./CommandPalette";
 import { Logo, LogoMark } from "./Logo";
+import { WebsiteLink } from "./WebsiteLink";
 
 type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; badge?: string; badgeTone?: "red";
   /** A plan feature: shown to everyone, with a lock when the account's plan doesn't include it. */
@@ -314,6 +315,7 @@ export function Sidebar() {
           <LogoMark className="h-8 w-8 drop-shadow-[0_0_12px_rgba(249,115,22,0.35)]" />
           {!collapsed && <span className="font-display text-[17px] font-semibold tracking-tight">BlackSync</span>}
         </Link>
+        {!collapsed && <WebsiteLink label="Website" className="ml-auto text-[11px] text-zinc-500 hover:text-zinc-200" />}
       </div>
       <div className={cn("pb-2", collapsed ? "px-3" : "px-3")}>
         <button

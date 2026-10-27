@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { WebsiteLink } from "@/components/WebsiteLink";
 import useSWR from "swr";
 import { PlanCards } from "@/components/billing/PlanCards";
 import type { BookingLinks, Plan } from "@/components/billing/types";
@@ -25,9 +26,12 @@ export default function PricingPage() {
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-8 sm:py-14">
         <div className="mb-8 flex items-center justify-between">
           <span className="font-display text-lg font-semibold text-zinc-900">BlackSync AI</span>
+          <span className="flex items-center gap-4">
+          <WebsiteLink />
           <Link href="/sign-up" className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">
             Create your account
           </Link>
+          </span>
         </div>
         <PricingHeading title="Simple plans for AI calling" description="Every plan includes calling credits each month and every core feature. Need more? Credits, agent slots and numbers can be added any time." />
         {!data ? (

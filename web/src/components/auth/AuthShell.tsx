@@ -1,6 +1,7 @@
 import { CalendarCheck, Mic, PhoneCall, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { FullScreenSignup } from "@/components/ui/full-screen-signup";
+import { WebsiteLink } from "@/components/WebsiteLink";
 
 const POINTS = [
   { icon: Mic, title: "Human-sounding voice agents", text: "Built from your script, your offer and your voice." },
@@ -24,6 +25,8 @@ export const authFormAppearance = {
 /** Split sign-in frame: brand story on the left, the form on the right. */
 export function AuthShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
+    <>
+    <WebsiteLink className="fixed right-4 top-4 z-50 rounded-full bg-white/80 px-3 py-1.5 backdrop-blur sm:right-6 sm:top-5" />
     <FullScreenSignup
       logo={<Logo className="text-white" />}
       headline={
@@ -44,5 +47,6 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
     >
       {children}
     </FullScreenSignup>
+    </>
   );
 }
