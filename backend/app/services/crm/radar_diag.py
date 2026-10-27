@@ -53,47 +53,33 @@ async def run():
             ver = Counter(((j.result or {}).get("verification") or {}).get("status") for j in jobs)
             _out("job_verification", counts=dict(ver))
 
-            # Recent finished calls from the rules' agents: what the classifier heard, re-run now.
+            # Round 2: failed jobs, the agent's opener, and how conversations start (contact name redacted).
+            from app.models.agent import Agent
+            import re
+            failed = [j for j in jobs if j.status == "failed"]
+            _out("failed_jobs", items=[{"rule": names.get(j.automation_id), "error": j.error[:300],
+                                        "result_keys": sorted((j.result or {}).keys())} for j in failed])
             agent_ids = {(r.spec.get("source") or {}).get("agent_id") for r in rules} - {None, ""}
+            for aid in agent_ids:
+                a = await db.get(Agent, __import__("uuid").UUID(aid))
+                if a:
+                    _out("agent", first_message=(a.first_message or "")[:300], prompt_has_is_this="is this" in (a.system_prompt or "").lower())
             q = select(CallLog, Lead).join(Lead, Lead.id == CallLog.lead_id).where(
-                CallLog.org_id == org.id, CallLog.started_at >= since, CallLog.call_type.in_(("outbound", "inbound")))
-            rows = (await db.execute(q)).all()
-            stats = Counter()
-            samples = []
-            for call, lead in rows:
-                v = verification.classify(call.transcript, lead.name, call.outcome or "")
-                in_rules = str(call.agent_id) in agent_ids
-                stats[(call.outcome, v["status"], in_rules, bool(call.transcript))] += 1
-                if v["status"] == "unverified" and call.outcome in ("voicemail",) and len(samples) < 12:
-                    user = [t for t in (call.transcript or []) if isinstance(t, dict) and t.get("role") == "user"]
-                    first = (lead.name or "").split()[0] if lead.name else ""
-                    text = " ".join(str(t.get("text") or t.get("content") or "") for t in user)
-                    samples.append({"call": call.id, "user_turns": len(user), "name_len": len(first),
-                                    "name_in_text": bool(first) and first.lower() in text.lower(),
-                                    "greeting_words": len(text.split()), "has_vm_phrase": any(
-                                        p in text.lower() for p in ("leave", "message", "tone", "beep", "reached"))})
-            _out("calls", total=len(rows), agents=list(agent_ids),
-                 by=[[*k, n] for k, n in stats.most_common(40)])
-            _out("vm_unverified_samples", items=samples)
-
-            # Skips for "Outside the selected CRM pond": where is that person now?
-            pond_skips = [j for j in jobs if (j.result or {}).get("reason") == "Outside the selected CRM pond"][:15]
-            if conn and pond_skips:
-                _, http = sync.http_for(conn)
-                where = []
-                for j in pond_skips:
-                    call = await db.get(CallLog, j.call_id)
-                    lead = await db.get(Lead, call.lead_id) if call and call.lead_id else None
-                    ref = (lead.crm_refs or {}).get("followupboss") if lead else None
-                    pond = None
-                    if ref:
-                        try:
-                            person = await http.request("GET", f"/v1/people/{int(ref)}", params={"fields": "id,assignedPondId"})
-                            pond = person.get("assignedPondId")
-                        except Exception as exc:
-                            pond = f"error: {str(exc)[:80]}"
-                    where.append({"rule_pond": (j.spec.get("source") or {}).get("pond_id"), "person_pond": pond,
-                                  "linked": bool(ref), "verification": ((j.result or {}).get("verification") or {}).get("status")})
-                _out("pond_skips", items=where)
+                CallLog.org_id == org.id, CallLog.started_at >= since, CallLog.call_type == "outbound",
+                CallLog.outcome.in_(("completed", "not_interested", "meeting_booked", "callback", "interested", "wrong_number", "do_not_call")))
+            convs = []
+            for call, lead in (await db.execute(q.limit(25))).all():
+                first = ((lead.name or "").split() or [""])[0]
+                def red(t):
+                    t = str(t or "")[:200]
+                    for tok in (lead.name or "").split():
+                        if len(tok) > 1:
+                            t = re.sub(re.escape(tok), "{NAME}", t, flags=re.I)
+                    return t
+                turns = [t for t in (call.transcript or []) if isinstance(t, dict) and t.get("role") in ("user", "assistant")][:5]
+                convs.append({"outcome": call.outcome, "name_tokens": len((lead.name or "").split()), "first_len": len(first),
+                              "turns": [[t["role"][0], red(t.get("text") or t.get("content"))] for t in turns]})
+            _out("conversations", items=convs[:12])
+            _out("conversations2", items=convs[12:25])
     except Exception as exc:
         _out("failed", error=str(exc)[:500])
