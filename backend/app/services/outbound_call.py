@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 import structlog
 from livekit import api
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runtime import agent_to_runtime, lead_variables
@@ -560,7 +560,12 @@ class CallService:
         ))
 
         if call_log.lead_id:
-            lead_values: dict = {"status": outcome if outcome != "completed" else "completed", "updated_at": now}
+            from app.services.contacts import next_status
+
+            current = (await db.execute(select(Lead.status).where(Lead.id == call_log.lead_id))).scalar_one_or_none()
+            lead_values: dict = {"updated_at": now}
+            if (status_after := next_status(current, outcome)) is not None:
+                lead_values["status"] = status_after
             if qualification_score is not None:
                 lead_values["qualification_score"] = qualification_score
             if meeting_link:
@@ -639,10 +644,12 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         # A corrected outcome must reach the contact too: someone who talked is never left in a redial state,
         # and a "conversation" that was really a voicemail greeting gets the contact their retry.
         if call_log.lead_id and call_log.outcome not in ("no_answer", "voicemail", "screened", "failed"):
-            from app.routers.campaigns import RETRY_STATUSES
+            # The reviewed outcome (often sharper than the agent's own "completed") moves the contact's stage.
+            from app.services.contacts import next_status
 
-            await db.execute(update(Lead).where(Lead.id == call_log.lead_id, Lead.status.in_(RETRY_STATUSES))
-                             .values(status=call_log.outcome))
+            lead = await db.get(Lead, call_log.lead_id)
+            if lead and (status_after := next_status(lead.status, call_log.outcome)) is not None:
+                lead.status = status_after
         elif call_log.lead_id and call_log.outcome == "voicemail":
             latest = (await db.execute(select(CallLog.id).where(CallLog.lead_id == call_log.lead_id)
                                        .order_by(CallLog.started_at.desc()).limit(1))).scalar_one_or_none()
@@ -686,6 +693,38 @@ async def fix_mislabeled_outcomes(limit: int = 500) -> int:
     if ids:
         log.info("outcomes_repaired", count=len(ids))
     return len(ids)
+
+
+async def repair_contact_statuses() -> int:
+    """Repair: contacts whose calls say more than their status (a reviewed "Follow-up" left at "Talked, no
+    decision", or a later voicemail that wiped out an earlier "call me back"). Replays each contact's calls
+    through the same rule live calls use. Contacts already moved to a real stage (by hand or a call) are left alone."""
+    from app.database import AsyncSessionLocal
+    from app.services.contacts import _OPEN, _VAGUE, next_status
+
+    movable = [x for x in (*_OPEN, *_VAGUE) if x]
+    fixed = 0
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(Lead.id, Lead.status, CallLog.outcome)
+            .join(CallLog, CallLog.lead_id == Lead.id)
+            .where(or_(Lead.status.is_(None), Lead.status.in_(movable)), CallLog.outcome.isnot(None),
+                   CallLog.call_type.in_(("outbound", "inbound")))
+            .order_by(Lead.id, CallLog.started_at))).all()
+        derived: dict = {}
+        current: dict = {}
+        for lead_id, status, outcome in rows:
+            current[lead_id] = status
+            derived[lead_id] = next_status(derived.get(lead_id, "new"), outcome) or derived.get(lead_id, "new")
+        for lead_id, status in derived.items():
+            if status not in movable and status != current[lead_id]:
+                same = Lead.status.is_(None) if current[lead_id] is None else Lead.status == current[lead_id]
+                await db.execute(update(Lead).where(Lead.id == lead_id, same).values(status=status))
+                fixed += 1
+        await db.commit()
+    if fixed:
+        log.info("contact_statuses_repaired", count=fixed)
+    return fixed
 
 
 async def emit_call_events(call_id: uuid.UUID) -> None:

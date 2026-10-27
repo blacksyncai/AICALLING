@@ -15,13 +15,15 @@ import { formatDuration, outcomeLabel, timeAgo } from "@/lib/utils";
 
 /* The pipeline as a board: one column per stage, drag a contact to change its status. */
 
-const STAGES: { status: string; kind: ColumnStatus; color: string }[] = [
-  { status: "new", kind: "todo", color: "#a1a1aa" },
-  { status: "completed", kind: "todo", color: "#71717a" },
-  { status: "interested", kind: "in-progress", color: "#2563eb" },
-  { status: "callback", kind: "in-progress", color: "#d97706" },
-  { status: "meeting_booked", kind: "in-progress", color: "#059669" },
-  { status: "not_interested", kind: "todo", color: "#d4d4d8" },
+// Every contact status has a home. A column's first status is what a card dropped into it becomes.
+const STAGES: { status: string; title: string; includes: string[]; kind: ColumnStatus; color: string }[] = [
+  { status: "new", title: "New", includes: ["new", "calling"], kind: "todo", color: "#a1a1aa" },
+  { status: "no_answer", title: "No answer yet", includes: ["no_answer", "voicemail", "screened", "failed"], kind: "todo", color: "#94a3b8" },
+  { status: "completed", title: "Talked, no decision", includes: ["completed", "hung_up", "language_barrier"], kind: "todo", color: "#71717a" },
+  { status: "interested", title: "Interested", includes: ["interested", "qualified"], kind: "in-progress", color: "#2563eb" },
+  { status: "callback", title: "Follow-up", includes: ["callback"], kind: "in-progress", color: "#d97706" },
+  { status: "meeting_booked", title: "Meeting booked", includes: ["meeting_booked", "transferred"], kind: "in-progress", color: "#059669" },
+  { status: "not_interested", title: "Not interested", includes: ["not_interested", "not_qualified", "wrong_number", "do_not_call"], kind: "todo", color: "#d4d4d8" },
 ];
 const PER_COLUMN = 40;
 
@@ -39,7 +41,7 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
     () =>
       STAGES.map((s) => {
         // Longest conversation first, so the best talks sit at the top of each stage.
-        const p = new URLSearchParams({ status: s.status, page: "1", page_size: String(PER_COLUMN), sort: "longest_call" });
+        const p = new URLSearchParams({ status: s.includes.join(","), page: "1", page_size: String(PER_COLUMN), sort: "longest_call" });
         if (q) p.set("q", q);
         if (campaignId) p.set("campaign_id", campaignId);
         return `/api/contacts?${p}`;
@@ -57,7 +59,7 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
     setColumns(
       STAGES.map((s, i) => ({
         id: s.status,
-        title: outcomeLabel(s.status),
+        title: s.title,
         status: s.kind,
         icon: dot(s.color),
         cards: data[i].items.map(
@@ -67,6 +69,8 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
             subtitle: [c.company, c.role].filter(Boolean).join(" · ") || c.phone,
             tags: [
               ...(c.do_not_call ? [{ label: "DNC", variant: "bug" as const }] : []),
+              // Grouped columns: say which one it is ("Qualified", "Voicemail", "Wrong number").
+              ...(c.status !== s.status ? [{ label: outcomeLabel(c.status), variant: "design" as const }] : []),
               ...c.tags.slice(0, 2).map((t) => ({ label: t, variant: "feature" as const })),
             ],
             assignee: { name: c.name || "#" },
@@ -90,7 +94,7 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
     setMoved((m) => ({ ...m, [from]: (m[from] ?? 0) - 1, [to]: (m[to] ?? 0) + 1 }));
     try {
       await post("/api/contacts/bulk", { ids: [cardId], action: "set_status", status: to });
-      toast(`${card.title} moved to ${outcomeLabel(to)}`);
+      toast(`${card.title} moved to ${STAGES.find((s) => s.status === to)?.title ?? outcomeLabel(to)}`);
       onChanged();
     } catch (e) {
       setColumns(before);
@@ -121,7 +125,8 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
         <div className={styles.scroller} tabIndex={0} aria-label="Pipeline stages, scroll horizontally">
         <div className={styles.columns}>
           {columns.map((col) => {
-            const total = (counts[col.id] ?? 0) + (moved[col.id] ?? 0);
+            const stage = STAGES.find((s) => s.status === col.id);
+            const total = (stage?.includes ?? [col.id]).reduce((n, st) => n + (counts[st] ?? 0), 0) + (moved[col.id] ?? 0);
             return (
               <div key={col.id} className={styles.column} style={{ ["--stage-color" as string]: STAGES.find((s) => s.status === col.id)?.color }}>
                 <Column

@@ -177,7 +177,9 @@ async def list_contacts(
     )).scalar_one()
     filtered = base
     if status:
-        filtered = filtered.where(Lead.status == status)
+        # One status, or several comma-separated (a board column groups related ones).
+        wanted = [x.strip() for x in status.split(",") if x.strip()]
+        filtered = filtered.where(Lead.status.in_(wanted) if len(wanted) > 1 else Lead.status == wanted[0])
     if sort == "longest_call":
         # Longest single conversation first (the pipeline board); contacts never reached go last.
         longest_q = (select(CallLog.lead_id, func.max(CallLog.duration_seconds).label("secs"))

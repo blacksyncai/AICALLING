@@ -67,7 +67,13 @@ async def lifespan(app: FastAPI):
     from app.services.call_alerts import start_worker as start_alerts
     alert_task = start_alerts() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.outbound_call import fix_mislabeled_outcomes
-    repair_task = asyncio.create_task(fix_mislabeled_outcomes() if settings.run_startup_jobs else asyncio.sleep(0))
+    from app.services.outbound_call import repair_contact_statuses
+
+    async def _repairs():
+        await fix_mislabeled_outcomes()
+        await repair_contact_statuses()
+
+    repair_task = asyncio.create_task(_repairs() if settings.run_startup_jobs else asyncio.sleep(0))
     if settings.run_startup_jobs:
         from app.agent.templates import refresh_welcome_agents
         try:

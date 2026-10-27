@@ -76,3 +76,26 @@ def parse_contacts_csv(text: str) -> tuple[list[dict], int]:
         }
         contacts.append({"name": name or phone, "phone": phone, **known, "custom_fields": custom or None})
     return contacts, skipped
+
+
+
+# How a contact's pipeline status follows its calls. Calls that didn't reach anyone never undo a real result,
+# and a vague "we talked" never replaces a clear one. A clear answer on a later call (yes, no, call me back)
+# always becomes the new status.
+NO_CONVERSATION = ("no_answer", "voicemail", "screened", "failed")
+_OPEN = (None, "", "new", "calling", *NO_CONVERSATION)
+_VAGUE = ("completed", "hung_up", "language_barrier")
+_RANK = {"interested": 1, "callback": 1, "qualified": 2, "transferred": 3, "meeting_booked": 3}
+
+
+def next_status(current: str | None, outcome: str | None) -> str | None:
+    """The contact's status after a call ended with `outcome` (None: leave it as it is)."""
+    if not outcome:
+        return None
+    if outcome in NO_CONVERSATION:
+        return outcome if current in _OPEN else None
+    if outcome in _VAGUE:
+        return outcome if current in _OPEN or current in _VAGUE else None
+    if outcome in _RANK and _RANK.get(current or "", 0) > _RANK[outcome]:
+        return None  # a booked meeting isn't undone by a later "interested"
+    return outcome
