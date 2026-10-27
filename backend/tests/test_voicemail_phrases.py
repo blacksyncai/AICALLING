@@ -52,3 +52,14 @@ def test_voicemail_greeting_is_kept_for_radar():
     # Nothing heard, or already on the record: nothing added.
     assert voicemail_greeting_turn(transcript, "") is None
     assert voicemail_greeting_turn(transcript, heard) is None
+
+
+def test_call_screener_giving_up_is_voicemail():
+    from app.agent.runtime import is_screener_hold, voicemail_greeting_match
+
+    for text in ("I'm sorry. This person is not available. If you would like to leave an additional message, "
+                 "please reply after the tone.",
+                 "I'm sorry. This person is not available. If you would like to leave an additional message,"):
+        assert voicemail_greeting_match(text) and not is_screener_hold(text)
+    # A live person saying someone isn't around is not a machine.
+    assert voicemail_greeting_match("He's not available right now, who's calling?") is None

@@ -832,7 +832,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     report=lambda: _post_run_outcome(run, run.outcome or outcome))
             else:
                 from app.agent.voicemail_timing import wait_for_voicemail_minimum as _min_wait
-                await _min_wait(run.t0, cfg.get("voice_tuning"))  # never under 7 s connected
+                await _min_wait(run.t0, cfg.get("voice_tuning"))  # never under 8 s connected
                 await _delete_room(ctx.room.name)
         _keep(asyncio.create_task(_go()))
 
@@ -1379,6 +1379,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 text = (new_message.text_content or "").strip()
                 if not text or is_screener_hold(text):
                     raise StopResponse()  # the screener is still holding the line: stay quiet
+                if voicemail_greeting_match(text):
+                    # "This person is not available… leave a message after the tone": the screener gave up.
+                    if not vm["detected"]:
+                        vm["detected"] = True
+                        vm["heard"] = (vm["heard"] + " " + text).strip()
+                        log.info("screener_to_voicemail", room=ctx.room.name)
+                        asyncio.create_task(_handle_voicemail())
+                    raise StopResponse()
                 screen["holding"], screen["passed"] = False, True
                 log.info("screener_passed", room=ctx.room.name)
                 turn_ctx.add_message(role="system", content=(
@@ -1502,8 +1510,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             return
         if call_type != "outbound" or vm["detected"] or not getattr(ev, "is_final", False):
             return
-        if run.t0 and _time.monotonic() - run.t0 > 45:
-            return  # only the opening of the call
+        if run.t0 and _time.monotonic() - run.t0 > 45 and not screen["seen"]:
+            return  # only the opening of the call (after a screener, its "not available, leave a message" can come late)
         text = getattr(ev, "transcript", "") or ""
         if not screen["seen"]:
             from app.agent.runtime import screener_match
@@ -1736,7 +1744,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         return _on
 
     CHECK_IN_AFTER, HANG_UP_AFTER = 7.0, 8.0  # quiet seconds: check in once, then hang up
-    SCREENER_WAIT = 75.0  # how long to hold for a screened person before giving up
+    # How long to hold for a screened person. Real people come on within seconds of hearing who's calling;
+    # waiting longer only bills the line until the screener says "not available, leave a message" (~40 s).
+    SCREENER_WAIT = 25.0
 
     async def _hang_up_on_silence() -> None:
         while True:
@@ -1775,7 +1785,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 run.transcript.append({"role": "tool", "tool": "end_call", "args": {"reason": "silence"},
                                        "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
                 _mark_ended()
-                await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))  # never under 7 s connected
+                await wait_for_voicemail_minimum(run.t0, cfg.get("voice_tuning"))  # never under 8 s connected
                 await _delete_room(ctx.room.name)
                 return
 

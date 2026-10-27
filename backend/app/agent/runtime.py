@@ -462,6 +462,9 @@ _VOICEMAIL_STRICT = (
     "leave your number", "your name and number", "your name, number", "name, number and", "name and phone number",
     "leave a voicemail", "leave a voice mail", "leave me a voicemail", "leave me a voice mail", "feel free to leave",
     "leave a detailed message", "record a message", "at the beep", "after the tone",
+    # Call screeners giving up ("I'm sorry. This person is not available. If you would like to leave an
+    # additional message, please reply after the tone.").
+    "this person is not available", "leave an additional message",
 )
 
 

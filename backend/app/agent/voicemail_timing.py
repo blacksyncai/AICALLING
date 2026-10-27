@@ -1,12 +1,12 @@
 """Minimum connected duration for every agent-initiated hangup.
 
 Carriers surcharge calls that connect for under ~6 seconds, so the agent never ends a call before
-MIN_CONNECTED_FLOOR seconds after pickup, whatever an agent's saved setting says."""
+MIN_CONNECTED_FLOOR seconds after pickup (8 s: a safe margin over 6), whatever an agent's saved setting says."""
 import asyncio
 import math
 import time
 
-MIN_CONNECTED_FLOOR = 7.0
+MIN_CONNECTED_FLOOR = 8.0
 DEFAULT_MIN_CONNECTED_SECONDS = MIN_CONNECTED_FLOOR
 
 
