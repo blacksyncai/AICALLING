@@ -34,3 +34,21 @@ def test_premature_hangup_is_held():
     assert not should_hold_hangup("not_interested", "Yeah I'm interested")  # final outcomes always go through
     assert not should_hold_hangup("completed", "")
     assert not should_hold_hangup("qualified", "Alright, sounds good, talk soon")
+
+
+def test_voicemail_greeting_is_kept_for_radar():
+    from app.agent.runtime import person_answered, voicemail_greeting_turn
+    from app.services.crm.verification import classify
+
+    heard = "  Hi, you've reached Robert   Chen. Please leave a message after the tone. "
+    transcript = [{"role": "assistant", "text": "Hey, is this Robert?"},
+                  {"role": "tool", "tool": "voicemail", "args": {"action": "hung_up"}}]
+    turn = voicemail_greeting_turn(transcript, heard)
+    assert turn == {"role": "user", "text": "Hi, you've reached Robert Chen. Please leave a message after the tone.",
+                    "voicemail_greeting": True}
+    transcript.append(turn)
+    assert classify(transcript, "Robert Chen", "voicemail")["status"] == "named_voicemail"
+    assert not person_answered(transcript)  # still a voicemail, never a conversation
+    # Nothing heard, or already on the record: nothing added.
+    assert voicemail_greeting_turn(transcript, "") is None
+    assert voicemail_greeting_turn(transcript, heard) is None

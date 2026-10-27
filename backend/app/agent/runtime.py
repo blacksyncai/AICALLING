@@ -524,6 +524,20 @@ def is_voicemail_text(text: str) -> bool:
     return any(h in t for h in _VOICEMAIL_HINTS)
 
 
+def voicemail_greeting_turn(transcript: list[dict] | None, heard: str) -> dict | None:
+    """The greeting the worker heard before it hung up on a voicemail, as a contact turn for the call record.
+
+    The live transcript drops it (the agent stops listening once it detects a machine), but it's the only
+    evidence of who the mailbox belongs to ("Hi, you've reached Robert..."), which Radar checks."""
+    text = re.sub(r"\s+", " ", heard or "").strip()[:2000]
+    if not text:
+        return None
+    said = re.sub(r"\s+", " ", " ".join(contact_turns(transcript))).casefold()
+    if text.casefold() in said:
+        return None
+    return {"role": "user", "text": text, "voicemail_greeting": True}
+
+
 def contact_turns(transcript: list[dict] | None) -> list[str]:
     return [(t.get("text") or "").strip() for t in transcript or []
             if t.get("role") in ("user", "caller") and (t.get("text") or "").strip()]

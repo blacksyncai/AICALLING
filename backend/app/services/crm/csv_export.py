@@ -18,6 +18,9 @@ ADDRESS = {'address':'street','street':'street','street_address':'street','maili
            'mailing_street':'street','mailing_city':'city','mailing_state':'state','mailing_zip':'code','city':'city','town':'city','state':'state','zip':'code','zip_code':'code','zipcode':'code','postal_code':'code'}
 RESERVED = {'source','lead_source','stage','status','agent','assigned_agent','owner','lender','background','notes','created','last_activity'}
 INTERNAL = {'bs_deal','bs_install','bs_tries','crm_trigger','crm_contacted','crm_stage','crm_tags'}
+# FUB's own person fields: the contact sync already writes them, and FUB refuses custom fields with these labels.
+NATIVE = {'first_name','last_name','full_name','firstname','lastname','fullname','phone_number','phone_1','phone1',
+          'mobile','mobile_phone','cell','email_address','email_1','email1'}
 
 
 def values_for(lead):
@@ -84,7 +87,7 @@ async def export(db, job, conn, call, lead):
         raise ContactReviewRequired('CSV data is not available for this workspace/contact.')
     values=values_for(lead)
     # No extra data: keep the already-supported identity/contact path unchanged.
-    extra={k:v for k,v in values.items() if k not in {'name','phone','email'}}
+    extra={k:v for k,v in values.items() if k not in {'name','phone','email'} and k.casefold() not in NATIVE}
     if not extra and lead.intent_source != 'csv': return
     raw=json.dumps(values,ensure_ascii=False,sort_keys=True,indent=2,default=str)
     if len(raw)>250000:
@@ -163,9 +166,13 @@ async def export(db, job, conn, call, lead):
                 try:
                     await http.request('POST','/v1/customFields',json={'label':label,'type':'text'})
                 except Exception as exc:
-                    if getattr(exc,'status',None) not in (401,403): raise
-                    create_allowed=False
-                    report['warnings'].append('FUB denied custom-field creation; an account-owner API key is required. Unmapped values are retained in the CSV snapshot.')
+                    if getattr(exc,'status',None)==400 and 'reserved' in str(exc).casefold():
+                        # FUB keeps this label for its own field: leave the value in the CSV snapshot instead.
+                        report['warnings'].append(f'FUB reserves the field name "{label}"; that value stays in the CSV snapshot.')
+                    elif getattr(exc,'status',None) not in (401,403): raise
+                    else:
+                        create_allowed=False
+                        report['warnings'].append('FUB denied custom-field creation; an account-owner API key is required. Unmapped values are retained in the CSV snapshot.')
                 else:
                     fields=await p._custom_fields(http,fresh=True,strict=True)
                     existing=[f for f in fields if p._slug(f['label'])==p._slug(label)]

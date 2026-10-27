@@ -28,7 +28,10 @@ def classify(transcript, expected_name: str, outcome: str = "") -> dict:
         question = normal(previous["text"]) if previous and previous["role"] == "assistant" else ""
         asks_name = bool(re.search(
             r"\b(?:am i speaking (?:with|to)|speaking (?:with|to)|is this|are you|is that|did i reach|have i reached)\s+"
-            + re.escape(first) + r"(?!\w)", question))
+            + re.escape(first) + r"(?!\w)", question)) or bool(re.search(
+            # "Hey, this is Robert, right?" / "Robert Chen, correct?": a name check phrased as a statement.
+            r"(?:\bthis is\s+|^(?:hey|hi|hello)?[, ]*)" + re.escape(first) + r"(?:\s+[^\W\d_]+)?\s*,?\s*(?:right|correct)\b",
+            question))
         wrong = re.search(r"\bwrong (?:phone )?number\b|\bno (?:one|person) (?:here )?by that name\b", text)
         denies_name = asks_name and (
             re.search(r"\b(?:i(?:'m| am)|this is) not\s+" + re.escape(first) + r"(?!\w)", text) or
@@ -46,11 +49,12 @@ def classify(transcript, expected_name: str, outcome: str = "") -> dict:
             r"(?:hi[, .]*|hello[, .]*)?(?:this is|i am|i'm|it's|it is) " + re.escape(first) +
             r"(?: speaking)?[.! ,]*|" + re.escape(first) + r" speaking[.! ,]*", text)
         affirmative = asks_name and re.fullmatch(
-            r"(?:yes|yeah|yep|yup|speaking|correct|that's me|that is me|this is (?:him|her)|you(?:'ve| have) got (?:him|her))"
+            r"(?:yes|yeah|yep|yup|speaking|correct|that's me|that is me|this is (?:him|her)|you(?:'ve| have) got (?:him|her)"
+            r"|(?:yes|yeah|yep)?[,. ]*(?:that's right|that is right|it is))"
             r"(?:[, .!]*(?:this is|i am|i'm) " + re.escape(first) + r")?[.! ,]*", text)
         if asks_name and re.fullmatch(
-            r"(?:yes|yeah|yep|correct)(?:[, .!]+(?:it is|that's me|that is me))?"
-            r"(?:[,.!? ]+(?:who(?:'s| is) (?:speaking|calling)|who is this))?[?.! ]*", text):
+            r"(?:yes|yeah|yep|correct)(?:[, .!]+(?:it is|that's me|that is me|that's right|that is right))?"
+            r"(?:[,.!? ]+(?:who(?:'s| is) (?:speaking|calling|this)|who is this))?[?.! ]*", text):
             affirmative = True
         if self_id or affirmative:
             evidence = [{"turn": i, "role": "user", "text": turn["text"][:600]}]

@@ -317,3 +317,22 @@ def test_partial_progress_is_preserved_on_crm_failure(client, crm):
     execute_all()
     assert len(client.get(f"/api/radar/automations/ponds/{pond['id']}/members").json()['members']) == 1
     assert crm['person']['assignedPondId'] == 7
+
+
+def test_statement_style_name_check_counts_as_confirmed():
+    """Agents that open with "Hey, this is Robert, right?" (Compass) and get a plain yes."""
+    from app.services.crm.verification import classify
+
+    def ask(reply, opener="Hey, this is Robert Chen, right?"):
+        return classify([{"role": "assistant", "text": opener}, {"role": "user", "text": reply}], "Robert Chen")["status"]
+
+    for reply in ("Yes. It is.", "Yeah.", "Yes.", "Yeah. Who's this?", "Yeah. That's right.", "That's right."):
+        assert ask(reply) == "name_confirmed", reply
+    assert ask("Yes.", opener="Hey, this is Robert, right?") == "name_confirmed"
+    assert ask("Yes, that's right.", opener="Robert, correct?") == "name_confirmed"
+    # Not confirmations.
+    assert ask("Hello? Who's calling?") == "unverified"
+    assert ask("Who's this?") == "unverified"
+    assert ask("No.") == "unverified"
+    assert ask("Hello? No. This is John.") == "wrong_number" or ask("Hello? No. This is John.") == "unverified"
+    assert ask("Yes.", opener="Hey, this is Olivia from Compass, right?") == "unverified"  # the agent's own name

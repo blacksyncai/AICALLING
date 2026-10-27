@@ -1460,9 +1460,17 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         run.outcome = vm_outcome
         await asyncio.sleep(0.5)
         from app.agent.voicemail_timing import finish_voicemail
+        async def _report() -> None:
+            # Keep the greeting on the call record: it's how Radar hears whose voicemail it was.
+            from app.agent.runtime import voicemail_greeting_turn
+
+            turn = voicemail_greeting_turn(run.transcript, vm["heard"])
+            if turn:
+                run.transcript.append({**turn, "ts": round(_time.monotonic() - run.t0, 2)})
+            await _post_run_outcome(run, vm_outcome)
+
         await finish_voicemail(run.t0, cfg.get("voice_tuning"),
-            hangup=lambda: _delete_room(ctx.room.name),
-            report=lambda: _post_run_outcome(run, vm_outcome))
+            hangup=lambda: _delete_room(ctx.room.name), report=_report)
 
     async def _answer_screener() -> None:
         try:
@@ -1487,6 +1495,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             log.warning("screener_reply_failed", error=str(exc)[:200])
 
     def _on_transcribed(ev) -> None:
+        if call_type == "outbound" and vm["detected"] and getattr(ev, "is_final", False):
+            # Keep hearing the greeting until hangup: the name often comes after the detection phrase.
+            if len(vm["heard"]) < 2000:
+                vm["heard"] += " " + (getattr(ev, "transcript", "") or "")
+            return
         if call_type != "outbound" or vm["detected"] or not getattr(ev, "is_final", False):
             return
         if run.t0 and _time.monotonic() - run.t0 > 45:

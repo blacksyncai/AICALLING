@@ -13,7 +13,7 @@ BASE='/api/radar/automations'
 def csv_remote(client,crm,remote,monkeypatch):
     from app.services.crm.http import BaseHttp
     previous=BaseHttp.client_factory
-    state={'fields':[], 'calls':[], 'deny_create':False, 'lose_field':False,'lose_put':False}
+    state={'fields':[], 'calls':[], 'deny_create':False, 'lose_field':False,'lose_put':False,'reserved':set()}
     client.patch('/api/integrations/crm/followupboss',json={'csv_create_fields':False})
     async def handle(req):
         path,method=req.url.path,req.method
@@ -22,6 +22,7 @@ def csv_remote(client,crm,remote,monkeypatch):
             state['calls'].append((method,path,body))
             if method=='GET':return httpx.Response(200,json={'customfields':state['fields']})
             if state['deny_create']:return httpx.Response(403,json={'message':'Account owner only'})
+            if body['label'] in state['reserved']:return httpx.Response(400,json={'errorMessage':f'Field "{body["label"]}" is reserved by the system'})
             name='custom'+''.join(x.capitalize() for x in re.findall('[A-Za-z0-9]+',body['label']))
             item={**body,'name':name};state['fields'].append(item)
             if state['lose_field']:raise httpx.ReadTimeout('Field response lost',request=req)
@@ -235,3 +236,16 @@ def test_fub_identifier_formatting_does_not_produce_false_failed_receipt():
     assert not confirmed([{'value':'+14155550999'}],[{'value':'+14155550123'}],'phones')
     for value in ('NaN','Infinity','1e999999','0.1234567890123456789012345'):
         with pytest.raises(ValueError):convert(value,{'type':'number'})
+
+
+def test_fub_native_and_reserved_field_names_never_fail_the_push(client,crm,remote,csv_remote):
+    """A CSV with first_name/last_name columns (and a label FUB reserves) still routes the deal."""
+    remote['people']=[person()];csv_remote['reserved']={'Owner Type'}
+    client.patch('/api/integrations/crm/followupboss',json={'csv_create_fields':True})
+    call,lead,_=queue(client,crm);extras(lead,{'first_name':'Robert','last_name':'Chen','owner_type':'Trust','units':'8'})
+    execute_all();row=job(client,call)
+    assert row['status']=='succeeded',row
+    posted={b['label'] for m,p,b in csv_remote['calls'] if m=='POST'}
+    assert 'First Name' not in posted and 'Last Name' not in posted
+    assert 'owner_type' in row['result']['csv_data']['unmapped'] and row['result']['csv_data']['warnings']
+    assert 'Trust' in remote['people'][0]['background'] and remote['deals']
