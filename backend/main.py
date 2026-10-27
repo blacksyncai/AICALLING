@@ -64,6 +64,9 @@ async def lifespan(app: FastAPI):
     crm_task = start_poll_loop()
     from app.services.crm.automations import start_worker
     radar_task = start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    if settings.run_startup_jobs:  # TEMPORARY: one-off read-only voicemail check (remove after use)
+        from app.services.crm import radar_diag
+        _diag_task = asyncio.create_task(radar_diag.run())
     from app.services.call_alerts import start_worker as start_alerts
     alert_task = start_alerts() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.outbound_call import fix_mislabeled_outcomes
