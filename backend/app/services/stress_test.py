@@ -146,13 +146,41 @@ async def run_scenario(cfg: dict, variables: dict, scenario: dict) -> dict:
             **review, "passed": not failed}
 
 
+# Approximate list prices, USD per 1M tokens (input, output), to estimate what a run cost us in model usage.
+PRICES = {
+    "gpt-4.1": (2.0, 8.0), "gpt-4.1-mini": (0.4, 1.6), "gpt-4.1-nano": (0.1, 0.4),
+    "gpt-4o": (2.5, 10.0), "gpt-4o-mini": (0.15, 0.6), "gpt-oss-120b": (0.35, 0.75),
+    "mistral-small-latest": (0.1, 0.3), "mistral-medium-latest": (0.4, 2.0), "ministral-3b-latest": (0.04, 0.04),
+    "ministral-8b-latest": (0.1, 0.1), "ministral-14b-latest": (0.2, 0.2),
+}
+FALLBACK_PRICE = (1.0, 4.0)  # models without a listed price: a deliberately high guess
+
+
+def cost_of(meter: dict) -> dict:
+    total = 0.0
+    for model, row in meter.items():
+        p_in, p_out = PRICES.get(model, FALLBACK_PRICE)
+        row["cost_usd"] = round((row["input"] * p_in + row["output"] * p_out) / 1_000_000, 4)
+        total += row["cost_usd"]
+    return {"cost_usd": round(total, 4), "input_tokens": sum(r["input"] for r in meter.values()),
+            "output_tokens": sum(r["output"] for r in meter.values()), "by_model": meter, "estimate": True}
+
+
 async def run(cfg: dict, variables: dict, only: list[str] | None = None) -> dict:
+    from app.services.llm import usage_meter
+
     picked = [s for s in scenarios_for(cfg) if not only or s["id"] in only]
     gate = asyncio.Semaphore(4)
+    meter: dict = {}
+    token = usage_meter.set(meter)  # the scenario tasks copy this context, so they all add to the same meter
 
     async def one(s: dict) -> dict:
         async with gate:
             return await run_scenario(cfg, variables, s)
 
-    results = await asyncio.gather(*(one(s) for s in picked))
-    return {"results": list(results), "passed": sum(r["passed"] for r in results), "total": len(results)}
+    try:
+        results = await asyncio.gather(*(one(s) for s in picked))
+    finally:
+        usage_meter.reset(token)
+    return {"results": list(results), "passed": sum(r["passed"] for r in results), "total": len(results),
+            "usage": cost_of(meter)}

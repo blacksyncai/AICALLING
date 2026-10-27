@@ -1,9 +1,10 @@
 "use client";
 
-import { CheckCircle2, ChevronDown, FlaskConical, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, FlaskConical, History, XCircle } from "lucide-react";
 import { useState } from "react";
-import { post } from "@/lib/api";
-import { cn, humanize, outcomeLabel } from "@/lib/utils";
+import useSWR from "swr";
+import { api, fetcher, post } from "@/lib/api";
+import { cn, humanize, outcomeLabel, timeAgo } from "@/lib/utils";
 import { Button, Notice } from "../ui";
 import { AiOrb } from "../ui/ai-orb";
 
@@ -29,12 +30,33 @@ interface Result {
   error?: string;
 }
 
-/** Simulated callers put the agent through tricky situations in text; each conversation is graded. */
+type Run = { id: string; created_at: string | null; passed: number; total: number; cost_usd?: number;
+  results?: Result[]; usage?: { input_tokens: number; output_tokens: number } };
+
+const money = (usd: number) => (usd < 0.01 ? "<$0.01" : `$${usd.toFixed(2)}`);
+
+/** Simulated callers put the agent through tricky situations in text; each conversation is graded.
+    Every run is saved, so a closed tab doesn't lose it. The model cost only reaches BlackSync staff. */
 export function StressTest({ agentId, variables, beforeStart }: { agentId: string; variables: Record<string, string>; beforeStart: () => Promise<boolean> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [data, setData] = useState<{ results: Result[]; passed: number; total: number } | null>(null);
+  const [data, setData] = useState<Run | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const { data: history, mutate: refreshHistory } = useSWR<{ runs: Run[] }>(`/api/agents/${agentId}/stress-tests`, fetcher);
+  const [loadingRun, setLoadingRun] = useState<string | null>(null);
+
+  async function openRun(id: string) {
+    setLoadingRun(id);
+    setError("");
+    try {
+      setData(await api<Run>(`/api/agents/${agentId}/stress-tests/${id}`));
+      setOpen(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoadingRun(null);
+    }
+  }
 
   async function run() {
     if (!(await beforeStart())) return;
@@ -43,6 +65,7 @@ export function StressTest({ agentId, variables, beforeStart }: { agentId: strin
     setData(null);
     try {
       setData(await post(`/api/agents/${agentId}/stress-test`, { variables }));
+      void refreshHistory();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -69,11 +92,15 @@ export function StressTest({ agentId, variables, beforeStart }: { agentId: strin
           </div>
         )}
         {data && (
-          <div className="rounded-lg bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-800">
-            {data.passed} of {data.total} passed
+          <div className="flex items-center justify-between gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-800">
+            <span>{data.passed} of {data.total} passed</span>
+            <span className="text-xs font-normal text-zinc-500">
+              {data.created_at && timeAgo(data.created_at)}
+              {data.cost_usd != null && <span title="Model usage for this run (estimate, staff only)"> · {money(data.cost_usd)} usage</span>}
+            </span>
           </div>
         )}
-        {data?.results.map((r) => (
+        {data?.results?.map((r) => (
           <div key={r.id} className="rounded-lg border border-zinc-200 bg-white">
             <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
               {r.passed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <XCircle className="h-4 w-4 shrink-0 text-red-500" />}
@@ -106,6 +133,29 @@ export function StressTest({ agentId, variables, beforeStart }: { agentId: strin
             )}
           </div>
         ))}
+        {!busy && (history?.runs.length ?? 0) > 0 && (
+          <div className="pt-2">
+            <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+              <History className="h-3 w-3" /> Recent runs
+            </p>
+            <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200 bg-white">
+              {history!.runs.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => void openRun(r.id)}
+                    className={cn("flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-zinc-50", data?.id === r.id && "bg-brand-50/60")}
+                  >
+                    {r.passed === r.total ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <XCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />}
+                    <span className="flex-1 font-medium text-zinc-800">{r.passed} of {r.total} passed</span>
+                    {r.cost_usd != null && <span className="tabular-nums text-zinc-500">{money(r.cost_usd)}</span>}
+                    <span className="text-zinc-400">{loadingRun === r.id ? "Opening…" : r.created_at ? timeAgo(r.created_at) : ""}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

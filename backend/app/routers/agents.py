@@ -433,9 +433,52 @@ async def stress_test_agent(agent_id: uuid.UUID, body: StressTestRequest, ctx: C
     _stress_runs[str(ctx.org.id)] = [*recent, now]
     variables = {"name": "Jordan", "first_name": "Jordan", "full_name": "Jordan Lee", **body.variables}
     try:
-        return await stress_test.run(agent_to_runtime(agent, secrets=True), variables, body.scenarios or None)
+        out = await stress_test.run(agent_to_runtime(agent, secrets=True), variables, body.scenarios or None)
     except LLMNotConfigured as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # Keep the run so it can be reopened later (results only live in the tab otherwise).
+    from app.models.stress_test import StressTestRun
+
+    row = StressTestRun(org_id=ctx.org.id, agent_id=agent.id, user_id=ctx.user.id, passed=out["passed"],
+                        total=out["total"], cost_usd=out["usage"]["cost_usd"], usage=out["usage"], results=out["results"])
+    db.add(row)
+    await db.commit()
+    return _run_out(row, full=True, staff=ctx.user.is_superadmin)
+
+
+def _run_out(r, full: bool = False, staff: bool = False) -> dict:
+    """What a run cost us in model usage is internal: only BlackSync staff see it."""
+    out = {"id": str(r.id), "created_at": r.created_at.isoformat() if r.created_at else None, "passed": r.passed,
+           "total": r.total}
+    if staff:
+        out["cost_usd"] = r.cost_usd
+    if full:
+        out["results"] = r.results or []
+        if staff:
+            out["usage"] = r.usage or {}
+    return out
+
+
+@router.get("/{agent_id}/stress-tests")
+async def list_stress_tests(agent_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    """This agent's recent stress-test runs, newest first."""
+    from app.models.stress_test import StressTestRun
+
+    agent = await _get_agent(db, ctx, agent_id)
+    rows = (await db.execute(select(StressTestRun).where(StressTestRun.org_id == ctx.org.id, StressTestRun.agent_id == agent.id)
+                             .order_by(StressTestRun.created_at.desc()).limit(20))).scalars().all()
+    return {"runs": [_run_out(r, staff=ctx.user.is_superadmin) for r in rows]}
+
+
+@router.get("/{agent_id}/stress-tests/{run_id}")
+async def get_stress_test(agent_id: uuid.UUID, run_id: uuid.UUID, ctx: CtxDep, db: DbDep):
+    from app.models.stress_test import StressTestRun
+
+    agent = await _get_agent(db, ctx, agent_id)
+    row = await db.get(StressTestRun, run_id)
+    if not row or row.org_id != ctx.org.id or row.agent_id != agent.id:
+        raise HTTPException(status_code=404, detail="Stress test not found")
+    return _run_out(row, full=True, staff=ctx.user.is_superadmin)
 
 
 @router.post("/{agent_id}/chat")

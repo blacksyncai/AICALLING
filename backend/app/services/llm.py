@@ -6,6 +6,7 @@ and post-call analysis (summary, outcome, sentiment, extracted fields).
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 
 import httpx
 import structlog
@@ -31,6 +32,21 @@ class LLMNotConfigured(RuntimeError):
     pass
 
 
+# Optional token meter: set it (a dict) around a block of calls to add up what they used, per model.
+usage_meter: ContextVar[dict | None] = ContextVar("usage_meter", default=None)
+
+
+def _meter(model: str | None, data: dict) -> None:
+    meter = usage_meter.get()
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if meter is None or not isinstance(usage, dict):
+        return
+    row = meter.setdefault(model or "unknown", {"input": 0, "output": 0, "calls": 0})
+    row["input"] += int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+    row["output"] += int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    row["calls"] += 1
+
+
 async def _chat(payload: dict, timeout: float = 45.0) -> dict:
     from app.agent.models import llm_endpoint
 
@@ -51,7 +67,9 @@ async def _chat(payload: dict, timeout: float = 45.0) -> dict:
         )
         if resp.status_code >= 400:
             raise RuntimeError(f"LLM error {resp.status_code}: {resp.text[:300]}")
-        return resp.json()
+        data = resp.json()
+        _meter(payload.get("model"), data)
+        return data
 
 
 def _tool_specs(cfg: dict) -> list[dict]:
