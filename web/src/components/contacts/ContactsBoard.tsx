@@ -11,7 +11,7 @@ import { Spinner } from "@/components/ui";
 import { Column, gentleSpring, type CardData, type ColumnData, type ColumnStatus, type DragState } from "@/components/ui/kanban-board";
 import { api, post } from "@/lib/api";
 import type { ContactList } from "@/lib/types";
-import { outcomeLabel, timeAgo } from "@/lib/utils";
+import { formatDuration, outcomeLabel, timeAgo } from "@/lib/utils";
 
 /* The pipeline as a board: one column per stage, drag a contact to change its status. */
 
@@ -38,7 +38,8 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
   const urls = useMemo(
     () =>
       STAGES.map((s) => {
-        const p = new URLSearchParams({ status: s.status, page: "1", page_size: String(PER_COLUMN) });
+        // Longest conversation first, so the best talks sit at the top of each stage.
+        const p = new URLSearchParams({ status: s.status, page: "1", page_size: String(PER_COLUMN), sort: "longest_call" });
         if (q) p.set("q", q);
         if (campaignId) p.set("campaign_id", campaignId);
         return `/api/contacts?${p}`;
@@ -69,7 +70,9 @@ export function ContactsBoard({ q, campaignId, counts, onChanged }: { q: string;
               ...c.tags.slice(0, 2).map((t) => ({ label: t, variant: "feature" as const })),
             ],
             assignee: { name: c.name || "#" },
-            date: c.last_called_at ? timeAgo(c.last_called_at) : "Not called",
+            date: c.longest_call_seconds
+              ? `${formatDuration(c.longest_call_seconds)} talk · ${timeAgo(c.last_called_at)}`
+              : c.last_called_at ? timeAgo(c.last_called_at) : "Not called",
           }),
         ),
       })),

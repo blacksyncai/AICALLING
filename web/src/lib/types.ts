@@ -429,6 +429,7 @@ export interface Contact {
   last_called_at: string | null;
   /** Length of the latest call in seconds (list view only). */
   last_call_seconds?: number | null;
+  longest_call_seconds?: number | null;
   do_not_call: boolean;
   attempts: number;
   created_at: string | null;

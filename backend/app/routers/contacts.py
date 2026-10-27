@@ -154,6 +154,7 @@ async def list_contacts(
     dnc: bool | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
+    sort: str = "",
 ):
     base = select(Lead).where(Lead.org_id == ctx.org.id)
     if q.strip():
@@ -177,15 +178,23 @@ async def list_contacts(
     filtered = base
     if status:
         filtered = filtered.where(Lead.status == status)
-    rows = (await db.execute(
-        filtered.order_by(Lead.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    )).scalars().all()
+    if sort == "longest_call":
+        # Longest single conversation first (the pipeline board); contacts never reached go last.
+        longest_q = (select(CallLog.lead_id, func.max(CallLog.duration_seconds).label("secs"))
+                     .where(CallLog.org_id == ctx.org.id).group_by(CallLog.lead_id).subquery())
+        ordered = (filtered.outerjoin(longest_q, longest_q.c.lead_id == Lead.id)
+                   .order_by(func.coalesce(longest_q.c.secs, 0).desc(), Lead.updated_at.desc()))
+    else:
+        ordered = filtered.order_by(Lead.created_at.desc())
+    rows = (await db.execute(ordered.offset((page - 1) * page_size).limit(page_size))).scalars().all()
     total = (await db.execute(select(func.count()).select_from(filtered.subquery()))).scalar_one()
     names = dict((await db.execute(
         select(Campaign.id, Campaign.name).where(Campaign.org_id == ctx.org.id)
     )).all())
     # How long each contact's latest call lasted (the little timer next to their status).
+    # And their longest call, for contacts called more than once.
     last_call: dict = {}
+    longest: dict = {}
     if rows:
         calls = (await db.execute(
             select(CallLog.lead_id, CallLog.duration_seconds)
@@ -193,9 +202,10 @@ async def list_contacts(
             .order_by(CallLog.started_at.desc()))).all()
         for lead_id, secs in calls:
             last_call.setdefault(lead_id, int(secs or 0))
+            longest[lead_id] = max(longest.get(lead_id, 0), int(secs or 0))
     return {
-        "items": [{**contact_to_dict(l, names.get(l.campaign_id)), "last_call_seconds": last_call.get(l.id)}
-                  for l in rows],
+        "items": [{**contact_to_dict(l, names.get(l.campaign_id)), "last_call_seconds": last_call.get(l.id),
+                   "longest_call_seconds": longest.get(l.id)} for l in rows],
         "total": total,
         "page": page,
         "page_size": page_size,
