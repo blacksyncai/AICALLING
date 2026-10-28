@@ -488,6 +488,7 @@ export default function RadarPage() {
                   scanId={scan.id}
                   crm={crm}
                   agents={agents ?? []}
+                  showAll={scan.segment?.kind === "deal"}
                 />
               ))}
             {total === 0 && (
@@ -517,11 +518,14 @@ function PlayCard({
   scanId,
   crm,
   agents,
+  showAll = false,
 }: {
   play: Play;
   scanId: string;
   crm: Crm;
   agents: { id: string; name: string }[];
+  // Deal boards are filled from BlackSync calls, so everyone on them was "already called": show them anyway.
+  showAll?: boolean;
 }) {
   const Icon = ICON[play.key] ?? RadarIcon;
   const [open, setOpen] = useState(false);
@@ -564,7 +568,7 @@ function PlayCard({
       tag: uniq(play.items.flatMap((i) => i.tags ?? [])),
     };
   }, [play.items]);
-  const [showHandled, setShowHandled] = useState(false);
+  const [showHandled, setShowHandled] = useState(showAll);
   const [launched, setLaunched] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set());
   const installed = crm.installs.find((i) => i.agent_id === agentId);
@@ -691,7 +695,7 @@ function PlayCard({
             </div>
           </div>
           <span className="font-display text-3xl font-semibold tabular-nums text-zinc-900">
-            {Math.max(play.count - handledCount, 0)}
+            {showHandled ? play.count : Math.max(play.count - handledCount, 0)}
           </span>
         </div>
         <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-zinc-700">
