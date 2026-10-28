@@ -60,7 +60,7 @@ export function PhoneNumbersTab() {
           </Link>
         </div>
       </section>
-      <NumberPackCard onChanged={() => void mutate()} />
+      <NumberPackCard onChanged={() => void mutate()} pickHref="/phone-numbers#get-number" />
     </div>
   );
 }

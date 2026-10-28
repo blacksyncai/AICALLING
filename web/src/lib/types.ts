@@ -107,7 +107,7 @@ export interface MyPhoneNumbers {
   requests: PhoneNumberRequestItem[];
   self_serve: boolean;
   recordings_enabled: boolean;
-  pricing?: { active: number; included: number; included_on_plan: number; unit_cents: number; subscribed: boolean };
+  pricing?: { active: number; included: number; included_on_plan: number; unit_cents: number; subscribed: boolean; pack_credits?: number };
 }
 
 export interface AgentTemplate {

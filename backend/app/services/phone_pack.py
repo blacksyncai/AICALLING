@@ -3,8 +3,8 @@
 Spreading call volume over many numbers, and retiring each before it wears out, keeps caller IDs from being
 labelled spam. Packs are billed as a quantity on the plan subscription (catalog.PHONE_PACK); this module keeps
 the numbers in line with what's paid for:
-- reconcile(): buys missing pack numbers (a new pack, or a purchase that failed earlier) and releases extras
-  (a pack removed or the plan ended).
+- A pack is 10 number credits: the customer picks each number (credits(), used by the number purchase), and
+  reconcile() releases extras when a pack is removed or the plan ends.
 - refresh_due(): swaps every pack number whose month is up for a fresh one in the same area code. The new number
   takes the old one's place in campaign rotations, agent caller IDs and the default, then the old one is released.
 """
@@ -109,21 +109,30 @@ async def _retire(db: AsyncSession, row: PhoneNumber) -> None:
     await telephony.release(db, row, return_to_twilio=True)
 
 
+async def credits(db: AsyncSession, org_id: uuid.UUID) -> dict:
+    """Pack number credits: how many the packs give, how many are in use, how many are left to pick."""
+    total, used = await wanted(db, org_id), len(await pack_numbers(db, org_id))
+    return {"total": total, "used": used, "open": max(0, total - used)}
+
+
+def mark(row: PhoneNumber) -> None:
+    """Make a just-bought number a pack number: covered by the pack, swapped for a fresh one each month."""
+    row.pack_refresh_at = _now() + timedelta(days=catalog.PHONE_PACK["refresh_days"])
+    row.pack_area_code = row.number[2:5]
+
+
 async def reconcile(db: AsyncSession, org_id: uuid.UUID, area_code: str = "") -> dict:
-    """Match the account's pack numbers to the packs it pays for."""
+    """Release pack numbers beyond what the account pays for (a pack removed, or the plan ended).
+    Numbers are never bought here: the customer picks them with their credits."""
     want = await wanted(db, org_id)
     have = await pack_numbers(db, org_id)
-    added = removed = 0
+    removed = 0
     if len(have) > want:
         for row in sorted(have, key=lambda n: _aware(n.created_at) or _now(), reverse=True)[:len(have) - want]:
             await _retire(db, row)
             removed += 1
-    elif len(have) < want:
-        code = area_code or next((n.pack_area_code for n in have if n.pack_area_code), "")
-        added = len(await _buy(db, org_id, code, want - len(have)))
-    if added or removed:
-        log.info("phone_pack_reconciled", org_id=str(org_id), wanted=want, added=added, removed=removed)
-    return {"wanted": want, "added": added, "removed": removed}
+        log.info("phone_pack_reconciled", org_id=str(org_id), wanted=want, removed=removed)
+    return {"wanted": want, "added": 0, "removed": removed}
 
 
 async def refresh_due(db: AsyncSession, now: datetime | None = None) -> int:

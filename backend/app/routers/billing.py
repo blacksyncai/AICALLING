@@ -346,6 +346,7 @@ async def _packs_payload(db, org_id) -> dict:
         "packs": (row.phone_packs or 0) if live else 0,
         "numbers": [telephony.number_to_dict(n) for n in numbers],
         "next_refresh_at": min(refresh).isoformat() if refresh else None,
+        "credits": await phone_pack.credits(db, org_id),
     }
 
 
@@ -356,7 +357,7 @@ async def phone_packs(ctx: CtxDep, db: DbDep):
 
 @router.post("/addons/phone-packs")
 async def phone_packs_set(body: PhonePacksIn, ctx: ManagerDep, db: DbDep):
-    """Add or remove Fresh Number Packs; new numbers are bought right away in the chosen area code."""
+    """Add or remove Fresh Number Packs. Each pack gives 10 number credits the customer spends on numbers they pick."""
     from app.services import phone_pack
 
     if not body.confirm:
@@ -365,11 +366,8 @@ async def phone_packs_set(body: PhonePacksIn, ctx: ManagerDep, db: DbDep):
     if subscriptions.is_helcim(row):
         raise HTTPException(status_code=409, detail="Number packs aren't available for accounts billed through Helcim yet. Contact support and we'll set it up.")
     await _guard(subscriptions.set_phone_packs(db, ctx.org.id, body.quantity, ctx.user.id))
-    result = await phone_pack.reconcile(db, ctx.org.id, body.area_code)
-    out = await _packs_payload(db, ctx.org.id)
-    if len(out["numbers"]) < result["wanted"]:
-        out["warning"] = "Some numbers couldn't be bought yet. We'll keep trying automatically."
-    return out
+    await phone_pack.reconcile(db, ctx.org.id)
+    return await _packs_payload(db, ctx.org.id)
 
 
 @router.post("/subscription/cancel")

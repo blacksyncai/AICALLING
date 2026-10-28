@@ -22,6 +22,8 @@ function nextNumberCost(p: Pricing): { free: boolean; text: string } {
   const unit = `$${(p.unit_cents / 100).toFixed(2)}/mo`;
   if (!p.subscribed) return { free: false, text: `${unit} per number — no plan needed. Or get 1–4 numbers included with a plan.` };
   if (p.active < p.included) return { free: true, text: `Included with your plan — no extra charge. Extra numbers after that are ${unit} each.` };
+  if (p.pack_credits)
+    return { free: true, text: `Uses 1 of your ${p.pack_credits} Fresh Number Pack credit${p.pack_credits === 1 ? "" : "s"} — no extra charge. It's swapped for a fresh number in the same area code every month.` };
   return { free: false, text: `You've used your plan's ${p.included === 1 ? "included number" : `${p.included} included numbers`}. Each extra number is ${unit}, charged now (prorated) and with your plan each month.` };
 }
 
@@ -34,7 +36,7 @@ function PriceLine({ pricing }: { pricing: Pricing }) {
 /** The "Get a number" call to action: a dark card with an orange glow so it stands out on the page. */
 function GetNumberCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
-    <section className="relative overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-lg ring-1 ring-zinc-900">
+    <section id="get-number" className="relative scroll-mt-6 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-lg ring-1 ring-zinc-900">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(420px_220px_at_100%_0%,rgba(236,101,60,0.45),transparent_70%),radial-gradient(360px_200px_at_0%_100%,rgba(245,158,11,0.18),transparent_70%)]"
@@ -374,7 +376,7 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
     const cost = nextNumberCost(pricing);
     const unit = pricing ? `$${(pricing.unit_cents / 100).toFixed(2)}/mo` : "$3.50/mo";
     const note = cost.free
-      ? "It's included with your plan."
+      ? pricing?.active != null && pricing.active < pricing.included ? "It's included with your plan." : "It uses 1 Fresh Number Pack credit (no extra charge)."
       : pricing && !pricing.subscribed
         ? `It's ${unit} — you'll pay securely with Stripe, then the number is added right away. Cancel any time in Billing.`
         : `It's ${unit}: the prorated amount for this month is charged to your card now, then it's billed with your plan.`;
@@ -382,7 +384,7 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
     setBuying(n.number);
     try {
       // confirm_charge: the customer just saw and accepted the price above.
-      const r = await post<{ checkout_url?: string }>("/api/phone-numbers/purchase", { number: n.number, carrier: n.carrier, confirm_charge: !cost.free });
+      const r = await post<{ checkout_url?: string; used_pack_credit?: boolean }>("/api/phone-numbers/purchase", { number: n.number, carrier: n.carrier, confirm_charge: !cost.free });
       if (r?.checkout_url) {
         window.location.href = r.checkout_url;
         return; // stays busy while the browser leaves for checkout
@@ -390,7 +392,7 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
       setResults(null);
       setArea("");
       refresh();
-      toast(`${n.friendly} added`);
+      toast(r?.used_pack_credit ? `${n.friendly} added with a pack credit` : `${n.friendly} added`);
       setBuying(null);
     } catch (err) {
       toast((err as Error).message, "error");

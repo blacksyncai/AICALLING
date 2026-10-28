@@ -1,11 +1,11 @@
 "use client";
 
-import { Check, Minus, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { Check, Minus, Plus, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { Button, Input, Modal } from "@/components/ui";
+import { Button, Modal } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
 import type { PhoneNumberItem } from "@/lib/types";
 
@@ -20,17 +20,17 @@ interface Packs {
   packs: number;
   numbers: PhoneNumberItem[];
   next_refresh_at: string | null;
-  warning?: string;
+  credits: { total: number; used: number; open: number };
 }
 
 const usd = (c: number) => `$${(c / 100).toFixed(0)}`;
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
 
-/** Fresh Number Pack: 10 local numbers per pack, each swapped for a new one every month, spread across campaigns. */
-export function NumberPackCard({ onChanged }: { onChanged: () => void }) {
+/** Fresh Number Pack: 10 number credits per pack. The customer picks each number; every one is swapped for a
+    fresh number in the same area code each month. `pickHref` is where the number search is. */
+export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChanged: () => void; pickHref?: string }) {
   const toast = useToast();
   const { data, mutate } = useSWR<Packs>("/api/billing/addons/phone-packs", fetcher);
-  const [areaCode, setAreaCode] = useState("");
   const [confirm, setConfirm] = useState<number | null>(null); // the pack count being confirmed
   const [busy, setBusy] = useState(false);
   if (!data) return null;
@@ -40,12 +40,11 @@ export function NumberPackCard({ onChanged }: { onChanged: () => void }) {
   async function apply(quantity: number) {
     setBusy(true);
     try {
-      const out = await post<Packs>("/api/billing/addons/phone-packs", { quantity, area_code: areaCode, confirm: true });
+      const out = await post<Packs>("/api/billing/addons/phone-packs", { quantity, confirm: true });
       await mutate(out, false);
       onChanged();
       setConfirm(null);
-      toast(quantity > owned ? `${(quantity - owned) * per} fresh numbers added` : "Number pack removed");
-      if (out.warning) toast(out.warning, "error");
+      toast(quantity > owned ? `${(quantity - owned) * per} number credits added — pick your numbers` : "Number pack removed");
     } catch (e) {
       toast((e as Error).message, "error");
     } finally {
@@ -66,7 +65,7 @@ export function NumberPackCard({ onChanged }: { onChanged: () => void }) {
                 <ShieldCheck className="h-3 w-3" /> Anti-spam
               </span>
             </div>
-            <p className="mt-1 text-sm text-zinc-600">{data.per_pack} local numbers, swapped for fresh ones every month. Stop worrying about spam labels.</p>
+            <p className="mt-1 text-sm text-zinc-600">{data.per_pack} number credits: pick the local numbers you want, and each one is swapped for a fresh one every month. Stop worrying about spam labels.</p>
           </div>
           <div className="shrink-0 text-right">
             <div className="font-display text-2xl font-semibold tabular-nums text-zinc-900">{usd(data.amount_cents)}</div>
@@ -88,12 +87,19 @@ export function NumberPackCard({ onChanged }: { onChanged: () => void }) {
         </ul>
 
         {owned > 0 && (
-          <div className="flex items-center gap-2 rounded-xl bg-zinc-50 px-3 py-2.5 text-sm text-zinc-700 ring-1 ring-zinc-900/5">
-            <RefreshCw className="h-4 w-4 shrink-0 text-brand-600" />
-            <span>
-              <strong>{owned}</strong> pack{owned === 1 ? "" : "s"} · {data.numbers.length} numbers
-              {data.next_refresh_at && <> · next fresh number {day(data.next_refresh_at)}</>}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-zinc-50 px-3 py-2.5 text-sm text-zinc-700 ring-1 ring-zinc-900/5">
+            <span className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 shrink-0 text-brand-600" />
+              <span>
+                <strong>{data.credits.open}</strong> of {data.credits.total} credits left · {data.credits.used} number{data.credits.used === 1 ? "" : "s"} picked
+                {data.next_refresh_at && <> · next fresh number {day(data.next_refresh_at)}</>}
+              </span>
             </span>
+            {data.credits.open > 0 && (
+              <Link href={pickHref} className="inline-flex items-center gap-1 rounded-full bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700">
+                <Search className="h-3.5 w-3.5" /> Pick your numbers
+              </Link>
+            )}
           </div>
         )}
 
@@ -110,14 +116,8 @@ export function NumberPackCard({ onChanged }: { onChanged: () => void }) {
           <p className="text-sm text-zinc-500">Coming soon.</p>
         ) : (
           <div className="flex flex-wrap items-end gap-2">
-            {owned === 0 && (
-              <label className="w-28">
-                <span className="mb-1 block text-xs font-medium text-zinc-600">Area code</span>
-                <Input inputMode="numeric" maxLength={3} placeholder="Any" value={areaCode} onChange={(e) => setAreaCode(e.target.value.replace(/\D/g, "").slice(0, 3))} />
-              </label>
-            )}
             <Button variant="primary" className="rounded-full!" onClick={() => setConfirm(owned + 1)} disabled={busy || owned >= 10}>
-              <Plus className="h-4 w-4" /> {owned ? "Add another pack" : `Get ${data.per_pack} fresh numbers`}
+              <Plus className="h-4 w-4" /> {owned ? "Add another pack" : `Get ${data.per_pack} number credits`}
             </Button>
             {owned > 0 && (
               <Button className="rounded-full!" onClick={() => setConfirm(owned - 1)} disabled={busy}>
@@ -146,7 +146,7 @@ export function NumberPackCard({ onChanged }: { onChanged: () => void }) {
             </div>
             <div className="px-4 py-2.5 text-zinc-600">
               {adding
-                ? `${per} numbers${areaCode ? ` in area code ${areaCode}` : ""} are added right away. The prorated amount for the rest of this billing period is charged now, then ${usd(data.amount_cents)} with your plan each month.`
+                ? `You get ${per} number credits right away: pick the exact numbers you want with "Get a local number". The prorated amount for the rest of this billing period is charged now, then ${usd(data.amount_cents)} with your plan each month.`
                 : `The ${per} newest pack numbers are released and taken out of your campaigns. Unused time is credited to your next invoice.`}
             </div>
           </dl>
@@ -155,7 +155,7 @@ export function NumberPackCard({ onChanged }: { onChanged: () => void }) {
               Cancel
             </Button>
             <Button className="rounded-full!" variant="primary" loading={busy} onClick={() => confirm != null && void apply(confirm)}>
-              {adding ? `Pay and add numbers` : "Remove pack"}
+              {adding ? `Pay and get ${per} credits` : "Remove pack"}
             </Button>
           </div>
         </div>

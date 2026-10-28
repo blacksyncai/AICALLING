@@ -1,4 +1,4 @@
-"""Fresh Number Pack: 10 numbers per pack on the plan, bought in the chosen area code, swapped monthly."""
+"""Fresh Number Pack: 10 number credits per pack on the plan; the customer picks each number; swapped monthly."""
 
 import asyncio
 import uuid
@@ -48,6 +48,8 @@ def carrier(monkeypatch):
     monkeypatch.setattr(telephony, "purchase", purchase)
     monkeypatch.setattr(telephony, "release", release)
     monkeypatch.setattr(telephony, "_livekit_numbers", noop)
+    monkeypatch.setattr(telephony, "purchase_carriers", lambda: ["twilio"])
+    monkeypatch.setattr(telephony, "purchase_carrier", lambda c=None: "twilio")
     return state
 
 
@@ -55,7 +57,13 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_buy_refresh_and_remove_a_pack(client, make_client, stripe, carrier):  # noqa: F811
+def _pick(client, c, number):
+    r = c.post("/api/phone-numbers/purchase", json={"number": number})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def test_pack_gives_credits_to_pick_numbers_then_refresh_and_remove(client, make_client, stripe, carrier):  # noqa: F811
     org, c = _account(client, make_client, "Pack Co")
     info = c.get("/api/billing/addons/phone-packs").json()
     assert info["amount_cents"] == 2500 and info["numbers"] == [] and info["packs"] == 0 and info["available"]
@@ -64,17 +72,25 @@ def test_buy_refresh_and_remove_a_pack(client, make_client, stripe, carrier):  #
     _subscribe(client, c, stripe, "solo")
     assert c.post("/api/billing/addons/phone-packs", json={"quantity": 1}).status_code == 400  # needs confirm
 
-    out = c.post("/api/billing/addons/phone-packs", json={"quantity": 1, "area_code": "512", "confirm": True}).json()
-    assert out["packs"] == 1 and len(out["numbers"]) == 10
-    assert all(n["number"].startswith("+1512") and n["pack_refresh_at"] for n in out["numbers"])
+    out = c.post("/api/billing/addons/phone-packs", json={"quantity": 1, "confirm": True}).json()
+    assert out["packs"] == 1 and out["numbers"] == [] and carrier["bought"] == []  # nothing bought for them
+    assert out["credits"] == {"total": 10, "used": 0, "open": 10}
     assert stripe.slot_calls[-1] == (1, "error_if_incomplete")  # charged now, refused if the card fails
-    # Pack numbers never count toward the plan's included numbers or the $3.50 add-on.
-    nums = c.get("/api/phone-numbers").json()
-    assert nums["pricing"]["active"] == 0
 
-    # A campaign rotating through two pack numbers and an agent calling from one.
+    # The plan's included numbers are used first, then pack credits (never the $3.50 add-on).
+    included = c.get("/api/phone-numbers").json()["pricing"]["included"]
+    for i in range(included):
+        assert "used_pack_credit" not in _pick(client, c, f"+1415777{i:04d}")
+    old = _pick(client, c, "+15125550001")
+    other = _pick(client, c, "+15125550002")
+    assert old["used_pack_credit"] and old["pack_refresh_at"] and other["used_pack_credit"]
+    nums = c.get("/api/phone-numbers").json()
+    assert nums["pricing"]["pack_credits"] == 8 and nums["pricing"]["billable"] == 0
+    assert c.get("/api/billing/addons/phone-packs").json()["credits"]["open"] == 8
+
+    # A campaign rotating through both pack numbers and an agent calling from one.
+    old, other = old["number"], other["number"]
     agent = c.post("/api/agents/", json={"template": "sales_sdr"}).json()
-    old, other = out["numbers"][0]["number"], out["numbers"][1]["number"]
     camp = c.post("/api/campaigns/", json={"name": "Rotate", "agent_id": agent["id"]}).json()
     from app.database import AsyncSessionLocal
     from app.models.agent import Agent
@@ -100,7 +116,7 @@ def test_buy_refresh_and_remove_a_pack(client, make_client, stripe, carrier):  #
     assert _run(refresh()) == 1
     assert carrier["released"] == [old]
     new = carrier["bought"][-1]
-    assert new.startswith("+1512") and new != old
+    assert new.startswith("+1512") and new != old  # same area code they picked
 
     async def check():
         async with AsyncSessionLocal() as db:
@@ -110,24 +126,20 @@ def test_buy_refresh_and_remove_a_pack(client, make_client, stripe, carrier):  #
 
     pool, caller = _run(check())
     assert pool == [new, other] and caller == new  # the fresh number took the old one's place
-    assert len(c.get("/api/billing/addons/phone-packs").json()["numbers"]) == 10
+    assert c.get("/api/billing/addons/phone-packs").json()["credits"]["open"] == 8
 
-    # Removing the pack releases its numbers and takes them out of rotations.
+    # Removing the pack releases its numbers and takes them out of rotations; plan numbers stay.
     out = c.post("/api/billing/addons/phone-packs", json={"quantity": 0, "confirm": True}).json()
     assert out["packs"] == 0 and out["numbers"] == []
     assert stripe.slot_calls[-1] == (0, None)
-    assert len(carrier["released"]) == 11
+    assert sorted(carrier["released"]) == sorted([old, new, other])
     assert _run(check())[0] == []
 
 
-def test_short_area_code_fills_from_elsewhere_and_card_failure_buys_nothing(client, make_client, stripe, carrier):  # noqa: F811
+def test_card_failure_gives_no_credits(client, make_client, stripe, carrier):  # noqa: F811
     org, c = _account(client, make_client, "Pack Short Co")
     _subscribe(client, c, stripe, "solo")
     stripe.charge_status = "failed"
-    r = c.post("/api/billing/addons/phone-packs", json={"quantity": 1, "area_code": "907", "confirm": True})
-    assert r.status_code == 402 and carrier["bought"] == []
-    stripe.charge_status = "succeeded"
-    carrier["short"].add("907")
-    out = c.post("/api/billing/addons/phone-packs", json={"quantity": 1, "area_code": "907", "confirm": True}).json()
-    assert len(out["numbers"]) == 10
-    assert sum(n["number"].startswith("+1907") for n in out["numbers"]) == 1  # the rest came from other area codes
+    r = c.post("/api/billing/addons/phone-packs", json={"quantity": 1, "confirm": True})
+    assert r.status_code == 402
+    assert c.get("/api/billing/addons/phone-packs").json()["credits"]["open"] == 0

@@ -103,6 +103,8 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
     registration_status = await summaries(db, numbers)
     cfg = await settings_store.get_all(db)
     pricing = await phone_summary(db, ctx.org.id)
+    from app.services import phone_pack
+    pricing["pack_credits"] = (await phone_pack.credits(db, ctx.org.id))["open"]
     from app.services import entitlements
 
     pricing["included_on_plan"] = await entitlements.included_numbers(db, ctx.org)
@@ -112,7 +114,8 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
         "numbers": [{**telephony.number_to_dict(n), "registration": registration_status.get(n.id),
                      "health": health.get(n.number)} for n in numbers],
         "requests": [_request_to_dict(r) for r in requests],
-        "self_serve": bool(cfg["self_serve_numbers"]) and bool(telephony.purchase_carriers()),
+        # Fresh Number Pack credits always let the customer pick their own numbers.
+        "self_serve": (bool(cfg["self_serve_numbers"]) or pricing["pack_credits"] > 0) and bool(telephony.purchase_carriers()),
         "purchase_carriers": telephony.purchase_carriers(),
         "recordings_enabled": settings.recordings_ready,
     }
@@ -173,14 +176,18 @@ async def request_number(body: NumberRequestIn, ctx: ManagerDep, db: DbDep):
     return _request_to_dict(req)
 
 
-async def _require_self_serve(db) -> None:
-    if not telephony.purchase_carriers() or not await settings_store.get(db, "self_serve_numbers"):
+async def _require_self_serve(db, org_id=None) -> None:
+    from app.services import phone_pack
+
+    allowed = await settings_store.get(db, "self_serve_numbers") or (
+        org_id is not None and (await phone_pack.credits(db, org_id))["open"] > 0)
+    if not telephony.purchase_carriers() or not allowed:
         raise HTTPException(status_code=403, detail="Request a number and we'll set it up for you.")
 
 
 @router.get("/available")
 async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = "", carrier: Literal["signalwire", "twilio", "plivo"] | None = None):
-    await _require_self_serve(db)
+    await _require_self_serve(db, ctx.org.id)
     try:
         return {"numbers": await telephony.search_available(area_code.strip(), carrier=carrier)}
     except (telephony.TelephonyError, ValueError) as exc:
@@ -189,7 +196,7 @@ async def available_numbers(ctx: ManagerDep, db: DbDep, area_code: str = "", car
 
 @router.post("/purchase", status_code=201)
 async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
-    await _require_self_serve(db)
+    await _require_self_serve(db, ctx.org.id)
     from app.services.billing.subscriptions import phone_summary
 
     try:
@@ -209,8 +216,19 @@ async def purchase_number(body: PurchaseIn, ctx: ManagerDep, db: DbDep):
     from app.services.billing import purchases
     from app.services.billing.subscriptions import charge_for_new_number
 
+    from app.services import phone_pack
+
     summary = await phone_summary(db, ctx.org.id)
     extra = summary["active"] >= summary["included"]
+    if extra and (await phone_pack.credits(db, ctx.org.id))["open"] > 0:
+        # A Fresh Number Pack credit covers it: no extra charge, and it's swapped for a fresh number monthly.
+        try:
+            row = await telephony.purchase(db, ctx.org.id, body.number, body.label or phone_pack.LABEL, carrier=carrier)
+        except (telephony.TelephonyError, ValueError) as exc:
+            raise _err(exc)
+        phone_pack.mark(row)
+        await db.commit()
+        return {**telephony.number_to_dict(row), "used_pack_credit": True}
     if extra and not body.confirm_charge:
         raise HTTPException(status_code=409, detail={
             "code": "confirm_charge", "unit_cents": summary["unit_cents"], "included": summary["included"],
