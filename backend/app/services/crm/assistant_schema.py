@@ -10,7 +10,7 @@ class StageInput(BaseModel):
 
 class CommandSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    action: Literal["list_contacts", "find_contact", "create_contact", "list_pipelines", "create_pipeline", "add_stages", "move_stage", "field_catalog", "contact_fields", "add_note", "mark_dnc", "create_task", "create_pond", "create_stage", "list_sources", "set_contact_source"]
+    action: Literal["list_contacts", "find_contact", "create_contact", "list_pipelines", "create_pipeline", "add_stages", "move_stage", "field_catalog", "contact_fields", "add_note", "mark_dnc", "create_task", "create_pond", "create_stage", "list_sources", "set_contact_source", "list_deals"]
     name: str = Field(default="", max_length=120)
     phone: str = Field(default="", max_length=40)
     email: str = Field(default="", max_length=254)
@@ -29,7 +29,7 @@ class CommandSpec(BaseModel):
         needed = {"create_contact": ["name"], "create_pipeline": ["name"],
                   "add_stages": ["pipeline_id", "stages"], "move_stage": ["external_id", "pipeline_id", "stage_id"],
                   "add_note": ["external_id", "text"], "mark_dnc": ["external_id"],
-                  "contact_fields": ["external_id"], "create_task": ["external_id", "name", "due_date"], "create_pond": ["name"], "create_stage": ["name"], "set_contact_source": ["external_id", "name"]}
+                  "contact_fields": ["external_id"], "create_task": ["external_id", "name", "due_date"], "create_pond": ["name"], "create_stage": ["name"], "set_contact_source": ["external_id", "name"], "list_deals": ["pipeline_id"]}
         for key in needed.get(self.action, []):
             if not getattr(self, key): raise ValueError(f"{self.action} needs {key}")
         if self.action in ("find_contact", "create_contact") and not (self.phone or self.email):
@@ -46,10 +46,11 @@ class CommandSpec(BaseModel):
                    "move_stage": {"external_id", "pipeline_id", "stage_id"}, "field_catalog": set(),
                    "contact_fields": {"external_id"}, "add_note": {"external_id", "text", "name"},
                    "mark_dnc": {"external_id"}, "create_task": {"external_id", "name", "due_date"},
-                   "create_pond": {"name"}, "create_stage": {"name"}, "list_sources": set(), "set_contact_source": {"external_id", "name"}}[self.action]
+                   "create_pond": {"name"}, "create_stage": {"name"}, "list_sources": set(), "set_contact_source": {"external_id", "name"},
+                   "list_deals": {"pipeline_id", "stage_id", "limit"}}[self.action]
         for key in self.model_fields_set - {"action"} - allowed:
             default = type(self).model_fields[key].get_default(call_default_factory=True)
             if getattr(self, key) != default: raise ValueError(f"{self.action} does not accept {key}")
         return self
 
-READS = {"list_contacts", "find_contact", "list_pipelines", "field_catalog", "contact_fields", "list_sources"}
+READS = {"list_contacts", "find_contact", "list_pipelines", "field_catalog", "contact_fields", "list_sources", "list_deals"}

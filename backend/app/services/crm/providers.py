@@ -882,19 +882,50 @@ class FollowUpBoss(Provider):
                 return []
             return [{"value": str(r["id"]) if resource == "ponds" else str(r.get(key) or ""), "label": str(r.get(key) or "")}
                     for r in rows if r.get(key)]
-        return {"pond": await names("ponds"), "source": await names("sources"), "stage": await names("stages")}
+        deal = []
+        try:
+            for pipe in await fub_collection(http, "pipelines"):
+                for st in pipe.get("stages") or []:
+                    if pipe.get("id") and st.get("id"):
+                        deal.append({"value": f"{pipe['id']}:{st['id']}",
+                                     "label": f"{pipe.get('name') or pipe['id']} · {st.get('name') or st['id']}"})
+        except Exception:
+            pass
+        return {"pond": await names("ponds"), "source": await names("sources"), "stage": await names("stages"), "deal": deal}
+
+    async def _deal_people(self, http, value: str, cap: int) -> list[dict]:
+        """The people on the active deals in one deal stage ("<pipelineId>:<stageId>")."""
+        import asyncio
+        from app.services.crm import fub_deals
+
+        pipeline_id, _, stage_id = value.partition(":")
+        if not (pipeline_id.isdigit() and stage_id.isdigit()):
+            raise CrmError("Choose a deal stage from the list.")
+        ids = fub_deals.people_ids(await fub_deals.in_pipeline(http, pipeline_id, stage_id, cap=cap))[:cap]
+        gate = asyncio.Semaphore(5)
+
+        async def one(pid):
+            async with gate:
+                try:
+                    return await self._person(http, pid, self._FIELDS)
+                except CrmError:
+                    return None  # deleted or not visible to this key
+        return [p for p in await asyncio.gather(*(one(pid) for pid in ids)) if p and p.get("id")]
 
     async def segment_signals(self, http, config, kind: str, value: str, cap: int = 5000):
-        """Everyone in the pond / lead source / stage (up to cap). The filter is sent to FUB and also checked
+        """Everyone in the pond / lead source / stage / deal stage (up to cap). The filter is sent to FUB and also checked
         here, so the list is right even if FUB ignores it (just slower)."""
         from app.services.crm.radar import Signals
 
-        field = {"pond": "assignedPondId", "source": "source", "stage": "stage"}[kind]
-        people = await self._pages(http, "/v1/people", "people", cap,
-                                   {"sort": "-created", "fields": self._FIELDS, self._SEGMENT_PARAM[kind]: value})
+        if kind == "deal":
+            people, field = await self._deal_people(http, value, min(cap, 1000)), ""
+        else:
+            field = {"pond": "assignedPondId", "source": "source", "stage": "stage"}[kind]
+            people = await self._pages(http, "/v1/people", "people", cap,
+                                       {"sort": "-created", "fields": self._FIELDS, self._SEGMENT_PARAM[kind]: value})
         out = []
         for p in people:
-            if str(p.get(field) or "") != str(value):
+            if field and str(p.get(field) or "") != str(value):
                 continue
             phones = [x for x in p.get("phones") or [] if x.get("value")]
             if not phones:

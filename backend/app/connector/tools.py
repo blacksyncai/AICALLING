@@ -1199,8 +1199,8 @@ async def radar_list_segments(s: Session, args: dict) -> dict:
 
 
 @tool("radar_open_segment", "Open a CRM list in Radar",
-      "Pulls everyone in one pond, lead source or stage into a Radar play you can launch.",
-      {"crm": CRM, "kind": {"type": "string", "enum": ["pond", "source", "stage"]},
+      "Pulls everyone in one pond, lead source, stage or deal stage (Follow Up Boss deals) into a Radar play you can launch.",
+      {"crm": CRM, "kind": {"type": "string", "enum": ["pond", "source", "stage", "deal"]},
        "value": {"type": "string", "description": "The segment's value from radar_list_segments."}, "label": STR},
       ["crm", "kind", "value"], read_only=False, open_world=True)
 async def radar_open_segment(s: Session, args: dict) -> dict:

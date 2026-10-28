@@ -30,6 +30,7 @@ export const TOOL_NAMES: Record<string, string> = {
   mark_dnc: "Mark a contact do not call",
   create_task: "Create a follow-up task",
   list_sources: "View lead sources",
+  list_deals: "View deals on a deal board",
   set_contact_source:
     "Set contact lead source (preserves existing attribution)",
   create_pond: "Create a Follow Up Boss pond",
@@ -101,6 +102,37 @@ function Result({ result }: { result: Record<string, unknown> }) {
         </p>
       </div>
     );
+  const deals = result.deals as
+    | { id: string; name: string; stage: string; people: { id: string; name: string }[] }[]
+    | undefined;
+  if (deals) {
+    const pipe = result.pipeline as { name?: string } | undefined;
+    const byStage = (result.by_stage ?? {}) as Record<string, number>;
+    return (
+      <div className="mt-4 rounded-xl border border-zinc-200 p-4">
+        <h4 className="text-sm font-semibold">
+          {pipe?.name ?? "Deal board"} · {String(result.total_active_deals ?? deals.length)} active deals
+        </h4>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {Object.entries(byStage).map(([stage, n]) => (
+            <Badge key={stage} tone="gray">{stage}: {n}</Badge>
+          ))}
+        </div>
+        <ul className="mt-3 divide-y divide-zinc-100 text-xs">
+          {deals.map((d) => (
+            <li key={d.id} className="flex justify-between gap-3 py-2">
+              <span className="font-medium text-zinc-800">
+                {d.people.map((p) => p.name).filter(Boolean).join(", ") || d.name}
+              </span>
+              <span className="text-zinc-500">{d.stage}</span>
+            </li>
+          ))}
+        </ul>
+        {!deals.length && <p className="mt-2 text-xs text-zinc-500">No active deals here.</p>}
+        <p className="mt-3 text-xs text-zinc-500">{String(result.scope ?? "")}</p>
+      </div>
+    );
+  }
   const pipes = (
     Array.isArray(result.pipelines)
       ? result.pipelines

@@ -361,7 +361,7 @@ Use list/find tools first when the person/pipeline/stage is unclear. Do not mix 
 For Follow Up Boss, Close, HubSpot and Pipedrive create_pipeline accepts stages [{label,kind:active|won|lost}]. Preserve the exact stage names the user supplied; business stage names default to active unless they explicitly describe a won/lost outcome. Do not ask the user to confirm those names again. Follow Up Boss stores both won/lost as closedStage=true, not separate outcome types.
 For a pipeline request, emit a create_pipeline command as soon as its name and stages are known from the full conversation. For add_stages in Follow Up Boss, use a DEAL pipeline ID from resources.deal_pipelines, not the person-stage collection. Creating a pipeline does not route people into its deals.
 Do not ask users to type yes or confirm in chat. The UI opens a confirmation dialog with Confirm and continue and Cancel. Emit the typed command instead of promising to draft it later or returning only a resource suggestion. Missing essential details require a focused question, not a confirmation loop.
-For add_note use the user's actual text, not a fictional conversation summary. find_contact needs an exact email/phone. list_contacts is a bounded page, not a full-CRM search.
+For add_note use the user's actual text, not a fictional conversation summary. find_contact needs an exact email/phone. list_contacts is a bounded page, not a full-CRM search. list_deals (Follow Up Boss) reads the active deals on one deal pipeline from resources.deal_pipelines, optionally one stage_id, with the people on each deal; use it whenever the user asks who or how many are in a deal board or deal stage. Read tools run right away and you will see their results, so propose them directly instead of saying you cannot see deals.
 Commands are proposed only, never completed. Supported tools vary by CRM and API permissions. Do not claim arbitrary bulk actions, deletion, email sending, dialing, or account administration.
 Follow Up Boss terminology: the API calls a deal board a pipeline; users see Deals / Deal Tracking. It tracks opportunities, not contact verification groups. Lead Flow is incoming-lead assignment/routing, Smart Lists are saved contact filters, ponds group unassigned/shared contacts, and person stages describe a contact lifecycle. Do not confuse or rename one object into another. When a matching FUB routing rule runs, BlackSync also sends the contact’s stored CSV columns using the existing field catalog and per-agent mapping choices. Mailing addresses and matching custom fields fill empty FUB values; existing conflicting values are preserved and the full source snapshot is retained in contact background. Creation of missing custom-field definitions is an explicit integration setting requiring FUB owner permissions. For already completed routing, direct the user to Radar Activity → Sync CSV data; do not claim that this has run merely because they asked in chat. For grouping verified contacts, explain the pond/tag/Smart List approach; a Deals board is appropriate only when the user wants deal tracking. Native Lead Flow and Smart List configuration tools are not implemented; do not offer create buttons/actions for them. When the user cannot see an object, propose read-only inspection rather than another creation.
 You also draft BlackSync Radar automation rules. Platform execution is separate from generating a proposal. Never dial calls, expose secrets or claim unconfirmed changes are complete.
@@ -426,6 +426,22 @@ Default to drafting verification/name_confirmed if the customer explicitly asks 
             spec = CommandSpec.model_validate(item)
             row = await assistant.prepare(db, conn, ctx.user.id, spec)
             proposed_commands.append(row)
+        reads = [row for row in proposed_commands if row.spec["action"] in assistant.READS]
+        if reads and len(reads) == len(proposed_commands):
+            # Lookups change nothing, so they run now and the assistant answers from what the CRM returned.
+            results = []
+            for row in reads:
+                await assistant.execute(db, row, conn, ctx.org)
+                results.append({"action": row.spec["action"], "status": row.status, "error": row.error,
+                                "result": json.dumps(row.result)[:12000] if row.result else None})
+            answer = await _chat({"model": settings.analysis_model, "temperature": 0,
+                "response_format": {"type": "json_object"}, "max_tokens": 900,
+                "messages": [{"role": "system", "content": "You are BlackSync's CRM assistant. Answer the user's question in a short, plain message using only these CRM read results. Name people and counts exactly as returned; if a read failed, say so. Return JSON {\"message\": \"...\"}."},
+                             {"role": "user", "content": json.dumps({"question": body.message, "results": results})}]})
+            message = str(json.loads(answer["choices"][0]["message"]["content"]).get("message") or "")[:1800]
+            return {"commands": [assistant.command_out(row, body.provider) for row in reads],
+                    "message": message or "I read the CRM; see the results below.", "drafts": drafts,
+                    "resource_requests": [], "needs_source": False, "writes_performed": False}
         requests = []
         for item in generated.get("resource_requests", [])[:4]:
             valid = ResourceIn.model_validate(item)

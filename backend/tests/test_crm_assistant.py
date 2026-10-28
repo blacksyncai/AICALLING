@@ -187,3 +187,16 @@ def test_pipeline_preview_keeps_explicit_default_stage_kinds(monkeypatch):
     spec=CommandSpec(action='create_pipeline',name='Test',stages=[{'label':'New'},{'label':'Won','kind':'won'}])
     row=asyncio.run(assistant.prepare(Db(),conn,uuid.uuid4(),spec))
     assert row.spec['stages']==[{'label':'New','kind':'active'},{'label':'Won','kind':'won'}]
+
+
+def test_read_commands_run_right_away_and_get_answered(client,crm,monkeypatch):
+    from app.services import llm
+    replies=[{'message':'Checking.','commands':[{'action':'list_sources'}]},{'message':'You have these lead sources.'}]
+    async def fake(*args,**kwargs):
+        return {'choices':[{'message':{'content':json.dumps(replies.pop(0))}}]}
+    monkeypatch.setattr(llm,'_chat',fake)
+    result=client.post('/api/radar/automations/draft',json={'provider':'followupboss','message':'What lead sources do I have?'})
+    assert result.status_code==200,result.text
+    body=result.json()
+    assert body['message']=='You have these lead sources.'
+    assert body['commands'][0]['status']=='succeeded' and not body['writes_performed']

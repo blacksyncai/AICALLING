@@ -35,3 +35,56 @@ async def route(http, person_id, pipeline_id, stage_id, name):
     if str(check.get('stageId')) != stage_id or str(check.get('pipelineId')) != pipeline_id:
         raise CrmError('The CRM did not confirm the requested deal stage; review before retrying.')
     return {'id': str(check['id']), 'pipeline_id': pipeline_id, 'stage_id': stage_id}
+
+
+async def in_pipeline(http, pipeline_id, stage_id="", cap=2000):
+    """Active deals on one board (optionally one stage), newest first. Filters are also checked here."""
+    from app.services.crm.providers import _fub_next
+    if not str(pipeline_id).isascii() or not str(pipeline_id).isdigit():
+        raise CrmError('Choose a numeric Follow Up Boss deal-pipeline ID.')
+    params, out, req = {'pipelineId': int(pipeline_id), 'limit': 100}, [], None
+    if stage_id:
+        params['stageId'] = int(stage_id)
+    req = ('/v1/deals', params)
+    while req and len(out) < cap:
+        page = await http.request('GET', req[0], params=req[1])
+        rows = page.get('deals') or []
+        out += [d for d in rows if str(d.get('pipelineId')) == str(pipeline_id)
+                and (not stage_id or str(d.get('stageId')) == str(stage_id))
+                and str(d.get('status') or 'Active').casefold() == 'active']
+        req = _fub_next(page) if len(rows) >= 100 else None
+    return out[:cap]
+
+
+def people_ids(deals):
+    """Person IDs on these deals, in order, once each."""
+    seen, out = set(), []
+    for d in deals:
+        for p in d.get('people') or []:
+            pid = str(p.get('id') or '') if isinstance(p, dict) else str(p)
+            if pid.isdigit() and pid not in seen:
+                seen.add(pid); out.append(pid)
+        for pid in map(str, d.get('peopleIds') or []):
+            if pid.isdigit() and pid not in seen:
+                seen.add(pid); out.append(pid)
+    return out
+
+
+async def summary(http, pipeline_id, stage_id="", limit=25):
+    """What the assistant reads: counts per stage and the first deals with their people."""
+    from app.services.crm.fub_pipelines import get_pipeline
+    pipe = await get_pipeline(http, pipeline_id)
+    names = {str(s.get('id')): s.get('name') or str(s.get('id')) for s in pipe.get('stages') or []}
+    if stage_id and stage_id not in names:
+        raise CrmError('Choose a stage from this deal pipeline.')
+    deals = await in_pipeline(http, pipeline_id, stage_id)
+    counts = {names[k]: 0 for k in names if not stage_id or k == stage_id}
+    for d in deals:
+        label = names.get(str(d.get('stageId')), d.get('stageName') or str(d.get('stageId')))
+        counts[label] = counts.get(label, 0) + 1
+    rows = [{'id': str(d.get('id')), 'name': d.get('name') or '', 'stage': names.get(str(d.get('stageId')), d.get('stageName') or ''),
+             'people': [{'id': str(p.get('id')), 'name': p.get('name') or ''} for p in d.get('people') or [] if isinstance(p, dict)],
+             'updated': d.get('updated') or d.get('created') or ''} for d in deals[:limit]]
+    return {'pipeline': {'id': str(pipe['id']), 'name': pipe.get('name') or ''}, 'total_active_deals': len(deals),
+            'by_stage': counts, 'deals': rows, 'shown': len(rows),
+            'scope': 'Active deals only; archived and deleted deals are not counted.'}

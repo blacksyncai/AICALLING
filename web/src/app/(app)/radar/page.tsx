@@ -169,8 +169,8 @@ const DEPTH_LABEL: Record<Depth, string> = {
   old: "old-lead dig",
   segment: "opened",
 };
-type SegKind = "pond" | "source" | "stage";
-const SEG_LABEL: Record<SegKind, string> = { pond: "Pond", source: "Lead source", stage: "Stage" };
+type SegKind = "pond" | "source" | "stage" | "deal";
+const SEG_LABEL: Record<SegKind, string> = { pond: "Pond", source: "Lead source", stage: "Stage", deal: "Deal stage" };
 
 const ICON: Record<string, typeof Flame> = {
   hot: Flame,
@@ -277,7 +277,7 @@ export default function RadarPage() {
             <Button
               disabled={scanning}
               onClick={() => setListOpen((v) => !v)}
-              title="Everyone in one pond, lead source or stage from your CRM"
+              title="Everyone in one pond, lead source, stage or deal stage from your CRM"
             >
               <Layers className="h-4 w-4" /> Open a list
             </Button>
@@ -451,7 +451,7 @@ export default function RadarPage() {
             <div className="min-w-[150px]">
               <div className="mb-1 text-xs font-medium text-zinc-600">List type</div>
               <Select value={segKind} onChange={(e) => { setSegKind(e.target.value as SegKind); setSegValue(""); }}>
-                {(Object.keys(SEG_LABEL) as SegKind[]).map((k) => (
+                {(Object.keys(SEG_LABEL) as SegKind[]).filter((k) => k !== "deal" || segs?.deal).map((k) => (
                   <option key={k} value={k}>{SEG_LABEL[k]}</option>
                 ))}
               </Select>

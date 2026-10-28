@@ -19,7 +19,7 @@ def capabilities(provider):
     if p.can_map_fields: tools += ["field_catalog", "contact_fields"]
     if provider in NOTES: tools += ["add_note"]
     if type(p).mark_dnc is not Provider.mark_dnc: tools += ["mark_dnc"]
-    if provider == "followupboss": tools += ["create_task", "create_pond", "create_stage", "create_pipeline", "add_stages", "list_sources", "set_contact_source"]
+    if provider == "followupboss": tools += ["create_task", "create_pond", "create_stage", "create_pipeline", "add_stages", "list_sources", "set_contact_source", "list_deals"]
     return [{"action": t, "writes": t not in READS} for t in tools]
 
 
@@ -104,6 +104,9 @@ async def perform(db, conn, spec):
     if action == "list_sources":
         from app.services.crm.automation_resources import fub_collection
         return {"sources": await fub_collection(http, "sources"), "scope": "Existing lead sources; native Lead Flow configuration is separate."}
+    if action == "list_deals":
+        from app.services.crm.fub_deals import summary
+        return await summary(http, spec.pipeline_id, spec.stage_id, spec.limit)
     if action == "set_contact_source":
         person = await http.request("GET", f"/v1/people/{int(spec.external_id)}")
         if person.get("source") == spec.name:
