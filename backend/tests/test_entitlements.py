@@ -9,12 +9,15 @@ import pytest
 from app.services.billing import catalog, stripe_api
 from tests.test_billing import _account, _hook, stripe  # noqa: F401  (fixture)
 from tests.test_phone_numbers import twilio  # noqa: F401  (fixture)
+from app.services.billing.terms import TERMS_VERSION
+
+ACCEPT_TERMS = {"accept_terms": True, "terms_version": TERMS_VERSION}
 
 
 def _subscribe(client, c, stripe, plan_key, sub_id=None, extra_items=(), metadata=None, price_id=None):
     """Start a plan the way Checkout + webhooks do."""
     sub_id = sub_id or f"sub_{uuid.uuid4().hex[:8]}"
-    assert c.post(f"/api/billing/plans/{plan_key}/checkout").status_code == 200
+    assert c.post(f"/api/billing/plans/{plan_key}/checkout", json=ACCEPT_TERMS).status_code == 200
     sess = stripe.sessions[-1]
     plan = catalog.PLANS[plan_key]
     price = stripe.prices[plan["lookup_key"]]
@@ -55,7 +58,7 @@ def test_catalog_has_four_tiers_and_managed_is_sales_led(client, make_client, st
     assert plans["teams"]["recommended"] and plans["managed"]["self_serve"] is False
     assert cat["agent_addon"]["amount_cents"] == 1900 and cat["links"]["sales_booking_url"].startswith("https://")
     # No self-serve checkout or plan change into Managed.
-    r = c.post("/api/billing/plans/managed/checkout")
+    r = c.post("/api/billing/plans/managed/checkout", json=ACCEPT_TERMS)
     assert r.status_code == 409 and "sales" in r.json()["detail"]
     assert not any("plan_managed" in str(s) for s in stripe.sessions)
     # The public pricing payload has no Stripe ids.
@@ -164,7 +167,7 @@ def test_downgrade_preview_lists_what_goes_over(client, make_client, stripe):
 
 def test_legacy_teams_price_keeps_teams_entitlements(client, make_client, stripe):
     _, c = _account(client, make_client, "Legacy Co")
-    c.post("/api/billing/plans/solo/checkout")
+    c.post("/api/billing/plans/solo/checkout", json=ACCEPT_TERMS)
     sess = stripe.sessions[-1]
     old = stripe.prices["plan_teams_monthly"]
     stripe.subs["sub_old"] = {"id": "sub_old", "customer": sess["customer"], "status": "active", "metadata": {},
@@ -212,7 +215,7 @@ def test_admin_managed_link_activates_managed_and_flags_onboarding(client, make_
 def test_admin_overrides_are_audited_and_reversible(client, make_client, stripe):
     org, c = _account(client, make_client, "Override Co")
     _subscribe(client, c, stripe, "solo")
-    assert c.post("/api/billing/plans/solo/checkout").status_code == 409
+    assert c.post("/api/billing/plans/solo/checkout", json=ACCEPT_TERMS).status_code == 409
     r = client.post(f"/api/admin/billing/orgs/{org['id']}/overrides", json={"key": "crm", "value": 1, "reason": "Pilot"})
     assert r.status_code == 201
     oid = r.json()["id"]

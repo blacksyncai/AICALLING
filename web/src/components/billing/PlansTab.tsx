@@ -9,6 +9,8 @@ import { Button, Modal, Notice, Spinner } from "@/components/ui";
 import { PricingHeading } from "@/components/ui/pricing";
 import { fetcher, post } from "@/lib/api";
 import { CountryPopup } from "./CountryPopup";
+import { SubscribeTerms } from "./SubscribeTerms";
+import { TERMS_VERSION } from "@/lib/terms";
 import { type CheckoutResult, startCheckout } from "@/lib/helcim";
 import { cn } from "@/lib/utils";
 import { PlanCards, type PlanAction } from "./PlanCards";
@@ -79,6 +81,7 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
   const [busy, setBusy] = useState<string | null>(null);
   const { data: countryData } = useSWR<{ country: string }>("/api/billing/country", fetcher);
   const [askCountry, setAskCountry] = useState<Plan | null>(null); // plan waiting on the pop-up
+  const [askTerms, setAskTerms] = useState<Plan | null>(null); // plan waiting on the Terms agreement
   const [preview, setPreview] = useState<{ plan: Plan; data: Preview } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [slots, setSlots] = useState<SlotPreview | null>(null);
@@ -151,17 +154,32 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
           setBusy(null);
           return;
         }
-        const res = await startCheckout(await post<CheckoutResult>(`/api/billing/plans/${plan.key}/checkout`));
-        if (res === "redirect") return; // stays busy while the browser leaves for checkout
-        if (res) {
-          await Promise.all([mutate(), mutateEnt()]);
-          refresh();
-          toast(`You're now on ${plan.name}`);
-        }
+        // A first subscription: show the price, terms and the agreement before any checkout starts.
+        setAskTerms(plan);
         setBusy(null);
         return;
       }
       setPreview({ plan, data: await post<Preview>(`/api/billing/plans/${plan.key}/preview`) });
+      setBusy(null);
+    } catch (e) {
+      toast((e as Error).message, "error");
+      setBusy(null);
+    }
+  }
+
+  async function subscribe(plan: Plan) {
+    setBusy(plan.key);
+    try {
+      const result = await post<CheckoutResult>(`/api/billing/plans/${plan.key}/checkout`, { accept_terms: true, terms_version: TERMS_VERSION });
+      if (!("url" in result)) setAskTerms(null); // Helcim opens its own payment window over the page
+      const res = await startCheckout(result);
+      if (res === "redirect") return; // stays busy while the browser leaves for checkout
+      setAskTerms(null);
+      if (res) {
+        await Promise.all([mutate(), mutateEnt()]);
+        refresh();
+        toast(`You're now on ${plan.name}`);
+      }
       setBusy(null);
     } catch (e) {
       toast((e as Error).message, "error");
@@ -403,6 +421,12 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
           </div>
         )}
       </Modal>
+      <SubscribeTerms
+        plan={askTerms}
+        busy={!!askTerms && busy === askTerms.key}
+        onClose={() => setAskTerms(null)}
+        onConfirm={() => askTerms && void subscribe(askTerms)}
+      />
       <CountryPopup
         initial={countryData?.country}
         open={askCountry !== null}

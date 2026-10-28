@@ -317,7 +317,8 @@ async def checkout_lookup_funds(db: AsyncSession, org: Organization, user_id: uu
                            return_path="/billing")
 
 
-async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID, plan_key: str) -> str | dict:
+async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID, plan_key: str,
+                        terms_acceptance: tuple[str, str] | None = None) -> str | dict:
     from app.models.billing import BillingSubscription
 
     if plan_key not in catalog.PLANS:
@@ -337,6 +338,8 @@ async def checkout_plan(db: AsyncSession, org: Organization, user_id: uuid.UUID,
         raise BillingError(str(exc), 409)
     cid = await ensure_customer(db, org)
     meta = {"org_id": str(org.id), "purchase_type": "plan", "plan": plan_key}
+    if terms_acceptance:  # which recorded Terms acceptance this subscription was started under
+        meta.update(terms_acceptance_id=terms_acceptance[0], terms_version=terms_acceptance[1])
     session = await stripe_api.create_checkout_session(
         mode="subscription", customer=cid, line_items=[{"price": price, "quantity": 1}],
         metadata=meta, client_reference_id=str(org.id), subscription_data={"metadata": meta},

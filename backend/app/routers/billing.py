@@ -221,10 +221,77 @@ class PlanChange(BaseModel):
     confirm: bool = False
 
 
+class PlanCheckoutIn(BaseModel):
+    # The user ticked "I agree to the Terms of Service and authorize recurring subscription charges…".
+    accept_terms: bool = False
+    terms_version: str = Field(default="", max_length=32)
+
+
 @router.post("/plans/{plan_key}/checkout")
-async def plan_checkout(plan_key: str, ctx: ManagerDep, db: DbDep):
-    url = await _guard(purchases.checkout_plan(db, ctx.org, ctx.user.id, plan_key))
+async def plan_checkout(plan_key: str, request: Request, ctx: ManagerDep, db: DbDep, body: PlanCheckoutIn | None = None):
+    """Start a first subscription. The Terms of Service must be accepted here, on the server, before any
+    checkout session exists; the acceptance is recorded with the plan and billing interval."""
+    from app.services.billing import terms
+
+    body = body or PlanCheckoutIn()
+    if not body.accept_terms:
+        raise HTTPException(status_code=400, detail={
+            "code": "terms_required", "message": "Please agree to the Terms of Service to continue."})
+    if body.terms_version != terms.TERMS_VERSION:
+        raise HTTPException(status_code=409, detail={
+            "code": "terms_updated", "message": "Our Terms of Service were just updated. Reload the page and review them."})
+    plan = catalog.PLANS.get(plan_key)
+    sub = await db.get(BillingSubscription, ctx.org.id)
+    if not plan or plan_key == "managed" or not catalog.self_serve(plan_key) or (
+            sub and sub.status in ("active", "trialing", "past_due", "incomplete")):
+        # Not a plan this account can start: the usual refusal, and no acceptance is recorded.
+        return await _guard(purchases.checkout_plan(db, ctx.org, ctx.user.id, plan_key))
+    accepted = await terms.record(db, org_id=ctx.org.id, user_id=ctx.user.id, plan_key=plan_key,
+                                  interval=plan.get("interval") or "month", amount_cents=plan.get("amount_cents"),
+                                  ip=request.client.host if request.client else "",
+                                  user_agent=request.headers.get("user-agent", ""))
+    await db.commit()
+    log.info("terms_accepted", org_id=str(ctx.org.id), user_id=str(ctx.user.id), version=terms.TERMS_VERSION,
+             plan=plan_key, acceptance_id=str(accepted.id))
+    url = await _guard(purchases.checkout_plan(db, ctx.org, ctx.user.id, plan_key,
+                                               terms_acceptance=(str(accepted.id), terms.TERMS_VERSION)))
     return url if isinstance(url, dict) else {"url": url}
+
+
+@router.get("/terms")
+async def terms_status(ctx: CtxDep, db: DbDep):
+    """The current terms version, and whether this account has to agree again after a material change."""
+    from app.models.billing import BillingSubscription
+    from app.services.billing import terms
+
+    sub = await db.get(BillingSubscription, ctx.org.id)
+    live = bool(sub and sub.status in ("active", "trialing", "past_due"))
+    last = await terms.latest(db, ctx.org.id)
+    return {"version": terms.TERMS_VERSION, "url": terms.TERMS_URL,
+            "accepted_version": last.terms_version if last else None,
+            "accepted_at": last.accepted_at.isoformat() if last and last.accepted_at else None,
+            "renewal_needed": await terms.needs_renewal(db, ctx.org.id, live)}
+
+
+class TermsRenewIn(BaseModel):
+    terms_version: str = Field(max_length=32)
+
+
+@router.post("/terms/accept")
+async def accept_updated_terms(body: TermsRenewIn, request: Request, ctx: ManagerDep, db: DbDep):
+    """A current subscriber agreeing to updated terms (only asked after a material change)."""
+    from app.models.billing import BillingSubscription
+    from app.services.billing import terms
+
+    if body.terms_version != terms.TERMS_VERSION:
+        raise HTTPException(status_code=409, detail="Our Terms of Service were just updated. Reload the page.")
+    sub = await db.get(BillingSubscription, ctx.org.id)
+    plan = catalog.PLANS.get(sub.plan_key or "", {}) if sub else {}
+    await terms.record(db, org_id=ctx.org.id, user_id=ctx.user.id, plan_key=(sub.plan_key if sub else "") or "",
+                       interval=plan.get("interval") or "", amount_cents=plan.get("amount_cents"), context="renewal",
+                       ip=request.client.host if request.client else "", user_agent=request.headers.get("user-agent", ""))
+    await db.commit()
+    return {"ok": True, "version": terms.TERMS_VERSION}
 
 
 @router.post("/plans/{plan_key}/preview")

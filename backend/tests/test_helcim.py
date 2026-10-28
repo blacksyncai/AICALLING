@@ -9,6 +9,9 @@ import pytest
 from app.config import settings
 from app.services.billing import helcim_api
 from tests.test_billing import _account, stripe  # noqa: F401  (fixture)
+from app.services.billing.terms import TERMS_VERSION
+
+ACCEPT_TERMS = {"accept_terms": True, "terms_version": TERMS_VERSION}
 
 
 @pytest.fixture
@@ -118,7 +121,7 @@ def test_helcim_plan_subscribes_grants_credits_and_renews(client, make_client, s
 
     _, c = _account(client, make_client, "Calgary Co")
     c.post("/api/billing/country", json={"country": "CA"})
-    r = c.post("/api/billing/plans/solo/checkout").json()
+    r = c.post("/api/billing/plans/solo/checkout", json=ACCEPT_TERMS).json()
     pid = r["helcim"]["purchase_id"]
     assert not stripe.sessions
     helcim["txns"]["21"] = _verify(21)
@@ -155,7 +158,7 @@ def test_helcim_plan_declined_first_month(client, make_client, stripe, helcim):
     helcim["failed"] = "true"
     _, c = _account(client, make_client, "Declined Co")
     c.post("/api/billing/country", json={"country": "OTHER"})
-    pid = c.post("/api/billing/plans/solo/checkout").json()["helcim"]["purchase_id"]
+    pid = c.post("/api/billing/plans/solo/checkout", json=ACCEPT_TERMS).json()["helcim"]["purchase_id"]
     helcim["txns"]["31"] = _verify(31)
     r = c.post("/api/billing/helcim/confirm", json={"purchase_id": pid, "data": _signed(_verify(31), "sec1")})
     assert r.status_code == 402
@@ -163,6 +166,6 @@ def test_helcim_plan_declined_first_month(client, make_client, stripe, helcim):
     assert all(x["status"] == "inactive" for x in helcim["subs"].values())  # Helcim stops retrying
     # They can try again with another card.
     helcim["failed"] = "false"
-    pid = c.post("/api/billing/plans/solo/checkout").json()["helcim"]["purchase_id"]
+    pid = c.post("/api/billing/plans/solo/checkout", json=ACCEPT_TERMS).json()["helcim"]["purchase_id"]
     helcim["txns"]["32"] = _verify(32)
     assert c.post("/api/billing/helcim/confirm", json={"purchase_id": pid, "data": _signed(_verify(32), "sec2")}).status_code == 200

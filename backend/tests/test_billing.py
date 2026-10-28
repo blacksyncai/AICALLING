@@ -13,6 +13,9 @@ import pytest
 from app.config import settings
 from app.services.billing import catalog, recharge, stripe_api
 from tests.test_accounts import _login, _new_account
+from app.services.billing.terms import TERMS_VERSION
+
+ACCEPT_TERMS = {"accept_terms": True, "terms_version": TERMS_VERSION}
 
 
 # ── Fake Stripe ───────────────────────────────────────────────────────────────
@@ -321,7 +324,7 @@ def test_included_credits_spent_first_and_expire_purchased_never(client, make_cl
     from app.services.billing import settings_store
     monkeypatch.setitem(settings_store.DEFAULTS, "phone_minute_fee", 0)  # checks other logic
     org, c = _account(client, make_client, "Plan Co")
-    c.post("/api/billing/plans/solo/checkout")
+    c.post("/api/billing/plans/solo/checkout", json=ACCEPT_TERMS)
     sess = stripe.sessions[-1]
     assert sess["mode"] == "subscription"
     end = int(time.time()) + 30 * 86400
