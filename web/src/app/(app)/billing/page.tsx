@@ -1,6 +1,6 @@
 "use client";
 
-import { Coins, CreditCard, LayoutGrid, Receipt, UserSearch } from "lucide-react";
+import { Coins, CreditCard, LayoutGrid, Phone, Receipt, UserSearch } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
@@ -11,6 +11,7 @@ import { InvoicesTab } from "@/components/billing/InvoicesTab";
 import { LookupsTab } from "@/components/billing/LookupsTab";
 import { OverviewTab } from "@/components/billing/OverviewTab";
 import { PlansTab } from "@/components/billing/PlansTab";
+import { PhoneNumbersTab } from "@/components/billing/PhoneNumbersTab";
 import type { Overview, Purchase } from "@/components/billing/types";
 import { Notice, PageHeader, Spinner } from "@/components/ui";
 import { PillTabs } from "@/components/ui/pricing";
@@ -20,6 +21,7 @@ const TABS = [
   { value: "overview", label: "Overview", icon: LayoutGrid },
   { value: "plans", label: "Plans", icon: CreditCard },
   { value: "credits", label: "Calling Credits", icon: Coins },
+  { value: "numbers", label: "Phone Numbers", icon: Phone },
   { value: "lookups", label: "Lead Lookup Balance", icon: UserSearch },
   { value: "invoices", label: "Invoices & Payments", icon: Receipt },
 ] as const;
@@ -167,6 +169,7 @@ function BillingContent() {
           {tab === "overview" && <OverviewTab overview={overview} go={select} />}
           {tab === "plans" && <PlansTab canManage={overview.can_manage} refresh={() => void mutate()} />}
           {tab === "credits" && <CreditsTab canManage={overview.can_manage} />}
+          {tab === "numbers" && <PhoneNumbersTab />}
           {tab === "lookups" && <LookupsTab canManage={overview.can_manage} />}
           {tab === "invoices" && <InvoicesTab canManage={overview.can_manage} />}
         </>
