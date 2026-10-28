@@ -58,6 +58,9 @@ class Agent(Base):
 
     # ── Actions ───────────────────────────────────────────────────────────────
     enable_booking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Which calendar books meetings: "calcom" (default) or "calendly". The key and event type below belong to it
+    # (for Calendly: a personal access token and the event type's UUID).
+    calendar_provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
     calcom_event_type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     # The account's own Cal.com API key, Fernet-encrypted (SECRETS_ENCRYPTION_KEY); never returned by the API.
     calcom_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)

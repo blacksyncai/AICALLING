@@ -888,7 +888,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 found = await _cal.fetch_slots(preferred_date, cfg.get("calcom_event_type_id"),
                                            cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
                                            time_of_day=time_of_day, time=time,
-                                           exclude={s["start"] for s in run.slots}, count=3)
+                                           exclude={s["start"] for s in run.slots}, count=3,
+                                           provider=cfg.get("calendar_provider"))
             except _cal.CalendarUnavailable:
                 if run.trace:
                     run.trace.mark("tool_result", speech=context.speech_handle, tool="check_availability", status="unavailable")
@@ -943,7 +944,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     _cal._zone(cfg.get("calendar_timezone"))).date().isoformat()
                 try:
                     fresh = await _cal.fetch_slots(local_day, cfg.get("calcom_event_type_id"),
-                        cfg.get("calcom_api_key"), cfg.get("calendar_timezone"), count=10000)
+                        cfg.get("calcom_api_key"), cfg.get("calendar_timezone"), count=10000,
+                        provider=cfg.get("calendar_provider"))
                 except _cal.CalendarUnavailable as exc:
                     if run.trace:
                         run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="read_unavailable_no_write")
@@ -956,8 +958,10 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     if run.trace:
                         run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="stale")
                     raise NoAction("Not booked: that slot is no longer available. Check availability again.")
-                link = await _cal.create_booking(chosen["start"], email, "", cfg.get("calcom_event_type_id"),
-                    cfg.get("calcom_api_key"), cfg.get("calendar_timezone"))
+                link = await _cal.create_booking(chosen["start"], email,
+                    (cfg_vars or {}).get("full_name") or (cfg_vars or {}).get("name") or "",
+                    cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
+                    provider=cfg.get("calendar_provider"), phone=(cfg_vars or {}).get("phone") or "")
                 if not link:
                     raise ActionUncertain("No booking receipt")
                 # Persist the authoritative result inside the shielded operation,

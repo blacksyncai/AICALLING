@@ -865,11 +865,14 @@ def readiness(agent, org) -> dict:
             "You're out of calling credits, so calls can't start. Add credits to keep going.", "/profile?tab=billing")
 
     if agent.enable_booking:
-        if (getattr(agent, "calcom_api_key_enc", None) or settings.calcom_api_key) and (agent.calcom_event_type_id or settings.calcom_event_type_id):
+        calendly = getattr(agent, "calendar_provider", None) == "calendly"
+        if calendly and getattr(agent, "calcom_api_key_enc", None) and agent.calcom_event_type_id:
+            add("calendar", "Calendar booking", "ok", "Booking is on and Calendly is connected.")
+        elif not calendly and (getattr(agent, "calcom_api_key_enc", None) or settings.calcom_api_key) and (agent.calcom_event_type_id or settings.calcom_event_type_id):
             add("calendar", "Calendar booking", "ok", "Booking is on and a calendar is connected.")
         else:
             add("calendar", "Calendar booking", "warning",
-                "Booking is on, but no calendar is connected yet, so the agent can't book real meetings. Add your Cal.com API key and event type under Actions.",
+                "Booking is on, but no calendar is connected yet, so the agent can't book real meetings. Connect Cal.com or Calendly under Actions.",
                 href)
     elif b.get("booking_requested"):
         add("calendar", "Calendar booking", "warning",

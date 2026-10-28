@@ -24,7 +24,7 @@ import { VersionHistory } from "@/components/agent-editor/VersionHistory";
 import { sectionOrder } from "@/lib/builder";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, Field, Input, Modal, Notice, Select, Spinner, Tabs, Textarea, Toggle } from "@/components/ui";
-import { fetcher, patch } from "@/lib/api";
+import { fetcher, patch, post } from "@/lib/api";
 import type { Agent, SettingsStatus, Voice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +45,7 @@ const VARIABLES = ["name", "full_name", "company", "email", "phone", "role"];
 const EDITABLE: (keyof Agent)[] = [
   "name", "description", "status", "system_prompt", "first_message", "knowledge_base", "language",
   "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio", "enable_booking",
-  "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "voicemail_action", "voicemail_message", "screener_action", "transfer_number", "transfer_mode", "transfer_handoff", "transfer_ring_seconds", "max_duration_seconds", "extraction_fields", "success_criteria",
+  "calendar_provider", "calcom_event_type_id", "calcom_api_key", "calendar_timezone", "voicemail_action", "voicemail_message", "screener_action", "transfer_number", "transfer_mode", "transfer_handoff", "transfer_ring_seconds", "max_duration_seconds", "extraction_fields", "success_criteria",
   "ai_disclosure", "builder", "caller_number", "record_calls", "specialty",
 ];
 
@@ -548,7 +548,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                 checked={draft.enable_booking}
                 onChange={(v) => set("enable_booking", v)}
                 label="Book appointments"
-                description="The agent can check your calendar for open times and book the meeting straight into your Cal.com calendar."
+                description="The agent can check your calendar for open times and book the meeting straight into your Cal.com or Calendly calendar."
               />
               {draft.enable_booking && <CalcomSettings draft={draft} set={set} />}
               <VoicemailSettings draft={draft} set={set} />
@@ -762,24 +762,59 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-/** Cal.com key (write-only), event type and the time zone the agent says times in. */
+type CalendlyType = { id: string; name: string; duration: number | null; scheduling_url: string; locations: string[] };
+
+/** The booking calendar: Cal.com or Calendly. Key (write-only), event type and the time zone times are said in. */
 function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void }) {
+  const calendly = draft.calendar_provider === "calendly";
   const keySaved = !!draft.calcom_key_set && draft.calcom_api_key === undefined;
   const removing = draft.calcom_api_key === "";
   const ready = (keySaved || !!draft.calcom_api_key) && !!draft.calcom_event_type_id;
   const tz = draft.calendar_timezone ?? "";
+  const name = calendly ? "Calendly" : "Cal.com";
+
+  function switchTo(provider: "calcom" | "calendly") {
+    if (provider === (draft.calendar_provider ?? "calcom")) return;
+    set("calendar_provider", provider);
+    // A key and event type belong to one calendar: start clean on the other.
+    set("calcom_event_type_id", "");
+    if (draft.calcom_key_set) set("calcom_api_key", "");
+  }
+
   return (
     <Card className="space-y-4 p-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm font-medium">Cal.com calendar</div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex rounded-full bg-zinc-100 p-0.5" role="tablist" aria-label="Calendar">
+          {([["calcom", "Cal.com"], ["calendly", "Calendly"]] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={(draft.calendar_provider ?? "calcom") === value}
+              onClick={() => switchTo(value)}
+              className={cn(
+                "rounded-full px-3.5 py-1 text-sm font-medium transition",
+                (draft.calendar_provider ?? "calcom") === value ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", ready ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
-          {ready ? "Connected" : "Needs API key and event type"}
+          {ready ? `${name} connected` : calendly ? "Needs token and event type" : "Needs API key and event type"}
         </span>
       </div>
       <Field
-        label="Cal.com API key"
+        label={calendly ? "Calendly personal access token" : "Cal.com API key"}
         hint={
-          removing ? "The saved key will be removed when you save." : keySaved ? "A key is saved. Paste a new one to replace it." : "Cal.com → Settings → Developer → API keys."
+          removing
+            ? "The saved key will be removed when you save."
+            : keySaved
+              ? "A key is saved. Paste a new one to replace it."
+              : calendly
+                ? "Calendly → Integrations & apps → API & webhooks → Personal access tokens. Booking needs a paid Calendly plan."
+                : "Cal.com → Settings → Developer → API keys."
         }
       >
         <div className="flex gap-2">
@@ -787,7 +822,7 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
             type="password"
             autoComplete="off"
             value={draft.calcom_api_key ?? ""}
-            placeholder={keySaved ? "•••••••• saved" : "cal_live_…"}
+            placeholder={keySaved ? "•••••••• saved" : calendly ? "eyJraWQi…" : "cal_live_…"}
             onChange={(e) => set("calcom_api_key", e.target.value.trim() || undefined)}
           />
           {draft.calcom_key_set && !removing && (
@@ -798,9 +833,13 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
         </div>
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Event type ID" hint="The number in the event type's URL in Cal.com.">
-          <Input inputMode="numeric" value={draft.calcom_event_type_id} onChange={(e) => set("calcom_event_type_id", e.target.value.replace(/\D/g, ""))} placeholder="e.g. 4374694" />
-        </Field>
+        {calendly ? (
+          <CalendlyEventType draft={draft} set={set} canLoad={keySaved || !!draft.calcom_api_key} />
+        ) : (
+          <Field label="Event type ID" hint="The number in the event type's URL in Cal.com.">
+            <Input inputMode="numeric" value={draft.calcom_event_type_id} onChange={(e) => set("calcom_event_type_id", e.target.value.replace(/\D/g, ""))} placeholder="e.g. 4374694" />
+          </Field>
+        )}
         <TimezonePicker value={tz} onChange={(v) => set("calendar_timezone", v)} />
       </div>
       <label className="flex items-start gap-2 text-sm text-zinc-700">
@@ -816,6 +855,71 @@ function CalcomSettings({ draft, set }: { draft: Agent; set: <K extends keyof Ag
         </span>
       </label>
     </Card>
+  );
+}
+
+/** Pick a Calendly event type from the account's own list (loaded with the token; nothing to copy by hand). */
+function CalendlyEventType({ draft, set, canLoad }: { draft: Agent; set: <K extends keyof Agent>(key: K, value: Agent[K]) => void; canLoad: boolean }) {
+  const [types, setTypes] = useState<CalendlyType[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const token = draft.calcom_api_key ?? "";
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const out = await post<{ event_types: CalendlyType[] }>(`/api/agents/${draft.id}/calendly/event-types`, { api_key: token });
+      setTypes(out.event_types);
+      if (out.event_types.length === 1 && !draft.calcom_event_type_id) set("calcom_event_type_id", out.event_types[0].id);
+    } catch (e) {
+      setError((e as Error).message);
+      setTypes(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [draft.id, draft.calcom_event_type_id, token, set]);
+
+  // Saved token: show the list right away. A pasted one loads as soon as it looks complete.
+  useEffect(() => {
+    if (canLoad && types === null && !busy && !error && (draft.calcom_key_set || token.length > 40)) void load();
+  }, [canLoad, types, busy, error, draft.calcom_key_set, token, load]);
+
+  const chosen = types?.find((t) => t.id === draft.calcom_event_type_id);
+  return (
+    <Field
+      label="Event type"
+      hint={
+        error ||
+        (chosen?.locations.includes("outbound_call")
+          ? "You call them: Calendly gets the contact's phone number with the booking."
+          : chosen
+            ? `${chosen.duration ?? ""}${chosen.duration ? " min · " : ""}books into ${chosen.name}`
+            : canLoad
+              ? "Pick which Calendly event the agent books."
+              : "Paste your token first.")
+      }
+    >
+      <div className="flex gap-2">
+        <Select
+          value={draft.calcom_event_type_id}
+          disabled={!types?.length}
+          onChange={(e) => set("calcom_event_type_id", e.target.value)}
+          aria-label="Calendly event type"
+        >
+          <option value="">{busy ? "Loading…" : types ? (types.length ? "Choose an event type" : "No active event types") : draft.calcom_event_type_id ? "Saved event type" : "—"}</option>
+          {types?.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+              {t.duration ? ` (${t.duration} min)` : ""}
+            </option>
+          ))}
+        </Select>
+        <Button type="button" onClick={() => void load()} loading={busy} disabled={!canLoad} className="shrink-0">
+          {types ? "Reload" : "Load"}
+        </Button>
+      </div>
+    </Field>
   );
 }
 

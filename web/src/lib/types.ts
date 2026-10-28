@@ -23,6 +23,7 @@ export interface Agent {
   voice_tuning?: VoiceTuning;
   background_audio: boolean;
   enable_booking: boolean;
+  calendar_provider?: "calcom" | "calendly";
   calcom_event_type_id: string;
   /** Write-only: set to save a new Cal.com key, "" to remove it. Never sent back by the API. */
   calcom_api_key?: string;

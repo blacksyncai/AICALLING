@@ -67,6 +67,7 @@ def agent_to_runtime(agent, *, secrets: bool = False) -> dict:
         "background_audio": bool(agent.background_audio),
         "enable_booking": bool(agent.enable_booking),
         "calcom_event_type_id": agent.calcom_event_type_id or "",
+        "calendar_provider": getattr(agent, "calendar_provider", None) or "calcom",
         "calendar_timezone": getattr(agent, "calendar_timezone", None) or "",
         "calcom_key_set": bool(getattr(agent, "calcom_api_key_enc", None)),
         "transfer_number": agent.transfer_number or "",

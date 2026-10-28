@@ -1,5 +1,5 @@
 """
-Cal.com slot lookup + booking, shared by the API playground and the voice worker.
+Calendar slot lookup + booking (Cal.com or Calendly), shared by the API playground and the voice worker.
 Mock slots/receipts require an explicit playground-only allow_mock flag.
 Voice calls fail closed if a real calendar is not configured.
 """
@@ -201,12 +201,89 @@ def choose_slots(starts: list[str], tz: str | None, preferred_date: str = "", ti
     return out[:count]
 
 
+# ── Calendly ──────────────────────────────────────────────────────────────────
+# Personal access token + event type (stored as its UUID). Booking needs a paid Calendly plan (Scheduling API).
+CALENDLY = "https://api.calendly.com"
+
+
+def calendly_event_uri(event_type_id: str) -> str:
+    etype = (event_type_id or "").strip()
+    return etype if etype.startswith("http") else f"{CALENDLY}/event_types/{etype}"
+
+
+def _utc(d: dt.datetime) -> str:
+    return d.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+async def calendly_event_types(api_key: str) -> list[dict]:
+    """The token owner's active event types, for picking one in the agent editor."""
+    async with asyncio.timeout(10.0), httpx.AsyncClient(timeout=10.0) as client:
+        headers = {"Authorization": f"Bearer {api_key.strip()}"}
+        me = await client.get(f"{CALENDLY}/users/me", headers=headers)
+        me.raise_for_status()
+        user = (me.json().get("resource") or {}).get("uri")
+        resp = await client.get(f"{CALENDLY}/event_types", headers=headers,
+                                params={"user": user, "active": "true", "count": 100})
+        resp.raise_for_status()
+    out = []
+    for e in resp.json().get("collection") or []:
+        uri = e.get("uri") or ""
+        out.append({"id": uri.rsplit("/", 1)[-1], "name": e.get("name") or "Meeting", "duration": e.get("duration"),
+                    "scheduling_url": e.get("scheduling_url") or "",
+                    "locations": [x.get("kind") for x in e.get("locations") or [] if x.get("kind")]})
+    return out
+
+
+async def _calendly_starts(key: str, etype: str, start: dt.date) -> list[str]:
+    """Open start times for 14 days from `start` (Calendly answers at most 7 days per request)."""
+    now = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)
+    begin = max(dt.datetime.combine(start, dt.time(), dt.timezone.utc), now)
+    starts: list[str] = []
+    async with asyncio.timeout(8.0), httpx.AsyncClient(timeout=8.0) as client:
+        for week in range(2):
+            lo = begin + dt.timedelta(days=7 * week)
+            resp = await client.get(f"{CALENDLY}/event_type_available_times",
+                                    headers={"Authorization": f"Bearer {key}"},
+                                    params={"event_type": calendly_event_uri(etype), "start_time": _utc(lo),
+                                            "end_time": _utc(lo + dt.timedelta(days=7) - dt.timedelta(seconds=1))})
+            resp.raise_for_status()
+            starts += [x["start_time"] for x in resp.json().get("collection") or []
+                       if x.get("status") == "available" and x.get("start_time")]
+    return starts
+
+
+async def _calendly_book(key: str, etype: str, start: str, email: str, name: str, tz: str | None, phone: str) -> str:
+    """Book through Calendly's Scheduling API; returns the invitee's reschedule link as the receipt."""
+    headers = {"Authorization": f"Bearer {key}"}
+    async with asyncio.timeout(12.0), httpx.AsyncClient(timeout=10.0) as client:
+        et = await client.get(calendly_event_uri(etype), headers=headers)
+        et.raise_for_status()
+        locations = (et.json().get("resource") or {}).get("locations") or []
+        body: dict = {"event_type": calendly_event_uri(etype), "start_time": start,
+                      "invitee": {"name": name or "Guest", "email": email, "timezone": _zone(tz).key}}
+        if locations:
+            kind = locations[0].get("kind")
+            body["location"] = {"kind": kind}
+            if kind == "outbound_call":  # the host calls the invitee: Calendly needs their number
+                if not phone:
+                    raise CalendarUnavailable("This Calendly event needs the contact's phone number")
+                body["location"]["location"] = phone
+            elif kind == "ask_invitee":
+                body["location"]["location"] = phone or "Phone call"
+        resp = await client.post(f"{CALENDLY}/invitees", headers=headers, json=body)
+        resp.raise_for_status()
+        data = resp.json().get("resource") or {}
+    return data.get("reschedule_url") or data.get("event") or data.get("uri") or ""
+
+
 async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None,
                       api_key: str | None = None, tz: str | None = None, *, time_of_day: str = "",
                       time: str = "", exclude: set[str] | None = None, count: int = 3,
-                      allow_mock: bool = False) -> list[dict]:
-    """Open slots ({start, label}) to offer, from Cal.com's full availability (see choose_slots)."""
+                      allow_mock: bool = False, provider: str | None = None) -> list[dict]:
+    """Open slots ({start, label}) to offer, from the calendar's full availability (see choose_slots)."""
     etype, key = _event_type(event_type_id), _key(api_key)
+    if provider == "calendly":  # never falls back to the server's Cal.com account
+        etype, key = (event_type_id or "").strip(), (api_key or "").strip()
     today = dt.datetime.now(dt.timezone.utc).date()
     start = today
     try:
@@ -220,6 +297,14 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
         if not allow_mock:
             raise CalendarUnavailable("Calendar is not connected")
         starts = _all_mock(start if start > today else today + dt.timedelta(days=1), tz)
+    elif provider == "calendly":
+        try:
+            starts = await _calendly_starts(key, etype, start)
+        except Exception as exc:
+            log.warning("calendly_fetch_failed", error=type(exc).__name__)
+            if allow_mock:
+                return []
+            raise CalendarUnavailable("Availability could not be verified") from exc
     else:
         try:
             async with asyncio.timeout(8.0), httpx.AsyncClient(timeout=8.0) as client:
@@ -247,17 +332,31 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
 
 
 async def create_booking(start: str, email: str, name: str, event_type_id: str | None = None,
-                         api_key: str | None = None, tz: str | None = None, *, allow_mock: bool = False) -> str:
+                         api_key: str | None = None, tz: str | None = None, *, allow_mock: bool = False,
+                         provider: str | None = None, phone: str = "") -> str:
     """Return a provider booking receipt; raise on unverified real results.
 
     The playground may explicitly request simulated receipts and legacy empty
     failure results. Production voice never opts into that behavior.
     """
     etype, key = _event_type(event_type_id), _key(api_key)
+    if provider == "calendly":
+        etype, key = (event_type_id or "").strip(), (api_key or "").strip()
     if not key or not etype:
         if not allow_mock:
             raise CalendarUnavailable("Calendar is not connected")
         return f"https://cal.com/mock-booking?start={start}&attendee={email}"
+    if provider == "calendly":
+        try:
+            return await _calendly_book(key, etype, start, email, name, tz, phone)
+        except CalendarUnavailable:
+            raise
+        except Exception as exc:
+            log.warning("calendly_booking_failed", error=type(exc).__name__,
+                        status=getattr(getattr(exc, "response", None), "status_code", None))
+            if allow_mock:
+                return ""
+            raise CalendarUnavailable("Booking result unavailable; do not retry automatically") from exc
     try:
         async with asyncio.timeout(10.0), httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(

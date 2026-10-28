@@ -179,7 +179,8 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                 slots = await calendar.fetch_slots(
                     args.get("preferred_date", ""), cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"),
                     cfg.get("calendar_timezone"), time_of_day=args.get("time_of_day", ""), time=args.get("time", ""),
-                    exclude={x["start"] for x in state.get("slots") or []}, allow_mock=True)
+                    exclude={x["start"] for x in state.get("slots") or []}, allow_mock=True,
+                    provider=cfg.get("calendar_provider"))
                 state["slots"] = calendar.remember_slots(state.get("slots") or [], slots)
                 if slots:
                     state["last_found"] = slots
@@ -203,7 +204,8 @@ async def playground_reply(cfg: dict, variables: dict, history: list[dict], stat
                     link = await calendar.create_booking(slot["start"], normalize_email(args.get("email", "")),
                                                          variables.get("full_name") or variables.get("name", ""),
                                                          cfg.get("calcom_event_type_id"),
-                                                         cfg.get("calcom_api_key"), cfg.get("calendar_timezone"), allow_mock=True)
+                                                         cfg.get("calcom_api_key"), cfg.get("calendar_timezone"), allow_mock=True,
+                                                         provider=cfg.get("calendar_provider"), phone=variables.get("phone", ""))
                     if link:
                         state["booked"] = slot["label"]
                         result = f"Booked {slot['label']}. Confirm exactly this time with the contact. Link: {link}"

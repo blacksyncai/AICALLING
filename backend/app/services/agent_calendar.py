@@ -1,4 +1,4 @@
-"""One Cal.com calendar for the whole account: saved from any agent's editor, copied to every agent, and
+"""One calendar (Cal.com or Calendly) for the whole account: saved from any agent's editor, copied to every agent, and
 given to agents created later so the API key and event type aren't typed in again."""
 import uuid
 
@@ -18,6 +18,7 @@ async def apply_default(db: AsyncSession, agent: Agent) -> None:
     if not default.get("event_type_id"):
         return
     agent.calcom_event_type_id = default["event_type_id"]
+    agent.calendar_provider = default.get("provider") or None
     agent.calcom_api_key_enc = default.get("api_key_enc")
     agent.calendar_timezone = agent.calendar_timezone or default.get("timezone") or None
 
@@ -25,9 +26,10 @@ async def apply_default(db: AsyncSession, agent: Agent) -> None:
 async def use_everywhere(db: AsyncSession, org_id: uuid.UUID, source: Agent) -> int:
     """Make this agent's calendar the account default and copy it to every agent. Returns agents updated."""
     org = await db.get(Organization, org_id)
-    org.calendar_default = {"event_type_id": source.calcom_event_type_id or "",
+    org.calendar_default = {"event_type_id": source.calcom_event_type_id or "", "provider": source.calendar_provider or "",
                             "api_key_enc": source.calcom_api_key_enc, "timezone": source.calendar_timezone or ""}
     res = await db.execute(update(Agent).where(Agent.org_id == org_id, Agent.id != source.id).values(
         calcom_event_type_id=source.calcom_event_type_id or "", calcom_api_key_enc=source.calcom_api_key_enc,
+        calendar_provider=source.calendar_provider,
         calendar_timezone=source.calendar_timezone))
     return int(res.rowcount or 0)

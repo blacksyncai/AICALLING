@@ -6,6 +6,8 @@ Agents router — create/configure voice agents and test them
 from __future__ import annotations
 
 import uuid
+
+import httpx
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -27,7 +29,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 _EDITABLE = (
     "name", "description", "status", "system_prompt", "first_message", "knowledge_base",
     "language", "llm_model", "temperature", "voice_id", "voice_speed", "voice_tuning", "background_audio",
-    "enable_booking", "calcom_event_type_id", "calendar_timezone", "transfer_number", "max_duration_seconds",
+    "enable_booking", "calendar_provider", "calcom_event_type_id", "calendar_timezone", "transfer_number", "max_duration_seconds",
     "voicemail_action", "voicemail_message", "screener_action",
     "transfer_mode", "transfer_handoff", "transfer_ring_seconds",
     "extraction_fields", "success_criteria", "builder", "ai_disclosure", "caller_number", "record_calls",
@@ -81,6 +83,7 @@ class AgentUpdate(BaseModel):
     voice_tuning: VoiceTuning | None = None
     background_audio: bool | None = None
     enable_booking: bool | None = None
+    calendar_provider: str | None = Field(default=None, pattern="^(calcom|calendly)$")
     calcom_event_type_id: str | None = Field(default=None, max_length=64)
     # Write-only: "" removes the saved key.
     calcom_api_key: str | None = Field(default=None, max_length=200)
@@ -149,6 +152,7 @@ def agent_to_dict(a: Agent, stats: dict | None = None) -> dict:
         "transfer_ring_seconds": a.transfer_ring_seconds or 20,
         "pinned": bool(a.pinned),
         "calcom_key_set": bool(a.calcom_api_key_enc),
+        "calendar_provider": a.calendar_provider or "calcom",
         "ai_disclosure": a.ai_disclosure is not False,
         "caller_number": a.caller_number or "",
         "specialty": catalog_specialty(a) or "",
@@ -325,6 +329,33 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
     await db.commit()
     await db.refresh(agent)
     return agent_to_dict(agent)
+
+
+class CalendlyIn(BaseModel):
+    api_key: str = Field(default="", max_length=400)  # blank: use the token already saved on this agent
+
+
+@router.post("/{agent_id}/calendly/event-types")
+async def calendly_event_types(agent_id: uuid.UUID, body: CalendlyIn, ctx: CtxDep, db: DbDep):
+    """The event types a Calendly token can book, to pick one in the editor (nothing is saved here)."""
+    from app.services.calendar import calendly_event_types as list_types
+    from app.services.secret_store import decrypt_value
+
+    agent = await _get_agent(db, ctx, agent_id)
+    key = body.api_key.strip()
+    if not key and agent.calendar_provider == "calendly":
+        key = decrypt_value(agent.calcom_api_key_enc) or ""
+    if not key:
+        raise HTTPException(status_code=400, detail="Paste your Calendly personal access token first.")
+    try:
+        return {"event_types": await list_types(key)}
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            raise HTTPException(status_code=400, detail="Calendly didn't accept that token. Create a personal access "
+                                "token under Calendly → Integrations → API & Webhooks.") from exc
+        raise HTTPException(status_code=502, detail="Couldn't reach Calendly. Try again.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Couldn't reach Calendly. Try again.") from exc
 
 
 @router.get("/{agent_id}/versions")
