@@ -86,6 +86,8 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
   const [confirming, setConfirming] = useState(false);
   const [slots, setSlots] = useState<SlotPreview | null>(null);
   const focus = useSearchParams().get("plan");
+  const { data: termsStatus, mutate: mutateTerms } = useSWR<{ renewal_needed: boolean }>("/api/billing/terms", fetcher);
+  const [renewAgreed, setRenewAgreed] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -266,6 +268,38 @@ export function PlansTab({ canManage, refresh }: { canManage: boolean; refresh: 
           <p className="basis-full text-xs text-zinc-500 sm:basis-auto sm:flex-1">
             BlackSync set up {ent.plan_name} access for your account. You&apos;re only billed for what&apos;s shown under Billing.
           </p>
+        </Card>
+      )}
+      {termsStatus?.renewal_needed && canManage && (
+        <Card className="flex flex-wrap items-center justify-between gap-3 rounded-2xl p-5 text-sm">
+          <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 text-zinc-700">
+            <input type="checkbox" checked={renewAgreed} onChange={(e) => setRenewAgreed(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600" />
+            <span>
+              We&apos;ve updated our{" "}
+              <a href="/terms" target="_blank" rel="noopener" className="font-medium text-brand-700 hover:underline">Terms of Service</a>.
+              I agree to the updated terms. Your plan and billing stay the same.
+            </span>
+          </label>
+          <Button
+            className="rounded-full!"
+            variant="primary"
+            disabled={!renewAgreed}
+            loading={busy === "terms"}
+            onClick={async () => {
+              setBusy("terms");
+              try {
+                await post("/api/billing/terms/accept", { terms_version: TERMS_VERSION });
+                await mutateTerms();
+                toast("Thanks — your agreement is saved");
+              } catch (e) {
+                toast((e as Error).message, "error");
+              } finally {
+                setBusy(null);
+              }
+            }}
+          >
+            Agree
+          </Button>
         </Card>
       )}
       <PricingHeading title="A plan that fits your team" description="Every plan includes calling credits each month. Buy more any time — they never expire." />
