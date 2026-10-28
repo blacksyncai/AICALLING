@@ -325,6 +325,53 @@ async def agent_slots_set(body: SlotsIn, ctx: ManagerDep, db: DbDep):
     return await _plan_payload(db, ctx.org.id)
 
 
+class PhonePacksIn(BaseModel):
+    quantity: int = Field(ge=0, le=10)
+    area_code: str = Field(default="", max_length=3, pattern=r"^\d{0,3}$")
+    confirm: bool = False
+
+
+async def _packs_payload(db, org_id) -> dict:
+    from app.services import phone_pack, telephony
+
+    row = await db.get(BillingSubscription, org_id)
+    live = bool(row and row.status in ("active", "trialing", "past_due"))
+    numbers = await phone_pack.pack_numbers(db, org_id)
+    refresh = [n.pack_refresh_at for n in numbers if n.pack_refresh_at]
+    return {
+        **{k: v for k, v in catalog.PHONE_PACK.items() if k not in ("lookup_key", "numbers")},
+        "per_pack": catalog.PHONE_PACK["numbers"],
+        "available": (await catalog.resolve_prices()).get(catalog.PHONE_PACK["key"], {}).get("status") == "ok",
+        "subscribed": live and bool(row.plan_key), "helcim": subscriptions.is_helcim(row),
+        "packs": (row.phone_packs or 0) if live else 0,
+        "numbers": [telephony.number_to_dict(n) for n in numbers],
+        "next_refresh_at": min(refresh).isoformat() if refresh else None,
+    }
+
+
+@router.get("/addons/phone-packs")
+async def phone_packs(ctx: CtxDep, db: DbDep):
+    return await _packs_payload(db, ctx.org.id)
+
+
+@router.post("/addons/phone-packs")
+async def phone_packs_set(body: PhonePacksIn, ctx: ManagerDep, db: DbDep):
+    """Add or remove Fresh Number Packs; new numbers are bought right away in the chosen area code."""
+    from app.services import phone_pack
+
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Please confirm the change to your number packs.")
+    row = await db.get(BillingSubscription, ctx.org.id)
+    if subscriptions.is_helcim(row):
+        raise HTTPException(status_code=409, detail="Number packs aren't available for accounts billed through Helcim yet. Contact support and we'll set it up.")
+    await _guard(subscriptions.set_phone_packs(db, ctx.org.id, body.quantity, ctx.user.id))
+    result = await phone_pack.reconcile(db, ctx.org.id, body.area_code)
+    out = await _packs_payload(db, ctx.org.id)
+    if len(out["numbers"]) < result["wanted"]:
+        out["warning"] = "Some numbers couldn't be bought yet. We'll keep trying automatically."
+    return out
+
+
 @router.post("/subscription/cancel")
 async def cancel_subscription(ctx: ManagerDep, db: DbDep):
     await _guard(subscriptions.set_cancel(db, ctx.org.id, True))

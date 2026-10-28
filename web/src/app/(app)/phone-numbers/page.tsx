@@ -4,8 +4,8 @@ import { Clock, Hash, Phone, Search, ShieldCheck, Star } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { useToast } from "@/components/toast";
-import { PhoneNumberPerformance } from "@/components/phone/PhoneNumberPerformance";
 import { TextingCard } from "@/components/phone/TextingCard";
+import { NumberPackCard } from "@/components/phone/NumberPackCard";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, PageHeader, Spinner } from "@/components/ui";
 import { api, fetcher, patch, post } from "@/lib/api";
@@ -107,7 +107,6 @@ export default function PhoneNumbersPage() {
         </div>
       )}
       <PageHeader title="Phone numbers" description="The numbers your agents call from. Pick a default, or set one per agent under Agent → Actions." />
-      <PhoneNumberPerformance numbers={data.numbers} />
       {manager && data.numbers.length === 0 && <div className="mb-6">{getNumber}</div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <NumbersList numbers={data.numbers} manager={manager} refresh={() => void mutate()} />
@@ -125,6 +124,7 @@ export default function PhoneNumbersPage() {
               />
             )}
             {data.numbers.length > 0 && getNumber}
+            <NumberPackCard onChanged={() => void mutate()} />
             <TextingCard />
             {data.requests.length > 0 && (
               <Card>
@@ -204,9 +204,14 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
             <li key={n.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
               <Phone className="h-4 w-4 shrink-0 text-zinc-400" />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm font-medium tabular-nums text-zinc-900">{n.number}</span>
                   {n.is_default && <Badge tone="violet">Default</Badge>}
+                  {n.pack_refresh_at && (
+                    <span title="Part of your Fresh Number Pack: swapped for a new number on this date">
+                      <Badge tone="amber">Fresh pack · new number {fmtDate(n.pack_refresh_at)}</Badge>
+                    </span>
+                  )}
                   {n.registration && <span className="text-xs text-zinc-500">{n.registration.status}</span>}
                 </div>
                 {manager ? (

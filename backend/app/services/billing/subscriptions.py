@@ -44,6 +44,10 @@ def _is_agent_item(item: dict) -> bool:
     return _lookup(item) == catalog.AGENT_ADDON["lookup_key"]
 
 
+def _is_pack_item(item: dict) -> bool:
+    return _lookup(item) == catalog.PHONE_PACK["lookup_key"]
+
+
 def _plan_item(sub: dict) -> dict | None:
     return next((i for i in _items(sub) if _lookup(i) not in catalog.ADDON_LOOKUP_KEYS), None)
 
@@ -60,6 +64,7 @@ async def sync_from_stripe(db: AsyncSession, sub: dict, org_id: uuid.UUID) -> Bi
     price_id = ((item or {}).get("price") or {}).get("id")
     phone = next((i for i in _items(sub) if _is_phone_item(i)), None)
     agents = next((i for i in _items(sub) if _is_agent_item(i)), None)
+    pack = next((i for i in _items(sub) if _is_pack_item(i)), None)
     meta = sub.get("metadata") or {}
     row = await db.get(BillingSubscription, org_id)
     if row is None:
@@ -77,6 +82,8 @@ async def sync_from_stripe(db: AsyncSession, sub: dict, org_id: uuid.UUID) -> Bi
     row.phone_quantity = int(phone.get("quantity") or 0) if phone else 0
     row.agent_item_id = agents["id"] if agents else None
     row.agent_slots = int(agents.get("quantity") or 0) if agents else 0
+    row.pack_item_id = pack["id"] if pack else None
+    row.phone_packs = int(pack.get("quantity") or 0) if pack else 0
     custom = str(meta.get("credits") or "")
     row.custom_credits = int(custom) if row.plan_key == "managed" and custom.isdigit() else None
     if row.plan_key == "managed" and row.status in ("active", "trialing"):
@@ -325,6 +332,41 @@ async def set_agent_slots(db: AsyncSession, org_id: uuid.UUID, quantity: int, us
     return row
 
 
+async def set_phone_packs(db: AsyncSession, org_id: uuid.UUID, quantity: int, user_id: uuid.UUID) -> BillingSubscription:
+    """Change how many Fresh Number Packs are on the plan. Adding charges the prorated amount now (refused if
+    the card fails); removing credits unused time. The numbers themselves follow in phone_pack.reconcile."""
+    row, sub = await _live_sub(db, org_id)
+    if row.plan_key is None:
+        raise BillingError("Fresh Number Packs are added to a BlackSync plan — start a plan first.", 409)
+    if row.status == "past_due":
+        raise BillingError("Your last payment didn't go through — update your card before adding a pack.", 402)
+    if quantity < 0 or quantity > 10:
+        raise BillingError("Choose between 0 and 10 packs.", 400)
+    if quantity == (row.phone_packs or 0):
+        return row
+    try:
+        price = await catalog.sellable_price(catalog.PHONE_PACK["key"])
+    except catalog.NotSellable as exc:
+        raise BillingError(str(exc), 409)
+    adding = quantity > (row.phone_packs or 0)
+    try:
+        updated = await stripe_api.set_item_quantity(
+            subscription_id=sub["id"], item_id=row.pack_item_id, price_id=price, quantity=quantity,
+            idempotency_key=f"bs-packs-{org_id}-{quantity}-{uuid.uuid4().hex[:6]}",
+            payment_behavior="error_if_incomplete" if adding else None)
+    except stripe_api.StripeNotConfigured:
+        raise
+    except Exception as exc:
+        if not adding:
+            raise
+        log.warning("phone_pack_charge_failed", org_id=str(org_id), error=str(exc))
+        raise BillingError("The charge for the number pack didn't go through. Check your card under Billing.", 402)
+    row = await sync_from_stripe(db, updated, org_id)
+    await db.commit()
+    log.info("phone_packs_changed", org_id=str(org_id), packs=quantity, by=str(user_id))
+    return row
+
+
 # ── Phone number add-on ───────────────────────────────────────────────────────
 
 
@@ -334,8 +376,8 @@ async def phone_summary(db: AsyncSession, org_id: uuid.UUID) -> dict:
 
     org = await db.get(Organization, org_id)
     included = await entitlements.included_numbers(db, org) if org else 0
-    # Numbers bought on their own already have their own $3.50/mo subscription.
-    active = len([n for n in await active_numbers(db, org_id) if not n.stripe_subscription_id])
+    # Numbers bought on their own already have their own $3.50/mo subscription; pack numbers are paid by the pack.
+    active = len([n for n in await active_numbers(db, org_id) if not n.stripe_subscription_id and not n.pack_refresh_at])
     row = await db.get(BillingSubscription, org_id)
     subscribed = bool(row and row.status in LIVE)
     return {"active": active, "included": included if subscribed else 0,

@@ -514,6 +514,8 @@ def number_to_dict(n: PhoneNumber) -> dict:
         "id": str(n.id), "number": n.number, "label": n.label, "source": n.source or "assigned",
         "carrier": n.carrier or "twilio",
         "is_default": bool(n.is_default), "status": n.status,
+        # Fresh Number Pack numbers are swapped for new ones on this date.
+        "pack_refresh_at": n.pack_refresh_at.isoformat() if getattr(n, "pack_refresh_at", None) else None,
         # Plivo numbers: AT&T / T-Mobile spam-label registration progress (None for other carriers).
         "spam_protection": ({"status": getattr(n, "reputation_status", None) or "PENDING",
                              "carriers": getattr(n, "reputation_detail", None) or {}}

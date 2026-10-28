@@ -64,6 +64,8 @@ async def lifespan(app: FastAPI):
     crm_task = start_poll_loop()
     from app.services.crm.automations import start_worker
     radar_task = start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services import phone_pack
+    pack_task = phone_pack.start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.call_alerts import start_worker as start_alerts
     alert_task = start_alerts() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.outbound_call import fix_mislabeled_outcomes
@@ -150,6 +152,7 @@ async def lifespan(app: FastAPI):
     refresh_task.cancel()
     crm_task.cancel()
     radar_task.cancel()
+    pack_task.cancel()
     alert_task.cancel()
     repair_task.cancel()
     log.info("pounce_shutting_down")

@@ -141,7 +141,11 @@ PHONE_ADDON = {"key": "phone_number", "name": "Additional phone number", "amount
 # Each slot adds one to the plan's agent limit. Recurring, on the plan subscription.
 AGENT_ADDON = {"key": "agent_slot", "name": "Extra agent slot", "amount_cents": 1900, "interval": "month",
                "lookup_key": "additional_agent_slot_monthly"}
-ADDON_LOOKUP_KEYS = {PHONE_ADDON["lookup_key"], AGENT_ADDON["lookup_key"]}
+# Fresh Number Pack: 10 local numbers per pack, each swapped for a new one every refresh_days, so call volume is
+# spread wide and no caller ID wears out. Recurring, on the plan subscription. See services/phone_pack.
+PHONE_PACK = {"key": "phone_pack", "name": "Fresh Number Pack", "amount_cents": 2500, "interval": "month",
+              "numbers": 10, "refresh_days": 30, "lookup_key": "fresh_number_pack_10_monthly"}
+ADDON_LOOKUP_KEYS = {PHONE_ADDON["lookup_key"], AGENT_ADDON["lookup_key"], PHONE_PACK["lookup_key"]}
 
 # Lowest list price per credit — the fallback for $ estimates before any purchase.
 LIST_CENTS_PER_CREDIT = min(p["amount_cents"] / p["credits"] for p in CREDIT_PACKS.values())
@@ -154,6 +158,7 @@ def all_items() -> list[tuple[str, dict, str]]:
     out += [("lookup_funds", LOOKUP_FUNDS[k], "one_time") for k in FUNDS_ORDER]
     out.append(("phone_addon", PHONE_ADDON, "recurring"))
     out.append(("agent_addon", AGENT_ADDON, "recurring"))
+    out.append(("phone_pack", PHONE_PACK, "recurring"))
     return out
 
 

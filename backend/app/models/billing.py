@@ -54,6 +54,9 @@ class BillingSubscription(Base):
     # Subscription item carrying extra agent slots ($19/mo each; quantity = slots).
     agent_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_slots: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    # Fresh Number Packs (10 recycled numbers each) on this subscription.
+    pack_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    phone_packs: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     # Included credits per cycle when an admin set a custom amount (custom Managed); None = the plan's.
     custom_credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
@@ -212,6 +215,9 @@ class PhoneNumber(Base):
     # Bought on its own ($3.50/mo subscription, no plan): cancelling that subscription releases the number.
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Taken out of campaign rotation until then ("low_pickups": likely labeled spam). See services/number_health.
+    # Part of a Fresh Number Pack: swapped for a new number at this time (None = a regular number).
+    pack_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pack_area_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
     rest_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rest_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Plivo Caller Reputation (AT&T / T-Mobile spam-label registration): NOT_REGISTERED | PENDING | ACTIVE |
