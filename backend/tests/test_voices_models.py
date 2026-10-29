@@ -283,7 +283,7 @@ def test_new_agents_default_to_marissa(client):
 def test_mia_is_third_premium_family_without_claiming_clone(client, cartesia):
     voices = client.get("/api/settings/voices").json()["voices"]
     rows = list(dict.fromkeys(v.get("family") or v["name"] for v in voices if v["category"] == "premium"))
-    assert rows[:4] == ["Marissa M", "Zain", "Mia", "Lauren"]
+    assert rows[:5] == ["Marissa M", "Zain", "Mia", "Macco", "Lauren"]
     mia = next(v for v in voices if v["id"] == "26def8d4-b397-4d79-b5f1-d554d16ba4fe")
     assert mia["category"] == "premium"
     assert mia["is_clone"] is False
