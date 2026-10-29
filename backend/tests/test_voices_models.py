@@ -105,10 +105,13 @@ def test_voice_metadata_fields(client, cartesia, monkeypatch):
     for v in voices.values():
         assert {"id", "name", "provider", "category", "language", "accent", "gender", "description",
                 "is_clone", "preview", "models", "status"} <= v.keys()
-        assert v["provider"] == ("elevenlabs" if v["id"].startswith("elevenlabs:") else "mistral" if v["id"].startswith("mistral:") else "cartesia")
-        assert v["models"] == (["eleven_flash_v2_5"] if v["provider"] == "elevenlabs" else ["voxtral-mini-tts-latest"] if v["provider"] == "mistral" else ["sonic-3"])
+        prefix = v["id"].split(":", 1)[0] if ":" in v["id"] else "cartesia"
+        assert v["provider"] == prefix
+        assert v["models"] == {"elevenlabs": ["eleven_flash_v2_5"], "mistral": ["voxtral-mini-tts-latest"],
+                               "fishaudio": ["fishaudio/s2.1-pro"]}.get(prefix, ["sonic-3"])
         assert v["status"] == "available"
-        assert v["preview"] is (bool(settings.elevenlabs_api_key) if v["provider"] == "elevenlabs" else True)
+        assert v["preview"] is (bool(settings.elevenlabs_api_key) if v["provider"] == "elevenlabs"
+                                else settings.livekit_ready if v["provider"] == "fishaudio" else True)
     assert voices["pub-1"]["accent"] == "British"
     assert voices["pub-1"]["gender"] == "male"
     assert voices["pub-2"]["accent"] is None  # nothing in the metadata → no guess

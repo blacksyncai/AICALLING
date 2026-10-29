@@ -27,6 +27,8 @@ FEATURED_VOICES: list[dict] = [
      "description": "Live voice clone.", "clone": True, "language": "en"},
     {"id": "058f0988-5723-49e0-b322-e50034637fe6", "name": "Sofia", "gender": "feminine",
      "description": "Live voice clone.", "clone": True, "language": "en"},
+    {"id": "fishaudio:v_goYxyDbAUbfP", "name": "Zain 2", "gender": "masculine", "description": "Live voice clone (Fish Audio).",
+     "clone": True, "provider": "fishaudio", "language": "en"},
     {"id": "elevenlabs:WkIfOTQgqfIPfV7X7nND", "name": "Sally", "provider": "elevenlabs",
      "clone": True, "description": "Live voice clone.", "language": "en"},
     {"id": "378695da-44e9-4fc7-a9cb-efcb0d2037cc", "name": "Macco · Version 1", "family": "Macco", "tone": "Version 1",

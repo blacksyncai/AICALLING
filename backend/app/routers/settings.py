@@ -15,6 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.agent.models import LANGUAGES, RUNTIME_DEFAULT_MODEL, model_catalog, model_groups
+from app.agent import fish_tts
 from app.agent.mistral_tts import MISTRAL_TTS_MODEL, is_mistral_voice, synthesize_wav
 from app.agent import elevenlabs_tts
 from app.agent.voices import FEATURED_VOICES, HIDDEN_VOICE_IDS, VOICE_MODELS
@@ -137,8 +138,10 @@ def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> d
         "gender": gender,
         "description": (raw.get("description") or "")[:200],
         "is_clone": owned,
-        "preview": bool(settings.elevenlabs_api_key) if raw.get("provider") == "elevenlabs" else can_preview,
+        "preview": bool(settings.elevenlabs_api_key) if raw.get("provider") == "elevenlabs" else
+                   settings.livekit_ready if raw.get("provider") == "fishaudio" else can_preview,
         "models": [elevenlabs_tts.MODEL] if raw.get("provider") == "elevenlabs" else
+                  [fish_tts.MODEL] if raw.get("provider") == "fishaudio" else
                   [MISTRAL_TTS_MODEL] if raw.get("provider") == "mistral" else list(VOICE_MODELS),
         "status": "available",
     }
@@ -328,6 +331,23 @@ async def preview_voice(body: VoicePreview):
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
             except httpx.HTTPError:
+                raise HTTPException(status_code=502, detail="Couldn't generate this voice preview. Please try again.")
+            while len(_preview_cache) > _PREVIEW_CACHE_MAX:
+                _preview_cache.popitem(last=False)
+        _preview_cache.move_to_end(key)
+        return Response(content=_preview_cache[key], media_type="audio/wav")
+    if fish_tts.is_fish_voice(voice_id):
+        if not settings.livekit_ready:
+            raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
+        key = (voice_id, round(body.speed, 2), body.language, body.text)
+        if key not in _preview_cache:
+            try:
+                _preview_cache[key] = await fish_tts.synthesize_wav(
+                    voice_id, body.text, speed=body.speed, language=body.language)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+            except Exception as exc:
+                log.warning("fish_preview_failed", error=str(exc)[:200])
                 raise HTTPException(status_code=502, detail="Couldn't generate this voice preview. Please try again.")
             while len(_preview_cache) > _PREVIEW_CACHE_MAX:
                 _preview_cache.popitem(last=False)
