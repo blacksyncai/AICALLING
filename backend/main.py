@@ -74,8 +74,6 @@ async def lifespan(app: FastAPI):
     async def _repairs():
         await fix_mislabeled_outcomes()
         await repair_contact_statuses()
-        from app.services.crm import radar_repair  # TEMPORARY check; remove after it has run
-        await radar_repair.run()
 
     repair_task = asyncio.create_task(_repairs() if settings.run_startup_jobs else asyncio.sleep(0))
     if settings.run_startup_jobs:
