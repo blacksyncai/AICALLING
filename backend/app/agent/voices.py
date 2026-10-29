@@ -29,10 +29,10 @@ FEATURED_VOICES: list[dict] = [
      "description": "Live voice clone.", "clone": True, "language": "en"},
     {"id": "elevenlabs:WkIfOTQgqfIPfV7X7nND", "name": "Sally", "provider": "elevenlabs",
      "clone": True, "description": "Live voice clone.", "language": "en"},
-    {"id": "378695da-44e9-4fc7-a9cb-efcb0d2037cc", "name": "Macco · Version 1", "family": "Macco", "tone": "Version 1",
-     "description": "Deep voice clone.", "clone": True},
-    {"id": "elevenlabs:diHzndF9D0TjlgUfMwn0", "name": "Macco · Version 2", "family": "Macco", "tone": "Version 2",
-     "description": "Live voice clone.", "clone": True, "provider": "elevenlabs", "language": "en"},
+    {"id": "lkcartesia:v_ZMqDxhK7B6i6", "name": "Macco · Version 1", "family": "Macco", "tone": "Version 1",
+     "description": "Deep voice clone.", "clone": True, "provider": "cartesia", "language": "en"},
+    {"id": "inworld:v_ZMqDxhK7B6i6", "name": "Macco · Version 2", "family": "Macco", "tone": "Version 2",
+     "description": "Live voice clone.", "clone": True, "provider": "inworld", "language": "en"},
     {"id": "elevenlabs:iRh44YCGcZyLpQjPFMsh", "name": "Matt", "provider": "elevenlabs",
      "clone": True, "description": "Live voice clone.", "language": "en"},
     {"id": "elevenlabs:Ywuz3KyW2N5pqKNpwcCL", "name": "Mishal", "provider": "elevenlabs",
@@ -89,6 +89,8 @@ DEFAULT_VOICE_ID = "97f03c16-fab2-4747-b655-9caefbd68fcf"
 RETIRED_VOICES = {
     "mistral:01a133e4-93c6-7540-98b5-a917a4da562e": "fishaudio:v_goYxyDbAUbfP",  # Zain (Mistral) → Zain · Version 1
     "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd": "fishaudio:v_SriZAPqzgffq",  # Marissa M (Mistral) → Version 1
+    "378695da-44e9-4fc7-a9cb-efcb0d2037cc": "lkcartesia:v_ZMqDxhK7B6i6",  # Macco (old Cartesia clone) → Version 1
+    "elevenlabs:diHzndF9D0TjlgUfMwn0": "inworld:v_ZMqDxhK7B6i6",  # Macco (ElevenLabs) → Version 2
 }
 
 

@@ -41,7 +41,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
 from app.agent.elevenlabs_tts import is_elevenlabs_voice, make_livekit_tts as make_elevenlabs_tts
-from app.agent.fish_tts import is_fish_voice, make_livekit_tts as make_fish_tts
+from app.agent.inference_tts import is_inference_voice, make_livekit_tts as make_inference_tts, provider_of as inference_provider
 from app.agent.models import MISTRAL_MODELS, NEEDS_USER_TURN
 from app.agent.runtime import contact_turns, should_hold_hangup
 
@@ -1274,8 +1274,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         llm=openai.LLM(**llm_kwargs),
         tts=make_elevenlabs_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
         if is_elevenlabs_voice(voice_id) else
-        make_fish_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
-        if is_fish_voice(voice_id) else
+        make_inference_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
+        if is_inference_voice(voice_id) else
         make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia.TTS(
             model="sonic-3",
             voice=DEFAULT_VOICE_ID if is_mistral_voice(voice_id) else voice_id,
@@ -1640,7 +1640,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,
              has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
              stt_provider="cartesia" if language == "tl" else "deepgram", language=language,
-             tts_provider="elevenlabs" if is_elevenlabs_voice(voice_id) else "fishaudio" if is_fish_voice(voice_id) else "mistral" if is_mistral_voice(voice_id) and settings.mistral_api_key else "cartesia",
+             tts_provider="elevenlabs" if is_elevenlabs_voice(voice_id) else inference_provider(voice_id) if is_inference_voice(voice_id) else "mistral" if is_mistral_voice(voice_id) and settings.mistral_api_key else "cartesia",
              background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
              preemptive_generation=True, preemptive_tts=True,
              short_sentence_streaming=settings.voice_short_sentence_streaming, trace_enabled=settings.voice_turn_trace,

@@ -106,12 +106,14 @@ def test_voice_metadata_fields(client, cartesia, monkeypatch):
         assert {"id", "name", "provider", "category", "language", "accent", "gender", "description",
                 "is_clone", "preview", "models", "status"} <= v.keys()
         prefix = v["id"].split(":", 1)[0] if ":" in v["id"] else "cartesia"
-        assert v["provider"] == prefix
+        assert v["provider"] == {"lkcartesia": "cartesia"}.get(prefix, prefix)
         assert v["models"] == {"elevenlabs": ["eleven_flash_v2_5"], "mistral": ["voxtral-mini-tts-latest"],
-                               "fishaudio": ["fishaudio/s2.1-pro"]}.get(prefix, ["sonic-3"])
+                               "fishaudio": ["fishaudio/s2.1-pro"], "inworld": ["inworld/inworld-tts-2"],
+                               "lkcartesia": ["cartesia/sonic-3.5"]}.get(prefix, ["sonic-3"])
         assert v["status"] == "available"
+        inference = prefix in ("fishaudio", "inworld", "lkcartesia")
         assert v["preview"] is (bool(settings.elevenlabs_api_key) if v["provider"] == "elevenlabs"
-                                else settings.livekit_ready if v["provider"] == "fishaudio" else True)
+                                else settings.livekit_ready if inference else True)
     assert voices["pub-1"]["accent"] == "British"
     assert voices["pub-1"]["gender"] == "male"
     assert voices["pub-2"]["accent"] is None  # nothing in the metadata → no guess
