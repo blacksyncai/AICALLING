@@ -241,8 +241,9 @@ class Settings(BaseSettings):
 
     @property
     def recording_via_twilio(self) -> bool:
-        p = (self.recording_provider or "").lower()
-        return p == "twilio" or (p == "" and self.twilio_ready)
+        # LiveKit egress records every call by default (Scale plan: 500 at once, files land seconds after the
+        # call, straight in our bucket). RECORDING_PROVIDER=twilio switches back to recording on the Twilio trunk.
+        return (self.recording_provider or "").lower() == "twilio"
 
     @property
     def recordings_ready(self) -> bool:

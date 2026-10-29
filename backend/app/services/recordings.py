@@ -1,6 +1,6 @@
 """
-Call recordings — LiveKit egress mixes the room's audio (caller + agent) into one
-OGG file and uploads it straight to an S3-compatible bucket (Railway Buckets,
+Call recordings — LiveKit egress records the room's audio into one two-channel OGG file (the agent on
+one side, the caller on the other) and uploads it straight to an S3-compatible bucket (Railway Buckets,
 Cloudflare R2, AWS S3…). Playback uses short-lived presigned URLs, so the bucket
 stays private and every request goes through the account check first.
 """
@@ -47,6 +47,8 @@ async def start(room_name: str, key: str) -> str:
         info = await lk.egress.start_room_composite_egress(api.RoomCompositeEgressRequest(
             room_name=room_name,
             audio_only=True,
+            # Agent and caller on separate channels: Radar re-checks voicemail greetings on the caller's side.
+            audio_mixing=api.AudioMixing.DUAL_CHANNEL_AGENT,
             file_outputs=[api.EncodedFileOutput(file_type=api.EncodedFileType.OGG, filepath=key, s3=s3)],
         ))
     finally:

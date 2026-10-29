@@ -292,7 +292,7 @@ def test_twilio_records_instead_of_egress(client, make_client, twilio, monkeypat
     monkeypatch.setattr(settings, "livekit_sip_outbound_trunk_id", "ST_test")
     for k, v in {"recordings_s3_bucket": "b", "recordings_s3_access_key": "k", "recordings_s3_secret_key": "s"}.items():
         monkeypatch.setattr(settings, k, v)
-    monkeypatch.setattr(settings, "recording_provider", "")  # auto → Twilio (credentials are set)
+    monkeypatch.setattr(settings, "recording_provider", "twilio")
     started = []
 
     async def fake_start(room, key):
@@ -310,3 +310,28 @@ def test_twilio_records_instead_of_egress(client, make_client, twilio, monkeypat
     assert not started  # no LiveKit egress
     rec = owner.get(f"/api/calls/{call_id}/recording").json()
     assert rec["status"] == "processing"  # pending until the trunk recording is copied over
+
+
+def test_livekit_egress_records_by_default(client, make_client, twilio, monkeypatch):
+    org, owner = _account(client, make_client, "Egress Rec Co", credits=50)
+    log: list = []
+    monkeypatch.setattr(outbound_call, "_lk", lambda: _FakeLK(log))
+    monkeypatch.setattr(settings, "livekit_sip_outbound_trunk_id", "ST_test")
+    for k, v in {"recordings_s3_bucket": "b", "recordings_s3_access_key": "k", "recordings_s3_secret_key": "s"}.items():
+        monkeypatch.setattr(settings, k, v)
+    monkeypatch.setattr(settings, "recording_provider", "")  # default: LiveKit egress, even with Twilio set up
+    started = []
+
+    async def fake_start(room, key):
+        started.append(key)
+        return "EG_1"
+
+    monkeypatch.setattr(recordings, "start", fake_start)
+    agent = owner.post("/api/agents/", json={"template": "sales_sdr"}).json()
+    call_id = owner.post(f"/api/agents/{agent['id']}/phone-call", json={"to_phone": "+15551234567"}).json()["call_id"]
+    for _ in range(40):
+        if started:
+            break
+        time.sleep(0.05)
+    assert started and started[0].endswith(f"{call_id}.ogg")  # recorded by LiveKit once answered, no Twilio copy
+    time.sleep(0.3)  # let the background task save the recording key before the next test uses the database

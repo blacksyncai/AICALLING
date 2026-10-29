@@ -64,18 +64,20 @@ def _twilio_time(value: str | None) -> datetime | None:
 
 
 async def ensure_trunk_recording() -> str | None:
-    """Turn recording on for the Twilio trunk (idempotent). Returns the mode now set, None if unavailable."""
+    """Match the Twilio trunk's recording to the setting (idempotent): on when Twilio records calls, off when
+    LiveKit does (so Twilio doesn't record and bill every call a second time). Returns the mode now set."""
     from app.services import telephony
 
-    if not settings.recording_via_twilio or not settings.twilio_ready:
+    if not settings.twilio_ready:
         return None
+    want = TRUNK_MODE if settings.recording_via_twilio else "do-not-record"
     sid = await telephony.trunk_sid()
     url = f"{telephony._TRUNKING}/Trunks/{sid}/Recording"
     current = await telephony._request("GET", url)
-    if current.get("mode") == TRUNK_MODE:
-        return TRUNK_MODE
-    data = await telephony._request("POST", url, data={"Mode": TRUNK_MODE, "Trim": "do-not-trim"})
-    log.info("twilio_trunk_recording_enabled", trunk=sid, previous=current.get("mode"), mode=data.get("mode"))
+    if current.get("mode") == want:
+        return want
+    data = await telephony._request("POST", url, data={"Mode": want, "Trim": "do-not-trim"})
+    log.info("twilio_trunk_recording_set", trunk=sid, previous=current.get("mode"), mode=data.get("mode"))
     return data.get("mode")
 
 
@@ -183,7 +185,8 @@ async def process_due(db, now: datetime | None = None, limit: int = 25) -> int:
 
 
 def start_sweeper(interval: float = 60.0):
-    """Every minute: make sure trunk recording is on (first run), then save any pending recordings."""
+    """Every minute: set the trunk's recording to match the setting (first run), then save any pending recordings
+    (calls recorded on the trunk before a switch to LiveKit still finish)."""
     from app.database import AsyncSessionLocal
 
     async def _loop() -> None:

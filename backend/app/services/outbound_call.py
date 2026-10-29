@@ -430,8 +430,8 @@ class CallService:
             conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == org.id))).scalars().all()
             variables = crm_vars.apply(variables, lead, agent, list(conns))
         metadata = _build_metadata(call_log, agent, variables, "outbound", lead, max_seconds=max_seconds)
-        if record and carrier in ("signalwire", "plivo"):
-            # Record the session in our worker; carrier-native calls must not depend on egress quota.
+        if record and carrier in ("signalwire", "plivo") and settings.recording_via_twilio:
+            # Twilio-recording mode: carriers off the Twilio trunk are recorded in our worker instead.
             call_log.recording_key = recordings.key_for(org.id, call_log.id)
             call_log.recording_status = "worker_pending"
             metadata = json.dumps({**json.loads(metadata), "record_key": call_log.recording_key,
@@ -493,10 +493,8 @@ class CallService:
         )
         log.info("livekit_sip_dialing", room=room_name, to=phone, from_number=from_number or "trunk default",
                  trunk=trunk_id, carrier=carrier)
-        # LiveKit egress only when Twilio isn't recording (egress is capped by concurrency and monthly minutes).
-        recording_key = (recordings.key_for(org.id, call_log.id)
-                         if record and carrier not in ("signalwire", "plivo") and not settings.recording_via_twilio
-                         else None)
+        # LiveKit egress records every carrier's calls (started once the contact answers).
+        recording_key = recordings.key_for(org.id, call_log.id) if record and not settings.recording_via_twilio else None
         task = asyncio.create_task(_dial_and_watch(sip_req, call_log.id, lead.id if lead else None, room_name,
                                                    recording_key))
         _BACKGROUND.add(task)

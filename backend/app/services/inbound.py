@@ -206,12 +206,23 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
                    credits_reserved=reserved, credit_rate=rate)
     from app.services import recordings
 
+    record_key = None
     if recordings.enabled_for(agent) and settings.recording_via_twilio:
         from app.services import twilio_recordings
 
         twilio_recordings.mark_pending(call)
+    elif recordings.enabled_for(agent):
+        record_key = recordings.key_for(row.org_id, call.id)
     db.add(call)
     await db.commit()
+    if record_key:
+        import asyncio
+
+        from app.services.outbound_call import _BACKGROUND, _start_recording
+
+        task = asyncio.create_task(_start_recording(call.id, room, record_key))
+        _BACKGROUND.add(task)
+        task.add_done_callback(_BACKGROUND.discard)
     variables = lead_variables(lead) if lead else {"phone": caller}
     log.info("inbound_call_routed", to=row.number, agent=agent.name, call_log_id=str(call.id), known_caller=bool(lead))
     cfg = agent_to_runtime(agent, secrets=True)

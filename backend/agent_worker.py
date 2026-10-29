@@ -1650,7 +1650,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     session.on("close", lambda ev: log.info("session_closed", room=ctx.room.name,
                                             reason=str(getattr(ev, "reason", "")), error=str(getattr(ev, "error", "") or "")[:300]))
     session_started = _time.monotonic()
-    await session.start(agent, room=ctx.room)
+    await session.start(agent, room=ctx.room, record=False)  # recordings go to our own bucket, not LiveKit
     log.info("voice_session_ready", room=ctx.room.name,
              after_answer_seconds=round(_time.monotonic() - session_started, 3))
 
@@ -2118,7 +2118,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     session.on("conversation_item_added", _on_conversation_item)
 
-    await session.start(agent, room=ctx.room)
+    await session.start(agent, room=ctx.room, record=False)  # recordings go to our own bucket, not LiveKit
     recorder = await _start_worker_recording(ctx, session, metadata)
 
     # Announce call_started to Live Monitor

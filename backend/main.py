@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             log.warning("campaign_resume_failed", error=str(exc)[:200])
     from app.services import twilio_recordings
-    rec_task =(twilio_recordings.start_sweeper() if settings.run_startup_jobs and settings.recording_via_twilio
+    rec_task =(twilio_recordings.start_sweeper() if settings.run_startup_jobs and settings.twilio_ready
                 else asyncio.create_task(asyncio.sleep(0)))
     from app.services.number_registration import start_worker as start_registration_worker
     registration_task = start_registration_worker() if settings.run_startup_jobs and settings.number_registration_worker_enabled else asyncio.create_task(asyncio.sleep(0))
