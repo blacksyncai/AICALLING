@@ -249,3 +249,20 @@ def test_fub_native_and_reserved_field_names_never_fail_the_push(client,crm,remo
     assert 'First Name' not in posted and 'Last Name' not in posted
     assert 'owner_type' in row['result']['csv_data']['unmapped'] and row['result']['csv_data']['warnings']
     assert 'Trust' in remote['people'][0]['background'] and remote['deals']
+
+
+def test_street_only_column_plus_full_address_column_sends_the_whole_address(client,crm,remote,csv_remote):
+    remote['people']=[person()]
+    call,lead,_=queue(client,crm)
+    extras(lead,{'address':'Eureka Street','custom4':'53 Eureka St, San Francisco, CA 94114'})
+    execute_all();row=job(client,call)
+    assert row['status']=='succeeded',row
+    a=remote['people'][0]['addresses'][0]
+    assert (a['street'],a['city'],a['state'],a['code'])==('53 Eureka St','San Francisco','CA','94114')
+
+
+def test_full_address_parsing():
+    from app.services.crm.csv_export import full_address
+    assert full_address({'custom4':'20 W Harder Rd, Hayward, CA 94544'})==('custom4',{'street':'20 W Harder Rd','city':'Hayward','state':'CA','code':'94544'})
+    assert full_address({'notes':'Owner unverified, call later'}) is None
+    assert full_address({'address':'Union Street'}) is None

@@ -23,6 +23,35 @@ NATIVE = {'first_name','last_name','full_name','firstname','lastname','fullname'
           'mobile','mobile_phone','cell','email_address','email_1','email1'}
 
 
+# "53 Eureka St, San Francisco, CA 94114" — one column holding the whole address.
+_FULL_ADDRESS = re.compile(r'^\s*(.+?),\s*([^,]+?),\s*([A-Za-z]{2})\.?\s+(\d{5})(?:-\d{4})?\s*$')
+
+
+def full_address(values):
+    """(column, {street, city, state, code}) for the first value that is a complete street address, else None."""
+    ranked = sorted(values.items(), key=lambda kv: 'address' not in kv[0].lower())  # address-named columns first
+    for key, value in ranked:
+        m = _FULL_ADDRESS.match(str(value or '')) if isinstance(value, str) else None
+        if m and re.search(r'\d', m.group(1)):
+            return key, {'street': m.group(1).strip(), 'city': m.group(2).strip(),
+                         'state': m.group(3).upper(), 'code': m.group(4)}
+    return None
+
+
+async def fill_address(http, ref, lead):
+    """Give an FUB person the contact's full address when their FUB address has no city/ZIP yet. True if written."""
+    found = full_address(values_for(lead))
+    if not found:
+        return False
+    person = await http.request('GET', f'/v1/people/{int(ref)}', params={'fields': 'id,addresses'})
+    addresses = person.get('addresses') or []
+    current = addresses[0] if addresses else {}
+    if current.get('city') or current.get('code'):
+        return False  # a complete address is already there: never overwrite it
+    await http.request('PUT', f'/v1/people/{int(ref)}', json={'addresses': [{**current, **found[1]}, *addresses[1:]]})
+    return True
+
+
 def values_for(lead):
     values = {k: v for k, v in variables.visible_fields(lead.custom_fields).items() if k not in INTERNAL and not k.startswith('_')}
     for key in ('name','phone','email','company','role'):
@@ -229,9 +258,15 @@ async def export(db, job, conn, call, lead):
         if current in (None,'',[]): patch[api_key]=value;report['synced'].append(key)
         elif confirmed(current,value): report['unchanged'].append(key)
         else: report['conflicts'].append(key)
+    found=full_address(extra)
+    if found and not (address.get('city') and address.get('code')):
+        # A street-only column ("Eureka Street") plus a column with the whole address: use the whole address.
+        address={**found[1]};address_sources={part:found[0] for part in address};collisions.discard('addresses')
     if address and 'addresses' not in collisions:
         addresses=person.get('addresses') or []
         current=addresses[0] if addresses else {}
+        if found and not current.get('city') and not current.get('code'):
+            current={k:v for k,v in current.items() if k not in address}  # street-only FUB address: complete it
         if any(current.get(part) and str(current[part])!=value for part,value in address.items()):
             report['conflicts'].extend(address_sources.values())
         else:
