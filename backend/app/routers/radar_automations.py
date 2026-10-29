@@ -503,6 +503,27 @@ async def draft(body: DraftIn, ctx: ManagerDep, db: DbDep):
     return {**result, "conversation_id": str(row.id)}
 
 
+async def _sync_data(db, org_id, row):
+    """Backfill one completed action's contact: CSV data (incl. full address), plus the BlackSync tag for deals."""
+    rule = await owned_rule(db, org_id, row.automation_id)
+    conn = await db.get(CrmConnection, rule.connection_id)
+    call = await db.get(CallLog, row.call_id)
+    lead = await db.get(Lead, call.lead_id) if call and call.org_id == org_id else None
+    if not conn or conn.org_id != org_id or conn.provider != "followupboss" or not lead or lead.org_id != org_id:
+        raise HTTPException(400, "This action has no linked Follow Up Boss contact in this workspace.")
+    receipt = (row.result or {}).get("contact") or {}
+    if str(receipt.get("id") or "") != str((lead.crm_refs or {}).get(conn.provider) or "") or not receipt.get("id"):
+        raise HTTPException(409, "The FUB contact link changed. Review the contact before syncing data.")
+    from app.services.crm import sync
+    from app.services.crm.csv_export import export
+    from app.services.crm.fub_deals import tag_person
+    await export(db, row, conn, call, lead)
+    if any(a.get("kind") == "crm_deal_stage" for a in (row.spec or {}).get("actions") or []):
+        _, http = sync.http_for(conn)
+        await tag_person(http, str(receipt["id"]))
+    return str(receipt["id"])
+
+
 @router.post("/activity/{execution_id}/sync-data")
 async def sync_csv_data(execution_id: uuid.UUID, ctx: ManagerDep, db: DbDep):
     """Explicitly backfill CSV data on a contact from an already completed routing action."""
@@ -510,21 +531,31 @@ async def sync_csv_data(execution_id: uuid.UUID, ctx: ManagerDep, db: DbDep):
     row = await db.get(RadarExecution, execution_id)
     if not row or row.org_id != ctx.org.id or row.status != "succeeded":
         raise HTTPException(404, "Completed routing action not found.")
-    rule = await owned_rule(db, ctx.org.id, row.automation_id)
-    conn = await db.get(CrmConnection, rule.connection_id)
-    call = await db.get(CallLog, row.call_id)
-    lead = await db.get(Lead, call.lead_id) if call and call.org_id == ctx.org.id else None
-    if not conn or conn.org_id != ctx.org.id or conn.provider != "followupboss" or not lead or lead.org_id != ctx.org.id:
-        raise HTTPException(400, "This action has no linked Follow Up Boss contact in this workspace.")
-    receipt = (row.result or {}).get("contact") or {}
-    if str(receipt.get("id") or "") != str((lead.crm_refs or {}).get(conn.provider) or "") or not receipt.get("id"):
-        raise HTTPException(409, "The FUB contact link changed. Review the contact before syncing data.")
     try:
-        from app.services.crm.csv_export import export
-        await export(db, row, conn, call, lead)
+        await _sync_data(db, ctx.org.id, row)
         return {"result": row.result}
     except CrmError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/activity/sync-data-all")
+async def sync_csv_data_all(ctx: ManagerDep, db: DbDep):
+    """The "Sync all" button: backfill every contact a completed action pushed (once per contact)."""
+    await require(ctx, db)
+    rows = (await db.execute(select(RadarExecution).where(
+        RadarExecution.org_id == ctx.org.id, RadarExecution.status == "succeeded")
+        .order_by(RadarExecution.updated_at.desc()).limit(500))).scalars().all()
+    done: set[str] = set()
+    failed = 0
+    for row in rows:
+        contact = str(((row.result or {}).get("contact") or {}).get("id") or "")
+        if not contact or contact in done:
+            continue
+        try:
+            done.add(await _sync_data(db, ctx.org.id, row))
+        except (HTTPException, CrmError):
+            failed += 1
+    return {"contacts": len(done), "failed": failed}
 
 
 @router.post("/activity/{execution_id}/sync-transcript")

@@ -1785,6 +1785,8 @@ function AutomationActivity() {
     }[];
   }>(`${BASE}/activity`, fetcher, { refreshInterval: 10000 });
   const [retryErr, setRetryErr] = useState("");
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [syncNote, setSyncNote] = useState("");
   if (error) return <Notice tone="red">{errorText(error)}</Notice>;
   if (!data) return <Spinner />;
   return (
@@ -1797,11 +1799,41 @@ function AutomationActivity() {
             seconds.
           </p>
         </div>
-        <Button size="sm" onClick={() => void mutate()}>
-          <RefreshCw size={14} />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          {data.items.some((i) => i.status === "succeeded" && i.result.contact) && (
+            <Button
+              size="sm"
+              loading={syncingAll}
+              title="Send every pushed contact's CSV data (full address and more) and the BlackSync tag to the CRM again"
+              onClick={async () => {
+                setRetryErr("");
+                setSyncNote("");
+                setSyncingAll(true);
+                try {
+                  const r = await post<{ contacts: number; failed: number }>(`${BASE}/activity/sync-data-all`);
+                  setSyncNote(`Synced ${r.contacts} contact${r.contacts === 1 ? "" : "s"}${r.failed ? ` · ${r.failed} need review` : ""}.`);
+                  void mutate();
+                } catch (e) {
+                  setRetryErr(errorText(e));
+                } finally {
+                  setSyncingAll(false);
+                }
+              }}
+            >
+              Sync all
+            </Button>
+          )}
+          <Button size="sm" onClick={() => void mutate()}>
+            <RefreshCw size={14} />
+            Refresh
+          </Button>
+        </div>
       </div>
+      {syncNote && (
+        <div className="mt-4">
+          <Notice tone="green">{syncNote}</Notice>
+        </div>
+      )}
       {retryErr && (
         <div className="mt-4">
           <Notice tone="red">{retryErr}</Notice>

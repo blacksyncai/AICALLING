@@ -266,3 +266,15 @@ def test_full_address_parsing():
     assert full_address({'custom4':'20 W Harder Rd, Hayward, CA 94544'})==('custom4',{'street':'20 W Harder Rd','city':'Hayward','state':'CA','code':'94544'})
     assert full_address({'notes':'Owner unverified, call later'}) is None
     assert full_address({'address':'Union Street'}) is None
+
+
+def test_sync_all_backfills_full_address_and_tags_once_per_contact(client,crm,remote,csv_remote):
+    remote['people']=[person()]
+    call,lead,_=queue(client,crm);execute_all();row=job(client,call)
+    assert row['status']=='succeeded'
+    extras(lead,{'address':'Eureka Street','custom4':'53 Eureka St, San Francisco, CA 94114'})
+    r=client.post(f"{BASE}/activity/sync-data-all")
+    assert r.status_code==200 and r.json()=={'contacts':1,'failed':0},r.text
+    p=remote['people'][0]
+    assert p['addresses'][0]['city']=='San Francisco' and p['addresses'][0]['code']=='94114'
+    assert len(remote['deals'])==1
