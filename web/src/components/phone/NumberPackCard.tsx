@@ -26,7 +26,7 @@ interface Packs {
 const usd = (c: number) => `$${(c / 100).toFixed(0)}`;
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
 
-/** Fresh Number Pack: 10 number credits per pack. The customer picks each number; every one is swapped for a
+/** Fresh Number Pack: 10 numbers per pack. The customer picks each number; every one is swapped for a
     fresh number in the same area code each month. `pickHref` is where the number search is. */
 export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChanged: () => void; pickHref?: string }) {
   const toast = useToast();
@@ -44,7 +44,7 @@ export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChan
       await mutate(out, false);
       onChanged();
       setConfirm(null);
-      toast(quantity > owned ? `${(quantity - owned) * per} number credits added — pick your numbers` : "Number pack removed");
+      toast(quantity > owned ? `${(quantity - owned) * per} numbers added to your pack — pick which ones you want` : "Number pack removed");
     } catch (e) {
       toast((e as Error).message, "error");
     } finally {
@@ -65,7 +65,7 @@ export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChan
                 <ShieldCheck className="h-3 w-3" /> Anti-spam
               </span>
             </div>
-            <p className="mt-1 text-sm text-zinc-600">{data.per_pack} number credits: pick the local numbers you want, and each one is swapped for a fresh one every month. Stop worrying about spam labels.</p>
+            <p className="mt-1 text-sm text-zinc-600">{data.per_pack} local numbers you choose yourself, each one swapped for a fresh one every month. Stop worrying about spam labels.</p>
           </div>
           <div className="shrink-0 text-right">
             <div className="font-display text-2xl font-semibold tabular-nums text-zinc-900">{usd(data.amount_cents)}</div>
@@ -91,7 +91,7 @@ export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChan
             <span className="flex items-center gap-2">
               <RefreshCw className="h-4 w-4 shrink-0 text-brand-600" />
               <span>
-                <strong>{data.credits.open}</strong> of {data.credits.total} credits left · {data.credits.used} number{data.credits.used === 1 ? "" : "s"} picked
+                <strong>{data.credits.used}</strong> of {data.credits.total} numbers picked{data.credits.open > 0 && <> · {data.credits.open} left to choose</>}
                 {data.next_refresh_at && <> · next fresh number {day(data.next_refresh_at)}</>}
               </span>
             </span>
@@ -117,7 +117,7 @@ export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChan
         ) : (
           <div className="flex flex-wrap items-end gap-2">
             <Button variant="primary" className="rounded-full!" onClick={() => setConfirm(owned + 1)} disabled={busy || owned >= 10}>
-              <Plus className="h-4 w-4" /> {owned ? "Add another pack" : `Get ${data.per_pack} number credits`}
+              <Plus className="h-4 w-4" /> {owned ? "Add another pack" : `Get ${data.per_pack} fresh numbers`}
             </Button>
             {owned > 0 && (
               <Button className="rounded-full!" onClick={() => setConfirm(owned - 1)} disabled={busy}>
@@ -146,7 +146,7 @@ export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChan
             </div>
             <div className="px-4 py-2.5 text-zinc-600">
               {adding
-                ? `You get ${per} number credits right away: pick the exact numbers you want with "Get a local number". The prorated amount for the rest of this billing period is charged now, then ${usd(data.amount_cents)} with your plan each month.`
+                ? `Your pack has room for ${per} numbers: pick the exact ones you want with "Get a local number". The prorated amount for the rest of this billing period is charged now, then ${usd(data.amount_cents)} with your plan each month.`
                 : `The ${per} newest pack numbers are released and taken out of your campaigns. Unused time is credited to your next invoice.`}
             </div>
           </dl>
@@ -155,7 +155,7 @@ export function NumberPackCard({ onChanged, pickHref = "#get-number" }: { onChan
               Cancel
             </Button>
             <Button className="rounded-full!" variant="primary" loading={busy} onClick={() => confirm != null && void apply(confirm)}>
-              {adding ? `Pay and get ${per} credits` : "Remove pack"}
+              {adding ? `Pay and add ${per} numbers` : "Remove pack"}
             </Button>
           </div>
         </div>

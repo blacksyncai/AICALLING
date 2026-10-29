@@ -23,7 +23,7 @@ function nextNumberCost(p: Pricing): { free: boolean; text: string } {
   if (!p.subscribed) return { free: false, text: `${unit} per number — no plan needed. Or get 1–4 numbers included with a plan.` };
   if (p.active < p.included) return { free: true, text: `Included with your plan — no extra charge. Extra numbers after that are ${unit} each.` };
   if (p.pack_credits)
-    return { free: true, text: `Uses 1 of your ${p.pack_credits} Fresh Number Pack credit${p.pack_credits === 1 ? "" : "s"} — no extra charge. It's swapped for a fresh number in the same area code every month.` };
+    return { free: true, text: `Part of your Fresh Number Pack (${p.pack_credits} left to choose) — no extra charge. It's swapped for a fresh number in the same area code every month.` };
   return { free: false, text: `You've used your plan's ${p.included === 1 ? "included number" : `${p.included} included numbers`}. Each extra number is ${unit}, charged now (prorated) and with your plan each month.` };
 }
 
@@ -376,7 +376,7 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
     const cost = nextNumberCost(pricing);
     const unit = pricing ? `$${(pricing.unit_cents / 100).toFixed(2)}/mo` : "$3.50/mo";
     const note = cost.free
-      ? pricing?.active != null && pricing.active < pricing.included ? "It's included with your plan." : "It uses 1 Fresh Number Pack credit (no extra charge)."
+      ? pricing?.active != null && pricing.active < pricing.included ? "It's included with your plan." : "It's part of your Fresh Number Pack (no extra charge)."
       : pricing && !pricing.subscribed
         ? `It's ${unit} — you'll pay securely with Stripe, then the number is added right away. Cancel any time in Billing.`
         : `It's ${unit}: the prorated amount for this month is charged to your card now, then it's billed with your plan.`;
@@ -392,7 +392,7 @@ function BuyNumber({ pricing, refresh, carriers }: { pricing: Pricing; refresh: 
       setResults(null);
       setArea("");
       refresh();
-      toast(r?.used_pack_credit ? `${n.friendly} added with a pack credit` : `${n.friendly} added`);
+      toast(r?.used_pack_credit ? `${n.friendly} added to your Fresh Number Pack` : `${n.friendly} added`);
       setBuying(null);
     } catch (err) {
       toast((err as Error).message, "error");
