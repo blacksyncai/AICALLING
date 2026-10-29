@@ -197,3 +197,19 @@ def test_unassigned_deals_get_the_contacts_agent():
     http = Http()
     assert asyncio.run(assign_unowned(http, '9')) == 2
     assert http.puts == [('/v1/deals/1', {'userIds': [4]}), ('/v1/deals/3', {'userIds': [1]})]  # no agent → account owner
+
+
+def test_blacksync_tag_keeps_other_tags_and_is_added_once():
+    from app.services.crm.fub_deals import tag_person
+
+    class Http:
+        def __init__(self):
+            self.tags, self.puts = ['Seller', 'Hot'], 0
+        async def request(self, method, path, **kw):
+            if method == 'GET': return {'id': 1, 'tags': self.tags}
+            self.puts += 1; self.tags = kw['json']['tags']; return {}
+
+    http = Http()
+    assert asyncio.run(tag_person(http, '1')) is True
+    assert http.tags == ['Seller', 'Hot', 'BlackSync']
+    assert asyncio.run(tag_person(http, '1')) is False and http.puts == 1

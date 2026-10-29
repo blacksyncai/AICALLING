@@ -13,6 +13,19 @@ async def owner_ids(http, person_id):
     return [int(uid)] if uid else []
 
 
+TAG = 'BlackSync'
+
+
+async def tag_person(http, person_id, tag=TAG):
+    """Add a tag to the person, keeping their other tags. Returns True if it was added."""
+    person = await http.request('GET', f'/v1/people/{int(person_id)}', params={'fields': 'id,tags'})
+    tags = [t for t in person.get('tags') or [] if isinstance(t, str)]
+    if any(t.casefold() == tag.casefold() for t in tags):
+        return False
+    await http.request('PUT', f'/v1/people/{int(person_id)}', json={'tags': [*tags, tag]})
+    return True
+
+
 async def route(http, person_id, pipeline_id, stage_id, name):
     pipe = await get_pipeline(http, pipeline_id)
     stages = {str(s.get('id')): s for s in pipe.get('stages', [])}

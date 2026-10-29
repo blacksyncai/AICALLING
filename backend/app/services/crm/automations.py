@@ -156,8 +156,13 @@ async def perform_action(db, conn, action, call, lead, catalog):
         raise CrmError("This contact isn't linked to the selected CRM. Import/link it before routing.")
     p, http = sync.http_for(conn)
     if action.kind == "crm_deal_stage":
-        from app.services.crm.fub_deals import route
-        return await route(http, ref, action.pipeline_id, action.target_id, lead.name)
+        from app.services.crm.fub_deals import route, tag_person
+        result = await route(http, ref, action.pipeline_id, action.target_id, lead.name)
+        try:
+            await tag_person(http, ref)  # "BlackSync" on the person, so the team can find who came from us
+        except CrmError as exc:
+            log.warning("fub_blacksync_tag_failed", error=str(exc)[:200])
+        return result
     if action.kind == "crm_stage":
         pipe = next(x for x in catalog["pipelines"] if x["id"] == action.pipeline_id)
         result = await p.set_stage(http, conn.config or {}, ref, pipe, action.target_id,

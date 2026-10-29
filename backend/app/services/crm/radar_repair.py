@@ -24,6 +24,14 @@ async def run():
                 for k in ((lead.custom_fields or {}).get("crm_fields") or {}):
                     keys["crm_fields." + k] = keys.get("crm_fields." + k, 0) + 1
             mario = next((l for l in leads if (l.name or "").lower().startswith("mario medal")), None)
+            no_city = [l for l in leads if (l.custom_fields or {}).get("address") and not (l.custom_fields or {}).get("city")]
+            sample = []
+            for l in no_city[:5]:
+                cf = l.custom_fields or {}
+                sample.append({k: str(v)[:40] for k, v in cf.items() if k in ("address", "custom2", "custom3", "custom4",
+                               "property_address", "property_street", "mailing_address", "source", "listing_status")})
+            log.info("compass_no_city_sample", count=len(no_city), sample=sample,
+                     mario_keys=sorted((mario.custom_fields or {}).keys()) if mario else None)
             addr = {}
             if mario:
                 cf = mario.custom_fields or {}
