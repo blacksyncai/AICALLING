@@ -240,8 +240,10 @@ def test_mistral_voice_listed_as_premium_and_audio_converts(client, cartesia):
     z1, z2 = voices["fishaudio:v_goYxyDbAUbfP"], voices["95280ca0-610a-41c9-8457-1dcec809da61"]
     assert (z1["name"], z1["provider"]) == ("Zain · Version 1", "fishaudio")
     assert (z2["name"], z2["provider"]) == ("Zain · Version 2", "cartesia")
-    m = voices["mistral:01a1340c-90cb-7714-8ee0-02732154b0dd"]
-    assert m["name"] == "Marissa M · Version 2" and m["family"] == "Marissa M" and m["category"] == "premium" and m["provider"] == "mistral"
+    assert "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd" not in voices  # Marissa M's Mistral version was retired
+    m1, m2 = voices["fishaudio:v_SriZAPqzgffq"], voices["97f03c16-fab2-4747-b655-9caefbd68fcf"]
+    assert (m1["name"], m1["provider"]) == ("Marissa M · Version 1", "fishaudio")
+    assert (m2["name"], m2["provider"]) == ("Marissa M · Version 2", "cartesia")
     assert f32le_to_s16le(struct.pack("<3f", 0.0, 1.0, -2.0)) == struct.pack("<3h", 0, 32767, -32767)
     assert wav_header(10)[:4] == b"RIFF" and len(wav_header(10)) == 44
 
@@ -283,3 +285,27 @@ def test_mia_is_third_premium_family_without_claiming_clone(client, cartesia):
     mia = next(v for v in voices if v["id"] == "26def8d4-b397-4d79-b5f1-d554d16ba4fe")
     assert mia["category"] == "premium"
     assert mia["is_clone"] is False
+
+
+def test_agents_on_retired_voices_move_to_fish_versions(client):
+    import asyncio
+    import uuid
+
+    from app.agent.voices import move_retired_voices
+    from app.database import AsyncSessionLocal
+    from app.models.agent import Agent
+
+    zain = client.post("/api/agents/", json={"template": "blank"}).json()
+    other = client.post("/api/agents/", json={"template": "blank"}).json()
+
+    async def set_and_move():
+        async with AsyncSessionLocal() as db:
+            (await db.get(Agent, uuid.UUID(zain["id"]))).voice_id = "mistral:01a133e4-93c6-7540-98b5-a917a4da562e"
+            await db.commit()
+        await move_retired_voices()
+        async with AsyncSessionLocal() as db:
+            return (await db.get(Agent, uuid.UUID(zain["id"]))).voice_id, (await db.get(Agent, uuid.UUID(other["id"]))).voice_id
+
+    moved, untouched = asyncio.run(set_and_move())
+    assert moved == "fishaudio:v_goYxyDbAUbfP"
+    assert untouched == "97f03c16-fab2-4747-b655-9caefbd68fcf"

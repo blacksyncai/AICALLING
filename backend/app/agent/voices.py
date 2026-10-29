@@ -14,10 +14,10 @@ VOICE_MODELS = ["sonic-3"]  # the Cartesia TTS model the voice worker uses
 
 FEATURED_VOICES: list[dict] = [
     # Premium families in picker order; keep each family's versions together.
-    {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
+    {"id": "fishaudio:v_SriZAPqzgffq", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
+    {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
      "gender": "feminine", "description": "Live voice clone.", "clone": True},
-    {"id": "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "fishaudio:v_goYxyDbAUbfP", "name": "Zain · Version 1", "family": "Zain", "tone": "Version 1",
      "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Zain · Version 2", "family": "Zain", "tone": "Version 2",
@@ -84,3 +84,24 @@ HIDDEN_VOICE_IDS = {
 
 # New agents start with Marissa M (Version 1, the Cartesia house clone).
 DEFAULT_VOICE_ID = "97f03c16-fab2-4747-b655-9caefbd68fcf"
+
+# Voices taken out of the picker, and what agents still using them move to (applied at startup).
+RETIRED_VOICES = {
+    "mistral:01a133e4-93c6-7540-98b5-a917a4da562e": "fishaudio:v_goYxyDbAUbfP",  # Zain (Mistral) → Zain · Version 1
+    "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd": "fishaudio:v_SriZAPqzgffq",  # Marissa M (Mistral) → Version 1
+}
+
+
+async def move_retired_voices() -> int:
+    """Agents on a retired voice move to its replacement. Idempotent; returns how many agents moved."""
+    from sqlalchemy import update
+
+    from app.database import AsyncSessionLocal
+    from app.models.agent import Agent
+
+    moved = 0
+    async with AsyncSessionLocal() as db:
+        for old, new in RETIRED_VOICES.items():
+            moved += (await db.execute(update(Agent).where(Agent.voice_id == old).values(voice_id=new))).rowcount or 0
+        await db.commit()
+    return moved
