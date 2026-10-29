@@ -31,7 +31,7 @@ const PREVIEW_LINE =
 
 /** House suggestions in display order; Mia is the third option. */
 export const HOUSE_VOICES = [
-  "fishaudio:v_SriZAPqzgffq",
+  "97f03c16-fab2-4747-b655-9caefbd68fcf",
   "fishaudio:v_goYxyDbAUbfP",
   "26def8d4-b397-4d79-b5f1-d554d16ba4fe",
   "91e4713f-2150-4be6-8564-2d121bbd8c10",

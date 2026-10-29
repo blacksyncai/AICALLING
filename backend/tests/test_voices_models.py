@@ -244,8 +244,8 @@ def test_mistral_voice_listed_as_premium_and_audio_converts(client, cartesia):
     assert (z2["name"], z2["provider"]) == ("Zain · Version 2", "cartesia")
     assert "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd" not in voices  # Marissa M's Mistral version was retired
     m1, m2 = voices["fishaudio:v_SriZAPqzgffq"], voices["97f03c16-fab2-4747-b655-9caefbd68fcf"]
-    assert (m1["name"], m1["provider"]) == ("Marissa M · Version 1", "fishaudio")
-    assert (m2["name"], m2["provider"]) == ("Marissa M · Version 2", "cartesia")
+    assert (m1["name"], m1["provider"]) == ("Marissa M · Version 2", "fishaudio")
+    assert (m2["name"], m2["provider"]) == ("Marissa M · Version 1", "cartesia")
     assert f32le_to_s16le(struct.pack("<3f", 0.0, 1.0, -2.0)) == struct.pack("<3h", 0, 32767, -32767)
     assert wav_header(10)[:4] == b"RIFF" and len(wav_header(10)) == 44
 

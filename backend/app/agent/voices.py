@@ -14,10 +14,10 @@ VOICE_MODELS = ["sonic-3"]  # the Cartesia TTS model the voice worker uses
 
 FEATURED_VOICES: list[dict] = [
     # Premium families in picker order; keep each family's versions together.
-    {"id": "fishaudio:v_SriZAPqzgffq", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
-    {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
+    {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
      "gender": "feminine", "description": "Live voice clone.", "clone": True},
+    {"id": "fishaudio:v_SriZAPqzgffq", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
     {"id": "fishaudio:v_goYxyDbAUbfP", "name": "Zain · Version 1", "family": "Zain", "tone": "Version 1",
      "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
     {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Zain · Version 2", "family": "Zain", "tone": "Version 2",
@@ -88,7 +88,7 @@ DEFAULT_VOICE_ID = "97f03c16-fab2-4747-b655-9caefbd68fcf"
 # Voices taken out of the picker, and what agents still using them move to (applied at startup).
 RETIRED_VOICES = {
     "mistral:01a133e4-93c6-7540-98b5-a917a4da562e": "fishaudio:v_goYxyDbAUbfP",  # Zain (Mistral) → Zain · Version 1
-    "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd": "fishaudio:v_SriZAPqzgffq",  # Marissa M (Mistral) → Version 1
+    "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd": "fishaudio:v_SriZAPqzgffq",  # Marissa M (Mistral) → Version 2 (Fish)
     "378695da-44e9-4fc7-a9cb-efcb0d2037cc": "lkcartesia:v_ZMqDxhK7B6i6",  # Macco (old Cartesia clone) → Version 1
     "elevenlabs:diHzndF9D0TjlgUfMwn0": "inworld:v_ZMqDxhK7B6i6",  # Macco (ElevenLabs) → Version 2
 }
