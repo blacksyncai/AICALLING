@@ -46,8 +46,11 @@ class DealsHttp:
         if path=='/v1/pipelines/1':
             return {'id':1,'stages':[{'id':101,'orderWeight':10},{'id':102,'orderWeight':20},{'id':103,'closedStage':True,'orderWeight':30}]}
         if method=='GET' and path=='/v1/deals':return {'deals':self.deals}
+        if method=='GET' and path.startswith('/v1/people/'):return {'id':91,'assignedUserId':7}
+        if method=='GET' and path=='/v1/me':return {'id':1}
         if method=='POST':
-            self.writes.append((method,kwargs['json']));self.deals=[{'id':5,'pipelineId':1,'status':'Active',**kwargs['json']}];return self.deals[0]
+            self.writes.append((method,kwargs['json']));self.deals=[{'id':5,'pipelineId':1,'status':'Active',**kwargs['json']}]
+            self.deals[0]['users']=[{'id':u} for u in kwargs['json'].get('userIds',[])];return self.deals[0]
         if method=='PUT':
             self.writes.append((method,kwargs['json']));self.deals[0].update(kwargs['json']);return self.deals[0]
         return self.deals[0]
@@ -60,6 +63,7 @@ def test_deal_routing_create_reconcile_progress_and_protect():
         http=DealsHttp()
         a=await route(http,'91','1','101','Mark')
         assert a['id']=='5' and http.writes[0][1]['peopleIds']==[91]
+        assert http.writes[0][1]['userIds']==[7]  # assigned to the contact's agent, so it shows on the board
         await route(http,'91','1','101','Mark')
         assert len(http.writes)==1
         await route(http,'91','1','102','Mark')
@@ -171,3 +175,25 @@ def test_blacksync_source_pond_filters_membership(client,crm):
             await db.commit()
     asyncio.run(add())
     assert matched()
+
+
+def test_unassigned_deals_get_the_contacts_agent():
+    from app.services.crm.fub_deals import assign_unowned
+
+    class Http:
+        def __init__(self):
+            self.puts = []
+            self.deals = [{'id': 1, 'pipelineId': 9, 'status': 'Active', 'people': [{'id': 11}], 'users': []},
+                          {'id': 2, 'pipelineId': 9, 'status': 'Active', 'people': [{'id': 12}], 'users': [{'id': 3}]},
+                          {'id': 3, 'pipelineId': 9, 'status': 'Active', 'people': [{'id': 13}]}]
+        async def request(self, method, path, **kw):
+            if path == '/v1/deals': return {'deals': self.deals}
+            if path == '/v1/people/11': return {'id': 11, 'assignedUserId': 4}
+            if path == '/v1/people/13': return {'id': 13}
+            if path == '/v1/me': return {'id': 1}
+            self.puts.append((path, kw.get('json')))
+            return {}
+
+    http = Http()
+    assert asyncio.run(assign_unowned(http, '9')) == 2
+    assert http.puts == [('/v1/deals/1', {'userIds': [4]}), ('/v1/deals/3', {'userIds': [1]})]  # no agent → account owner

@@ -1,4 +1,5 @@
-"""TEMPORARY read-only check (remove after it has run): who the Compass FUB deals belong to. Logs counts/ids only."""
+"""TEMPORARY one-time fix (remove after it has run): give Compass's unassigned FUB deals an agent so they show
+on Gabe's Deals board, then re-read the board to confirm. Logs counts only."""
 import structlog
 from sqlalchemy import select
 
@@ -19,21 +20,12 @@ async def run():
             if not conn:
                 return
             _, http = sync.http_for(conn)
-            me = await http.request("GET", "/v1/me")
+            fixed = await fub_deals.assign_unowned(http, "9")
             deals = await fub_deals.in_pipeline(http, "9")
-            sample = deals[:3]
-            people = []
-            for d in sample:
-                for p in d.get("people") or []:
-                    if isinstance(p, dict) and p.get("id"):
-                        row = await http.request("GET", f"/v1/people/{int(p['id'])}", params={"fields": "id,assignedUserId,assignedTo"})
-                        people.append({"assignedUserId": row.get("assignedUserId"), "assignedTo": row.get("assignedTo")})
-            users = {}
+            owners = {}
             for d in deals:
                 key = ",".join(str(u.get("id")) for u in d.get("users") or [] if isinstance(u, dict)) or "none"
-                users[key] = users.get(key, 0) + 1
-            log.info("fub_deal_owner_check", me={"id": me.get("id"), "name": me.get("name"), "role": me.get("role")},
-                     account=conn.account_label, deals=len(deals), deal_users=users,
-                     sample_keys=sorted(sample[0].keys()) if sample else [], sample_people=people)
+                owners[key] = owners.get(key, 0) + 1
+            log.info("fub_deals_assigned", fixed=fixed, deals=len(deals), owners=owners)
     except Exception as exc:
-        log.warning("fub_deal_owner_check_failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
+        log.warning("fub_deals_assign_failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
