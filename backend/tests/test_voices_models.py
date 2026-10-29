@@ -236,8 +236,10 @@ def test_mistral_voice_listed_as_premium_and_audio_converts(client, cartesia):
     import struct
 
     voices = _by_id(client.get("/api/settings/voices").json())
-    h = voices["mistral:01a133e4-93c6-7540-98b5-a917a4da562e"]
-    assert h["name"] == "Zain · Version 2" and h["family"] == "Zain" and h["category"] == "premium" and h["provider"] == "mistral"
+    assert "mistral:01a133e4-93c6-7540-98b5-a917a4da562e" not in voices  # Zain's Mistral version was retired
+    z1, z2 = voices["fishaudio:v_goYxyDbAUbfP"], voices["95280ca0-610a-41c9-8457-1dcec809da61"]
+    assert (z1["name"], z1["provider"]) == ("Zain · Version 1", "fishaudio")
+    assert (z2["name"], z2["provider"]) == ("Zain · Version 2", "cartesia")
     m = voices["mistral:01a1340c-90cb-7714-8ee0-02732154b0dd"]
     assert m["name"] == "Marissa M · Version 2" and m["family"] == "Marissa M" and m["category"] == "premium" and m["provider"] == "mistral"
     assert f32le_to_s16le(struct.pack("<3f", 0.0, 1.0, -2.0)) == struct.pack("<3h", 0, 32767, -32767)

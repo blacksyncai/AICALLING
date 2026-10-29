@@ -17,7 +17,7 @@ const key = (orgId: string) => `blacksync:welcome-demo-hidden:${orgId}`;
 
 /** First visit: pick a voice for Synchro (the welcome demo agent) and talk to it in the browser. */
 // Zain (Version 1) right after the selected voice on the demo.
-const DEMO_PINNED = ["95280ca0-610a-41c9-8457-1dcec809da61"];
+const DEMO_PINNED = ["fishaudio:v_goYxyDbAUbfP"];
 
 export function WelcomeDemo() {
   const { session } = useSession();
