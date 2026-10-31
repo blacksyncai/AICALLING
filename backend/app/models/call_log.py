@@ -21,6 +21,7 @@ def _now() -> datetime:
 #          | callback | transferred | voicemail | no_answer | completed | failed
 #          | wrong_number | do_not_call
 CALL_OUTCOMES = (
+    "no_decision", "insufficient_conversation", "busy", "information_requested", "declined_conversation",
     "meeting_booked", "qualified", "not_qualified", "interested", "not_interested",
     "callback", "transferred", "voicemail", "no_answer", "completed", "failed",
     "wrong_number", "do_not_call",
@@ -86,6 +87,7 @@ class CallLog(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     sentiment: Mapped[str | None] = mapped_column(String(16), nullable=True)
     extracted_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    response_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Voice latency: {"turns": n, "avg_response": s, "avg_eou": s, "avg_llm_ttft": s, "avg_tts_ttfb": s}
     metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 

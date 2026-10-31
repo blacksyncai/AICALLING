@@ -82,7 +82,7 @@ function NavLink({
       )}
     >
       <span className="relative flex shrink-0">
-        <Icon className={cn("h-[18px] w-[18px] transition-colors", active ? "text-brand-400 drop-shadow-[0_0_6px_rgba(249,115,22,0.6)]" : "text-zinc-500 group-hover:text-zinc-300")} />
+        <Icon className={cn("h-[18px] w-[18px] transition-colors", active ? "text-brand-400 drop-shadow-[0_0_6px_var(--brand-glow,rgba(249,115,22,0.6))]" : "text-zinc-500 group-hover:text-zinc-300")} />
         {badge && collapsed && <span className={cn("absolute -right-1 -top-1 h-2 w-2 rounded-full", badgeTone === "red" ? "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]" : "bg-brand-500 shadow-[0_0_6px_rgba(249,115,22,0.9)]")} />}
       </span>
       <span className={cn("flex-1 truncate whitespace-nowrap transition-opacity duration-200", collapsed ? "sr-only" : "opacity-100", active && "font-semibold")}>{label}</span>
@@ -315,7 +315,7 @@ export function Sidebar() {
     <nav className="flex h-full flex-col">
       <div className={cn("flex h-16 items-center", collapsed ? "justify-center px-0" : "px-5")}>
         <Link href="/dashboard" onClick={close} aria-label={`${brand.name} home`} className="flex items-center gap-2.5 text-white">
-          <LogoMark className="h-8 w-8 drop-shadow-[0_0_12px_rgba(249,115,22,0.35)]" />
+          <LogoMark className="h-8 w-8 drop-shadow-[0_0_12px_var(--brand-glow,rgba(249,115,22,0.35))]" />
           {!collapsed && <span className="font-display text-[17px] font-semibold tracking-tight"><BrandName /></span>}
         </Link>
         {!collapsed && <WebsiteLink label="Website" className="ml-auto text-[11px] text-zinc-500 hover:text-zinc-200" />}
@@ -404,7 +404,7 @@ export function Sidebar() {
 
   return (
     <>
-      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between bg-zinc-950 px-4 lg:hidden">
+      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between sidebar-surface bg-zinc-950 px-4 lg:hidden">
         <Logo className="text-white" />
         <div className="relative">
           <button
@@ -436,7 +436,7 @@ export function Sidebar() {
       <div className={cn("relative z-40 shrink-0 transition-[width] duration-300 ease-out max-lg:w-0", collapsed ? "lg:w-[92px]" : "lg:w-[264px]")}>
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-40 w-64 overflow-visible bg-zinc-950 transition-[transform,width] duration-300 ease-out",
+            "fixed inset-y-0 left-0 z-40 w-64 overflow-visible sidebar-surface bg-zinc-950 transition-[transform,width] duration-300 ease-out",
             "bg-[radial-gradient(380px_240px_at_0%_0%,rgba(249,115,22,0.12),transparent_70%)]",
             "lg:inset-y-3 lg:left-3 lg:translate-x-0 lg:rounded-2xl lg:shadow-[0_20px_50px_-20px_rgba(0,0,0,0.6)] lg:ring-1 lg:ring-white/[0.07]",
             collapsed ? "lg:w-[72px]" : "lg:w-60",

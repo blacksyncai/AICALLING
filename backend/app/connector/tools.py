@@ -572,7 +572,7 @@ async def call_with_agent(s: Session, args: dict) -> dict:
 
 def _call_brief(c: dict) -> dict:
     keep = ("id", "call_type", "status", "outcome", "sentiment", "summary", "duration_seconds", "to_phone",
-            "contact_name", "contact_company", "agent_name", "campaign_name", "agreed_meeting_time", "started_at")
+            "contact_name", "contact_company", "agent_name", "campaign_name", "agreed_meeting_time", "started_at", "response_analysis")
     return {**{k: c.get(k) for k in keep}, "url": link(f"/calls?call={c['id']}")}
 
 
@@ -580,6 +580,7 @@ def _call_brief(c: dict) -> dict:
       "Recent calls with outcome and summary, newest first. Filter by agent, campaign, outcome or day.",
       {"agent_id": ID, "campaign_id": ID, "outcome": {"type": "string", "description": "e.g. meeting_booked, "
                                                                                       "interested, not_interested"},
+       "next_action": {"type": "string", "enum": ["none_agreed", "callback_requested", "send_information", "meeting_booked", "human_review"]},
        "date": {"type": "string", "description": "A day, YYYY-MM-DD (account time zone)."},
        "sort": {"type": "string", "enum": ["newest", "longest", "shortest"]}, "limit": LIMIT})
 async def list_calls(s: Session, args: dict) -> dict:
@@ -594,7 +595,7 @@ async def list_calls(s: Session, args: dict) -> dict:
         except ValueError:
             raise ToolError("date must be YYYY-MM-DD.")
     out = await lc(s.need_account(), s.db, agent_id=_uuid(args, "agent_id", False),
-                   campaign_id=_uuid(args, "campaign_id", False), outcome=args.get("outcome") or None, call_type=None,
+                   campaign_id=_uuid(args, "campaign_id", False), outcome=args.get("outcome") or None, next_action=args.get("next_action") or None, call_type=None,
                    day=day, page=1, page_size=_int(args, "limit", 20, 1, 100), sort=args.get("sort") or "newest")
     return {"total": out.get("total"), "calls": [_call_brief(c) for c in out.get("items", [])]}
 
@@ -608,6 +609,7 @@ async def get_call(s: Session, args: dict) -> dict:
     transcript = [{"role": t.get("role"), "text": t.get("text") or t.get("content")}
                   for t in (c.get("transcript") or []) if isinstance(t, dict)]
     return {**_call_brief(c), "extracted": c.get("extracted_data") or c.get("extracted"),
+            "response_analysis": c.get("response_analysis"),
             "transcript": transcript[:400]}
 
 

@@ -19,9 +19,9 @@ import { formatDuration, outcomeLabel, timeAgo } from "@/lib/utils";
 const STAGES: { status: string; title: string; includes: string[]; kind: ColumnStatus; color: string }[] = [
   { status: "new", title: "New", includes: ["new", "calling"], kind: "todo", color: "#a1a1aa" },
   { status: "no_answer", title: "No answer yet", includes: ["no_answer", "voicemail", "screened", "failed"], kind: "todo", color: "#94a3b8" },
-  { status: "completed", title: "Talked, no decision", includes: ["completed", "hung_up", "language_barrier"], kind: "todo", color: "#71717a" },
+  { status: "no_decision", title: "Conversation / review", includes: ["no_decision", "insufficient_conversation", "busy", "declined_conversation", "completed", "hung_up", "language_barrier"], kind: "todo", color: "#71717a" },
   { status: "interested", title: "Interested", includes: ["interested", "qualified"], kind: "in-progress", color: "#2563eb" },
-  { status: "callback", title: "Follow-up", includes: ["callback"], kind: "in-progress", color: "#d97706" },
+  { status: "callback", title: "Follow-up", includes: ["callback", "information_requested"], kind: "in-progress", color: "#d97706" },
   { status: "meeting_booked", title: "Meeting booked", includes: ["meeting_booked", "transferred"], kind: "in-progress", color: "#059669" },
   { status: "not_interested", title: "Not interested", includes: ["not_interested", "not_qualified", "wrong_number", "do_not_call"], kind: "todo", color: "#d4d4d8" },
 ];

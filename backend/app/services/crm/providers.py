@@ -52,6 +52,12 @@ class CallInfo:
     started_at: dt.datetime | None = None
     url: str = ""
     extracted: dict = field(default_factory=dict)
+    response_analysis: dict = field(default_factory=dict)
+
+    @property
+    def routing_outcome(self):
+        from app.services.response_review import routing_outcome
+        return routing_outcome(self)
 
     @property
     def outcome_label(self) -> str:
@@ -69,6 +75,13 @@ class CallInfo:
             lines.append(f"Meeting: {self.meeting_time}" + (f" ({self.meeting_link})" if self.meeting_link else ""))
         if self.summary:
             lines += ["", self.summary]
+        if self.response_analysis.get("version") == 1:
+            review = self.response_analysis
+            lines += ["", f"Agreed next step: {review.get('next_action', 'none_agreed').replace('_', ' ')}"]
+            if review.get("evidence_quote"):
+                lines.append(f"Contact evidence: {review['evidence_quote']}")
+            if review.get("next_action_quote"):
+                lines.append(f"Next-step evidence: {review['next_action_quote']}")
         details = [f"{k.replace('_', ' ').capitalize()}: {v}" for k, v in (self.extracted or {}).items()
                    if v not in (None, "", [], {}) and not isinstance(v, (dict, list))]
         if details:
@@ -83,6 +96,8 @@ class CallInfo:
 
 
 OUTCOME_LABELS = {
+    "no_decision": "Spoke — no decision", "insufficient_conversation": "Insufficient conversation",
+    "busy": "Busy / bad timing", "information_requested": "Information requested", "declined_conversation": "Declined conversation",
     "meeting_booked": "Meeting booked", "interested": "Interested", "not_interested": "Not interested",
     "callback": "Callback requested", "no_answer": "No answer", "voicemail": "Left voicemail",
     "screened": "Call screener, no answer", "language_barrier": "Language barrier", "hung_up": "Hung up",
@@ -1070,7 +1085,7 @@ class FollowUpBoss(Provider):
         # Hand the human a task when there's something to do next.
         task = {"meeting_booked": ("Prep for meeting booked by AI" + (f": {call.meeting_time}" if call.meeting_time else ""), 0),
                 "callback": ("Call back: asked for a callback on an AI call", 1),
-                "interested": ("Follow up: interested on an AI call", 0)}.get(call.outcome)
+                "interested": ("Follow up: interested on an AI call", 0)}.get(call.routing_outcome)
         if task:
             try:
                 person = await self._person(http, external_id, "id,assignedUserId")

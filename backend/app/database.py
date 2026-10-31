@@ -115,6 +115,7 @@ async def create_all_tables() -> None:
     """Create tables (and add new columns) on startup."""
     # Import models so metadata is populated
     from app.models import white_label  # noqa: F401
+    from app.models import account_tree  # noqa: F401
     from app.models import number_registration, call_alert, account, agent, billing, builder, calendar, call_log, campaign, crm, crm_command, radar_automation, stress_test, terms, email_message, invite, lead, lead_finder, messaging, oauth, playbook, support  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

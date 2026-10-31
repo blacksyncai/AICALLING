@@ -47,8 +47,15 @@ h2,
 }
 
 .brand-gradient {
-  background: linear-gradient(135deg, #d2522b 0%, #f97316 55%, #f59e0b 100%);
+  background: linear-gradient(135deg, var(--brand-primary, #d2522b), var(--brand-accent, #f59e0b));
 }
+
+.brand-scope { display: contents; }
+.brand-scope[data-custom-brand="true"] { font-family: var(--font-sans); }
+.brand-scope[data-custom-brand="true"] .app-canvas {
+  background: var(--app-surface); color: var(--app-text);
+}
+.brand-scope[data-custom-brand="true"] .sidebar-surface { background: var(--sidebar-surface); }
 
 /* Thin scrollbars inside panels */
 .scroll-thin {

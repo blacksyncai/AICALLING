@@ -181,7 +181,14 @@ export interface TranscriptTurn {
   ts?: number;
 }
 
+export interface ResponseAnalysis {
+  version: number; response: string; evidence_quote: string | null; response_scope: string;
+  certainty: string; next_action: string; next_action_quote: string | null;
+  channel: string | null; timeline: string | null; meeting_response: string;
+}
+
 export interface Call {
+  response_analysis?: ResponseAnalysis | null;
   id: string;
   call_type: "outbound" | "web" | "inbound";
   status: string;
@@ -354,7 +361,7 @@ export interface Org {
 }
 
 export interface Session {
-  branding?: { name: string; logo_url: string | null; custom: boolean };
+  branding?: import("@/lib/branding").Brand;
   user: User;
   org: Org | null;
   /** "superadmin" when a platform admin is viewing an account they aren't a member of. */

@@ -17,9 +17,9 @@ import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model"
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import type { Agent, Call } from "@/lib/types";
-import { cn, formatDateTime, formatDuration, formatPhone, humanize, outcomeLabel, timeAgo } from "@/lib/utils";
+import { NEXT_ACTION_LABELS, cn, formatDateTime, formatDuration, formatPhone, humanize, outcomeLabel, timeAgo } from "@/lib/utils";
 
-const OUTCOMES = ["meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "language_barrier", "hung_up", "completed", "failed"];
+const OUTCOMES = ["no_decision", "insufficient_conversation", "busy", "information_requested", "declined_conversation", "wrong_number", "meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "language_barrier", "hung_up", "completed", "failed"];
 const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
 const TYPE_CHIP: Record<string, string> = { outbound: "Outbound calls", inbound: "Inbound calls", web: "Browser tests" };
 const PAGE = 25;
@@ -53,6 +53,7 @@ function CallLogs() {
   const startedBefore = params.get("started_before") ?? "";
   const agentId = params.get("agent_id") ?? "";
   const outcome = params.get("outcome") ?? "";
+  const nextAction = params.get("next_action") ?? "";
   const type = params.get("call_type") ?? "";
   const sort = params.get("sort") ?? "";
   const [page, setPage] = useState(1);
@@ -87,6 +88,7 @@ function CallLogs() {
   const qs = new URLSearchParams({ page: String(page), page_size: String(PAGE) });
   if (agentId) qs.set("agent_id", agentId);
   if (outcome) qs.set("outcome", outcome);
+  if (nextAction) qs.set("next_action", nextAction);
   if (type) qs.set("call_type", type);
   if (date) qs.set("date", date);
   if (sort) qs.set("sort", sort);
@@ -103,6 +105,7 @@ function CallLogs() {
   if (date) chips.push({ key: "date", label: formatDay(date), title: tz ? `Calls started on this day, ${timeZoneLabel(tz)}` : undefined });
   if (agentId) chips.push({ key: "agent_id", label: `Agent ${agents?.find((a) => a.id === agentId)?.name ?? "…"}` });
   if (outcome) chips.push({ key: "outcome", label: OUTCOME_CHIP[outcome] ?? outcomeLabel(outcome) });
+  if (nextAction) chips.push({ key: "next_action", label: NEXT_ACTION_LABELS[nextAction] ?? humanize(nextAction) });
   if (type) chips.push({ key: "call_type", label: TYPE_CHIP[type] ?? humanize(type) });
 
   return (
@@ -145,6 +148,9 @@ function CallLogs() {
               {outcomeLabel(o)}
             </option>
           ))}
+        </Select>
+        <Select className="rounded-full! border-zinc-200 bg-zinc-50 sm:w-48" value={nextAction} onChange={e => setFilter("next_action", e.target.value)} aria-label="Next step">
+          <option value="">All next steps</option>{Object.entries(NEXT_ACTION_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </Select>
         <Select className="rounded-full! border-zinc-200 bg-zinc-50 sm:w-44" value={type} onChange={(e) => setFilter("call_type", e.target.value)} aria-label="Call type">
           <option value="">Phone + browser</option>
@@ -364,7 +370,8 @@ function CallAvatar({ call: c }: { call: Call }) {
 
 function CallOutcome({ call: c }: { call: Call }) {
   if (!c.outcome) return <OutcomeBadge outcome={null} status={c.status} />;
-  return <StatusPill status={c.outcome} label={outcomeLabel(c.outcome)} />;
+  return <span className="inline-flex flex-col items-start gap-1"><StatusPill status={c.outcome} label={outcomeLabel(c.outcome)} />
+    {c.response_analysis?.version === 1 && <span className="text-[10px] text-zinc-400">{NEXT_ACTION_LABELS[c.response_analysis.next_action] ?? humanize(c.response_analysis.next_action)}</span>}</span>;
 }
 
 function Length({ sec }: { sec: number | null | undefined }) {

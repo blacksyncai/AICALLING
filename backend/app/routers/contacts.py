@@ -26,7 +26,7 @@ from app.services.contacts import CsvError, normalize_phone, parse_contacts_csv
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
-PIPELINE = ("new", "calling", "interested", "callback", "qualified", "meeting_booked",
+PIPELINE = ("no_decision", "insufficient_conversation", "busy", "information_requested", "declined_conversation", "new", "calling", "interested", "callback", "qualified", "meeting_booked",
             "not_interested", "not_qualified", "no_answer", "voicemail", "screened", "language_barrier", "hung_up", "completed", "failed")
 
 

@@ -277,9 +277,17 @@ Outcome definitions (pick the single best one):
 - callback: requires evidence of a live contact requesting another conversation or deferring this one.
   A greeting saying "leave your name and reason for calling and I will return your call" or
   "please leave a message and I will call you back" is voicemail, NEVER callback or qualified.
-  An agent offering a callback alone is not a contact request. For a live conversation: a live person asked to be called back later, said it's a bad time / they're
-  busy / driving, wants to think about it or check with someone, or asked for a text or email to look at later.
-- not_interested: declined or said no.
+  An agent offering a callback alone is not a contact request. Require a live request or agreement to talk again.
+  Busy/driving alone is busy. Wanting to think is no_decision unless a next conversation was agreed.
+  Requests for text/email information are information_requested, with send_information as the next action.
+- not_interested: explicitly rejected the ACTUAL OFFER or service. Quote the refusal and mark response_scope=offer.
+  A no to hearing the introduction is declined_conversation; a no to a meeting alone is not rejecting the offer.
+- declined_conversation: explicitly declined permission to explain the reason for calling; interest in the offer is unknown.
+- busy: bad timing / unavailable now, without a request or agreement to another call. Never assume callback permission.
+- information_requested: explicitly agreed to receive information by text/email, even if they declined a meeting.
+- no_decision: a meaningful exchange happened without a clear decision about the offer or an agreed next step.
+  Questions such as "Is this a solicitation?" and confusion about the caller are not rejections.
+- insufficient_conversation: only a greeting, a polite acknowledgment, a fragment, silence or too little speech to know.
 - not_qualified: doesn't fit (wrong size, budget, area, etc.).
 - do_not_call: asked to never be called again / remove them from the list.
 - wrong_number: the person isn't who the agent was trying to reach.
@@ -297,11 +305,21 @@ Outcome definitions (pick the single best one):
 - completed: a live conversation happened but the contact never reacted to what the agent was calling about
   (e.g. the call dropped mid-pitch) and none of the above fits.
 
-Once the contact reacted to the offer, pick the outcome that matches that reaction (interested, callback,
-not_interested, ...); don't fall back to completed. Don't invent interest: a "maybe later" is callback, not
-interested.
+No decision is a valid result. Never force an uncertain exchange into interested, callback or not_interested.
+Permission to hear a pitch is not product interest. A refusal of a meeting can coexist with interest in information.
+Callback requires an explicit live request or agreement to another conversation, not merely "busy" or "maybe".
+Keep sentiment independent of intent: a polite refusal is still a refusal; skepticism is not a refusal.
 
 Return JSON with keys:
+- "response_analysis": object with:
+  "evidence_quote": exact LIVE CONTACT words supporting the response, null if insufficient;
+  "response_scope": offer | permission_to_speak | meeting | timing | unknown (what they were responding to);
+  "certainty": clear | ambiguous | insufficient;
+  "next_action": none_agreed | callback_requested | send_information | meeting_booked | human_review;
+  "next_action_quote": exact LIVE CONTACT words requesting or agreeing to that action, null if none;
+  "channel": phone | email | text | null; "timeline": their words, or null;
+  "meeting_response": accepted | declined | not_discussed | unclear.
+  Evidence must not come from the agent, a recorded greeting, a screener, or an invented suggestion.
 - "summary": 2-3 sentence summary of what happened.
 - "outcome": one of {list(CALL_OUTCOMES)}.
 - "callback_request": for callback, an exact quote of the LIVE CONTACT words requesting or agreeing to
@@ -325,7 +343,8 @@ TRANSCRIPT:
             result["outcome"] = "completed"
         result["outcome"] = reconcile_outcome(result["outcome"], transcript,
                                               callback_request=result.get("callback_request"))
-        return result
+        from app.services.response_review import review_response
+        return review_response(result, transcript)
     except Exception as exc:
         log.warning("call_analysis_failed", error=str(exc))
         return None

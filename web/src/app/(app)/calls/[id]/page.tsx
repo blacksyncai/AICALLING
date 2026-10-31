@@ -6,6 +6,7 @@ import { use, useState } from "react";
 import useSWR from "swr";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
+import { ResponseReview } from "@/components/calls/ResponseReview";
 import { TranscriptLines } from "@/components/calls/Transcript";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
@@ -105,6 +106,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
 
       {live && <div className="mb-6"><Notice tone="blue">This call is still in progress. The transcript and AI summary appear when it ends.</Notice></div>}
 
+      {call.response_analysis?.version === 1 && <div className="mb-6"><ResponseReview review={call.response_analysis} /></div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Card id="transcript" className="scroll-mt-6">
           <CardHeader title="Transcript" />

@@ -75,7 +75,7 @@ def org_to_dict(o: Organization) -> dict:
 
 
 async def session_payload(db: AsyncSession, user: User, request: Request | None = None) -> dict:
-    from app.models.white_label import WhiteLabel
+    from app.services.account_tree import effective_brand
     from app.services.auth import resolve_request_org
     from app.services.white_label import public_brand, request_brand
 
@@ -86,7 +86,7 @@ async def session_payload(db: AsyncSession, user: User, request: Request | None 
     )).all()
     bound = await request_brand(db, request) if request else None
     return {
-        "branding": public_brand(await db.get(WhiteLabel, org.id) if org else None),
+        "branding": await effective_brand(db, org.id) if org else public_brand(None),
         "user": user_to_dict(user),
         "org": org_to_dict(org) if org else None,
         "role": role,
