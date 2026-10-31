@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardPaste, Eye, FileSpreadsheet, Search, UserPlus, UserSearch } from "lucide-react";
+import { ClipboardPaste, Eye, FileSpreadsheet, Plus, Search, UserPlus, UserSearch } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import useSWR from "swr";
@@ -180,6 +180,16 @@ export default function LeadFinderPage() {
           </span>
         )}
       </div>
+
+      <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-900">Need more lookup searches?</h2>
+          <p className="mt-1 text-xs text-zinc-500">Visit billing to add to your lead lookup balance.</p>
+        </div>
+        <Link href="/billing?tab=lookups" className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-[var(--brand-on-primary,#fff)] hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
+          <Plus className="h-4 w-4" aria-hidden="true" /> Add lookup searches
+        </Link>
+      </Card>
 
       {mode !== "sources" && usage?.enabled && !usage.unlimited && (
         <div className="mb-4 grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm sm:grid-cols-3">

@@ -50,7 +50,7 @@ export function CreditsCard({ usage, onChanged }: { usage: LeadFinderUsage | und
       </p>
       {usage && !usage.unlimited && (
         <Link href="/billing?tab=lookups" className="mt-2 inline-block text-xs font-medium text-brand-700 hover:text-brand-800">
-          Add funds →
+          Add lookup searches →
         </Link>
       )}
       {isAdmin && session?.org && !usage?.unlimited && <AddCredits orgId={session.org.id} onAdded={onChanged} />}
