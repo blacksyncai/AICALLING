@@ -23,7 +23,7 @@ export function FullScreenSignup({
   footnote?: React.ReactNode;
   icon?: LucideIcon;
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (

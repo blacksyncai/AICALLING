@@ -15,6 +15,7 @@ import { canManage, displayName, initials, signOut, switchOrg, useSession } from
 import { cn } from "@/lib/utils";
 import { openCommandPalette } from "./CommandPalette";
 import { Logo, LogoMark } from "./Logo";
+import { BrandName, useBranding } from "@/lib/branding";
 import { WebsiteLink } from "./WebsiteLink";
 
 type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; badge?: string; badgeTone?: "red";
@@ -213,7 +214,8 @@ function AccountMenu({ onNavigate, collapsed }: { onNavigate: () => void; collap
       <div className={cn("flex items-center gap-1", collapsed && "flex-col")}>
         {/* Clerk's account menu: profile photo, sign-in methods, security, sign out. */}
         <span className="flex h-10 w-10 shrink-0 items-center justify-center">
-          <UserButton appearance={{ elements: { avatarBox: "h-8 w-8" } }} />
+          {session.auth_provider === "clerk" ? <UserButton appearance={{ elements: { avatarBox: "h-8 w-8" } }} />
+            : <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-700 text-xs font-medium text-white">{initials(name)}</span>}
         </span>
         {collapsed ? (
           <button onClick={() => setOpen((v) => !v)} className="rounded-lg p-1.5 text-zinc-500 hover:bg-white/5 hover:text-zinc-200" aria-expanded={open} aria-label="Account menu">
@@ -242,6 +244,7 @@ const COLLAPSE_KEY = "bs-sidebar-collapsed";
 const MENU_HINT_KEY = "bs-menu-hint-seen";
 
 export function Sidebar() {
+  const brand = useBranding();
   const [open, setOpen] = useState(false);
   const [collapsedPref, setCollapsedPref] = useState(false);
   const { session } = useSession();
@@ -311,9 +314,9 @@ export function Sidebar() {
   const nav = (
     <nav className="flex h-full flex-col">
       <div className={cn("flex h-16 items-center", collapsed ? "justify-center px-0" : "px-5")}>
-        <Link href="/dashboard" onClick={close} aria-label="BlackSync home" className="flex items-center gap-2.5 text-white">
+        <Link href="/dashboard" onClick={close} aria-label={`${brand.name} home`} className="flex items-center gap-2.5 text-white">
           <LogoMark className="h-8 w-8 drop-shadow-[0_0_12px_rgba(249,115,22,0.35)]" />
-          {!collapsed && <span className="font-display text-[17px] font-semibold tracking-tight">BlackSync</span>}
+          {!collapsed && <span className="font-display text-[17px] font-semibold tracking-tight"><BrandName /></span>}
         </Link>
         {!collapsed && <WebsiteLink label="Website" className="ml-auto text-[11px] text-zinc-500 hover:text-zinc-200" />}
       </div>

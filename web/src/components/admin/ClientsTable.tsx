@@ -292,6 +292,7 @@ export function ClientsTable({ orgs, onChanged }: { orgs: AdminOrg[]; onChanged:
                               { label: "Add credits", icon: Plus, onClick: () => setAdjust({ org: o, kind: "credits", sign: 1 }), disabled: o.unlimited_credits },
                               { label: "Remove credits", icon: Minus, onClick: () => setAdjust({ org: o, kind: "credits", sign: -1 }), disabled: o.unlimited_credits || o.credits_balance <= 0 },
                               { label: "Lookup funds", icon: Wallet, onClick: () => setAdjust({ org: o, kind: "lookup", sign: 1 }) },
+                              { label: "White label", icon: LayoutGrid, href: `/admin/accounts/${o.id}#white-label` },
                               { label: "Account details", icon: ChevronRight, href: `/admin/accounts/${o.id}` },
                             ]}
                           />

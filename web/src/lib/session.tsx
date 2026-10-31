@@ -5,6 +5,7 @@ import useSWR, { type KeyedMutator } from "swr";
 import { fetcher, post } from "@/lib/api";
 import { clerkInstance } from "@/lib/clerk";
 import type { Session } from "@/lib/types";
+import { BrandingProvider } from "@/lib/branding";
 
 type SessionCtx = {
   session: Session | undefined;
@@ -16,7 +17,7 @@ const Ctx = createContext<SessionCtx>({ session: undefined, loading: true, mutat
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const { data, isLoading, mutate } = useSWR<Session>("/api/auth/me", fetcher, { revalidateOnFocus: true });
-  return <Ctx.Provider value={{ session: data, loading: isLoading, mutate }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ session: data, loading: isLoading, mutate }}><BrandingProvider brand={data?.branding}>{children}</BrandingProvider></Ctx.Provider>;
 }
 
 /** The signed-in user, the account they're working in, and their role there. */

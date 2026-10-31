@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.routers import white_label
 from app.database import create_all_tables
 from app.routers import (
     number_registration, account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, radar_automations, internal, lead_finder, meetings, phone_numbers, speech,
@@ -213,6 +214,7 @@ for r in (number_registration, auth, account, activity, admin, agents, agent_bui
           settings_router, internal):
     app.include_router(r.router)
 app.include_router(phone_numbers.admin_router)
+app.include_router(white_label.router)
 app.include_router(billing.admin_router)
 app.include_router(support.admin_router)
 from app.routers import admin_emails  # noqa: E402

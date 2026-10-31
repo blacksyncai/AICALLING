@@ -260,13 +260,28 @@ async def resolve_org(db: AsyncSession, user: User) -> tuple[Organization | None
 
 
 async def get_ctx(
+    request: Request,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Context:
-    org, role = await resolve_org(db, user)
+    org, role = await resolve_request_org(db, user, request)
     if org is None:
         raise HTTPException(status_code=403, detail="Your login isn't part of an account yet.")
     return Context(user=user, org=org, role=role)
+
+
+async def resolve_request_org(db: AsyncSession, user: User, request: Request) -> tuple[Organization | None, str]:
+    from app.services.white_label import request_brand
+
+    branding = await request_brand(db, request)
+    if not branding:
+        return await resolve_org(db, user)
+    member = await db.scalar(select(Membership).where(
+        Membership.user_id == user.id, Membership.org_id == branding.org_id,
+    ))
+    if not member and not (user.is_superadmin and admin_unlocked(request, user)):
+        raise HTTPException(403, "Your login does not belong to this workspace. Sign in with an invited account.")
+    return await db.get(Organization, branding.org_id), member.role if member else "superadmin"
 
 
 async def require_manager(ctx: Annotated[Context, Depends(get_ctx)]) -> Context:

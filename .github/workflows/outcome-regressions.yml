@@ -1,14 +1,16 @@
-name: Call outcome regressions
+name: App regression checks
 
 on:
   push:
     branches: [claude/determined-fermat-t1fn4e]
     paths:
       - 'backend/**'
+      - 'web/**'
       - '.github/workflows/outcome-regressions.yml'
   pull_request:
     paths:
       - 'backend/**'
+      - 'web/**'
       - '.github/workflows/outcome-regressions.yml'
   workflow_dispatch:
 
@@ -43,3 +45,26 @@ jobs:
           tests/test_campaign_rules.py
           tests/test_radar_automations.py
           tests/test_call_alerts.py
+          tests/test_white_label.py
+          tests/test_accounts.py
+          tests/test_clerk.py
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: node --experimental-strip-types --test src/lib/white-label-clerk.test.mjs
+      - run: npm run typecheck
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'

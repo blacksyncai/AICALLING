@@ -354,6 +354,7 @@ export interface Org {
 }
 
 export interface Session {
+  branding?: { name: string; logo_url: string | null; custom: boolean };
   user: User;
   org: Org | null;
   /** "superadmin" when a platform admin is viewing an account they aren't a member of. */

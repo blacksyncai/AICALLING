@@ -1,10 +1,14 @@
+"use client";
+
 import { ArrowUpRight } from "lucide-react";
+import { useBranding } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 
 export const WEBSITE_URL = "https://blacksync.ai";
 
 /** A quiet link back to the marketing site (blacksync.ai) from the app (blacksync.si). */
 export function WebsiteLink({ className, label = "Visit website" }: { className?: string; label?: string }) {
+  if (useBranding().custom) return null;
   return (
     <a
       href={WEBSITE_URL}

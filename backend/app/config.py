@@ -14,6 +14,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # The actual ingress alias issued by the web hosting platform, not a URL.
+    white_label_cname_target: str = ""
+    # Set on both the API and Next.js web service when using Clerk satellites.
+    white_label_primary_origin: str = ""
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

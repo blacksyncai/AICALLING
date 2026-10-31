@@ -1,11 +1,15 @@
 "use client";
 
 import { useId } from "react";
+import { BrandName, useBranding } from "@/lib/branding";
 
 export function LogoMark({ className = "h-7 w-7" }: { className?: string }) {
   // Unique per instance: the logo renders in both the mobile and desktop bars,
   // and a gradient defined inside a hidden copy would not paint.
   const gid = `bs-mark-${useId().replace(/:/g, "")}`;
+  const brand = useBranding();
+  if (brand.logo_url) return <img src={brand.logo_url} alt={`${brand.name} logo`} className={`object-contain ${className}`} />;
+  if (brand.custom) return <span aria-hidden className={`inline-flex shrink-0 items-center justify-center rounded-lg bg-zinc-800 font-semibold text-white ${className}`}>{brand.name.charAt(0)}</span>;
   return (
     <svg viewBox="0 0 64 64" className={className} aria-hidden>
       <defs>
@@ -28,7 +32,7 @@ export function Logo({ className = "" }: { className?: string }) {
   return (
     <span className={`inline-flex items-center gap-2 ${className}`}>
       <LogoMark />
-      <span className="font-display text-[16px] font-semibold tracking-tight">BlackSync</span>
+      <span className="font-display text-[16px] font-semibold tracking-tight"><BrandName /></span>
     </span>
   );
 }

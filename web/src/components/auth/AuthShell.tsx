@@ -2,6 +2,7 @@ import { CalendarCheck, Mic, PhoneCall, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { FullScreenSignup } from "@/components/ui/full-screen-signup";
 import { WebsiteLink } from "@/components/WebsiteLink";
+import { BrandedText } from "@/lib/branding";
 
 const POINTS = [
   { icon: Mic, title: "Human-sounding voice agents", text: "Built from your script, your offer and your voice." },
@@ -43,7 +44,7 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
         </span>
       }
       title={title}
-      subtitle={subtitle}
+      subtitle={<BrandedText text={subtitle} />}
     >
       {children}
     </FullScreenSignup>

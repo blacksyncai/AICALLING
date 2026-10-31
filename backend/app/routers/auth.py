@@ -74,18 +74,25 @@ def org_to_dict(o: Organization) -> dict:
     }
 
 
-async def session_payload(db: AsyncSession, user: User) -> dict:
-    org, role = await resolve_org(db, user)
+async def session_payload(db: AsyncSession, user: User, request: Request | None = None) -> dict:
+    from app.models.white_label import WhiteLabel
+    from app.services.auth import resolve_request_org
+    from app.services.white_label import public_brand, request_brand
+
+    org, role = await resolve_request_org(db, user, request) if request else await resolve_org(db, user)
     rows = (await db.execute(
         select(Membership, Organization).join(Organization, Organization.id == Membership.org_id)
         .where(Membership.user_id == user.id).order_by(Organization.name)
     )).all()
+    bound = await request_brand(db, request) if request else None
     return {
+        "branding": public_brand(await db.get(WhiteLabel, org.id) if org else None),
         "user": user_to_dict(user),
         "org": org_to_dict(org) if org else None,
         "role": role,
         "impersonating": role == "superadmin",
-        "memberships": [{"org_id": str(o.id), "org_name": o.name, "role": m.role} for m, o in rows],
+        "memberships": [{"org_id": str(o.id), "org_name": o.name, "role": m.role} for m, o in rows
+                        if not bound or o.id == bound.org_id],
         "auth_provider": "clerk" if settings.clerk_enabled else "password",
     }
 
@@ -115,7 +122,7 @@ async def login(body: LoginBody, request: Request, response: Response,
     await db.commit()
     set_session_cookie(response, request, user)
     log.info("user_login", user_id=str(user.id))
-    return await session_payload(db, user)
+    return await session_payload(db, user, request)
 
 
 @router.post("/logout")
@@ -125,8 +132,8 @@ async def logout(response: Response):
 
 
 @router.get("/me")
-async def me(user: Annotated[User, Depends(get_current_user)], db: Annotated[AsyncSession, Depends(get_db)]):
-    return await session_payload(db, user)
+async def me(request: Request, user: Annotated[User, Depends(get_current_user)], db: Annotated[AsyncSession, Depends(get_db)]):
+    return await session_payload(db, user, request)
 
 
 @router.post("/switch-org")
@@ -134,6 +141,10 @@ async def switch_org(body: SwitchOrgBody, request: Request, user: Annotated[User
                      db: Annotated[AsyncSession, Depends(get_db)]):
     """Work in another organization: one you belong to, or any org for super-admins.
     org_id=null returns a super-admin to their own account."""
+    from app.services.white_label import request_brand
+    bound = await request_brand(db, request)
+    if bound and body.org_id not in (None, bound.org_id):
+        raise HTTPException(403, "Switch workspaces from the platform's main domain.")
     if body.org_id is None:
         user.active_org_id = None
     else:
@@ -148,7 +159,7 @@ async def switch_org(body: SwitchOrgBody, request: Request, user: Annotated[User
             raise HTTPException(status_code=404, detail="Account not found")
         user.active_org_id = body.org_id
     await db.commit()
-    return await session_payload(db, user)
+    return await session_payload(db, user, request)
 
 
 @router.get("/invites/{token}")
@@ -189,11 +200,11 @@ async def accept_invite(token: str, body: AcceptInviteBody, request: Request, re
     await db.commit()
     set_session_cookie(response, request, user)
     log.info("invite_accepted", user_id=str(user.id), org_id=str(invite.org_id))
-    return await session_payload(db, user)
+    return await session_payload(db, user, request)
 
 
 @router.post("/invites/{token}/join")
-async def join_invite(token: str, user: Annotated[User, Depends(get_current_user)],
+async def join_invite(token: str, request: Request, user: Annotated[User, Depends(get_current_user)],
                       db: Annotated[AsyncSession, Depends(get_db)]):
     """Signed-in users (e.g. via Clerk) join the invite's account with their current login."""
     invite = await _find_invite(db, token)
@@ -205,7 +216,7 @@ async def join_invite(token: str, user: Annotated[User, Depends(get_current_user
     invite.accepted_at = datetime.now(timezone.utc)
     await db.commit()
     log.info("invite_joined", user_id=str(user.id), org_id=str(invite.org_id))
-    return await session_payload(db, user)
+    return await session_payload(db, user, request)
 
 
 # ── Clerk's emails, sent from our own address ───────────────────────────────────
