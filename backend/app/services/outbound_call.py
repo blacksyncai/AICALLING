@@ -609,18 +609,13 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         call_log = await db.get(CallLog, uuid.UUID(call_log_id))
         if not call_log or not call_log.transcript:
             return
-        from app.agent.runtime import NO_CONVERSATION_OUTCOMES, person_answered, reconcile_outcome
+        from app.agent.runtime import reconcile_outcome
 
-        call_log.outcome = reconcile_outcome(call_log.outcome, call_log.transcript)
-        if call_log.outcome == "voicemail":
-            call_log.status = "no_answer"
-
-        mislabeled = (call_log.outcome in (*NO_CONVERSATION_OUTCOMES, "failed")
-                      and person_answered(call_log.transcript))
-        if mislabeled:
-            call_log.outcome = "completed"
-            if call_log.status in ("no_answer", "failed"):
-                call_log.status = "completed"
+        previous = call_log.outcome
+        call_log.outcome = reconcile_outcome(previous, call_log.transcript)
+        if call_log.outcome != previous:
+            call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
+                               "failed": "failed"}.get(call_log.outcome, "completed")
         agent = await db.get(Agent, call_log.agent_id) if call_log.agent_id else None
         result = await analyze_call(
             call_log.transcript,

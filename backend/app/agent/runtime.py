@@ -120,6 +120,9 @@ def conversation_rules(cfg: dict) -> str:
         honesty = "Never claim to be human. If someone sincerely asks whether you're an AI, say yes."
     return (
         "# HOW TO TALK ON THIS CALL (built-in, always applies — your role and script follow)\n"
+        "- Recorded greetings that ask you to leave a name or message and promise to call back are voicemail, "
+        "not callback or qualified. Callback needs a live contact asking for or agreeing to another conversation. "
+        "If a person answers after screening, use their live response to choose the outcome.\n"
         "- Call screeners: if an automated assistant answers (it asks your name and why you're calling, or says "
         "\"please stay on the line\" / \"I'll see if they're available\"), it is not the person. Don't pitch to it. "
         "Answer only what it asks in a few words, then say nothing until the actual person speaks; then start "
@@ -438,7 +441,7 @@ _PERSONAL_GREETING = _PERSONAL_STRONG + _PERSONAL_WEAK
 def personal_greeting_match(text: str) -> str | None:
     """The phrase that marks this as a recorded personal greeting, or None."""
     t = (text or "").lower().replace("’", "'")
-    if len(t.split()) < 7 or "?" in t:  # live people ask ("can you text me?"); recordings don't
+    if len(t.split()) < 7 or "?" in t or re.search(r"\b(?:call|catch|ring) (?:me|us)\b|\bcan you\b", t):
         return None
     strong = [h for h in _PERSONAL_STRONG if h in t]
     if strong:
@@ -621,13 +624,25 @@ def voicemail_answered(transcript: list[dict] | None) -> bool:
 
 def callback_requested(transcript: list[dict] | None) -> bool:
     """Require a live contact's deferral, not an agent offer or recorded promise."""
-    text = " ".join(_live_contact_turns(transcript)).lower().replace("’", "'")
-    return bool(re.search(
-        r"\b(?:call (?:me|us)(?: back)?|catch me|another time|bad time|busy|driving|"
-        r"can't talk|cannot talk|talk (?:later|tomorrow)|maybe later|"
-        r"(?:text|email|send) (?:me|us)|think about it|check with|"
-        r"i(?:'ll| will) call you back)\b", text
-    ))
+    live = _live_contact_turns(transcript)
+    text = " ".join(live).lower().replace("’", "'")
+    if re.search(
+        r"\b(?:(?:call|ring) (?:me|us)(?: back)?|call (?:back|again)|catch me|try me|"
+        r"another time|bad time|busy|driving|can't talk|cannot talk|at work|in a meeting|not now|"
+        r"talk (?:later|tomorrow)|maybe later|(?:text|email|send) (?:me|us)|"
+        r"think about it|check with|i(?:'ll| will) call you back)\b", text
+    ):
+        return True
+    offered = False
+    for turn in transcript or []:
+        said = (turn.get("text") or "").lower()
+        if turn.get("role") in ("assistant", "agent"):
+            offered = bool(re.search(r"call you|call back|catch you|another time|follow up", said))
+        elif turn.get("role") in ("user", "caller") and (turn.get("text") or "").strip() in live:
+            if offered and re.match(r"^(?:yes|yeah|yep|sure|okay|ok|please do|that works|sounds good)\b", said):
+                return True
+            offered = False
+    return False
 
 
 def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str | None:

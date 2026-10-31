@@ -36,15 +36,15 @@ def test_name_and_reason_greeting_is_not_a_screener():
     assert screener_match("Record your name and reason for calling and I'll see if they're available.")
 
 
-@pytest.mark.parametrize("request", [
+@pytest.mark.parametrize("utterance", [
     "I'm busy—call me tomorrow afternoon.",
     "Can you catch me another time?",
     "Can you call me back later?",
     "I can't talk right now, can you just text me instead?",
     "I want to think about it and check with my partner.",
 ])
-def test_live_callback_requests_survive(request):
-    transcript = [contact(request)]
+def test_live_callback_requests_survive(utterance):
+    transcript = [contact(utterance)]
     assert person_answered(transcript)
     assert reconcile_outcome("callback", transcript) == "callback"
     assert reconcile_outcome("voicemail", transcript) == "completed"
@@ -132,3 +132,52 @@ def test_analysis_conflicts_are_resolved_before_radar(client, monkeypatch, store
     assert outcome == expected
     assert routed == [expected]
     assert status == ("no_answer" if expected == "voicemail" else "completed")
+
+
+def test_live_agreement_to_an_agent_callback_offer():
+    transcript = [contact("Hello?"), {"role": "assistant", "text": "Would you like me to call you tomorrow?"},
+                  contact("Yes, that works.")]
+    assert reconcile_outcome("callback", transcript) == "callback"
+
+
+def test_live_request_without_question_punctuation():
+    transcript = [contact("You've reached me at a bad time please call me tomorrow")]
+    assert reconcile_outcome("callback", transcript) == "callback"
+
+
+def test_outcome_report_corrects_contact_before_consumers(client, monkeypatch):
+    from types import SimpleNamespace
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.models.lead import Lead
+    from app.routers.campaigns import RETRY_STATUSES
+    from app.services import call_alerts, outbound_call
+    from app.services.crm.automations import condition_matches
+    from app.services.crm.sync import OUTCOME_TO_KEY
+
+    async def no_charge(*args):
+        pass
+
+    monkeypatch.setattr(outbound_call, "charge_call", no_charge)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            lead = Lead(name="Voicemail Regression", phone="+14155550199", status="calling")
+            db.add(lead)
+            await db.flush()
+            call = CallLog(lead_id=lead.id, livekit_room_name=f"report-{uuid.uuid4()}", call_type="outbound")
+            db.add(call)
+            await db.commit()
+            result = await outbound_call.outbound_call_service.update_call_outcome(
+                call_log_id=str(call.id), outcome="callback", transcript=[contact(GREETINGS[0])],
+                meeting_link=None, qualification_score=None, db=db)
+            await db.refresh(lead)
+            return result, lead.status
+
+    call, status = asyncio.run(run())
+    assert call.outcome == "voicemail" and call.status == "no_answer"
+    assert status == "voicemail" and status in RETRY_STATUSES
+    assert OUTCOME_TO_KEY[call.outcome] == "voicemail"
+    assert call.outcome not in call_alerts.DEFAULT_OUTCOMES
+    assert not condition_matches(SimpleNamespace(kind="outcome", value="callback"), call, {})
+    assert condition_matches(SimpleNamespace(kind="outcome", value="voicemail"), call, {})
