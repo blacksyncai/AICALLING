@@ -92,6 +92,11 @@ async def enqueue(db, org_id, call_ids, user_ids, requested_by=None, automatic=F
     return count
 
 
+def matches_outcome(call, outcomes):
+    from app.services.response_review import routing_outcome
+    return call.outcome in outcomes or routing_outcome(call) in outcomes
+
+
 async def collect(db):
     prefs = (await db.execute(select(CallAlertSettings).where(CallAlertSettings.enabled.is_(True)))).scalars().all()
     for p in prefs:
@@ -105,7 +110,11 @@ async def collect(db):
             stmt = select(CallLog.id).where(CallLog.org_id == p.org_id,
                 CallLog.call_type.in_(('outbound', 'inbound')), CallLog.ended_at.is_not(None),
                 CallLog.events_sent_at >= p.enabled_at, CallLog.events_sent_at < now()-timedelta(seconds=60),
-                CallLog.outcome.in_(p.outcomes), ~exists(select(CallAlert.id).where(
+                ((CallLog.outcome.in_(p.outcomes)) | (
+                    (CallLog.response_analysis["next_action"].as_string() == "callback_requested") &
+                    (CallLog.response_analysis["version"].as_integer() == 1) &
+                    CallLog.outcome.notin_(("do_not_call", "not_interested", "declined_conversation", "voicemail", "screened", "no_answer", "failed", "meeting_booked", "transferred"))
+                ) if "callback" in p.outcomes else CallLog.outcome.in_(p.outcomes)), ~exists(select(CallAlert.id).where(
                     CallAlert.call_id == CallLog.id, CallAlert.user_id == allowed[user_id])))
             if p.agent_ids:
                 stmt = stmt.where(CallLog.agent_id.in_([uuid.UUID(a) for a in p.agent_ids]))
@@ -131,7 +140,7 @@ async def deliver(alert_id):
         member = await db.scalar(select(Membership.id).where(Membership.org_id == row.org_id, Membership.user_id == row.user_id))
         if not member or not user or not org or org.status != 'active' or not call or call.org_id != row.org_id:
             row.status, row.error = 'cancelled', 'Account, call or recipient is no longer available.'
-        elif row.automatic and (not prefs or not prefs.enabled or str(user.id) not in prefs.user_ids or call.outcome not in prefs.outcomes or (prefs.agent_ids and str(call.agent_id) not in prefs.agent_ids)):
+        elif row.automatic and (not prefs or not prefs.enabled or str(user.id) not in prefs.user_ids or not matches_outcome(call, prefs.outcomes) or (prefs.agent_ids and str(call.agent_id) not in prefs.agent_ids)):
             row.status, row.error = 'cancelled', 'Automatic alert settings changed.'
         elif not email.email_enabled():
             row.status, row.error = 'failed', 'Email delivery is not configured.'

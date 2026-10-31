@@ -122,7 +122,7 @@ export default function ContactsPage() {
   const summary = [
     { label: "Total contacts", value: allTotal, sub: `${(counts.new ?? 0).toLocaleString()} not called yet`, icon: Users, tone: "bg-zinc-900 text-white" },
     { label: "Interested", value: (counts.interested ?? 0) + (counts.qualified ?? 0), sub: contacted ? `of ${contacted.toLocaleString()} reached` : "Wants to hear more", icon: Sparkles, tone: "bg-blue-50 text-blue-600" },
-    { label: "Follow-up", value: counts.callback ?? 0, sub: "Call back later or sent info", icon: PhoneCall, tone: "bg-amber-50 text-amber-600" },
+    { label: "Follow-up", value: (counts.callback ?? 0) + (counts.information_requested ?? 0), sub: "Requested a callback or information", icon: PhoneCall, tone: "bg-amber-50 text-amber-600" },
     { label: "Meeting booked", value: (counts.meeting_booked ?? 0) + (counts.transferred ?? 0), sub: "On the calendar", icon: CalendarCheck, tone: "bg-emerald-50 text-emerald-600" },
   ];
 

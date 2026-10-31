@@ -526,6 +526,11 @@ class CallService:
             return call_log
 
         prev_outcome = call_log.outcome
+        review_meta = dict(call_log.response_analysis or {})
+        if "_review_schema" not in review_meta:
+            review_meta["_counted_outcome"] = prev_outcome if prev_outcome in ("meeting_booked", "qualified", "interested") else None
+        review_meta["_review_schema"] = 1
+        review_meta["_reported_outcome"] = outcome
         now = datetime.now(timezone.utc)
         # The worker reports a few seconds (up to ~20 s) after the caller hangs up; end the call when they left.
         if ended_at:
@@ -549,6 +554,7 @@ class CallService:
             status=status,
             outcome=outcome,
             transcript=transcript,
+            response_analysis=review_meta,
             meeting_link=meeting_link,
             agreed_meeting_time=agreed_meeting_time or None,
             prospect_email=prospect_email or None,
@@ -562,8 +568,12 @@ class CallService:
 
             current = (await db.execute(select(Lead.status).where(Lead.id == call_log.lead_id))).scalar_one_or_none()
             lead_values: dict = {"updated_at": now}
+            if "_lead_status_before" not in review_meta:
+                review_meta["_lead_status_before"] = current
             if (status_after := next_status(current, outcome)) is not None:
                 lead_values["status"] = status_after
+                if status_after != current:
+                    review_meta["_lead_status_written"] = status_after
             if qualification_score is not None:
                 lead_values["qualification_score"] = qualification_score
             if meeting_link:
@@ -572,7 +582,7 @@ class CallService:
                 lead_values["do_not_call"] = True  # the contact asked not to be called again
             await db.execute(update(Lead).where(Lead.id == call_log.lead_id).values(**lead_values))
 
-        already_counted = prev_outcome in ("meeting_booked", "qualified", "interested")  # a repeated report
+        already_counted = bool(review_meta.get("_counted_outcome")) or prev_outcome in ("meeting_booked", "qualified", "interested")  # a repeated report
         if call_log.campaign_id and not already_counted:
             inc: dict = {}
             if outcome == "meeting_booked":
@@ -581,7 +591,9 @@ class CallService:
                 inc = {"total_qualified": Campaign.total_qualified + 1}
             if inc:
                 await db.execute(update(Campaign).where(Campaign.id == call_log.campaign_id).values(**inc))
+                review_meta["_counted_outcome"] = outcome
 
+        await db.execute(update(CallLog).where(CallLog.id == call_log.id).values(response_analysis=dict(review_meta)))
         await db.commit()
         await db.refresh(call_log)
         await charge_call(db, call_log)
@@ -612,6 +624,8 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         from app.agent.runtime import reconcile_outcome
 
         previous = call_log.outcome
+        review_meta = dict(call_log.response_analysis or {})
+        new_review = force or review_meta.get("_review_schema") == 1
         call_log.outcome = reconcile_outcome(previous, call_log.transcript,
                                              callback_request=(call_log.extracted_data or {}).get("_callback_request"))
         if call_log.outcome != previous:
@@ -624,8 +638,19 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             agent.success_criteria if agent else "",
         )
         if not result:
-            await db.commit()
-            return
+            if review_meta.get("_review_schema") == 1:
+                result = {"summary": call_log.summary, "sentiment": call_log.sentiment,
+                          "extracted": call_log.extracted_data or {}, "outcome": call_log.outcome,
+                          "response_analysis": {"certainty": "ambiguous", "next_action": "human_review"}}
+            else:
+                await db.commit()
+                return
+        from app.services.response_review import RESPONSE_OUTCOMES, review_response
+        if new_review:
+            result = review_response(result, call_log.transcript)
+        elif result.get("outcome") in RESPONSE_OUTCOMES:
+            result = {**result, "outcome": call_log.outcome}
+        reviewed = new_review and isinstance(result.get("response_analysis"), dict)
         call_log.summary = result.get("summary")
         call_log.sentiment = result.get("sentiment")
         call_log.extracted_data = {**(result.get("extracted") or {}), "_successful": result.get("successful"),
@@ -636,12 +661,39 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             force and call_log.outcome not in ("meeting_booked", "transferred", "do_not_call")) or (
             # A "no" the agent logged that was really the contact not speaking the language.
             call_log.outcome == "not_interested" and result.get("outcome") == "language_barrier")
+        replaceable = replaceable or (reviewed and call_log.outcome not in ("meeting_booked", "transferred", "do_not_call"))
         if replaceable and result.get("outcome"):
             if call_log.duration_seconds or call_log.outcome != "failed":
                 call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript,
                                                      callback_request=result.get("callback_request"))
                 call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                    "failed": "failed"}.get(call_log.outcome, "completed")
+        if reviewed:
+            call_log.response_analysis = {**review_meta, **result["response_analysis"], "response": call_log.outcome}
+            if call_log.outcome == "do_not_call":
+                call_log.response_analysis.update(next_action="none_agreed", next_action_quote=None, channel=None)
+            if call_log.outcome == "meeting_booked":
+                call_log.response_analysis["next_action"] = "meeting_booked"
+            if call_log.campaign_id and "_counted_outcome" in review_meta:
+                def counts(value):
+                    return (int(value in ("meeting_booked", "qualified", "interested")), int(value == "meeting_booked"))
+                old_q, old_b = counts(review_meta["_counted_outcome"])
+                new_q, new_b = counts(call_log.outcome)
+                await db.execute(update(Campaign).where(Campaign.id == call_log.campaign_id).values(
+                    total_qualified=Campaign.total_qualified + new_q - old_q,
+                    total_booked=Campaign.total_booked + new_b - old_b))
+                call_log.response_analysis["_counted_outcome"] = call_log.outcome if new_q else None
+            if call_log.lead_id and review_meta.get("_lead_status_written"):
+                lead = await db.get(Lead, call_log.lead_id)
+                latest = await db.scalar(select(CallLog.id).where(CallLog.lead_id == call_log.lead_id)
+                                         .order_by(CallLog.started_at.desc()).limit(1))
+                def utc(value):
+                    return value.replace(tzinfo=timezone.utc) if value and value.tzinfo is None else value
+                if lead and latest == call_log.id and lead.status == review_meta["_lead_status_written"] and utc(lead.updated_at) == utc(call_log.ended_at):
+                    from app.services.contacts import next_status
+                    before = review_meta.get("_lead_status_before")
+                    lead.status = next_status(before, call_log.outcome) or before or "new"
+                    lead.updated_at = datetime.now(timezone.utc)
         # A corrected outcome must reach the contact too: someone who talked is never left in a redial state,
         # and a "conversation" that was really a voicemail greeting gets the contact their retry.
         if call_log.lead_id and call_log.outcome not in ("no_answer", "voicemail", "screened", "failed"):
@@ -749,6 +801,7 @@ async def emit_call_events(call_id: uuid.UUID) -> None:
         "call_id": str(call.id),
         "status": call.status,
         "outcome": call.outcome,
+        "response_analysis": {k: v for k, v in (call.response_analysis or {}).items() if not k.startswith("_")},
         "summary": public_summary(call.status, call.summary),
         "sentiment": call.sentiment,
         "duration_seconds": call.duration_seconds,

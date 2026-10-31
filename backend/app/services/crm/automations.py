@@ -32,7 +32,8 @@ def condition_matches(condition, call, evidence):
     if condition.kind == "verification":
         return condition.value == evidence["status"]
     if condition.kind == "outcome":
-        return condition.value == call.outcome
+        from app.services.response_review import routing_outcome
+        return condition.value == call.outcome or (condition.value == "callback" and routing_outcome(call) == "callback")
     data = call.extracted_data or {}
     if condition.field not in data or data[condition.field] is None:
         return False

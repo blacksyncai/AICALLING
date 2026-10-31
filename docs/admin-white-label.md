@@ -1,5 +1,9 @@
 # Admin white label
 
+For expanded color/font/button schemes and nested account inheritance, see
+[Response review, brand kits and account families](response-review-and-account-families.md).
+The Account family and Brand kit cards are at the bottom of the account detail page.
+
 Open **Admin portal → Clients → White label** from a client's action menu, or open the account details
 and use its White label card. The platform super-admin login and the separate admin-portal unlock are
 both required by every settings, logo, DNS and activation endpoint. Account owners/admins cannot configure it.
@@ -66,7 +70,8 @@ credentials. Primary-domain login behavior remains the default when satellite co
 5. Visit the workspace. Membership is still required: a domain selects the account but never grants access.
    Account switching to another tenant is blocked on a bound domain. Use the primary app for switching accounts.
 
-Deactivating a domain or disabling branding revokes that hostname's account access in the API. Pending
+Deactivating a domain revokes that hostname's account access in the API. Disabling local branding does
+so when no inherited parent brand remains; a child can retain its own verified domain with an inherited kit. Pending
 reserved hosts also fail closed, rather than showing some other active account. DNS changes are rechecked
 on explicit checks/activation, not continuously polled; keep monitoring and hosting/certificate management
 with the existing hosting operator. If a domain is retired, remove it from hosting/DNS before releasing the

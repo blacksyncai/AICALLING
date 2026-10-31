@@ -100,7 +100,7 @@ export const VERIFICATION_LABELS: Record<string, string> = {
   wrong_number: "Wrong number",
   unverified: "Unverified",
 };
-export const OUTCOMES = [
+export const OUTCOMES = ["no_decision", "insufficient_conversation", "busy", "information_requested", "declined_conversation",
   "meeting_booked",
   "qualified",
   "not_qualified",

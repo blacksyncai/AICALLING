@@ -71,6 +71,7 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         "call_type": c.call_type or "outbound",
         "status": c.status,
         "outcome": c.outcome,
+        "response_analysis": {k: v for k, v in (c.response_analysis or {}).items() if not k.startswith("_")} or None,
         "sentiment": c.sentiment,
         "summary": public_summary(c.status, c.summary),
         "duration_seconds": c.duration_seconds,
@@ -141,6 +142,7 @@ async def list_calls(
     agent_id: uuid.UUID | None = None,
     campaign_id: uuid.UUID | None = None,
     outcome: str | None = None,
+    next_action: str | None = None,
     call_type: str | None = None,
     # A calendar day (YYYY-MM-DD) in the organization's reporting time zone.
     day: Date | None = Query(default=None, alias="date"),
@@ -166,6 +168,12 @@ async def list_calls(
         filters.append(CallLog.campaign_id == campaign_id)
     if outcome:
         filters.append(CallLog.outcome == outcome)
+    if next_action:
+        from app.services.response_review import NEXT_ACTIONS
+        if next_action not in NEXT_ACTIONS:
+            raise HTTPException(422, "Choose a supported next action.")
+        filters += [CallLog.response_analysis["version"].as_integer() == 1,
+                    CallLog.response_analysis["next_action"].as_string() == next_action]
     if call_type:
         filters.append(CallLog.call_type == call_type)
     if day:

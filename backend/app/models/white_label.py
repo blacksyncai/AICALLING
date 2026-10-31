@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, LargeBinary, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -17,6 +17,8 @@ class WhiteLabel(Base):
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     brand_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    brand_kit: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    inherit_parent: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
     logo: Mapped[bytes | None] = mapped_column(
         LargeBinary, nullable=True, deferred=True
     )

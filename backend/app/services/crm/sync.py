@@ -106,6 +106,7 @@ def call_info(data: dict) -> CallInfo:
         meeting_link=data.get("meeting_link") or "", started_at=started,
         url=f"{base}/calls/{data.get('call_id')}" if base and data.get("call_id") else "",
         extracted=data.get("extracted_data") or {},
+        response_analysis=data.get("response_analysis") or {},
     )
 
 
@@ -152,7 +153,7 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
                 await p.mark_dnc(http, conn.config or {}, ref)
             except CrmError as exc:
                 log.warning("crm_mark_dnc_failed", provider=conn.provider, error=str(exc))
-        moved = await _move_installed_deal(db, conn, p, http, lead, call.outcome) or \
+        moved = await _move_installed_deal(db, conn, p, http, lead, call.routing_outcome) or \
             await _move_stage(db, conn, p, http, ref, call, c)
         if lead and (lead.crm_refs or {}).get(conn.provider) != ref:
             lead.crm_refs = {**(lead.crm_refs or {}), conn.provider: ref}
@@ -391,6 +392,8 @@ BLACKSYNC_STAGES = [
     {"key": "dnc", "label": "Do not call", "kind": "lost"},
 ]
 OUTCOME_TO_KEY = {
+    "no_decision": None, "insufficient_conversation": None, "busy": None, "declined_conversation": None,
+    "information_requested": "follow_up",
     "meeting_booked": "booked", "interested": "follow_up", "qualified": "follow_up", "callback": "follow_up",
     "completed": "follow_up", "transferred": "follow_up", "voicemail": "voicemail", "no_answer": "no_answer",
     "failed": "no_answer", "not_interested": "not_interested", "not_qualified": "not_interested",
@@ -643,6 +646,8 @@ async def _move_installed_deal(db, conn: CrmConnection, p: Provider, http, lead:
     if not inst or not cf.get("bs_deal"):
         return None
     key = OUTCOME_TO_KEY.get(outcome or "", "follow_up")
+    if key is None:
+        return None  # no agreed next step: log the call without moving the CRM card
     target = _stage(inst, key)
     current = await p.deal_stage(http, conn.config or {}, cf["bs_deal"])
     ids = {st["id"] for st in inst["pipeline"]["stages"]}

@@ -205,7 +205,7 @@ async def list_orgs(_: AdminDep, db: DbDep, q: str = ""):
 
 
 @router.post("/orgs", status_code=201)
-async def create_org(body: OrgCreate, request: Request, admin: AdminDep, db: DbDep):
+async def create_org(body: OrgCreate, request: Request, admin: AdminDep, db: DbDep, parent_org_id: uuid.UUID | None = None):
     """New sub-account with its owner login. The owner either gets a password (generated
     if not given, returned once) or an invite link to set their own."""
     email = normalize_email(body.owner_email)
@@ -215,7 +215,17 @@ async def create_org(body: OrgCreate, request: Request, admin: AdminDep, db: DbD
         raise HTTPException(status_code=400, detail="Enter the company name.")
     if body.password and len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if parent_org_id:
+        from app.models.account_tree import AccountParent
+        from app.services.account_tree import check_child_depth
+        parent = await db.scalar(select(Organization).where(Organization.id == parent_org_id).with_for_update())
+        if not parent:
+            raise HTTPException(404, "Parent account not found")
+        await check_child_depth(db, parent_org_id)
     org = await create_organization(db, body.name, credits=body.credits, created_by=admin.id)
+    if parent_org_id:
+        db.add(AccountParent(org_id=org.id, parent_org_id=parent_org_id))
+        await db.flush()
     if body.lead_credits:
         from app.services import lead_finder as lf
 
@@ -318,6 +328,11 @@ async def delete_org(org_id: uuid.UUID, body: OrgDelete, admin: AdminDep, db: Db
     from app.services import google_calendar as gcal
 
     org = await _org_or_404(db, org_id)
+    from app.models.account_tree import AccountParent
+    await db.refresh(org, with_for_update=True)
+    if await db.scalar(select(AccountParent.org_id).where(AccountParent.parent_org_id == org_id).limit(1)):
+        raise HTTPException(409, "This account has child accounts. Remove or resolve them individually first.")
+
     if body.confirm_name.strip() != org.name:
         raise HTTPException(status_code=400, detail="Type the account name exactly to confirm.")
     house = (await db.execute(select(Organization).order_by(Organization.created_at).limit(1))).scalar_one_or_none()

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.white_label import WhiteLabel
+from app.services.brand_kit import DEFAULT_KIT
 
 
 def normalize_domain(raw: str) -> str | None:
@@ -89,6 +90,7 @@ def public_brand(row: WhiteLabel | None) -> dict:
         return {"name": "BlackSync", "logo_url": None, "custom": False}
     return {
         "name": row.brand_name,
+        "kit": {**DEFAULT_KIT, **(row.brand_kit or {})},
         "custom": True,
         "logo_url": f"/api/branding/logos/{row.org_id}/{row.logo_hash}.png"
         if row.logo_hash
@@ -113,11 +115,12 @@ def admin_payload(row: WhiteLabel | None) -> dict:
     return {
         "enabled": bool(row and row.enabled),
         "brand_name": row.brand_name if row else "",
+        "brand_kit": {**DEFAULT_KIT, **(row.brand_kit or {})} if row else DEFAULT_KIT,
+        "inherit_parent": row is None or row.inherit_parent is not False,
         "domain": domain or "",
         "domain_active": bool(
             row
             and row.domain_active
-            and row.enabled
             and row.verified_target == target
             and target
         ),
@@ -230,7 +233,6 @@ async def brand_for_host(db: AsyncSession, host: str) -> WhiteLabel | None:
         await db.scalar(
             select(WhiteLabel).where(
                 WhiteLabel.domain == host,
-                WhiteLabel.enabled.is_(True),
                 WhiteLabel.domain_active.is_(True),
                 WhiteLabel.verified_target == cname_target(),
                 WhiteLabel.dns_verified_at.is_not(None),
@@ -254,8 +256,7 @@ async def request_brand(db: AsyncSession, request: Request) -> WhiteLabel | None
         select(WhiteLabel).where(WhiteLabel.domain == host.split(":")[0].rstrip("."))
     )
     if row and not (
-        row.enabled
-        and row.domain_active
+        row.domain_active
         and row.dns_verified_at
         and row.verified_target == cname_target()
         and cname_target()
@@ -264,6 +265,10 @@ async def request_brand(db: AsyncSession, request: Request) -> WhiteLabel | None
             403,
             "This custom workspace is not active yet. Use the platform's main sign-in page.",
         )
+    if row:
+        from app.services.account_tree import effective_brand
+        if not (await effective_brand(db, row.org_id))["custom"]:
+            raise HTTPException(403, "This custom workspace branding is disabled.")
     request.state.white_label = row
     return request.state.white_label
 

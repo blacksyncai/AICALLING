@@ -15,16 +15,18 @@ export function Button({
   className,
   children,
   disabled,
+  style,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md"; loading?: boolean }) {
   return (
     <button
+      style={{ borderRadius: "var(--brand-radius, .5rem)", ...style }}
       disabled={disabled || loading}
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-[background-color,box-shadow,transform,color] duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500",
         size === "sm" ? "h-8 px-3 text-xs" : "h-9 px-4 text-sm",
         variant === "primary" &&
-          "bg-gradient-to-b from-brand-500 to-brand-600 text-white shadow-[0_1px_2px_rgba(185,58,20,0.35),inset_0_1px_0_rgba(255,255,255,0.18)] hover:from-brand-600 hover:to-brand-700",
+          "bg-gradient-to-b from-brand-500 to-brand-600 text-[var(--brand-on-primary,#fff)] shadow-sm hover:opacity-90",
         variant === "secondary" && "border border-zinc-200 bg-white text-zinc-800 shadow-xs hover:border-zinc-300 hover:bg-zinc-50",
         variant === "ghost" && "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
         variant === "danger" && "bg-red-600 text-white shadow-[0_1px_2px_rgba(185,28,28,0.3)] hover:bg-red-700",

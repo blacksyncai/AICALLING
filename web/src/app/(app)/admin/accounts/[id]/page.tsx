@@ -12,6 +12,7 @@ import { ManagePlanCard } from "@/components/admin/ManagePlan";
 import { PlanAdminCard } from "@/components/admin/PlanAdminCard";
 import { DeleteAccountCard } from "@/components/admin/DeleteAccountCard";
 import { LeadFinderCard } from "@/components/admin/LeadFinderCard";
+import { ChildAccountsCard } from "@/components/admin/ChildAccountsCard";
 import { WhiteLabelCard } from "@/components/admin/WhiteLabelCard";
 import { PhoneNumbersCard } from "@/components/admin/PhoneNumbersCard";
 import { AdminGuard, StatTile, fmt } from "@/components/admin/shared";
@@ -105,7 +106,6 @@ function AccountDetail() {
       </div>
 
       <AdminCallNotifications key={org.id} orgId={org.id} />
-      <WhiteLabelCard key={`branding-${org.id}`} orgId={org.id} />
       <details className="rounded-2xl border border-zinc-200 bg-white">
         <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-zinc-700">Notification defaults · recipients, outcomes and CRM links</summary>
         <CallAlertSettings key={org.id} orgId={org.id} />
@@ -126,6 +126,8 @@ function AccountDetail() {
           <DeleteAccountCard org={org} />
         </div>
       </div>
+      <ChildAccountsCard key={`children-${org.id}`} orgId={org.id} />
+      <WhiteLabelCard key={`branding-${org.id}`} orgId={org.id} />
     </div>
   );
 }
