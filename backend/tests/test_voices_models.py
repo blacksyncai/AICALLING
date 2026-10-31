@@ -289,6 +289,23 @@ def test_mia_is_third_premium_family_without_claiming_clone(client, cartesia):
     assert mia["is_clone"] is False
 
 
+def test_lauren_versions_keep_existing_id_and_route_new_providers(client, cartesia):
+    from app.agent.inference_tts import model_of, provider_voice_id
+
+    voices = client.get("/api/settings/voices").json()["voices"]
+    lauren = [v for v in voices if v.get("family") == "Lauren"]
+    assert [(v["id"], v["name"], v["provider"]) for v in lauren] == [
+        ("91e4713f-2150-4be6-8564-2d121bbd8c10", "Lauren · Version 1", "cartesia"),
+        ("lkcartesia:v_9thNgvPeCfcX", "Lauren · Version 2", "cartesia"),
+        ("fishaudio:v_9thNgvPeCfcX", "Lauren · Version 3", "fishaudio"),
+    ]
+    assert all(v["category"] == "premium" and v["is_clone"] for v in lauren)
+    assert provider_voice_id(lauren[1]["id"]) == "v_9thNgvPeCfcX"
+    assert provider_voice_id(lauren[2]["id"]) == "v_9thNgvPeCfcX"
+    assert model_of(lauren[1]["id"]) == "cartesia/sonic-3.5"
+    assert model_of(lauren[2]["id"]) == "fishaudio/s2.1-pro"
+
+
 def test_agents_on_retired_voices_move_to_fish_versions(client):
     import asyncio
     import uuid
