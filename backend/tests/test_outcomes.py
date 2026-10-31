@@ -91,11 +91,11 @@ def test_reanalyze_can_fix_an_analyzer_outcome(client, monkeypatch):
             db.add(CallLog(id=cid, call_type="outbound", status="completed", outcome="callback", transcript=greet,
                            to_phone="+14155550101", duration_seconds=35, livekit_room_name=f"call-{cid}"))
             await db.commit()
-        await outbound_call._analyze(str(cid))          # automatic: keeps the earlier label
+        await outbound_call._analyze(str(cid))          # automatic: greeting evidence corrects the earlier label
         async with AsyncSessionLocal() as db:
             before = (await db.get(CallLog, cid)).outcome
         await outbound_call._analyze(str(cid), force=True)  # Re-analyze button
         async with AsyncSessionLocal() as db:
             return before, (await db.get(CallLog, cid)).outcome
 
-    assert asyncio.run(run()) == ("callback", "voicemail")
+    assert asyncio.run(run()) == ("voicemail", "voicemail")

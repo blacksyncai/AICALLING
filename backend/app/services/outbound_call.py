@@ -609,7 +609,11 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         call_log = await db.get(CallLog, uuid.UUID(call_log_id))
         if not call_log or not call_log.transcript:
             return
-        from app.agent.runtime import NO_CONVERSATION_OUTCOMES, person_answered
+        from app.agent.runtime import NO_CONVERSATION_OUTCOMES, person_answered, reconcile_outcome
+
+        call_log.outcome = reconcile_outcome(call_log.outcome, call_log.transcript)
+        if call_log.outcome == "voicemail":
+            call_log.status = "no_answer"
 
         mislabeled = (call_log.outcome in (*NO_CONVERSATION_OUTCOMES, "failed")
                       and person_answered(call_log.transcript))
@@ -637,8 +641,9 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             call_log.outcome == "not_interested" and result.get("outcome") == "language_barrier")
         if replaceable and result.get("outcome"):
             if call_log.duration_seconds or call_log.outcome != "failed":
-                from app.agent.runtime import reconcile_outcome
                 call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript)
+                call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
+                                   "failed": "failed"}.get(call_log.outcome, "completed")
         # A corrected outcome must reach the contact too: someone who talked is never left in a redial state,
         # and a "conversation" that was really a voicemail greeting gets the contact their retry.
         if call_log.lead_id and call_log.outcome not in ("no_answer", "voicemail", "screened", "failed"):

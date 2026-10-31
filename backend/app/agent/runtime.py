@@ -508,6 +508,8 @@ def screener_hold_start(text: str) -> str | None:
 
 
 def screener_match(text: str) -> str | None:
+    if is_voicemail_greeting(text):
+        return None
     t = (text or "").lower().replace("’", "'")
     return next((h for h in _SCREENER if h in t), None)
 
@@ -515,6 +517,8 @@ def screener_match(text: str) -> str | None:
 def is_screener_hold(text: str) -> bool:
     """A screener's holding line (or a fragment of one), not a person picking up."""
     t = (text or "").lower().replace("’", "'").strip()
+    if is_voicemail_greeting(t):
+        return False
     if screener_match(t):
         return True
     return "?" not in t and any(h in t for h in _SCREENER_HOLD)  # a person picking up asks ("Hello? Who's this?")
@@ -547,24 +551,93 @@ def contact_turns(transcript: list[dict] | None) -> list[str]:
             if t.get("role") in ("user", "caller") and (t.get("text") or "").strip()]
 
 
+def _live_contact_turns(transcript: list[dict] | None) -> list[str]:
+    """Separate machine speech from contact replies, including pickup after screening."""
+    live = []
+    machine = False
+    greeting = ""
+    screened = False
+    for turn in transcript or []:
+        if turn.get("role") == "tool":
+            args = turn.get("args") or {}
+            if turn.get("tool") == "call_screener":
+                screened = True
+            if turn.get("tool") == "voicemail" or (
+                turn.get("tool") == "answer_detection" and args.get("is_machine") is True
+                and "screen" not in str(args.get("reason") or "").lower()
+            ):
+                machine = True
+                if turn.get("tool") == "voicemail":
+                    live = []
+            continue
+        if turn.get("role") not in ("user", "caller"):
+            continue
+        text = (turn.get("text") or "").strip()
+        if not text:
+            continue
+        if turn.get("voicemail_greeting") or is_voicemail_greeting(text):
+            machine = True
+            live = []
+            greeting += " " + text
+            continue
+        if is_screener_hold(text):
+            screened = True
+            continue
+        # Only the opening can be a personal recorded greeting. A busy person
+        # responding after screening or a live hello is still a person.
+        if not live and not machine and not screened and looks_like_personal_greeting(greeting + " " + text):
+            machine = True
+            greeting += " " + text
+            continue
+        if machine and (is_voicemail_text(text) or any(h in text.lower().replace("’", "'") for h in _PERSONAL_WEAK)):
+            greeting += " " + text
+            continue
+        live.append(text)
+    return live
+
+
 def person_answered(transcript: list[dict] | None) -> bool:
-    """True when a live person spoke on the call (not just a voicemail greeting or silence)."""
-    if any(t.get("role") == "tool" and t.get("tool") == "voicemail" for t in transcript or []):
-        return False  # the call worker detected an answering machine
-    turns = [t for t in contact_turns(transcript) if not is_screener_hold(t)]  # a screener isn't the person
-    if not turns:
+    """True when contact speech remains after excluding greetings and screening."""
+    return bool(_live_contact_turns(transcript))
+
+
+def voicemail_answered(transcript: list[dict] | None) -> bool:
+    """Positive machine evidence, with a later live pickup allowed to supersede it."""
+    if person_answered(transcript):
         return False
-    if all(is_voicemail_text(t) for t in turns):
-        return False
-    # A greeting that's mostly a voicemail recording ("Hi, you've reached Sam, leave a message") isn't a person.
-    joined = " ".join(turns)
-    return not (is_voicemail_text(joined) and len(turns) <= 2)
+    if any(t.get("voicemail_greeting") or (
+        t.get("role") == "tool" and (
+            t.get("tool") == "voicemail" or (
+                t.get("tool") == "answer_detection"
+                and (t.get("args") or {}).get("is_machine") is True
+                and "screen" not in str((t.get("args") or {}).get("reason") or "").lower()
+            )
+        )
+    ) for t in transcript or []):
+        return True
+    text = " ".join(contact_turns(transcript))
+    return is_voicemail_greeting(text) or looks_like_personal_greeting(text)
+
+
+def callback_requested(transcript: list[dict] | None) -> bool:
+    """Require a live contact's deferral, not an agent offer or recorded promise."""
+    text = " ".join(_live_contact_turns(transcript)).lower().replace("’", "'")
+    return bool(re.search(
+        r"\b(?:call (?:me|us)(?: back)?|catch me|another time|bad time|busy|driving|"
+        r"can't talk|cannot talk|talk (?:later|tomorrow)|maybe later|"
+        r"(?:text|email|send) (?:me|us)|think about it|check with|"
+        r"i(?:'ll| will) call you back)\b", text
+    ))
 
 
 def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str | None:
-    """Never label a call where the contact talked as no answer / voicemail / failed (those get redialed)."""
+    """Apply contact and machine evidence before outcomes reach routing consumers."""
+    if outcome not in ("meeting_booked", "transferred", "do_not_call", "screened") and voicemail_answered(transcript):
+        return "voicemail"
     if outcome in (*NO_CONVERSATION_OUTCOMES, "failed") and person_answered(transcript):
         return "completed"
+    if outcome == "callback" and not callback_requested(transcript):
+        return "completed"  # no positive evidence of a live request; do not invent voicemail
     return outcome
 
 

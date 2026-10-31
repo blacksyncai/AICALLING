@@ -1,0 +1,45 @@
+name: Call outcome regressions
+
+on:
+  push:
+    branches: [claude/determined-fermat-t1fn4e]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/outcome-regressions.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/outcome-regressions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  outcomes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r requirements.txt pytest
+      - name: Compile modified runtime paths
+        run: python -m compileall -q app/agent/runtime.py app/services/llm.py app/services/outbound_call.py agent_worker.py
+      - name: Test outcomes and routing
+        run: >-
+          python -m pytest -q
+          tests/test_voicemail_outcome_regressions.py
+          tests/test_outcomes.py
+          tests/test_voicemail_phrases.py
+          tests/test_call_screener.py
+          tests/test_contact_status_flow.py
+          tests/test_campaign_rules.py
+          tests/test_radar_automations.py
+          tests/test_call_alerts.py

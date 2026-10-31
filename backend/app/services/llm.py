@@ -234,7 +234,7 @@ def _transcript_text(transcript: list[dict]) -> str:
         if role in ("assistant", "agent"):
             lines.append(f"AGENT: {t.get('text', '')}")
         elif role in ("user", "caller"):
-            lines.append(f"CONTACT: {t.get('text', '')}")
+            lines.append(f"CONTACT{' [recorded voicemail greeting]' if t.get('voicemail_greeting') else ''}: {t.get('text', '')}")
         elif role == "tool":
             lines.append(f"[tool {t.get('tool')}: {json.dumps(t.get('args', {}))}]")
     return "\n".join(lines)
@@ -274,7 +274,10 @@ Outcome definitions (pick the single best one):
   asked how it works / what it costs / next steps, or agreed to receive details ("yeah, send me that", "sure,
   I'd like a valuation", "how much is it?", "sounds good, tell me more"). NOT interested: only confirming who
   they are, asking who's calling or why, or answering a question before the offer was even made.
-- callback: a follow-up is needed: a live person asked to be called back later, said it's a bad time / they're
+- callback: requires evidence of a live contact requesting another conversation or deferring this one.
+  A greeting saying "leave your name and reason for calling and I will return your call" or
+  "please leave a message and I will call you back" is voicemail, NEVER callback or qualified.
+  An agent offering a callback alone is not a contact request. For a live conversation: a live person asked to be called back later, said it's a bad time / they're
   busy / driving, wants to think about it or check with someone, or asked for a text or email to look at later.
 - not_interested: declined or said no.
 - not_qualified: doesn't fit (wrong size, budget, area, etc.).

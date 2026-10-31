@@ -850,6 +850,9 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         if context.speech_handle.interrupted:
             return "Not ended: the caller interrupted. Respond to their latest turn."
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
+        from app.agent.runtime import reconcile_outcome
+
+        outcome = reconcile_outcome(outcome, run.transcript) or outcome
         if outcome == "transferred" and run.outcome != "transferred":
             return "Not ended: no transfer has completed. Use the transfer tool first, or offer a callback; do not hang up as though the caller was connected."
         if outcome == "meeting_booked" and not run.meeting_time:
@@ -1520,6 +1523,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         if run.t0 and _time.monotonic() - run.t0 > 45 and not screen["seen"]:
             return  # only the opening of the call (after a screener, its "not available, leave a message" can come late)
         text = getattr(ev, "transcript", "") or ""
+        if screen["passed"]:
+            return  # the person answered after screening; do not classify their deferral as a greeting
         if not screen["seen"]:
             from app.agent.runtime import screener_match
 
@@ -1693,7 +1698,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                     log.info("amd_result", room=ctx.room.name, category=cat, reason=result.reason[:200],
                              delay=round(result.delay, 2))
                     run.transcript.append({"role": "tool", "tool": "answer_detection",
-                                           "args": {"result": cat, "reason": result.reason[:160]},
+                                           "args": {"result": cat, "is_machine": result.is_machine, "reason": result.reason[:160]},
                                            "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
                     if result.is_machine and not vm["detected"]:
                         await asyncio.sleep(1.5)  # a screener's words may still be on their way to the transcript
