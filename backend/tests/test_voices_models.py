@@ -312,14 +312,14 @@ def test_kate_clone_versions_route_providers_and_preserve_standard_voice(client,
     voices = client.get("/api/settings/voices").json()["voices"]
     kate = [v for v in voices if v.get("family") == "Kate"]
     assert [(v["id"], v["name"], v["provider"]) for v in kate] == [
-        ("lkcartesia:v_PmKa7bajvjhe", "Kate · Version 1", "cartesia"),
+        ("inworld:v_PmKa7bajvjhe", "Kate · Version 1", "inworld"),
         ("fishaudio:v_PmKa7bajvjhe", "Kate · Version 2", "fishaudio"),
-        ("inworld:v_PmKa7bajvjhe", "Kate · Version 3", "inworld"),
+        ("lkcartesia:v_PmKa7bajvjhe", "Kate · Version 3", "cartesia"),
     ]
     assert all(v["category"] == "premium" and v["is_clone"] for v in kate)
     assert all(provider_voice_id(v["id"]) == "v_PmKa7bajvjhe" for v in kate)
     assert [model_of(v["id"]) for v in kate] == [
-        "cartesia/sonic-3.5", "fishaudio/s2.1-pro", "inworld/inworld-tts-2",
+        "inworld/inworld-tts-2", "fishaudio/s2.1-pro", "cartesia/sonic-3.5",
     ]
     standard = next(v for v in voices if v["id"] == "f786b574-daa5-4673-aa0c-cbe3e8534c02")
     assert (standard["name"], standard["category"]) == ("Kate", "standard")
