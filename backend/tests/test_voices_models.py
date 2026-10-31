@@ -306,6 +306,25 @@ def test_lauren_versions_keep_existing_id_and_route_new_providers(client, cartes
     assert model_of(lauren[2]["id"]) == "fishaudio/s2.1-pro"
 
 
+def test_kate_clone_versions_route_providers_and_preserve_standard_voice(client, cartesia):
+    from app.agent.inference_tts import model_of, provider_voice_id
+
+    voices = client.get("/api/settings/voices").json()["voices"]
+    kate = [v for v in voices if v.get("family") == "Kate"]
+    assert [(v["id"], v["name"], v["provider"]) for v in kate] == [
+        ("lkcartesia:v_PmKa7bajvjhe", "Kate · Version 1", "cartesia"),
+        ("fishaudio:v_PmKa7bajvjhe", "Kate · Version 2", "fishaudio"),
+        ("inworld:v_PmKa7bajvjhe", "Kate · Version 3", "inworld"),
+    ]
+    assert all(v["category"] == "premium" and v["is_clone"] for v in kate)
+    assert all(provider_voice_id(v["id"]) == "v_PmKa7bajvjhe" for v in kate)
+    assert [model_of(v["id"]) for v in kate] == [
+        "cartesia/sonic-3.5", "fishaudio/s2.1-pro", "inworld/inworld-tts-2",
+    ]
+    standard = next(v for v in voices if v["id"] == "f786b574-daa5-4673-aa0c-cbe3e8534c02")
+    assert (standard["name"], standard["category"]) == ("Kate", "standard")
+
+
 @pytest.mark.parametrize("old,replacement", [
     ("mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "fishaudio:v_goYxyDbAUbfP"),
     ("lkcartesia:v_9thNgvPeCfcX", "inworld:v_9thNgvPeCfcX"),
