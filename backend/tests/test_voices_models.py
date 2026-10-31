@@ -296,17 +296,21 @@ def test_lauren_versions_keep_existing_id_and_route_new_providers(client, cartes
     lauren = [v for v in voices if v.get("family") == "Lauren"]
     assert [(v["id"], v["name"], v["provider"]) for v in lauren] == [
         ("91e4713f-2150-4be6-8564-2d121bbd8c10", "Lauren · Version 1", "cartesia"),
-        ("lkcartesia:v_9thNgvPeCfcX", "Lauren · Version 2", "cartesia"),
+        ("inworld:v_9thNgvPeCfcX", "Lauren · Version 2", "inworld"),
         ("fishaudio:v_9thNgvPeCfcX", "Lauren · Version 3", "fishaudio"),
     ]
     assert all(v["category"] == "premium" and v["is_clone"] for v in lauren)
     assert provider_voice_id(lauren[1]["id"]) == "v_9thNgvPeCfcX"
     assert provider_voice_id(lauren[2]["id"]) == "v_9thNgvPeCfcX"
-    assert model_of(lauren[1]["id"]) == "cartesia/sonic-3.5"
+    assert model_of(lauren[1]["id"]) == "inworld/inworld-tts-2"
     assert model_of(lauren[2]["id"]) == "fishaudio/s2.1-pro"
 
 
-def test_agents_on_retired_voices_move_to_fish_versions(client):
+@pytest.mark.parametrize("old,replacement", [
+    ("mistral:01a133e4-93c6-7540-98b5-a917a4da562e", "fishaudio:v_goYxyDbAUbfP"),
+    ("lkcartesia:v_9thNgvPeCfcX", "inworld:v_9thNgvPeCfcX"),
+])
+def test_agents_on_retired_voices_move_to_replacements(client, old, replacement):
     import asyncio
     import uuid
 
@@ -319,12 +323,13 @@ def test_agents_on_retired_voices_move_to_fish_versions(client):
 
     async def set_and_move():
         async with AsyncSessionLocal() as db:
-            (await db.get(Agent, uuid.UUID(zain["id"]))).voice_id = "mistral:01a133e4-93c6-7540-98b5-a917a4da562e"
+            (await db.get(Agent, uuid.UUID(zain["id"]))).voice_id = old
             await db.commit()
         await move_retired_voices()
+        assert await move_retired_voices() == 0
         async with AsyncSessionLocal() as db:
             return (await db.get(Agent, uuid.UUID(zain["id"]))).voice_id, (await db.get(Agent, uuid.UUID(other["id"]))).voice_id
 
     moved, untouched = asyncio.run(set_and_move())
-    assert moved == "fishaudio:v_goYxyDbAUbfP"
+    assert moved == replacement
     assert untouched == "97f03c16-fab2-4747-b655-9caefbd68fcf"

@@ -29,8 +29,8 @@ FEATURED_VOICES: list[dict] = [
      "description": "Live voice clone.", "clone": True, "provider": "inworld", "language": "en"},
     {"id": "91e4713f-2150-4be6-8564-2d121bbd8c10", "name": "Lauren · Version 1", "family": "Lauren", "tone": "Version 1", "gender": "feminine",
      "description": "Live voice clone.", "clone": True, "language": "en"},
-    {"id": "lkcartesia:v_9thNgvPeCfcX", "name": "Lauren · Version 2", "family": "Lauren", "tone": "Version 2",
-     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "cartesia", "language": "en"},
+    {"id": "inworld:v_9thNgvPeCfcX", "name": "Lauren · Version 2", "family": "Lauren", "tone": "Version 2",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "inworld", "language": "en"},
     {"id": "fishaudio:v_9thNgvPeCfcX", "name": "Lauren · Version 3", "family": "Lauren", "tone": "Version 3",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
     {"id": "058f0988-5723-49e0-b322-e50034637fe6", "name": "Sofia", "gender": "feminine",
@@ -91,6 +91,7 @@ DEFAULT_VOICE_ID = "97f03c16-fab2-4747-b655-9caefbd68fcf"
 
 # Voices taken out of the picker, and what agents still using them move to (applied at startup).
 RETIRED_VOICES = {
+    "lkcartesia:v_9thNgvPeCfcX": "inworld:v_9thNgvPeCfcX",  # Lauren · Version 2 → Inworld TTS 2
     "mistral:01a133e4-93c6-7540-98b5-a917a4da562e": "fishaudio:v_goYxyDbAUbfP",  # Zain (Mistral) → Zain · Version 1
     "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd": "fishaudio:v_SriZAPqzgffq",  # Marissa M (Mistral) → Version 2 (Fish)
     "378695da-44e9-4fc7-a9cb-efcb0d2037cc": "lkcartesia:v_ZMqDxhK7B6i6",  # Macco (old Cartesia clone) → Version 1
