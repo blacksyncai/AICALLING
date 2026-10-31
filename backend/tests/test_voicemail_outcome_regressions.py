@@ -217,3 +217,21 @@ def test_ai_analysis_reconciles_its_own_callback_output(monkeypatch, transcript,
     monkeypatch.setattr(llm, "_chat", fake_chat)
     result = asyncio.run(llm.analyze_call(transcript, None))
     assert result["outcome"] == expected
+
+
+def test_screening_that_reaches_a_mailbox_is_voicemail():
+    screen = {"role": "tool", "tool": "call_screener", "args": {"action": "answer"}}
+    marker = {"role": "tool", "tool": "voicemail", "args": {"action": "hung_up"}}
+    assert reconcile_outcome("screened", [screen, marker]) == "screened"
+    assert reconcile_outcome("screened", [screen, marker, contact(GREETINGS[1])]) == "voicemail"
+
+
+def test_greeting_closing_fragment_is_not_a_human_pickup():
+    transcript = [contact("Please leave a message."), contact("And I'll return your call."), contact("Thank you.")]
+    assert reconcile_outcome("qualified", transcript) == "voicemail"
+
+
+def test_live_request_overrides_earlier_machine_detection():
+    marker = {"role": "tool", "tool": "answer_detection", "args": {"is_machine": True}}
+    transcript = [marker, contact("I can't talk right now can you call me tomorrow")]
+    assert reconcile_outcome("callback", transcript) == "callback"

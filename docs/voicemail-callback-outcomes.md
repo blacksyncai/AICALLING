@@ -56,6 +56,7 @@ Detection remains heuristic and depends on transcription quality and available c
 recordings and very short live answers can be indistinguishable from text alone. The deterministic phrase fallback recognizes English; other languages rely on the model supplying
 an exact live-contact evidence quote. Quote validation verifies provenance, while the model still interprets
 intent. More multilingual/audio fixtures would improve coverage. Confirmed bookings,
-transfers, do-not-call decisions, and existing screened-call semantics remain protected.
+transfers, and do-not-call decisions remain protected. A screener-only hangup stays screened; actual
+voicemail greeting evidence after screening resolves to voicemail.
 Existing delivered events/alerts cannot be recalled by this fix. No historical calls are modified
 as part of implementation or validation.

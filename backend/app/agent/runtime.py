@@ -592,9 +592,16 @@ def _live_contact_turns(transcript: list[dict] | None) -> list[str]:
             machine = True
             greeting += " " + text
             continue
-        if machine and (is_voicemail_text(text) or any(h in text.lower().replace("’", "'") for h in _PERSONAL_WEAK)):
-            greeting += " " + text
-            continue
+        if machine:
+            normalized = text.lower().replace("’", "'")
+            continuation = (
+                is_voicemail_text(text) or any(h in normalized for h in _PERSONAL_WEAK)
+                or re.fullmatch(r"(?:thanks?|thank you|bye|goodbye|beep|have a (?:good|great|nice) day)[.! ]*", normalized)
+            )
+            live_request = re.search(r"\b(?:call|catch|ring) (?:me|us)\b|\bcan you\b", normalized)
+            if continuation and not live_request:
+                greeting += " " + text
+                continue
         live.append(text)
     return live
 
@@ -660,8 +667,14 @@ def callback_requested(transcript: list[dict] | None, quote: str | None = None) 
 def reconcile_outcome(outcome: str | None, transcript: list[dict] | None,
                       *, callback_request: str | None = None) -> str | None:
     """Apply contact and machine evidence before outcomes reach routing consumers."""
-    if outcome not in ("meeting_booked", "transferred", "do_not_call", "screened") and voicemail_answered(transcript):
-        return "voicemail"
+    if outcome not in ("meeting_booked", "transferred", "do_not_call") and voicemail_answered(transcript):
+        # Hanging up on a screener also records a voicemail tool marker. Only
+        # actual greeting text/metadata can distinguish its subsequent mailbox.
+        greeting = any(t.get("role") in ("user", "caller") and (
+            t.get("voicemail_greeting") or is_voicemail_greeting(t.get("text") or "")
+        ) for t in transcript or [])
+        if outcome != "screened" or greeting:
+            return "voicemail"
     if outcome in (*NO_CONVERSATION_OUTCOMES, "failed") and person_answered(transcript):
         return "completed"
     if outcome == "callback" and not callback_requested(transcript, callback_request):

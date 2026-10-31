@@ -747,6 +747,9 @@ class _CallRun:
 async def _post_run_outcome(run: _CallRun, outcome: str) -> None:
     if run.outcome_posted or not run.call_log_id:
         return
+    from app.agent.runtime import reconcile_outcome
+
+    outcome = reconcile_outcome(outcome, run.transcript) or outcome
     run.outcome_posted = True
     try:
         resp = await _api_post(f"/internal/calls/{run.call_log_id}/outcome", json={
