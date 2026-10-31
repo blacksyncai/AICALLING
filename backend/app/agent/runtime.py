@@ -622,9 +622,21 @@ def voicemail_answered(transcript: list[dict] | None) -> bool:
     return is_voicemail_greeting(text) or looks_like_personal_greeting(text)
 
 
-def callback_requested(transcript: list[dict] | None) -> bool:
+def callback_requested(transcript: list[dict] | None, quote: str | None = None) -> bool:
     """Require a live contact's deferral, not an agent offer or recorded promise."""
     live = _live_contact_turns(transcript)
+    quotes = [quote] if quote else []
+    quotes += [(t.get("args") or {}).get("callback_request") for t in transcript or []
+               if t.get("role") == "tool" and t.get("tool") == "end_call"]
+    for evidence in quotes:
+        if not isinstance(evidence, str):
+            continue
+        normalized = " ".join(evidence.casefold().split()).strip(" .!?")
+        # The model supplies the meaning; require its evidence to be actual live
+        # contact speech. This also supports requests in languages beyond English.
+        if normalized and normalized not in ("hello", "hi", "hey", "yes", "okay", "ok"):
+            if any(normalized in " ".join(t.casefold().split()) for t in live):
+                return True
     text = " ".join(live).lower().replace("’", "'")
     if re.search(
         r"\b(?:(?:call|ring) (?:me|us)(?: back)?|call (?:back|again)|catch me|try me|"
@@ -645,13 +657,14 @@ def callback_requested(transcript: list[dict] | None) -> bool:
     return False
 
 
-def reconcile_outcome(outcome: str | None, transcript: list[dict] | None) -> str | None:
+def reconcile_outcome(outcome: str | None, transcript: list[dict] | None,
+                      *, callback_request: str | None = None) -> str | None:
     """Apply contact and machine evidence before outcomes reach routing consumers."""
     if outcome not in ("meeting_booked", "transferred", "do_not_call", "screened") and voicemail_answered(transcript):
         return "voicemail"
     if outcome in (*NO_CONVERSATION_OUTCOMES, "failed") and person_answered(transcript):
         return "completed"
-    if outcome == "callback" and not callback_requested(transcript):
+    if outcome == "callback" and not callback_requested(transcript, callback_request):
         return "completed"  # no positive evidence of a live request; do not invent voicemail
     return outcome
 

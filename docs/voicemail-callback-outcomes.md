@@ -24,6 +24,8 @@ was a greeting. In addition, "name and reason for calling" could be treated as s
   allows subsequent live replies to supersede machine detection. Broad "call you back" hints alone
   no longer establish whether a live person answered.
 - Callback requires live contact deferral/request evidence or live agreement to an agent's callback offer.
+  Live and post-call models provide a verbatim callback_request quote, validated against live contact
+  turns, to support other wording and languages. English deferral patterns remain a fallback for older reports.
   An agent offer alone, silence, a screener hold, or a hello does not establish a request.
 - The live end-call tool, backend outcome report, and automatic analysis apply the same reconciliation.
   Recorded greetings cannot retain callback/qualified labels merely because the agent chose them first.
@@ -51,9 +53,9 @@ using it. This change does not execute a deployment.
 ## Limits
 
 Detection remains heuristic and depends on transcription quality and available context. Personal
-recordings and very short live answers can be indistinguishable from text alone. Callback phrase
-evidence currently recognizes English requests/deferrals and English agreement; multilingual intent
-evidence needs separate coverage before extending this guard to other languages. Confirmed bookings,
+recordings and very short live answers can be indistinguishable from text alone. The deterministic phrase fallback recognizes English; other languages rely on the model supplying
+an exact live-contact evidence quote. Quote validation verifies provenance, while the model still interprets
+intent. More multilingual/audio fixtures would improve coverage. Confirmed bookings,
 transfers, do-not-call decisions, and existing screened-call semantics remain protected.
 Existing delivered events/alerts cannot be recalled by this fix. No historical calls are modified
 as part of implementation or validation.

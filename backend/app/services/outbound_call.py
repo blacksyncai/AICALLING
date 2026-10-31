@@ -612,7 +612,8 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         from app.agent.runtime import reconcile_outcome
 
         previous = call_log.outcome
-        call_log.outcome = reconcile_outcome(previous, call_log.transcript)
+        call_log.outcome = reconcile_outcome(previous, call_log.transcript,
+                                             callback_request=(call_log.extracted_data or {}).get("_callback_request"))
         if call_log.outcome != previous:
             call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                "failed": "failed"}.get(call_log.outcome, "completed")
@@ -627,7 +628,8 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             return
         call_log.summary = result.get("summary")
         call_log.sentiment = result.get("sentiment")
-        call_log.extracted_data = {**(result.get("extracted") or {}), "_successful": result.get("successful")}
+        call_log.extracted_data = {**(result.get("extracted") or {}), "_successful": result.get("successful"),
+                                   "_callback_request": result.get("callback_request")}
         # The analyzer's outcome only fills in when the agent didn't pick a specific one — or, when
         # re-analyzing on request, replaces anything but a hard result the agent confirmed.
         replaceable = call_log.outcome in (None, "completed", "failed") or (
@@ -636,7 +638,8 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             call_log.outcome == "not_interested" and result.get("outcome") == "language_barrier")
         if replaceable and result.get("outcome"):
             if call_log.duration_seconds or call_log.outcome != "failed":
-                call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript)
+                call_log.outcome = reconcile_outcome(result["outcome"], call_log.transcript,
+                                                     callback_request=result.get("callback_request"))
                 call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                    "failed": "failed"}.get(call_log.outcome, "completed")
         # A corrected outcome must reach the contact too: someone who talked is never left in a redial state,

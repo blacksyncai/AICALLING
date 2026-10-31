@@ -304,6 +304,8 @@ interested.
 Return JSON with keys:
 - "summary": 2-3 sentence summary of what happened.
 - "outcome": one of {list(CALL_OUTCOMES)}.
+- "callback_request": for callback, an exact quote of the LIVE CONTACT words requesting or agreeing to
+  another conversation, in the original language; null otherwise. Never quote the agent or a recorded greeting.
 - "sentiment": one of ["positive", "neutral", "negative"] (the contact's attitude).
 - "successful": true/false. {('Success criteria: ' + success_criteria) if success_criteria else ''}
 - "extracted": object with these keys (null when not mentioned):
@@ -321,7 +323,8 @@ TRANSCRIPT:
         result = json.loads(data["choices"][0]["message"]["content"])
         if result.get("outcome") not in CALL_OUTCOMES:
             result["outcome"] = "completed"
-        result["outcome"] = reconcile_outcome(result["outcome"], transcript)
+        result["outcome"] = reconcile_outcome(result["outcome"], transcript,
+                                              callback_request=result.get("callback_request"))
         return result
     except Exception as exc:
         log.warning("call_analysis_failed", error=str(exc))

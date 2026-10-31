@@ -839,20 +839,22 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
 
     guard = {"refused": False}
 
-    async def end_call(outcome: str, context: RunContext) -> str | None:
+    async def end_call(outcome: str, context: RunContext, callback_request: str = "") -> str | None:
         """Hang up the call. Call this only AFTER you've said goodbye.
 
         Args:
             outcome: The result of the call. One of meeting_booked, qualified, not_qualified,
                 interested, not_interested, callback, transferred, voicemail, no_answer, wrong_number,
                 do_not_call, language_barrier (they don't speak or understand your language), completed.
+            callback_request: For callback, quote the live contact words requesting or agreeing to
+                another conversation, in their original language. Never quote a recorded greeting.
         """
         if context.speech_handle.interrupted:
             return "Not ended: the caller interrupted. Respond to their latest turn."
         outcome = outcome if outcome in _END_OUTCOMES else "completed"
         from app.agent.runtime import reconcile_outcome
 
-        outcome = reconcile_outcome(outcome, run.transcript) or outcome
+        outcome = reconcile_outcome(outcome, run.transcript, callback_request=callback_request) or outcome
         if outcome == "transferred" and run.outcome != "transferred":
             return "Not ended: no transfer has completed. Use the transfer tool first, or offer a callback; do not hang up as though the caller was connected."
         if outcome == "meeting_booked" and not run.meeting_time:
@@ -865,7 +867,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
             return ("Not ended: the contact is still engaged and hasn't said goodbye. Don't hang up — respond to "
                     "what they just said and keep the conversation going. Only end after a clear goodbye.")
         run.outcome = outcome
-        _record("end_call", {"outcome": outcome})
+        _record("end_call", {"outcome": outcome, **({"callback_request": callback_request} if callback_request else {})})
         log.info("end_call", room=ctx.room.name, outcome=outcome, contact_words=len(last.split()),
                  turns=sum(1 for t in run.transcript if t.get("role") in ("user", "assistant")))
         _hangup(context, outcome)
@@ -1566,7 +1568,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         if first:
             vm["live_hello"] = len(text.split()) <= 3 and "?" in text
         match = voicemail_greeting_match(vm["heard"])
-        if not match and run.t0 and elapsed < 20 and not vm.get("live_hello"):
+        if not match and run.t0 and elapsed < 20 and not vm.get("live_hello") and not screen["seen"]:
             match = personal_greeting_match(vm["heard"])
         if match:
             vm["detected"] = True

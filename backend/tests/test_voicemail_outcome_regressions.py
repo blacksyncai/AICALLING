@@ -181,3 +181,39 @@ def test_outcome_report_corrects_contact_before_consumers(client, monkeypatch):
     assert call.outcome not in call_alerts.DEFAULT_OUTCOMES
     assert not condition_matches(SimpleNamespace(kind="outcome", value="callback"), call, {})
     assert condition_matches(SimpleNamespace(kind="outcome", value="voicemail"), call, {})
+
+
+@pytest.mark.parametrize("utterance", [
+    "I'm tied up this afternoon; could we chat in a couple hours?",
+    "¿Podemos hablar mañana por la tarde?",
+])
+def test_verbatim_model_evidence_supports_other_wording_and_languages(utterance):
+    transcript = [contact(utterance)]
+    assert reconcile_outcome("callback", transcript, callback_request=utterance) == "callback"
+    recorded = transcript + [{"role": "tool", "tool": "end_call",
+                              "args": {"outcome": "callback", "callback_request": utterance}}]
+    assert reconcile_outcome("callback", recorded) == "callback"
+
+
+def test_callback_evidence_must_be_live_contact_speech():
+    assert reconcile_outcome("callback", [contact(GREETINGS[0])], callback_request=GREETINGS[0]) == "voicemail"
+    assert reconcile_outcome("callback", [contact("Hello?")], callback_request="Call me tomorrow") == "completed"
+
+
+@pytest.mark.parametrize("transcript,quote,expected", [
+    ([contact(GREETINGS[0])], GREETINGS[0], "voicemail"),
+    ([contact("¿Podemos hablar mañana por la tarde?")], "¿Podemos hablar mañana por la tarde?", "callback"),
+    ([contact("Hello?")], "Call me tomorrow", "completed"),
+])
+def test_ai_analysis_reconciles_its_own_callback_output(monkeypatch, transcript, quote, expected):
+    import json
+    from app.services import llm
+
+    async def fake_chat(payload, **kwargs):
+        return {"choices": [{"message": {"content": json.dumps({
+            "outcome": "callback", "callback_request": quote, "extracted": {},
+        })}}]}
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    result = asyncio.run(llm.analyze_call(transcript, None))
+    assert result["outcome"] == expected
