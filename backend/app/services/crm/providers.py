@@ -2262,28 +2262,31 @@ class Lofty(Provider):
                     ponds.append({"value": str(pond["id"]), "label": pond["pondName"]})
         except CrmError:
             pass
+        stage_names: set[str] = set()
         try:
             pipes = (await http.request("GET", "/v1.0/teamFeatures/lead-pipelines",
                                         params={"currPage": 0, "pageSize": 100})).get("pipelines") or []
-            stage_names: set[str] = set()
             for pipe in pipes:
                 for st in pipe.get("stages") or pipe.get("stageList") or []:
                     name = st.get("name") or st.get("stageName") if isinstance(st, dict) else str(st)
                     if name:
                         stage_names.add(str(name))
-            stages = [{"value": n, "label": n} for n in sorted(stage_names)]
         except CrmError:
             pass
-        # distinct lead sources seen on recent leads (the list endpoint supports a source filter)
+        # distinct lead sources and stages seen on recent leads (the list endpoint supports both filters;
+        # this also covers stages when the pipelines endpoint is out of the key's scope)
         try:
             res = await http.request("GET", "/v1.0/leads", params={"offset": 0, "limit": 100, "sort": "CreateTime", "desc": "true"})
-            for r in (res or {}).get("leads") or []:
-                if r.get("source"):
-                    sources.append({"value": r["source"], "label": r["source"]})
             seen = set()
-            sources = [s for s in sources if not (s["value"] in seen or seen.add(s["value"]))]
+            for r in (res or {}).get("leads") or []:
+                if r.get("source") and r["source"] not in seen:
+                    seen.add(r["source"])
+                    sources.append({"value": r["source"], "label": r["source"]})
+                if r.get("stage"):
+                    stage_names.add(str(r["stage"]))
         except CrmError:
             pass
+        stages = [{"value": n, "label": n} for n in sorted(stage_names)]
         return {"pond": ponds, "source": sources, "stage": stages, "deal": []}
 
     async def segment_signals(self, http, config, kind: str, value: str, cap: int = 5000):
