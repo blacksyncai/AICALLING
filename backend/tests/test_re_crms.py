@@ -209,8 +209,9 @@ def test_lofty_radar_scan(api):
 
     n_seen = len(api["seen"])
     quick = run(p.scan_signals(http, {}, limit=100, depth="quick"))
-    assert all(s.calls_known for s in quick)  # every depth reads per-lead call history now
+    assert all(s.calls_known for s in quick)  # quick reads call counts for its (small) batch
     assert any(r.url.path == "/v1.0/communication/call" for r in api["seen"][n_seen:])
+    assert not any(r.url.path.endswith("/activities") for r in api["seen"][n_seen:])  # but never activities
     quick_plays = {pl["key"]: pl for pl in build_plays(quick, now=now)["plays"]}
     assert [i["external_id"] for i in quick_plays["never_called"]["items"]] == ["8"]
     assert [i["external_id"] for i in quick_plays["revive"]["items"]] == ["7"]
