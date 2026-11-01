@@ -344,7 +344,7 @@ Open the CRM's page under Integrations and, under Speed to lead, choose the agen
     {
         "slug": "radar", "category": "crm_integrations", "title": "What is Radar?",
         "summary": "Radar scans your CRM for the people worth calling right now and hands them to an agent.",
-        "body": """Radar reads your connected CRM (Close or Follow Up Boss) — leads, deals, calls, emails, texts and website visits — and finds who to call now: hot leads, people who went quiet, new sign-ups and more. Send them to an agent in one tap.
+        "body": """Radar reads your connected CRM (Close, Follow Up Boss or Lofty) — leads, deals, calls, emails, texts and website visits — and finds who to call now: hot leads, people who went quiet, new sign-ups and more. Send them to an agent in one tap.
 
 Radar is included from the Growth plan. Without it you'll see an interactive preview on the Radar page.""",
     },

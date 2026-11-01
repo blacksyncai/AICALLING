@@ -2168,6 +2168,87 @@ class Lofty(Provider):
 
     can_map_fields = True
 
+    can_scan = True
+    _SCAN_FIELDS = "leadId,firstName,lastName,phones,emails,createTime,updateTime,stage,source,tags,cannotCall"
+    # (lead sort, desc?, page cap, read call logs?, log cap)
+    _DEPTHS = {"quick": ("CreateTime", "true", 300, False, 0),
+               "recent": ("UpdateTime", "true", 1000, True, 2000),
+               "old": ("CreateTime", "false", 300, False, 0)}
+
+    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
+        from app.services.crm.radar import Signals
+
+        # quick: the newest leads; recent: leads active lately (with their call history); old: oldest first
+        # to dig up old leads. Batches continue where the last one stopped (cursor -> state["next"]).
+        depth = depth or ("quick" if quick else "recent")
+        sort, desc, batch, with_logs, n_logs = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        offset = cursor[0] if cursor else 0
+        out: list[Signals] = []
+        while len(out) < limit:
+            res = await http.request("GET", "/v1.0/leads", params={
+                "offset": offset, "limit": min(batch, 100), "sort": sort, "desc": desc,
+                "fields": self._SCAN_FIELDS})
+            rows = (res or {}).get("leads") or []
+            for r in rows:
+                c = self._contact(r)
+                if c:
+                    out.append(Signals(
+                        external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
+                        created_at=c.created_at, last_activity_at=_parse_time(r.get("updateTime")),
+                        deal_stage=c.stage, status=c.stage, source=r.get("source") or "",
+                        tags=c.tags, dnc=c.dnc))
+            if len(rows) < 100 or len(out) >= batch:
+                offset = None
+                break
+            offset += 100
+        if state is not None:
+            state["next"] = [offset, {}] if offset is not None else None
+        if not with_logs:
+            for s in out:
+                s.calls_known = False
+            return out[:limit]
+        logs: list[dict] = []
+        log_offset = 0
+        while len(logs) < n_logs:
+            res = await http.request("GET", "/v1.0/logs", params={
+                "offset": log_offset, "limit": 100, "sort": "CreateTime", "desc": "true"})
+            rows = (res or {}).get("logs") or []
+            logs += rows
+            if len(rows) < 100:
+                break
+            log_offset += 100
+        by_lead: dict[str, list[dict]] = {}
+        inbound: dict[str, tuple[dt.datetime, str]] = {}
+        for lg in logs:
+            lid = str(lg.get("leadId") or "")
+            if not lid:
+                continue
+            when = _parse_time(lg.get("createTime"))
+            if lg.get("logType") == "logCall":
+                by_lead.setdefault(lid, []).append(lg)
+                if (lg.get("outboundOrInbound") or "").lower() == "inbound" and when:
+                    if lid not in inbound or when > inbound[lid][0]:
+                        inbound[lid] = (when, "Called you")
+            else:
+                direction = (lg.get("direction") or lg.get("outboundOrInbound") or "").lower()
+                if direction in ("inbound", "incoming") and when:
+                    kind = str(lg.get("logType") or "Activity").replace("log", "").replace("Log", "")
+                    if lid not in inbound or when > inbound[lid][0]:
+                        inbound[lid] = (when, f"{kind}ed you" if kind else "Reached out")
+        for s in out:
+            lc = by_lead.get(s.external_id, [])
+            outbound = [c for c in lc if (c.get("outboundOrInbound") or "outbound").lower() == "outbound"]
+            connected = [c for c in outbound if (c.get("callingOutcome") or "") in ("Talked", "LeftVoiceMessage")]
+            last = max(outbound, key=lambda c: c.get("createTime") or "") if outbound else None
+            inb = inbound.get(s.external_id)
+            s.calls = len(outbound)
+            s.connected_calls = len(connected)
+            s.last_call_at = _parse_time(last.get("createTime")) if last else None
+            s.last_call_result = (last.get("callingOutcome") or "") if last else ""
+            s.last_inbound_at = inb[0] if inb else None
+            s.inbound_kind = inb[1] if inb else ""
+        return out[:limit]
+
     async def field_catalog(self, http, config):
         return [{"key": k, "label": label} for k, label in (
             ("first_name", "First name"), ("last_name", "Last name"), ("full_name", "Full name"), ("email", "Email"),
