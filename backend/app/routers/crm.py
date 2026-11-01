@@ -476,6 +476,25 @@ async def update_settings(key: str, body: SettingsIn, ctx: ManagerDep, db: DbDep
     return conn_to_dict(conn)
 
 
+@router.get("/{key}/contact-count")
+async def contact_count(key: str, ctx: ManagerDep, db: DbDep):
+    """Live count of contacts visible in the connected CRM (one cheap API call) — proof the fetch works."""
+    conn = await _require_conn(db, ctx.org.id, key)
+    p = _provider(key)
+    try:
+        _, http = sync.http_for(conn)
+        count = await p.contact_count(http, conn.config or {})
+    except CrmError as exc:
+        await sync.add_log(db, conn, "test", "error", f"Contact count failed: {exc}")
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Couldn't count {p.name} contacts: {exc}") from exc
+    if count is None:
+        raise HTTPException(status_code=400, detail=f"{p.name} doesn't report a contact count.")
+    await sync.add_log(db, conn, "test", "ok", f"{p.name} reports {count} contacts.")
+    await db.commit()
+    return {"provider": key, "name": p.name, "count": count}
+
+
 @router.post("/{key}/test")
 async def test(key: str, ctx: ManagerDep, db: DbDep):
     conn = await _require_conn(db, ctx.org.id, key)
