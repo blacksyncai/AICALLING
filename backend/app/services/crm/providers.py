@@ -2201,6 +2201,9 @@ class Lofty(Provider):
                         external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
                         created_at=c.created_at, last_activity_at=_parse_time(r.get("lastUpdateTime") or r.get("updateTime")),
                         deal_stage=c.stage, status=c.stage, source=r.get("source") or "",
+                        deal_open=not c.dnc and (c.stage or "").lower() not in ("trash", "closed", "dead", "lost"),
+                        # Lofty's list gives no stage-entry timestamp; deal_updated_at stays None so
+                        # "stuck" is never fabricated from generic lastUpdateTime.
                         tags=c.tags, dnc=c.dnc))
             if len(rows) < 100 or len(out) >= batch:
                 offset = None
