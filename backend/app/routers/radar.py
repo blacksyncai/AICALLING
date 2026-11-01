@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+import structlog
 
 from app.models.agent import Agent
 from app.models.call_log import CallLog
@@ -17,6 +18,8 @@ from app.services import entitlements
 from app.services.auth import DbDep, ManagerDep
 from app.services.contacts import normalize_phone
 from app.services.crm import radar, sync
+
+log = structlog.get_logger(__name__)
 from app.services.crm.http import CrmError
 from app.services.crm.providers import PROVIDERS, Contact
 
