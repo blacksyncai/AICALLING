@@ -2217,9 +2217,9 @@ class Lofty(Provider):
     # (lead sort, desc?, page cap, per-lead call history?, per-lead activities?)
     # All depths sort by CreateTime: it's on every key's scope, while LastActivity can be
     # rejected (20024) by narrower keys. "recent" still reads activities/calls to find active leads.
-    _DEPTHS = {"quick": ("CreateTime", "true", 50, True, False),
+    _DEPTHS = {"quick": ("CreateTime", "true", 100, True, False),
                "recent": ("CreateTime", "true", 200, True, True),
-               "old": ("CreateTime", "false", 50, True, False)}
+               "old": ("CreateTime", "false", 100, True, False)}
 
     async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
         from app.services.crm.radar import Signals
