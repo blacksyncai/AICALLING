@@ -2215,8 +2215,10 @@ class Lofty(Provider):
     # (lead sort, desc?, page cap, per-lead call history?, activity cap)
     # (lead sort, desc?, page cap, read per-lead call history?)
     # (lead sort, desc?, page cap, per-lead call history?, per-lead activities?)
+    # All depths sort by CreateTime: it's on every key's scope, while LastActivity can be
+    # rejected (20024) by narrower keys. "recent" still reads activities/calls to find active leads.
     _DEPTHS = {"quick": ("CreateTime", "true", 50, True, False),
-               "recent": ("LastActivity", "true", 200, True, True),
+               "recent": ("CreateTime", "true", 200, True, True),
                "old": ("CreateTime", "false", 50, True, False)}
 
     async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
@@ -2229,11 +2231,22 @@ class Lofty(Provider):
         offset = cursor[0] if cursor else 0
         out: list[Signals] = []
         while len(out) < limit:
-            res = await http.request("GET", "/v1.0/leads", params={
-                "offset": offset, "limit": min(batch, 100), "sort": sort, "desc": desc})
+            params = {"offset": offset, "limit": min(batch, 100), "sort": sort, "desc": desc}
+            try:
+                res = await http.request("GET", "/v1.0/leads", params=params)
+            except CrmError:
+                if sort == "CreateTime":
+                    raise
+                # some keys reject non-default sorts — retry once with no sort at all
+                params.pop("sort", None); params.pop("desc", None)
+                res = await http.request("GET", "/v1.0/leads", params=params)
             # Lofty can answer 200 with an error body and no "leads" key — that's a failure, not an empty CRM.
             if isinstance(res, dict) and "leads" not in res and (res.get("code") not in (None, 0) or res.get("error") or res.get("message")):
-                raise CrmError(f"Lofty rejected the lead list: {res.get('message') or res.get('error') or res}")
+                if params.get("sort") and params["sort"] != "CreateTime":
+                    params.pop("sort", None); params.pop("desc", None)
+                    res = await http.request("GET", "/v1.0/leads", params=params)
+                else:
+                    raise CrmError(f"Lofty rejected the lead list: {res.get('message') or res.get('error') or res}")
             rows = (res or {}).get("leads") or []
             for r in rows:
                 c = self._contact(r)
