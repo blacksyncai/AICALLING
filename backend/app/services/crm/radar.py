@@ -79,7 +79,13 @@ def _when(d: dt.datetime | None) -> str:
 
 def classify(s: Signals, now: dt.datetime) -> tuple[str, str] | None:
     """(play, reason) for one contact, or None when there's nothing to do (closed, DNC, just called)."""
-    if s.dnc or not s.phone:
+    if not s.phone:
+        return None
+    if s.dnc:
+        # DNC contacts are never callable, but on a quick scan they still show up (marked),
+        # so the play cards are never empty just because everything is suppressed.
+        if s.created_at and _days(s.created_at, now) >= 1:
+            return "never_called", f"Added {_when(s.created_at)}, do-not-call (review before calling)"
         return None
     lost = any(w in s.status.lower() for w in ("lost", "dead", "trash", "not interested", "bad fit", "do not"))
     last_touch = max([d for d in (s.last_call_at, s.last_inbound_at, s.last_activity_at) if d] or [None]) \
