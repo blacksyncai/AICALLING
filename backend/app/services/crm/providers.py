@@ -2173,9 +2173,10 @@ class Lofty(Provider):
     # LastEmail, LastActivity, CreateTime, ...); there is no "UpdateTime". "fields" is not a
     # documented parameter either, so it is dropped — the list endpoint returns full lead objects.
     # (lead sort, desc?, page cap, per-lead call history?, activity cap)
-    _DEPTHS = {"quick": ("CreateTime", "true", 300, False, 0),
-               "recent": ("LastActivity", "true", 1000, True, 500),
-               "old": ("CreateTime", "false", 300, False, 0)}
+    # (lead sort, desc?, page cap, read per-lead call history?)
+    _DEPTHS = {"quick": ("CreateTime", "true", 300, True),
+               "recent": ("LastActivity", "true", 1000, True),
+               "old": ("CreateTime", "false", 300, True)}
 
     async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
         from app.services.crm.radar import Signals
@@ -2183,7 +2184,7 @@ class Lofty(Provider):
         # quick: the newest leads; recent: leads active lately (with their call history); old: oldest first
         # to dig up old leads. Batches continue where the last one stopped (cursor -> state["next"]).
         depth = depth or ("quick" if quick else "recent")
-        sort, desc, batch, with_logs, n_logs = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        sort, desc, batch, with_logs = self._DEPTHS.get(depth, self._DEPTHS["recent"])
         offset = cursor[0] if cursor else 0
         out: list[Signals] = []
         while len(out) < limit:
@@ -2198,7 +2199,7 @@ class Lofty(Provider):
                 if c:
                     out.append(Signals(
                         external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
-                        created_at=c.created_at, last_activity_at=_parse_time(r.get("updateTime")),
+                        created_at=c.created_at, last_activity_at=_parse_time(r.get("lastUpdateTime") or r.get("updateTime")),
                         deal_stage=c.stage, status=c.stage, source=r.get("source") or "",
                         tags=c.tags, dnc=c.dnc))
             if len(rows) < 100 or len(out) >= batch:
@@ -2207,10 +2208,6 @@ class Lofty(Provider):
             offset += 100
         if state is not None:
             state["next"] = [offset, {}] if offset is not None else None
-        if not with_logs:
-            for s in out:
-                s.calls_known = False
-            return out[:limit]
         # Per-lead history: calls from GET /v1.0/communication/call, inbound signals from the
         # lead's activity timeline (GET /v1.0/leads/{id}/activities — site views/searches/inquiries).
         by_lead: dict[str, list[dict]] = {}
@@ -2228,8 +2225,6 @@ class Lofty(Provider):
                             inbound[lid] = (when, "Called you")
             except CrmError:
                 pass  # lead not visible to this key — signals still work without its calls
-            if len(out) * 2 > n_logs:
-                break
         for s in out:
             try:
                 page = await http.request("GET", f"/v1.0/leads/{int(s.external_id)}/activities",
@@ -2255,6 +2250,77 @@ class Lofty(Provider):
             s.last_inbound_at = inb[0] if inb else None
             s.inbound_kind = inb[1] if inb else ""
         return out[:limit]
+
+    # ── Radar "open a list": ponds, sources and pipeline stages ──
+    can_segment = True
+
+    async def segment_options(self, http, config) -> dict:
+        ponds, sources, stages = [], [], []
+        try:
+            for pond in await http.request("GET", "/v1.0/team-features/lead-ponds") or []:
+                if pond.get("id") is not None and pond.get("pondName"):
+                    ponds.append({"value": str(pond["id"]), "label": pond["pondName"]})
+        except CrmError:
+            pass
+        try:
+            pipes = (await http.request("GET", "/v1.0/teamFeatures/lead-pipelines",
+                                        params={"currPage": 0, "pageSize": 100})).get("pipelines") or []
+            stage_names: set[str] = set()
+            for pipe in pipes:
+                for st in pipe.get("stages") or pipe.get("stageList") or []:
+                    name = st.get("name") or st.get("stageName") if isinstance(st, dict) else str(st)
+                    if name:
+                        stage_names.add(str(name))
+            stages = [{"value": n, "label": n} for n in sorted(stage_names)]
+        except CrmError:
+            pass
+        # distinct lead sources seen on recent leads (the list endpoint supports a source filter)
+        try:
+            res = await http.request("GET", "/v1.0/leads", params={"offset": 0, "limit": 100, "sort": "CreateTime", "desc": "true"})
+            for r in (res or {}).get("leads") or []:
+                if r.get("source"):
+                    sources.append({"value": r["source"], "label": r["source"]})
+            seen = set()
+            sources = [s for s in sources if not (s["value"] in seen or seen.add(s["value"]))]
+        except CrmError:
+            pass
+        return {"pond": ponds, "source": sources, "stage": stages, "deal": []}
+
+    async def segment_signals(self, http, config, kind: str, value: str, cap: int = 5000):
+        from app.services.crm.radar import Signals
+
+        params: dict = {"offset": 0, "limit": min(cap, 100), "sort": "CreateTime", "desc": "true"}
+        if kind == "pond":
+            params["pondId"] = value
+        elif kind == "source":
+            params["source"] = value
+        elif kind == "stage":
+            params["stage"] = value
+        else:
+            raise CrmError("Lofty lists support pond, source and stage.")
+        out: list[Signals] = []
+        offset = 0
+        while len(out) < cap:
+            params["offset"] = offset
+            res = await http.request("GET", "/v1.0/leads", params=params)
+            rows = (res or {}).get("leads") or []
+            for r in rows:
+                c = self._contact(r)
+                if not c:
+                    continue
+                if kind == "stage" and (r.get("stage") or "") != value:
+                    continue  # the filter may not be applied — check it here too
+                if kind == "source" and (r.get("source") or "") != value:
+                    continue
+                out.append(Signals(
+                    external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
+                    created_at=c.created_at, last_activity_at=_parse_time(r.get("lastUpdateTime") or r.get("updateTime")),
+                    deal_stage=c.stage, status=c.stage, source=r.get("source") or "",
+                    pond=str(r.get("pondId") or ""), tags=c.tags, dnc=c.dnc, calls_known=False))
+            if len(rows) < 100 or len(out) >= cap:
+                break
+            offset += 100
+        return out[:cap]
 
     async def field_catalog(self, http, config):
         return [{"key": k, "label": label} for k, label in (

@@ -162,11 +162,47 @@ def test_lofty_radar_scan(api):
 
     n_seen = len(api["seen"])
     quick = run(p.scan_signals(http, {}, limit=100, depth="quick"))
-    assert all(not s.calls_known for s in quick)
-    assert not any(r.url.path == "/v1.0/logs" for r in api["seen"][n_seen:])
+    assert all(s.calls_known for s in quick)  # every depth reads per-lead call history now
     assert any(r.url.path == "/v1.0/communication/call" for r in api["seen"][n_seen:])
     quick_plays = {pl["key"]: pl for pl in build_plays(quick, now=now)["plays"]}
+    assert [i["external_id"] for i in quick_plays["never_called"]["items"]] == ["8"]
     assert [i["external_id"] for i in quick_plays["revive"]["items"]] == ["7"]
+
+
+def test_lofty_radar_segments(api):
+    p = PROVIDERS["lofty"]
+    assert p.can_segment
+    http = p.native_http("key1", {})
+
+    def handler(req):
+        path, q = req.url.path, dict(req.url.params)
+        if path == "/v1.0/team-features/lead-ponds":
+            return httpx.Response(200, json=[{"id": 7, "pondName": "Buyers"}, {"id": 9, "pondName": "Sellers"}])
+        if path == "/v1.0/teamFeatures/lead-pipelines":
+            return httpx.Response(200, json={"pipelines": [{"id": 1, "name": "Main",
+                "stages": [{"name": "New Lead"}, {"name": "Active"}]}], "get_metadata": {"total": 1}})
+        if path == "/v1.0/leads":
+            rows = [{"leadId": 5, "firstName": "Jane", "phones": ["4155550105"], "stage": "New Lead",
+                     "source": "Zillow", "pondId": 7, "createTime": "2026-10-30T12:00:00Z"},
+                    {"leadId": 4, "firstName": "Bob", "phones": ["4155550104"], "stage": "Active",
+                     "source": "Website", "pondId": 9, "createTime": "2026-10-01T12:00:00Z"}]
+            if q.get("pondId"):
+                rows = [r for r in rows if str(r.get("pondId")) == q["pondId"]]
+            if q.get("stage"):
+                rows = [r for r in rows if r.get("stage") == q["stage"]]
+            return httpx.Response(200, json={"leads": rows})
+        return httpx.Response(404, json={})
+
+    api["handler"] = handler
+    opts = run(p.segment_options(http, {}))
+    assert {"value": "7", "label": "Buyers"} in opts["pond"]
+    assert {"value": "New Lead", "label": "New Lead"} in opts["stage"]
+    assert {"value": "Zillow", "label": "Zillow"} in opts["source"]
+    assert opts["deal"] == []
+    pond = run(p.segment_signals(http, {}, "pond", "7"))
+    assert [s.external_id for s in pond] == ["5"]
+    stage = run(p.segment_signals(http, {}, "stage", "Active"))
+    assert [s.external_id for s in stage] == ["4"]
 
 
 def test_sierra(api):
