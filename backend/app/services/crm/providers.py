@@ -2103,7 +2103,10 @@ class Lofty(Provider):
     docs_url = "https://developer.lofty.com"
 
     def native_http(self, secret, config):
-        return NativeHttp("https://api.lofty.com", headers={"Authorization": f"token {secret}"})
+        # Lofty answers many failed requests with HTTP 200 + {"code":...,"message":...};
+        # X-Error-Status makes them real 4xx/5xx so BaseHttp raises CrmError like other CRMs.
+        return NativeHttp("https://api.lofty.com", headers={
+            "Authorization": f"token {secret}", "X-Error-Status": "true"})
 
     async def verify(self, http, config):
         me = await http.request("GET", "/v1.0/me")
@@ -2214,6 +2217,8 @@ class Lofty(Provider):
         inbound: dict[str, tuple[dt.datetime, str]] = {}
         for s in out:
             lid = s.external_id
+            if not lid.isdigit():
+                continue  # non-numeric leadId: no per-lead history, but the signal itself stays
             try:
                 page = await http.request("GET", "/v1.0/communication/call",
                                           params={"leadId": int(lid), "offset": 0, "limit": 100})
@@ -2228,6 +2233,8 @@ class Lofty(Provider):
             if len(out) * 2 > n_logs:
                 break
         for s in out:
+            if not s.external_id.isdigit():
+                continue
             try:
                 page = await http.request("GET", f"/v1.0/leads/{int(s.external_id)}/activities",
                                           params={"offset": 0, "limit": 50})
