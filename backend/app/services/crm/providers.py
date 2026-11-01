@@ -2226,6 +2226,8 @@ class Lofty(Provider):
             except CrmError:
                 pass  # lead not visible to this key — signals still work without its calls
         for s in out:
+            if depth == "quick":
+                continue  # quick scan: lead list + call counts only, no per-lead activity fan-out
             try:
                 page = await http.request("GET", f"/v1.0/leads/{int(s.external_id)}/activities",
                                           params={"offset": 0, "limit": 50})
