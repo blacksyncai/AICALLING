@@ -284,7 +284,7 @@ export default function RadarPage() {
             <Button
               disabled={scanning}
               onClick={() => void runScan("quick")}
-              title="Your newest 300 leads — who came in lately and hasn't been touched"
+              title="Your newest 50 leads — who came in lately and hasn't been touched"
             >
               <Zap className="h-4 w-4" /> Quick scan
             </Button>
@@ -431,7 +431,7 @@ export default function RadarPage() {
             </p>
           ) : (
             <p className="text-sm text-zinc-600">
-              Quick scan checks your newest 300 leads (seconds). Dig old leads
+              Quick scan checks your newest 50 leads (seconds). Dig old leads
               starts from your oldest contacts. Full scan reads recent activity
               with call history.
             </p>
