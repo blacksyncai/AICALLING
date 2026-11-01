@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import { Users,
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpFromLine, Ban, CheckCircle2, ChevronRight, Clock, Download, FileText, Filter,
   Braces, GitBranch, History, Megaphone, Pause, PhoneCall, Play, RefreshCw, Repeat, Trash2, Zap,
 } from "lucide-react";
@@ -14,7 +14,7 @@ import {
 } from "@/components/integrations/CrmIntegrations";
 import { AnimatedTabList } from "@/components/ui/animated-tabs";
 import { Badge, Button, Card, Field, Input, Notice, Select, Spinner, Toggle } from "@/components/ui";
-import { del, fetcher, patch, post, put } from "@/lib/api";
+import { del, fetcher, get, patch, post, put } from "@/lib/api";
 import { canManage, useSession } from "@/lib/session";
 import { cn, humanize, timeAgo } from "@/lib/utils";
 
@@ -122,6 +122,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
   const [section, setSection] = useState<Section>("push");
   const [reconnect, setReconnect] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [contactCount, setContactCount] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ tone: "green" | "red"; text: string } | null>(null);
 
   const p = data?.providers.find((x) => x.key === key);
@@ -216,12 +217,24 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
           </div>
           <p className="truncate text-sm text-zinc-500">
             {c.account_label}
+            {contactCount !== null && <> · <span className="font-semibold text-zinc-800">{contactCount.toLocaleString()}</span> contacts in {p.name}</>}
             {c.last_synced_at ? ` · last sync ${timeAgo(c.last_synced_at)}` : ""}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" loading={busy === "test"} onClick={() => void run("test", () => post(`/api/integrations/crm/${key}/test`), "Connection checked — see Activity.")}>
             <RefreshCw className="h-3.5 w-3.5" /> Test
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={busy === "count"}
+            onClick={() => void run("count", async () => {
+              const r = await get<{ count: number }>(`/api/integrations/crm/${key}/contact-count`);
+              setContactCount(r.count);
+            }, undefined)}
+          >
+            <Users className="h-3.5 w-3.5" /> Count contacts
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setReconnect(true)}>
             Update credentials

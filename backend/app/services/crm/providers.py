@@ -198,6 +198,10 @@ class Provider:
         """Filters the import dialog offers: [{key, label, type: multi|single, options: [{value, label}]}]."""
         return []
 
+    async def contact_count(self, http: BaseHttp, config: dict) -> int | None:
+        """Total contacts visible to this connection, or None when the CRM can't report it cheaply."""
+        return None
+
     async def mark_dnc(self, http: BaseHttp, config: dict, external_id: str) -> None:
         """Flag the contact as do-not-call in the CRM (when the CRM has a way to)."""
         return None
@@ -2103,6 +2107,15 @@ class Lofty(Provider):
     docs_url = "https://developer.lofty.com"
 
     pipeline_noun = "stage"  # Lofty lead pipeline stages (person stages), set via PUT /v1.0/leads/{id} "stage"
+
+    async def contact_count(self, http, config) -> int | None:
+        """One page of GET /v1.0/leads; the response's get_metadata.total is the account's lead count."""
+        res = await http.request("GET", "/v1.0/leads", params={"offset": 0, "limit": 1, "sort": "CreateTime", "desc": "true"})
+        meta = (res or {}).get("get_metadata") or {}
+        total = meta.get("total")
+        if total is None:
+            raise CrmError("Lofty didn't report a total; the leads endpoint may be out of this key's scope.")
+        return int(total)
 
     async def pipelines(self, http, config):
         """The team's lead pipelines and their stages; falls back to distinct stage names seen on

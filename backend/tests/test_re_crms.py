@@ -153,6 +153,18 @@ def test_lofty_pipelines_fallback_from_leads(api):
     assert [s["label"] for s in pipes[0]["stages"]] == ["Active", "New Lead"]
 
 
+def test_lofty_contact_count(api):
+    p = PROVIDERS["lofty"]
+    http = p.native_http("key1", {})
+
+    def handler(req):
+        assert req.url.path == "/v1.0/leads" and req.url.params.get("limit") == "1"
+        return httpx.Response(200, json={"leads": [], "get_metadata": {"total": 1247}})
+
+    api["handler"] = handler
+    assert run(p.contact_count(http, {})) == 1247
+
+
 def test_lofty_radar_scan(api):
     from app.services.crm.radar import build_plays
 
