@@ -155,7 +155,9 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth:
     row = CrmScan(org_id=ctx.org.id, connection_id=conn.id, result=result)
     db.add(row)
     found = sum(pl["count"] for pl in batch["plays"])
-    await sync.add_log(db, conn, "import", "ok", f"Radar scanned {batch['scanned']} contacts: {found} worth calling now.")
+    log.info("radar_scan", provider=key, depth=depth, quick=depth == "quick", scanned=batch["scanned"],
+             worth_calling=found, signals=len(signals), batches=(previous.result.get("batches", 1) + 1) if previous else 1)
+    await sync.add_log(db, conn, "import", "ok", f"Radar {depth} scan: {batch['scanned']} contacts scanned, {found} worth calling now.")
     await db.commit()
     await db.refresh(row)
     return await _scan_view(db, ctx.org.id, row, key)
