@@ -106,6 +106,53 @@ def test_lofty(api):
     assert f["full_address"] == "12 Oak St, Austin, TX 78701" and f["price"] == "$400,000–$550,000" and f["timeframe"] == "3 months"
 
 
+def test_lofty_pipelines_and_stage(api):
+    p = PROVIDERS["lofty"]
+    http = p.native_http("key1", {})
+
+    def handler(req):
+        path = req.url.path
+        if path == "/v1.0/teamFeatures/lead-pipelines":
+            return httpx.Response(200, json={"pipelines": [{"id": 1, "name": "Main",
+                "stages": [{"id": 10, "name": "New Lead"}, {"id": 11, "name": "Contacted"}]}]})
+        if req.method == "PUT" and path == "/v1.0/leads/5":
+            return httpx.Response(200, json={"leadId": 5})
+        if req.method == "GET" and path == "/v1.0/leads":
+            return httpx.Response(200, json={"leads": [
+                {"leadId": 1, "stage": "Active", "phones": ["4155550101"]},
+                {"leadId": 2, "stage": "New Lead", "phones": ["4155550102"]}]})
+        return httpx.Response(404, json={})
+
+    api["handler"] = handler
+    pipes = run(p.pipelines(http, {}))
+    assert pipes[0]["stages"][1]["label"] == "Contacted"
+    assert run(p.set_stage(http, {}, "5", pipes[0], "11", create=False, forward_only=True)) == "Moved to Contacted"
+    body = json.loads(api["seen"][-1].content)
+    assert body == {"stage": "Contacted"}
+    run(p.mark_dnc(http, {}, "5"))
+    assert json.loads(api["seen"][-1].content) == {"cannotCall": True}
+
+
+def test_lofty_pipelines_fallback_from_leads(api):
+    from app.services.crm.http import CrmError
+    p = PROVIDERS["lofty"]
+    http = p.native_http("key1", {})
+
+    def handler(req):
+        if req.url.path == "/v1.0/teamFeatures/lead-pipelines":
+            return httpx.Response(403, json={"code": 200127, "message": "key scope"})
+        if req.url.path == "/v1.0/leads":
+            return httpx.Response(200, json={"leads": [
+                {"leadId": 1, "stage": "Active", "phones": ["4155550101"]},
+                {"leadId": 2, "stage": "New Lead", "phones": ["4155550102"]}]})
+        return httpx.Response(404, json={})
+
+    api["handler"] = handler
+    pipes = run(p.pipelines(http, {}))
+    assert pipes[0]["id"] == "lofty-stages"
+    assert [s["label"] for s in pipes[0]["stages"]] == ["Active", "New Lead"]
+
+
 def test_lofty_radar_scan(api):
     from app.services.crm.radar import build_plays
 

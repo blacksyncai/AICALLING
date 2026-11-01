@@ -9,7 +9,7 @@ from app.services.crm.http import CrmError
 from app.services.crm.providers import Contact, PROVIDERS, Provider
 from app.services.crm.assistant_schema import CommandSpec, READS
 
-NOTES = {"close", "followupboss", "highlevel", "attio", "zoho", "sierra"}
+NOTES = {"close", "followupboss", "highlevel", "attio", "zoho", "sierra", "lofty"}
 
 def capabilities(provider):
     p = PROVIDERS[provider]
@@ -20,6 +20,7 @@ def capabilities(provider):
     if provider in NOTES: tools += ["add_note"]
     if type(p).mark_dnc is not Provider.mark_dnc: tools += ["mark_dnc"]
     if provider == "followupboss": tools += ["create_task", "create_pond", "create_stage", "create_pipeline", "add_stages", "list_sources", "set_contact_source", "list_deals"]
+    if provider == "lofty": tools += ["list_sources", "set_contact_source", "create_task"]
     return [{"action": t, "writes": t not in READS} for t in tools]
 
 
@@ -94,6 +95,8 @@ async def add_note(p, http, cfg, external_id, text, title):
         return await http.request("POST", f"/crm/v6/Leads/{external_id}/Notes", json={"data": [{"Note_Title": title, "Note_Content": text}]})
     if p.key == "sierra":
         return await p._call(http, "POST", f"/leads/{external_id}/note", json={"message": title + "\n\n" + text, "shouldNotify": False})
+    if p.key == "lofty":
+        return await http.request("POST", "/v1.0/notes", json={"leadId": int(external_id), "content": (title + "\n\n" + text)[:5000]})
     raise CrmError("Native notes are not enabled for this CRM.")
 
 
@@ -102,11 +105,28 @@ async def perform(db, conn, spec):
     p, http = sync.http_for(conn); cfg = conn.config or {}
     action = spec.action
     if action == "list_sources":
+        if conn.provider == "lofty":
+            res = await http.request("GET", "/v1.0/leads", params={"offset": 0, "limit": 100, "sort": "CreateTime", "desc": "true"})
+            seen, sources = set(), []
+            for r in (res or {}).get("leads") or []:
+                if r.get("source") and r["source"] not in seen:
+                    seen.add(r["source"])
+                    sources.append({"name": r["source"]})
+            return {"sources": sources, "scope": "Distinct lead sources seen on recent leads."}
         from app.services.crm.automation_resources import fub_collection
         return {"sources": await fub_collection(http, "sources"), "scope": "Existing lead sources; native Lead Flow configuration is separate."}
     if action == "list_deals":
         from app.services.crm.fub_deals import summary
         return await summary(http, spec.pipeline_id, spec.stage_id, spec.limit)
+    if action == "set_contact_source" and conn.provider == "lofty":
+        if not spec.external_id.isdigit():
+            raise CrmError("Choose a valid numeric lead ID from Lofty.")
+        await http.request("PUT", f"/v1.0/leads/{int(spec.external_id)}", json={"source": spec.name})
+        lead = await http.request("GET", f"/v1.0/leads/{int(spec.external_id)}", params={"withTrash": "false"})
+        got = (lead.get("lead") or lead).get("source") or (lead.get("lead") or lead).get("leadSource")
+        if got != spec.name:
+            raise CrmError("The CRM did not confirm the lead's source. Review it before retrying.")
+        return {"id": spec.external_id, "source": spec.name, "message": "Lead source confirmed in Lofty."}
     if action == "set_contact_source":
         person = await http.request("GET", f"/v1/people/{int(spec.external_id)}")
         if person.get("source") == spec.name:
@@ -168,6 +188,15 @@ async def perform(db, conn, spec):
         await db.execute(update(Lead).where(Lead.org_id == conn.org_id,
             Lead.crm_refs[conn.provider].as_string() == spec.external_id).values(do_not_call=True))
         return {"message": "Do-not-call applied in the CRM and linked BlackSync contacts.", "id": spec.external_id}
+    if action == "create_task" and conn.provider == "lofty":
+        if not spec.external_id.isdigit():
+            raise CrmError("Choose a valid numeric lead ID from Lofty.")
+        result = await http.request("POST", "/v1.0/tasks", json={
+            "leadId": int(spec.external_id), "name": spec.name, "type": "Task",
+            "dueDate": spec.due_date.strftime("%Y-%m-%d %H:%M:%S")})
+        if not (result or {}).get("taskId") and (result or {}).get("code") not in (None, 0):
+            raise CrmError(f"Lofty did not confirm the task: {result.get('message') or result}")
+        return {"id": str((result or {}).get("taskId") or ""), "message": "Follow-up task created in Lofty."}
     if action == "create_task":
         result = await http.request("POST", "/v1/tasks", json={"personId": int(spec.external_id), "name": spec.name, "type": "Follow Up", "dueDate": spec.due_date.isoformat()})
         if not result.get("id"): raise CrmError("The CRM did not confirm task creation; check the CRM before retrying.")

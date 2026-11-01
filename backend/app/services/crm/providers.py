@@ -2102,6 +2102,46 @@ class Lofty(Provider):
     auth_fields = [AuthField("api_key", "API key", help="Lofty → Settings → Integrations → API → generate a key.")]
     docs_url = "https://developer.lofty.com"
 
+    pipeline_noun = "stage"  # Lofty lead pipeline stages (person stages), set via PUT /v1.0/leads/{id} "stage"
+
+    async def pipelines(self, http, config):
+        """The team's lead pipelines and their stages; falls back to distinct stage names seen on
+        recent leads when the pipelines endpoint is out of the key's scope."""
+        out: list[dict] = []
+        try:
+            page = await http.request("GET", "/v1.0/teamFeatures/lead-pipelines", params={"currPage": 0, "pageSize": 100})
+            for pipe in page.get("pipelines") or []:
+                stages = [{"id": str(st.get("id") or st.get("name")), "label": st.get("name") or st.get("stageName") or str(st),
+                           "kind": "active"} for st in (pipe.get("stages") or pipe.get("stageList") or []) if st]
+                out.append({"id": str(pipe.get("id")), "name": pipe.get("name") or "Pipeline", "stages": stages})
+        except CrmError:
+            pass
+        if not any(p["stages"] for p in out):
+            try:
+                res = await http.request("GET", "/v1.0/leads", params={"offset": 0, "limit": 100, "sort": "CreateTime", "desc": "true"})
+                names = sorted({str(r["stage"]) for r in (res or {}).get("leads") or [] if r.get("stage")})
+                if names:
+                    out = [{"id": "lofty-stages", "name": "Lead stages",
+                            "stages": [{"id": n, "label": n, "kind": "active"} for n in names]}]
+            except CrmError:
+                pass
+        return out
+
+    async def set_stage(self, http, config, external_id, pipeline, stage_id, *, create, forward_only, name=""):
+        """Move a Lofty lead to a pipeline stage by name: PUT /v1.0/leads/{leadId} {"stage": name}."""
+        stage_label = _stage_label(pipeline, stage_id) if pipeline else stage_id
+        if not external_id.isdigit():
+            raise CrmError("Choose a valid numeric lead ID from Lofty.")
+        res = await http.request("PUT", f"/v1.0/leads/{int(external_id)}", json={"stage": stage_label[:20]})
+        if (res or {}).get("leadId") is None and (res or {}).get("code") not in (None, 0):
+            raise CrmError(f"Lofty rejected the stage change: {res.get('message') or res}")
+        return f"Moved to {stage_label}"
+
+    async def mark_dnc(self, http, config, external_id):
+        if not external_id.isdigit():
+            raise CrmError("Choose a valid numeric lead ID from Lofty.")
+        await http.request("PUT", f"/v1.0/leads/{int(external_id)}", json={"cannotCall": True})
+
     def native_http(self, secret, config):
         return NativeHttp("https://api.lofty.com", headers={"Authorization": f"token {secret}"})
 
