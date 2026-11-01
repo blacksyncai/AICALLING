@@ -2214,9 +2214,10 @@ class Lofty(Provider):
     # documented parameter either, so it is dropped — the list endpoint returns full lead objects.
     # (lead sort, desc?, page cap, per-lead call history?, activity cap)
     # (lead sort, desc?, page cap, read per-lead call history?)
-    _DEPTHS = {"quick": ("CreateTime", "true", 300, True),
-               "recent": ("LastActivity", "true", 1000, True),
-               "old": ("CreateTime", "false", 300, True)}
+    # (lead sort, desc?, page cap, per-lead call history?, per-lead activities?)
+    _DEPTHS = {"quick": ("CreateTime", "true", 50, True, False),
+               "recent": ("LastActivity", "true", 200, True, True),
+               "old": ("CreateTime", "false", 50, True, False)}
 
     async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
         from app.services.crm.radar import Signals
@@ -2224,7 +2225,7 @@ class Lofty(Provider):
         # quick: the newest leads; recent: leads active lately (with their call history); old: oldest first
         # to dig up old leads. Batches continue where the last one stopped (cursor -> state["next"]).
         depth = depth or ("quick" if quick else "recent")
-        sort, desc, batch, with_logs = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        sort, desc, batch, with_calls, with_activities = self._DEPTHS.get(depth, self._DEPTHS["recent"])
         offset = cursor[0] if cursor else 0
         out: list[Signals] = []
         while len(out) < limit:
@@ -2257,6 +2258,8 @@ class Lofty(Provider):
         inbound: dict[str, tuple[dt.datetime, str]] = {}
         for s in out:
             lid = s.external_id
+            if not with_calls or not lid.isdigit():
+                continue
             try:
                 page = await http.request("GET", "/v1.0/communication/call",
                                           params={"leadId": int(lid), "offset": 0, "limit": 100})
@@ -2269,8 +2272,8 @@ class Lofty(Provider):
             except CrmError:
                 pass  # lead not visible to this key — signals still work without its calls
         for s in out:
-            if depth == "quick":
-                continue  # quick scan: lead list + call counts only, no per-lead activity fan-out
+            if not with_activities or not s.external_id.isdigit():
+                continue
             try:
                 page = await http.request("GET", f"/v1.0/leads/{int(s.external_id)}/activities",
                                           params={"offset": 0, "limit": 50})
