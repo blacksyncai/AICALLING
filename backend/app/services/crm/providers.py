@@ -2189,6 +2189,9 @@ class Lofty(Provider):
         while len(out) < limit:
             res = await http.request("GET", "/v1.0/leads", params={
                 "offset": offset, "limit": min(batch, 100), "sort": sort, "desc": desc})
+            # Lofty can answer 200 with an error body and no "leads" key — that's a failure, not an empty CRM.
+            if isinstance(res, dict) and "leads" not in res and (res.get("code") not in (None, 0) or res.get("error") or res.get("message")):
+                raise CrmError(f"Lofty rejected the lead list: {res.get('message') or res.get('error') or res}")
             rows = (res or {}).get("leads") or []
             for r in rows:
                 c = self._contact(r)
