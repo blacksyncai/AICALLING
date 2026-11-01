@@ -2169,10 +2169,12 @@ class Lofty(Provider):
     can_map_fields = True
 
     can_scan = True
-    _SCAN_FIELDS = "leadId,firstName,lastName,phones,emails,createTime,updateTime,stage,source,tags,cannotCall"
-    # (lead sort, desc?, page cap, read call logs?, log cap)
+    # Lofty's GET /v1.0/leads only accepts these sort values (docs: Default, LastContact, LastCall,
+    # LastEmail, LastActivity, CreateTime, ...); there is no "UpdateTime". "fields" is not a
+    # documented parameter either, so it is dropped — the list endpoint returns full lead objects.
+    # (lead sort, desc?, page cap, per-lead call history?, activity cap)
     _DEPTHS = {"quick": ("CreateTime", "true", 300, False, 0),
-               "recent": ("UpdateTime", "true", 1000, True, 2000),
+               "recent": ("LastActivity", "true", 1000, True, 500),
                "old": ("CreateTime", "false", 300, False, 0)}
 
     async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
@@ -2186,8 +2188,7 @@ class Lofty(Provider):
         out: list[Signals] = []
         while len(out) < limit:
             res = await http.request("GET", "/v1.0/leads", params={
-                "offset": offset, "limit": min(batch, 100), "sort": sort, "desc": desc,
-                "fields": self._SCAN_FIELDS})
+                "offset": offset, "limit": min(batch, 100), "sort": sort, "desc": desc})
             rows = (res or {}).get("leads") or []
             for r in rows:
                 c = self._contact(r)
@@ -2207,44 +2208,47 @@ class Lofty(Provider):
             for s in out:
                 s.calls_known = False
             return out[:limit]
-        logs: list[dict] = []
-        log_offset = 0
-        while len(logs) < n_logs:
-            res = await http.request("GET", "/v1.0/logs", params={
-                "offset": log_offset, "limit": 100, "sort": "CreateTime", "desc": "true"})
-            rows = (res or {}).get("logs") or []
-            logs += rows
-            if len(rows) < 100:
-                break
-            log_offset += 100
+        # Per-lead history: calls from GET /v1.0/communication/call, inbound signals from the
+        # lead's activity timeline (GET /v1.0/leads/{id}/activities — site views/searches/inquiries).
         by_lead: dict[str, list[dict]] = {}
         inbound: dict[str, tuple[dt.datetime, str]] = {}
-        for lg in logs:
-            lid = str(lg.get("leadId") or "")
-            if not lid:
-                continue
-            when = _parse_time(lg.get("createTime"))
-            if lg.get("logType") == "logCall":
-                by_lead.setdefault(lid, []).append(lg)
-                if (lg.get("outboundOrInbound") or "").lower() == "inbound" and when:
-                    if lid not in inbound or when > inbound[lid][0]:
-                        inbound[lid] = (when, "Called you")
-            else:
-                direction = (lg.get("direction") or lg.get("outboundOrInbound") or "").lower()
-                if direction in ("inbound", "incoming") and when:
-                    kind = str(lg.get("logType") or "Activity").replace("log", "").replace("Log", "")
-                    if lid not in inbound or when > inbound[lid][0]:
-                        inbound[lid] = (when, f"{kind}ed you" if kind else "Reached out")
+        for s in out:
+            lid = s.external_id
+            try:
+                page = await http.request("GET", "/v1.0/communication/call",
+                                          params={"leadId": int(lid), "offset": 0, "limit": 100})
+                for c in (page or {}).get("calls") or []:
+                    by_lead.setdefault(lid, []).append(c)
+                    if (c.get("direction") or "").lower() == "inbound":
+                        when = _parse_time(c.get("startTime") or c.get("createTime"))
+                        if when and (lid not in inbound or when > inbound[lid][0]):
+                            inbound[lid] = (when, "Called you")
+            except CrmError:
+                pass  # lead not visible to this key — signals still work without its calls
+            if len(out) * 2 > n_logs:
+                break
+        for s in out:
+            try:
+                page = await http.request("GET", f"/v1.0/leads/{int(s.external_id)}/activities",
+                                          params={"offset": 0, "limit": 50})
+                for a in (page or {}).get("activities") or (page or {}).get("data") or []:
+                    when = _parse_time(a.get("created") or a.get("createTime") or a.get("activityTime"))
+                    if when and (s.external_id not in inbound or when > inbound[s.external_id][0]):
+                        kind = a.get("type") or a.get("trackingType") or "Activity"
+                        inbound[s.external_id] = (when, str(kind).replace("Site", "").replace("site", ""))
+            except CrmError:
+                pass
         for s in out:
             lc = by_lead.get(s.external_id, [])
-            outbound = [c for c in lc if (c.get("outboundOrInbound") or "outbound").lower() == "outbound"]
-            connected = [c for c in outbound if (c.get("callingOutcome") or "") in ("Talked", "LeftVoiceMessage")]
-            last = max(outbound, key=lambda c: c.get("createTime") or "") if outbound else None
+            outbound = [c for c in lc if (c.get("direction") or "Outbound").lower() == "outbound"]
+            connected = [c for c in outbound if (c.get("status") == "Completed" and (c.get("duration") or 0) >= 30)
+                         or c.get("callingOutcome") == "Talked"]
+            last = max(outbound, key=lambda c: c.get("startTime") or c.get("createTime") or "") if outbound else None
             inb = inbound.get(s.external_id)
             s.calls = len(outbound)
             s.connected_calls = len(connected)
-            s.last_call_at = _parse_time(last.get("createTime")) if last else None
-            s.last_call_result = (last.get("callingOutcome") or "") if last else ""
+            s.last_call_at = _parse_time(last.get("startTime") or last.get("createTime")) if last else None
+            s.last_call_result = (last.get("status") or last.get("callingOutcome") or "") if last else ""
             s.last_inbound_at = inb[0] if inb else None
             s.inbound_kind = inb[1] if inb else ""
         return out[:limit]

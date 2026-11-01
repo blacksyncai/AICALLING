@@ -128,21 +128,22 @@ def test_lofty_radar_scan(api):
         {"leadId": 6, "firstName": "Dnc", "lastName": "Dude", "phones": ["4155550106"],
          "createTime": (now - dt.timedelta(days=1)).isoformat(), "stage": "New Lead", "cannotCall": True},
     ]
-    logs = [
-        {"leadId": 5, "logType": "logCall", "outboundOrInbound": "inbound", "callingOutcome": "Talked",
-         "createTime": (now - dt.timedelta(days=1)).isoformat()},
-        {"leadId": 4, "logType": "logCall", "outboundOrInbound": "outbound", "callingOutcome": "NoAnswer",
-         "createTime": (now - dt.timedelta(days=4)).isoformat()},
-        {"leadId": 4, "logType": "logCall", "outboundOrInbound": "outbound", "callingOutcome": "NoAnswer",
-         "createTime": (now - dt.timedelta(days=6)).isoformat()},
-    ]
-
     def handler(req):
         path = req.url.path
         if req.method == "GET" and path == "/v1.0/leads":
+            assert req.url.params["sort"] in ("CreateTime", "LastActivity"), req.url.params
             return httpx.Response(200, json={"leads": leads})
-        if req.method == "GET" and path == "/v1.0/logs":
-            return httpx.Response(200, json={"logs": logs})
+        if req.method == "GET" and path == "/v1.0/communication/call":
+            lid = req.url.params["leadId"]
+            calls = {"5": [{"leadId": 5, "direction": "Inbound", "status": "Completed", "duration": 200,
+                            "startTime": (now - dt.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")}],
+                     "4": [{"leadId": 4, "direction": "Outbound", "status": "NoAnswer", "duration": 0,
+                            "startTime": (now - dt.timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S")},
+                           {"leadId": 4, "direction": "Outbound", "status": "NoAnswer", "duration": 0,
+                            "startTime": (now - dt.timedelta(days=6)).strftime("%Y-%m-%d %H:%M:%S")}]}.get(lid, [])
+            return httpx.Response(200, json={"calls": calls})
+        if req.method == "GET" and path.endswith("/activities"):
+            return httpx.Response(200, json={"activities": []})
         return httpx.Response(404, json={})
 
     api["handler"] = handler
@@ -163,6 +164,7 @@ def test_lofty_radar_scan(api):
     quick = run(p.scan_signals(http, {}, limit=100, depth="quick"))
     assert all(not s.calls_known for s in quick)
     assert not any(r.url.path == "/v1.0/logs" for r in api["seen"][n_seen:])
+    assert any(r.url.path == "/v1.0/communication/call" for r in api["seen"][n_seen:])
     quick_plays = {pl["key"]: pl for pl in build_plays(quick, now=now)["plays"]}
     assert [i["external_id"] for i in quick_plays["revive"]["items"]] == ["7"]
 
