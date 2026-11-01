@@ -106,6 +106,67 @@ def test_lofty(api):
     assert f["full_address"] == "12 Oak St, Austin, TX 78701" and f["price"] == "$400,000–$550,000" and f["timeframe"] == "3 months"
 
 
+def test_lofty_radar_scan(api):
+    from app.services.crm.radar import build_plays
+
+    p = PROVIDERS["lofty"]
+    assert p.can_scan
+    http = p.native_http("key1", {})
+    now = dt.datetime.now(dt.timezone.utc)
+    leads = [
+        {"leadId": 5, "firstName": "Hot", "lastName": "Inbound", "phones": ["4155550105"], "emails": ["hot@x.com"],
+         "createTime": (now - dt.timedelta(days=2)).isoformat(), "updateTime": (now - dt.timedelta(days=2)).isoformat(),
+         "stage": "New Lead", "source": "Zillow", "tags": [{"tagName": "Buyer"}], "cannotCall": False},
+        {"leadId": 4, "firstName": "Never", "lastName": "Called", "phones": ["4155550104"],
+         "createTime": (now - dt.timedelta(days=10)).isoformat(), "stage": "Active", "source": "Website",
+         "tags": [], "cannotCall": False},
+        {"leadId": 7, "firstName": "Old", "lastName": "Lead", "phones": ["4155550107"],
+         "createTime": (now - dt.timedelta(days=400)).isoformat(), "updateTime": (now - dt.timedelta(days=395)).isoformat(), "stage": "Active", "tags": [], "cannotCall": False},
+        {"leadId": 8, "firstName": "Fresh", "lastName": "Signup", "phones": ["4155550108"],
+         "createTime": (now - dt.timedelta(days=3)).isoformat(), "updateTime": (now - dt.timedelta(days=3)).isoformat(),
+         "stage": "New Lead", "source": "Website", "tags": [], "cannotCall": False},
+        {"leadId": 6, "firstName": "Dnc", "lastName": "Dude", "phones": ["4155550106"],
+         "createTime": (now - dt.timedelta(days=1)).isoformat(), "stage": "New Lead", "cannotCall": True},
+    ]
+    logs = [
+        {"leadId": 5, "logType": "logCall", "outboundOrInbound": "inbound", "callingOutcome": "Talked",
+         "createTime": (now - dt.timedelta(days=1)).isoformat()},
+        {"leadId": 4, "logType": "logCall", "outboundOrInbound": "outbound", "callingOutcome": "NoAnswer",
+         "createTime": (now - dt.timedelta(days=4)).isoformat()},
+        {"leadId": 4, "logType": "logCall", "outboundOrInbound": "outbound", "callingOutcome": "NoAnswer",
+         "createTime": (now - dt.timedelta(days=6)).isoformat()},
+    ]
+
+    def handler(req):
+        path = req.url.path
+        if req.method == "GET" and path == "/v1.0/leads":
+            return httpx.Response(200, json={"leads": leads})
+        if req.method == "GET" and path == "/v1.0/logs":
+            return httpx.Response(200, json={"logs": logs})
+        return httpx.Response(404, json={})
+
+    api["handler"] = handler
+    signals = run(p.scan_signals(http, {}, limit=100, depth="recent"))
+    by_id = {s.external_id: s for s in signals}
+    assert set(by_id) == {"4", "5", "6", "7", "8"}
+    assert by_id["5"].last_inbound_at and by_id["5"].inbound_kind == "Called you"
+    assert by_id["4"].calls == 2 and by_id["4"].connected_calls == 0
+    assert by_id["4"].last_call_result == "NoAnswer" and by_id["4"].calls_known
+    assert by_id["6"].dnc is True
+    plays = {pl["key"]: pl for pl in build_plays(signals, now=now)["plays"]}
+    assert [i["external_id"] for i in plays["hot"]["items"]] == ["5"]
+    assert [i["external_id"] for i in plays["unreached"]["items"]] == ["4"]
+    assert [i["external_id"] for i in plays["never_called"]["items"]] == ["7", "8"]
+    assert not any(i["external_id"] == "6" for pl in plays.values() for i in pl["items"])
+
+    n_seen = len(api["seen"])
+    quick = run(p.scan_signals(http, {}, limit=100, depth="quick"))
+    assert all(not s.calls_known for s in quick)
+    assert not any(r.url.path == "/v1.0/logs" for r in api["seen"][n_seen:])
+    quick_plays = {pl["key"]: pl for pl in build_plays(quick, now=now)["plays"]}
+    assert [i["external_id"] for i in quick_plays["revive"]["items"]] == ["7"]
+
+
 def test_sierra(api):
     p = PROVIDERS["sierra"]
     http = p.native_http("sk", {})

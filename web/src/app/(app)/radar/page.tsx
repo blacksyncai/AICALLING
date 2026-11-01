@@ -381,7 +381,7 @@ export default function RadarPage() {
           <EmptyState
             icon={<RadarIcon className="h-5 w-5" />}
             title="Connect your CRM to use Radar"
-            description="Radar reads Close or Follow Up Boss — leads, deals, calls, emails, texts, website visits — and finds who to call now."
+            description="Radar reads Close, Follow Up Boss or Lofty — leads, deals, calls, emails, texts, website visits — and finds who to call now."
             action={
               <Link href="/integrations">
                 <Button variant="primary">Connect a CRM</Button>
