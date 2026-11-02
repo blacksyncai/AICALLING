@@ -922,6 +922,7 @@ _ZAPIER_DETAIL = "Connect today through Zapier using Integrations → Webhooks."
 _CRMS: list[tuple[str, str, list[str]]] = [
     ("follow_up_boss", "Follow Up Boss", ["real_estate", "mortgage"]),
     ("lofty", "Lofty", ["real_estate"]),
+    ("cloze", "Cloze", ["real_estate", "professional_services", "other"]),
     ("sierra_interactive", "Sierra Interactive", ["real_estate"]),
     ("boldtrail", "BoldTrail / kvCORE", ["real_estate"]),
     ("gohighlevel", "GoHighLevel", ["home_services", "real_estate", "healthcare", "insurance",
