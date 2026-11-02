@@ -2895,6 +2895,214 @@ class BoomTown(Provider):
 
 
 
+class Cloze(Provider):
+    """Cloze (relationship CRM) — api.cloze.com/v1, API key as Bearer (docs: same as an OAuth2 token). People are contacts."""
+
+    key, name = "cloze", "Cloze"
+    description = "Log every AI call on the contact's timeline, create contacts, import contacts and auto-call new ones."
+    auth_fields = [AuthField("api_key", "API key",
+                             help="Cloze \u2192 More \u2192 Settings \u2192 API key (help.cloze.com/article/2176). Sent as a Bearer token.")]
+    docs_url = "https://developer.cloze.com/"
+
+    def native_http(self, secret, config):
+        return NativeHttp("https://api.cloze.com/v1", headers={"Authorization": f"Bearer {secret}"})
+
+    @staticmethod
+    def _cloze_err(res: Any) -> None:
+        if isinstance(res, dict) and res.get("errorcode") not in (None, 0):
+            raise CrmError(str(res.get("message") or res.get("error") or res)[:300])
+
+    async def _call(self, http, method, path, **kw):
+        res = await http.request(method, path, **kw)
+        self._cloze_err(res)
+        return res
+
+    async def verify(self, http, config):
+        me = await self._call(http, "GET", "/user/profile")
+        name = " ".join(x for x in (me.get("first_name"), me.get("last_name")) if x) or me.get("email") or ""
+        return name or "Cloze account"
+
+    @staticmethod
+    def _contact(r: dict) -> Contact | None:
+        phones = [p.get("value") or p.get("phone") for p in r.get("phones") or [] if isinstance(p, dict) and (p.get("value") or p.get("phone"))]
+        emails = [e.get("value") or e.get("email") for e in r.get("emails") or [] if isinstance(e, dict) and (e.get("value") or e.get("email"))]
+        if not phones and not emails:
+            return None
+        name = " ".join(x for x in (r.get("first_name"), r.get("last_name")) if x) or r.get("name") or ""
+        dnc = False
+        for cf in r.get("custom_fields") or []:
+            if isinstance(cf, dict) and "do not contact" in str(cf.get("name") or cf.get("key") or "").lower():
+                dnc = bool(cf.get("value"))
+        tags = [t.get("name") if isinstance(t, dict) else str(t) for t in r.get("tags") or []]
+        return Contact(name, str(phones[0]) if phones else "", emails[0] if emails else "", r.get("company") or "",
+                       str(r.get("id") or r.get("key") or ""), _parse_time(r.get("created") or r.get("updated")),
+                       tags=[t for t in tags if t], stage=r.get("stage") or "", dnc=dnc)
+
+    async def find_or_create(self, http, config, c, create):
+        for field, value in (("email", c.email), ("phone", _digits10(c.phone))):
+            if not value:
+                continue
+            res = await self._call(http, "GET", "/people/find", params={field: value})
+            hits = (res or {}).get("list") or []
+            if hits:
+                return str(hits[0].get("id") or hits[0].get("key"))
+        if not create:
+            return None
+        first, last = split_name(c.name)
+        body: dict = {"first_name": first or c.phone, "last_name": last}
+        if c.email:
+            body["emails"] = [{"value": c.email}]
+        if c.phone:
+            body["phones"] = [{"value": _digits10(c.phone)}]
+        res = await self._call(http, "POST", "/people/create", json=body)
+        return str((res or {}).get("id") or (res or {}).get("key") or "")
+
+    async def log_call(self, http, config, external_id, call):
+        await self._call(http, "POST", "/timeline/communication/create", json={
+            "relation_key": external_id, "style": "call", "direction": "outbound",
+            "date": (call.started_at or dt.datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S"),
+            "subject": f"BlackSync AI call: {call.outcome_label}",
+            "body": call.note()[:5000], "duration": int(call.duration_seconds or 0)})
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out: list[Contact] = []
+        page = 1
+        while len(out) < limit:
+            res = await self._call(http, "GET", "/people/feed", params={"page": page, "limit": min(limit, 100)})
+            rows = (res or {}).get("list") or []
+            stop = False
+            for r in rows:
+                ct = self._contact(r)
+                created = _parse_time(r.get("created") or r.get("updated"))
+                if since and created and created <= since:
+                    stop = True
+                    break
+                if ct:
+                    out.append(ct)
+            if stop or len(rows) < 100:
+                break
+            page += 1
+        return out[:limit]
+
+    async def contact_count(self, http, config) -> int | None:
+        res = await self._call(http, "GET", "/people/feed", params={"page": 1, "limit": 1})
+        total = (res or {}).get("total")
+        return int(total) if total is not None else None
+
+    can_map_fields = True
+    pipeline_noun = "stage"
+
+    async def pipelines(self, http, config):
+        res = await self._call(http, "GET", "/account/contact_stages")
+        stages = [{"id": str(s.get("key") or s.get("name")), "label": s.get("label") or s.get("name") or str(s.get("key")),
+                   "kind": "active"} for s in (res or {}).get("list") or []]
+        return [{"id": "cloze-stages", "name": "Contact stages", "stages": stages}] if stages else []
+
+    async def set_stage(self, http, config, external_id, pipeline, stage_id, *, create, forward_only, name=""):
+        label = _stage_label(pipeline, stage_id) if pipeline else stage_id
+        await self._call(http, "POST", "/people/update", params={"id": external_id}, json={"stage": label})
+        return f"Moved to {label}"
+
+    async def mark_dnc(self, http, config, external_id):
+        await self._call(http, "POST", "/people/update", params={"id": external_id},
+                         json={"custom_fields": [{"name": "Do Not Contact", "value": True}]})
+
+    async def field_catalog(self, http, config):
+        return [{"key": k, "label": l} for k, l in (
+            ("first_name", "First name"), ("last_name", "Last name"), ("full_name", "Full name"),
+            ("email", "Email"), ("phone", "Phone"), ("company", "Company"), ("stage", "Stage"),
+            ("segment", "Segment"), ("tags", "Tags"), ("title", "Title"))]
+
+    async def person_fields(self, http, config, external_id):
+        res = await self._call(http, "GET", "/people/get", params={"id": external_id})
+        p = res.get("person") or res or {}
+        out = {
+            "first_name": p.get("first_name") or "", "last_name": p.get("last_name") or "",
+            "full_name": " ".join(x for x in (p.get("first_name"), p.get("last_name")) if x),
+            "email": next((e.get("value") for e in p.get("emails") or [] if isinstance(e, dict) and e.get("value")), ""),
+            "phone": next((x.get("value") for x in p.get("phones") or [] if isinstance(x, dict) and x.get("value")), ""),
+            "company": p.get("company") or "", "stage": p.get("stage") or "", "segment": p.get("segment") or "",
+            "tags": ", ".join(t.get("name") if isinstance(t, dict) else str(t) for t in p.get("tags") or [])[:300],
+            "title": p.get("title") or "",
+        }
+        for cf in p.get("custom_fields") or []:
+            if isinstance(cf, dict) and cf.get("name") and cf.get("value") not in (None, ""):
+                out[Cloze._slug(str(cf["name"]))] = str(cf["value"])
+        return {k: str(v)[:500] for k, v in out.items() if v not in (None, "")}
+
+    @staticmethod
+    def _slug(s: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+    can_scan = True
+    _DEPTHS = {"quick": ("created", "desc", 100, True, False),
+               "recent": ("updated", "desc", 200, True, True),
+               "old": ("created", "asc", 100, True, False)}
+
+    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
+        from app.services.crm.radar import Signals
+
+        depth = depth or ("quick" if quick else "recent")
+        sort, order, batch, with_calls, _ = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        out: list[Signals] = []
+        page = (cursor or [1])[0]
+        while len(out) < limit:
+            res = await self._call(http, "GET", "/people/feed", params={
+                "page": page, "limit": min(batch, 100), "sort": sort, "order": order})
+            rows = (res or {}).get("list") or []
+            for r in rows:
+                c = self._contact(r)
+                if c:
+                    out.append(Signals(
+                        external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
+                        created_at=c.created_at, last_activity_at=_parse_time(r.get("updated") or r.get("last_activity")),
+                        deal_stage=c.stage, status=c.stage,
+                        deal_open=not c.dnc and (c.stage or "").lower() not in ("trash", "closed"),
+                        source=r.get("source") or "", tags=c.tags, dnc=c.dnc))
+            if len(rows) < 100 or len(out) >= batch:
+                page = None
+                break
+            page += 1
+        if state is not None:
+            state["next"] = [page, {}] if page else None
+        if with_calls:
+            by_key: dict[str, list[dict]] = {}
+            inbound: dict[str, tuple[dt.datetime, str]] = {}
+            for s in out:
+                try:
+                    res = await self._call(http, "GET", "/timeline/communications",
+                                           params={"relation_key": s.external_id, "limit": 100})
+                    for ev in (res or {}).get("list") or []:
+                        when = _parse_time(ev.get("date"))
+                        direction = str(ev.get("direction") or "").lower()
+                        style = str(ev.get("style") or "")
+                        if "call" in style:
+                            if direction != "inbound":
+                                by_key.setdefault(s.external_id, []).append(ev)
+                            elif when and (s.external_id not in inbound or when > inbound[s.external_id][0]):
+                                inbound[s.external_id] = (when, "Called you")
+                        elif direction == "inbound" and when and (s.external_id not in inbound or when > inbound[s.external_id][0]):
+                            inbound[s.external_id] = (when, style.capitalize() or "Reached out")
+                except CrmError:
+                    pass
+            for s in out:
+                lc = by_key.get(s.external_id, [])
+                connected = [e for e in lc if (e.get("duration") or 0) >= 30]
+                last = max(lc, key=lambda e: e.get("date") or "") if lc else None
+                inb = inbound.get(s.external_id)
+                s.calls = len(lc)
+                s.connected_calls = len(connected)
+                s.last_call_at = _parse_time(last.get("date")) if last else None
+                s.last_call_result = str((last or {}).get("subject") or "")[:80]
+                s.last_inbound_at = inb[0] if inb else None
+                s.inbound_kind = inb[1] if inb else ""
+        else:
+            for s in out:
+                s.calls_known = False
+        return out[:limit]
+
+
+
 def _te_phone(phone: str) -> str:
     d = _digits10(phone)
     return f"({d[:3]}){d[3:6]}-{d[6:]}" if len(d) == 10 else phone
@@ -3001,7 +3209,7 @@ class TotalExpert(Provider):
 
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
-    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), Rechat(), BoomTown(), TotalExpert(), GoogleSheets(), Slack(),
+    BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), Rechat(), BoomTown(), TotalExpert(), Cloze(), GoogleSheets(), Slack(),
 )}
 
 
