@@ -1320,10 +1320,29 @@ class HubSpot(Provider):
                 "hs_timestamp": ts, "hs_call_title": f"AI call: {call.outcome_label}", "hs_call_body": call.note(html=True),
                 "hs_call_duration": str(int(call.duration_seconds or 0) * 1000), "hs_call_direction": "OUTBOUND",
                 "hs_call_status": "COMPLETED" if call.connected else "NO_ANSWER", "hs_call_to_number": call.phone,
+                "hs_call_disposition": self._DISPOSITION.get(call.outcome or "", self._DISPOSITION["connected"]
+                                                             if call.connected else self._DISPOSITION["no_answer"]),
             },
             "associations": [{"to": {"id": external_id},
                               "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 194}]}],
         })
+        await self._advance_lead_status(http, external_id, "CONNECTED" if call.connected else "ATTEMPTED_TO_CONTACT")
+
+    # HubSpot's default call outcomes (Settings → Calling → Call outcomes).
+    _DISPOSITION = {"connected": "f240bbac-87c9-4f6e-bf70-924b57d47db7", "no_answer": "73a0d17f-1163-4015-bdd5-ec830791da20",
+                    "voicemail": "b2cf5968-551e-4856-9783-52b3da59a7d0", "wrong_number": "17b47fee-58de-441e-a44c-c6300d46f273",
+                    "screened": "73a0d17f-1163-4015-bdd5-ec830791da20", "failed": "73a0d17f-1163-4015-bdd5-ec830791da20"}
+    # Lead status only moves forward; a person's own statuses (in progress, open deal, unqualified, bad timing) stay.
+    _LEAD_RANK = {"": 0, "NEW": 1, "OPEN": 2, "ATTEMPTED_TO_CONTACT": 3, "CONNECTED": 4}
+
+    async def _advance_lead_status(self, http, external_id: str, status: str) -> None:
+        try:
+            cur = await http.request("GET", f"/crm/v3/objects/contacts/{external_id}", params={"properties": "hs_lead_status"})
+            now = str((cur.get("properties") or {}).get("hs_lead_status") or "")
+            if now in self._LEAD_RANK and self._LEAD_RANK[status] > self._LEAD_RANK[now]:
+                await http.request("PATCH", f"/crm/v3/objects/contacts/{external_id}", json={"properties": {"hs_lead_status": status}})
+        except CrmError:
+            pass  # the call is logged either way; lead status is a nicety
 
     async def import_options(self, http, config):
         out = []
@@ -1350,7 +1369,7 @@ class HubSpot(Provider):
         out: list[Contact] = []
         after = None
         props = ["firstname", "lastname", "phone", "mobilephone", "email", "company", "createdate", "lifecyclestage",
-                 "hs_lead_status", "notes_last_contacted"]
+                 "hs_lead_status", "notes_last_contacted", self._DNC_PROP]
         conds = []
         if since:
             conds.append({"propertyName": "createdate", "operator": "GT", "value": str(int(since.timestamp() * 1000))})
@@ -1375,12 +1394,271 @@ class HubSpot(Provider):
                 status = p.get("hs_lead_status") or ""
                 out.append(Contact(name, phone, p.get("email") or "", p.get("company") or "", str(r["id"]),
                                    _parse_time(p.get("createdate")), stage=p.get("lifecyclestage") or "",
-                                   dnc=status.upper() in ("UNQUALIFIED_DNC", "DO_NOT_CALL"),
-                                   contacted=bool(p.get("notes_last_contacted"))))
+                                   dnc=self._is_dnc(p), contacted=bool(p.get("notes_last_contacted"))))
             after = ((page.get("paging") or {}).get("next") or {}).get("after")
             if not after:
                 break
         return out[:limit]
+
+
+    # ── Do not call (BlackSync → HubSpot) ──
+    _DNC_PROP = "blacksync_do_not_call"
+
+    @classmethod
+    def _is_dnc(cls, p: dict) -> bool:
+        return (str(p.get("hs_lead_status") or "").upper() in ("UNQUALIFIED_DNC", "DO_NOT_CALL")
+                or str(p.get(cls._DNC_PROP) or "").lower() == "true")
+
+    async def mark_dnc(self, http, config, external_id):
+        """Sets the "Do not call (BlackSync)" checkbox (created on first use) and lead status Unqualified."""
+        props = {"hs_lead_status": "UNQUALIFIED"}
+        try:
+            await http.request("GET", f"/crm/v3/properties/contacts/{self._DNC_PROP}")
+            props[self._DNC_PROP] = "true"
+        except CrmError:
+            try:
+                await http.request("POST", "/crm/v3/properties/contacts", json={
+                    "name": self._DNC_PROP, "label": "Do not call (BlackSync)", "type": "enumeration",
+                    "fieldType": "booleancheckbox", "groupName": "contactinformation",
+                    "options": [{"label": "Yes", "value": "true"}, {"label": "No", "value": "false"}]})
+                props[self._DNC_PROP] = "true"
+            except CrmError:
+                pass  # no schema scope: lead status alone still marks it
+        await http.request("PATCH", f"/crm/v3/objects/contacts/{external_id}", json={"properties": props})
+
+    # ── Script variables: any contact property ──
+    can_map_fields = True
+    _CONTACT_STD = [("firstname", "First name"), ("lastname", "Last name"), ("email", "Email"), ("phone", "Phone"),
+                    ("mobilephone", "Mobile phone"), ("company", "Company"), ("jobtitle", "Job title"),
+                    ("address", "Street address"), ("city", "City"), ("state", "State"), ("zip", "ZIP"),
+                    ("lifecyclestage", "Lifecycle stage"), ("hs_lead_status", "Lead status")]
+
+    async def field_catalog(self, http, config):
+        out = [{"key": k, "label": l} for k, l in self._CONTACT_STD]
+        seen = {k for k, _ in self._CONTACT_STD}
+        try:
+            props = (await http.request("GET", "/crm/v3/properties/contacts")).get("results") or []
+            for pr in props:
+                name = pr.get("name")
+                if name and name not in seen and not pr.get("hidden") and not (pr.get("modificationMetadata") or {}).get("readOnlyValue") \
+                        and not name.startswith("hs_"):
+                    out.append({"key": name, "label": pr.get("label") or name})
+                    seen.add(name)
+        except CrmError:
+            pass
+        return out[:300]
+
+    async def person_fields(self, http, config, external_id):
+        keys = [f["key"] for f in await self.field_catalog(http, config)]
+        res = await http.request("GET", f"/crm/v3/objects/contacts/{external_id}", params={"properties": ",".join(keys[:250])})
+        p = res.get("properties") or {}
+        return {k: str(v)[:500] for k, v in p.items() if v not in (None, "") and k in keys}
+
+    async def context(self, http, config, external_id):
+        try:
+            res = await http.request("GET", f"/crm/v3/objects/contacts/{external_id}", params={"properties": ",".join(self._SCAN_PROPS)})
+        except CrmError:
+            return ""
+        p = res.get("properties") or {}
+        bits = []
+        if p.get("lifecyclestage"):
+            bits.append(f"Lifecycle stage: {p['lifecyclestage']}")
+        if p.get("hs_lead_status"):
+            bits.append(f"Lead status: {p['hs_lead_status'].replace('_', ' ').lower()}")
+        if p.get("notes_last_contacted"):
+            bits.append(f"Last contacted: {str(p['notes_last_contacted'])[:10]} ({p.get('num_contacted_notes') or 0} touches)")
+        if p.get("recent_conversion_event_name"):
+            bits.append(f"Last form: {p['recent_conversion_event_name']} on {str(p.get('recent_conversion_date') or '')[:10]}")
+        return "; ".join(bits)
+
+    # ── Speed to lead (HubSpot → BlackSync): new form submissions ──
+    can_activity = True
+
+    async def recent_activity(self, http, config, since):
+        body = {"limit": 100, "properties": self._SCAN_PROPS,
+                "filterGroups": [{"filters": [{"propertyName": "recent_conversion_date", "operator": "GT",
+                                               "value": str(int(since.timestamp() * 1000))}]}],
+                "sorts": [{"propertyName": "recent_conversion_date", "direction": "DESCENDING"}]}
+        res = await http.request("POST", "/crm/v3/objects/contacts/search", json=body)
+        out = []
+        for r in res.get("results") or []:
+            p = r.get("properties") or {}
+            c = self._row_contact(r)
+            when = _parse_time(p.get("recent_conversion_date"))
+            if c and when:
+                out.append({"external_id": c.external_id, "contact": c, "at": when,
+                            "kind": f"Form: {p.get('recent_conversion_event_name') or 'submission'}"})
+        return out
+
+    # ── Radar scan ──
+    can_scan = True
+    _SCAN_PROPS = ["firstname", "lastname", "phone", "mobilephone", "email", "company", "createdate", "lastmodifieddate",
+                   "lifecyclestage", "hs_lead_status", "notes_last_contacted", "num_contacted_notes",
+                   "hs_last_sales_activity_timestamp", "recent_conversion_date", "recent_conversion_event_name",
+                   "hs_sales_email_last_replied", "hs_lifecyclestage_customer_date", "hubspot_owner_id",
+                   "hs_analytics_source", "num_associated_deals", "blacksync_do_not_call"]
+    # (sort property, direction, batch)
+    _DEPTHS = {"quick": ("createdate", "DESCENDING", 300), "recent": ("lastmodifieddate", "DESCENDING", 1000),
+               "old": ("createdate", "ASCENDING", 300)}
+    _TALKED = {"CONNECTED", "IN_PROGRESS", "OPEN_DEAL"}
+
+    @classmethod
+    def _row_contact(cls, r: dict) -> Contact | None:
+        p = r.get("properties") or {}
+        phone = p.get("mobilephone") or p.get("phone")
+        if not phone:
+            return None
+        name = " ".join(x for x in (p.get("firstname"), p.get("lastname")) if x)
+        return Contact(name, phone, p.get("email") or "", p.get("company") or "", str(r["id"]),
+                       _parse_time(p.get("createdate")), stage=p.get("lifecyclestage") or "", dnc=cls._is_dnc(p),
+                       contacted=bool(p.get("notes_last_contacted")))
+
+    def _signals(self, r: dict):
+        from app.services.crm.radar import Signals
+
+        p = r.get("properties") or {}
+        c = self._row_contact(r)
+        if not c:
+            return None
+        status = str(p.get("hs_lead_status") or "")
+        life = str(p.get("lifecyclestage") or "")
+        touches = int(float(p.get("num_contacted_notes") or 0))
+        talked = status in self._TALKED
+        inbound = [(d, kind) for d, kind in ((_parse_time(p.get("recent_conversion_date")),
+                                              f"Form: {p.get('recent_conversion_event_name') or 'submission'}"),
+                                             (_parse_time(p.get("hs_sales_email_last_replied")), "Replied to your email")) if d]
+        last_in = max(inbound, key=lambda x: x[0]) if inbound else None
+        won = _parse_time(p.get("hs_lifecyclestage_customer_date")) if life == "customer" else None
+        lost = status in ("UNQUALIFIED", "BAD_TIMING")
+        return Signals(
+            external_id=c.external_id, name=c.name, phone=c.phone, email=c.email, company=c.company,
+            created_at=c.created_at,
+            last_activity_at=_parse_time(p.get("hs_last_sales_activity_timestamp") or p.get("lastmodifieddate")),
+            last_inbound_at=last_in[0] if last_in else None, inbound_kind=last_in[1] if last_in else "",
+            calls=touches, connected_calls=1 if talked else 0, calls_known=True,
+            last_call_at=_parse_time(p.get("notes_last_contacted")),
+            last_call_result=status.replace("_", " ").title() if status else "",
+            deal_stage=life, deal_open=not won and not lost, won_at=won,
+            status="Unqualified" if status == "UNQUALIFIED" else (status.replace("_", " ").title() or life),
+            dnc=c.dnc, source=str(p.get("hs_analytics_source") or "").replace("_", " ").title(),
+            contacted=c.contacted)
+
+    async def _search_all(self, http, filters: list[dict], sort: tuple[str, str], cap: int,
+                          after: str | None = None, state: dict | None = None) -> list[dict]:
+        rows: list[dict] = []
+        while len(rows) < cap:
+            body: dict = {"limit": 100, "properties": self._SCAN_PROPS,
+                          "sorts": [{"propertyName": sort[0], "direction": sort[1]}]}
+            if filters:
+                body["filterGroups"] = [{"filters": filters}]
+            if after:
+                body["after"] = after
+            page = await http.request("POST", "/crm/v3/objects/contacts/search", json=body)
+            rows += page.get("results") or []
+            after = ((page.get("paging") or {}).get("next") or {}).get("after")
+            if not after or int(after) >= 9900:  # HubSpot search stops at 10,000 results
+                after = None
+                break
+        if state is not None:
+            state["next"] = [after, {}] if after else None
+        return rows[:cap]
+
+    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
+        depth = depth or ("quick" if quick else "recent")
+        prop, direction, batch = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        rows = await self._search_all(http, [], (prop, direction), min(batch, limit),
+                                      after=cursor[0] if cursor else None, state=state)
+        return [s for s in (self._signals(r) for r in rows) if s]
+
+    # ── Radar "open a list": HubSpot lists, lifecycle stage / lead status, deal stage ──
+    can_segment = True
+
+    async def segment_options(self, http, config) -> dict:
+        lists, stages, deal = [], [], []
+        try:
+            res = await http.request("POST", "/crm/v3/lists/search", json={"offset": 0, "count": 500,
+                                                                           "additionalProperties": ["hs_list_size"]})
+            for lst in res.get("lists") or []:
+                if str(lst.get("objectTypeId") or "0-1") == "0-1" and lst.get("listId") is not None:
+                    size = (lst.get("additionalProperties") or {}).get("hs_list_size")
+                    lists.append({"value": str(lst["listId"]),
+                                  "label": f"{lst.get('name') or lst['listId']}" + (f" ({size})" if size else "")})
+        except CrmError:
+            pass
+        for prop, label in (("lifecyclestage", "Lifecycle"), ("hs_lead_status", "Lead status")):
+            try:
+                d = await http.request("GET", f"/crm/v3/properties/contacts/{prop}")
+                stages += [{"value": f"{prop}:{o['value']}", "label": f"{label} · {o.get('label') or o['value']}"}
+                           for o in d.get("options") or [] if not o.get("hidden")]
+            except CrmError:
+                pass
+        try:
+            for pipe in await self.pipelines(http, config):
+                deal += [{"value": f"{pipe['id']}:{st['id']}", "label": f"{pipe['name']} · {st['label']}"}
+                         for st in pipe["stages"]]
+        except CrmError:
+            pass
+        return {"pond": [], "source": [], "stage": stages, "deal": deal, "list": lists}
+
+    async def _contacts_by_id(self, http, ids: list[str]) -> list[dict]:
+        rows: list[dict] = []
+        for i in range(0, len(ids), 100):
+            res = await http.request("POST", "/crm/v3/objects/contacts/batch/read", json={
+                "properties": self._SCAN_PROPS, "inputs": [{"id": x} for x in ids[i:i + 100]]})
+            rows += res.get("results") or []
+        return rows
+
+    async def segment_signals(self, http, config, kind: str, value: str, cap: int = 20000):
+        if kind == "list":
+            ids, after = [], None
+            while len(ids) < cap:
+                res = await http.request("GET", f"/crm/v3/lists/{value}/memberships",
+                                         params={"limit": 250, **({"after": after} if after else {})})
+                ids += [str(m.get("recordId")) for m in res.get("results") or [] if m.get("recordId")]
+                after = ((res.get("paging") or {}).get("next") or {}).get("after")
+                if not after:
+                    break
+            rows = await self._contacts_by_id(http, ids[:cap])
+        elif kind == "stage":
+            prop, _, val = value.partition(":")
+            if prop not in ("lifecyclestage", "hs_lead_status") or not val:
+                raise CrmError("Choose a lifecycle stage or lead status from the list.")
+            rows = await self._search_all(http, [{"propertyName": prop, "operator": "EQ", "value": val}],
+                                          ("createdate", "DESCENDING"), min(cap, 10000))
+            rows = [r for r in rows if str((r.get("properties") or {}).get(prop) or "") == val]
+        elif kind == "deal":
+            pipe, _, stage = value.partition(":")
+            deal_ids, after = [], None
+            while len(deal_ids) < cap:
+                body = {"limit": 100, "properties": ["dealstage", "pipeline"],
+                        "filterGroups": [{"filters": [{"propertyName": "pipeline", "operator": "EQ", "value": pipe},
+                                                      {"propertyName": "dealstage", "operator": "EQ", "value": stage}]}]}
+                if after:
+                    body["after"] = after
+                res = await http.request("POST", "/crm/v3/objects/deals/search", json=body)
+                deal_ids += [str(d["id"]) for d in res.get("results") or []]
+                after = ((res.get("paging") or {}).get("next") or {}).get("after")
+                if not after:
+                    break
+            ids: list[str] = []
+            for i in range(0, len(deal_ids), 100):
+                res = await http.request("POST", "/crm/v4/associations/deals/contacts/batch/read",
+                                         json={"inputs": [{"id": d} for d in deal_ids[i:i + 100]]})
+                for row in res.get("results") or []:
+                    for to in row.get("to") or []:
+                        cid = str(to.get("toObjectId") or "")
+                        if cid and cid not in ids:
+                            ids.append(cid)
+            rows = await self._contacts_by_id(http, ids[:cap])
+        else:
+            raise CrmError("HubSpot lists support lists, lifecycle stage / lead status and deal stages.")
+        out = []
+        for r in rows:
+            sig = self._signals(r)
+            if sig:
+                sig.calls_known = False  # a list, not a scored scan
+                out.append(sig)
+        return out
 
 
 # ── Pipedrive ─────────────────────────────────────────────────────────────────

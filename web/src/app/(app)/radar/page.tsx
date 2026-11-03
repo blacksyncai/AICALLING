@@ -169,8 +169,8 @@ const DEPTH_LABEL: Record<Depth, string> = {
   old: "old-lead dig",
   segment: "opened",
 };
-type SegKind = "pond" | "source" | "stage" | "deal";
-const SEG_LABEL: Record<SegKind, string> = { pond: "Pond", source: "Lead source", stage: "Stage", deal: "Deal stage" };
+type SegKind = "pond" | "source" | "stage" | "deal" | "list";
+const SEG_LABEL: Record<SegKind, string> = { list: "List", pond: "Pond", source: "Lead source", stage: "Stage", deal: "Deal stage" };
 
 const ICON: Record<string, typeof Flame> = {
   hot: Flame,
@@ -236,6 +236,12 @@ export default function RadarPage() {
     listOpen && crm ? `/api/radar/${crm.provider}/segments` : null,
     fetcher,
   );
+  useEffect(() => {
+    // Start on the first kind this CRM actually has (HubSpot: lists; Follow Up Boss: ponds).
+    if (!segs || (segs[segKind]?.length ?? 0) > 0) return;
+    const first = (Object.keys(SEG_LABEL) as SegKind[]).find((k) => (segs[k]?.length ?? 0) > 0);
+    if (first) { setSegKind(first); setSegValue(""); }
+  }, [segs, segKind]);
   const openList = async () => {
     if (!crm || !segValue) return;
     const label = segs?.[segKind]?.find((o) => o.value === segValue)?.label ?? segValue;
@@ -451,7 +457,7 @@ export default function RadarPage() {
             <div className="min-w-[150px]">
               <div className="mb-1 text-xs font-medium text-zinc-600">List type</div>
               <Select value={segKind} onChange={(e) => { setSegKind(e.target.value as SegKind); setSegValue(""); }}>
-                {(Object.keys(SEG_LABEL) as SegKind[]).filter((k) => k !== "deal" || segs?.deal).map((k) => (
+                {(Object.keys(SEG_LABEL) as SegKind[]).filter((k) => (segs ? (segs[k]?.length ?? 0) > 0 : k !== "deal" && k !== "list")).map((k) => (
                   <option key={k} value={k}>{SEG_LABEL[k]}</option>
                 ))}
               </Select>

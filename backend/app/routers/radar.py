@@ -173,7 +173,7 @@ async def segments(key: str, ctx: ManagerDep, db: DbDep):
     conn = await _conn(db, ctx.org.id, key)
     p = PROVIDERS[key]
     if not getattr(p, "can_segment", False):
-        return {"pond": [], "source": [], "stage": [], "deal": []}
+        return {"pond": [], "source": [], "stage": [], "deal": [], "list": []}
     _, http = sync.http_for(conn)
     try:
         return await p.segment_options(http, conn.config or {})
@@ -182,7 +182,7 @@ async def segments(key: str, ctx: ManagerDep, db: DbDep):
 
 
 class SegmentIn(BaseModel):
-    kind: str = Field(pattern="^(pond|source|stage|deal)$")
+    kind: str = Field(pattern="^(pond|source|stage|deal|list)$")
     value: str = Field(min_length=1, max_length=200)
     label: str = Field(default="", max_length=200)
 
@@ -208,7 +208,7 @@ async def open_segment(key: str, body: SegmentIn, ctx: ManagerDep, db: DbDep):
             s.dnc = True
         if body.kind == "pond":
             s.pond = label
-    noun = {"pond": "pond", "source": "lead source", "stage": "stage", "deal": "deal stage"}[body.kind]
+    noun = {"pond": "pond", "source": "lead source", "stage": "stage", "deal": "deal stage", "list": "list"}[body.kind]
     result = radar.build_segment(signals, f"{label} ({noun})", f"Everyone in the {noun} “{label}” in {p.name}.")
     result.update(depth="segment", segment={"kind": body.kind, "value": body.value, "label": label}, next=None)
     row = CrmScan(org_id=ctx.org.id, connection_id=conn.id, result=result)
