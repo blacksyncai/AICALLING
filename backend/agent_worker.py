@@ -13,6 +13,7 @@ and run as a configurable agent; anything else runs the original Paul SDR.
 from __future__ import annotations
 
 import asyncio
+import re
 import json
 import logging
 import os
@@ -1388,6 +1389,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             if opening["pending"]:
                 log.info("opening_covers_turn", room=ctx.room.name)
                 raise StopResponse()  # the opening line is the reply to their "Hello?"
+            fast = screen.pop("fast", None)
+            if fast and _time.monotonic() - fast < 3.0:
+                raise StopResponse()  # the opening line already answered their "Hello?" (see _screener_pickup)
             if screen["holding"]:
                 from app.agent.runtime import is_screener_hold
 
@@ -1517,6 +1521,30 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         except Exception as exc:
             log.warning("screener_reply_failed", error=str(exc)[:200])
 
+    _PICKUP = re.compile(r"\?|\b(?:hello|hi|hey|yeah|yes|yep|yo|speaking|this is|who(?:'s| is)|what's up|go ahead)\b")
+
+    def _screener_pickup(text: str) -> bool:
+        """While holding on a call screener: the first words that aren't the screener (or its voicemail) are
+        the person picking up. Speak the ready opening line right away, without waiting for the end of their
+        turn or the model. True when the pickup was answered here."""
+        from app.agent.runtime import is_screener_hold, screener_match
+
+        line = (opening.get("line") or "").strip()
+        if not line or is_screener_hold(text) or screener_match(text) or voicemail_greeting_match(text):
+            return False
+        if not _PICKUP.search(text.lower()):
+            return False  # e.g. the screener's "Connecting." — leave it to the normal turn handling
+        screen["holding"], screen["passed"], screen["fast"] = False, True, _time.monotonic()
+        log.info("screener_passed", room=ctx.room.name, fast=True,
+                 after_hold_s=round(_time.monotonic() - (screen["since"] or run.t0 or 0), 1))
+        try:
+            session.say(line, allow_interruptions=True)
+        except Exception as exc:
+            log.warning("screener_pickup_reply_failed", error=str(exc)[:200])
+            screen["fast"] = None
+            return False
+        return True
+
     def _on_transcribed(ev) -> None:
         if call_type == "outbound" and vm["detected"] and getattr(ev, "is_final", False):
             # Keep hearing the greeting until hangup: the name often comes after the detection phrase.
@@ -1530,6 +1558,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         text = getattr(ev, "transcript", "") or ""
         if screen["passed"]:
             return  # the person answered after screening; do not classify their deferral as a greeting
+        if screen["holding"] and text.strip() and _screener_pickup(text):
+            return
         if not screen["seen"]:
             from app.agent.runtime import screener_match
 
@@ -1899,6 +1929,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
         first = strip_tool_mentions(clean(first))  # the drafted opening skips the reply filter
     opening["pending"] = False
+    opening["line"] = first  # replayed the instant the real person picks up after a call screener
     try:
         if first:
             session.say(first, allow_interruptions=True)
