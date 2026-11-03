@@ -45,6 +45,19 @@ async def run():
                                 "outcome": c.outcome, "agent": (a.name if a else "")[:40],
                                 "vm_action": getattr(a, "voicemail_action", None) if a else None,
                                 "turns": [[t.get("role", "")[:1], str(t.get("text") or "")[:140]] for t in turns[:10]]})
+                durs = {}
+                for c in calls:
+                    if c.outcome == "voicemail":
+                        b = "0-10" if (c.duration_seconds or 0) <= 10 else "11-20" if c.duration_seconds <= 20 else "21-40" if c.duration_seconds <= 40 else "41+"
+                        durs[b] = durs.get(b, 0) + 1
+                longest = sorted([c for c in calls if c.outcome in ("voicemail", "insufficient_conversation", "no_decision", "no_answer")],
+                                 key=lambda c: -(c.duration_seconds or 0))[:10]
+                for c in longest:
+                    turns = [t for t in c.transcript or [] if isinstance(t, dict)]
+                    log.info("todd_vm_long", dur=c.duration_seconds, outcome=c.outcome,
+                             at=c.started_at.strftime("%m-%d %H:%M") if c.started_at else "",
+                             turns=[[t.get("role", "")[:1], str(t.get("text") or "")[:160]] for t in turns[:12]])
+                log.info("todd_vm_durations", voicemail_durations=durs)
                 log.info("todd_vm_check", org=org.name, calls=len(calls), outcomes=outcomes, vm_talked_through=talked,
                          agents={a.name[:40]: getattr(a, "voicemail_action", None) for a in agents.values()})
                 for s in samples:
