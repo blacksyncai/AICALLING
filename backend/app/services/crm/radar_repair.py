@@ -35,9 +35,18 @@ async def run():
                 r = s.result or {}
                 log.info("fub_recent_scan", at=str(s.created_at)[:16], depth=r.get("depth"), segment=r.get("segment"),
                          scanned=r.get("scanned"), plays={p.get("key"): p.get("count") for p in r.get("plays") or []})
-            for pond in ponds:
-                if "cold" not in str(pond.get("name") or "").lower():
-                    continue
+            fub = PROVIDERS["followupboss"]
+            first = await http.request("GET", "/v1/people", params={"stage": "Cold Call", "limit": 1, "fields": "id,stage"})
+            log.info("fub_stage_total", fub_total=(first.get("_metadata") or {}).get("total"))
+            t = time.monotonic()
+            state = {}
+            people = await fub._pages(http, "/v1/people", "people", 10000,
+                                      {"sort": "-created", "fields": fub._FIELDS, "stage": "Cold Call"}, state=state)
+            staged = [p for p in people if str(p.get("stage") or "") == "Cold Call"]
+            log.info("fub_stage_read", fetched=len(people), in_stage=len(staged), more=bool(state.get("next")),
+                     with_phone=sum(1 for p in staged if any(x.get("value") for x in p.get("phones") or [])),
+                     seconds=round(time.monotonic() - t, 1))
+            for pond in []:
                 pid = str(pond.get("id"))
                 t = time.monotonic()
                 fub = PROVIDERS["followupboss"]
