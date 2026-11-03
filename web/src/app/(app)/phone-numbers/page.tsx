@@ -109,6 +109,17 @@ export default function PhoneNumbersPage() {
         </div>
       )}
       <PageHeader title="Phone numbers" description="The numbers your agents call from. Pick a default, or set one per agent under Agent → Actions." />
+      {(data.deactivated?.length ?? 0) > 0 && (
+        <div className="mb-4">
+          <Notice tone="amber">
+            <strong>
+              {data.deactivated!.length === 1 ? "This number has been deactivated" : "These numbers have been deactivated"}:
+            </strong>{" "}
+            {data.deactivated!.map((d) => `${d.number}${d.released_at ? ` (${fmtDate(d.released_at)})` : ""}`).join(", ")}.
+            {" "}It no longer makes or takes calls, and it was taken off your agents and campaigns. Add a new number below to keep calling.
+          </Notice>
+        </div>
+      )}
       {manager && data.numbers.length === 0 && <div className="mb-6">{getNumber}</div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <NumbersList numbers={data.numbers} manager={manager} refresh={() => void mutate()} />

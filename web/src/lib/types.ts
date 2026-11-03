@@ -105,6 +105,8 @@ export interface MyPhoneNumbers {
   purchase_carriers?: string[];
   numbers: PhoneNumberItem[];
   requests: PhoneNumberRequestItem[];
+  // Numbers the carrier removed (deleted from the phone provider) in the last 14 days.
+  deactivated?: { number: string; released_at: string | null }[];
   self_serve: boolean;
   recordings_enabled: boolean;
   pricing?: { active: number; included: number; included_on_plan: number; unit_cents: number; subscribed: boolean; pack_credits?: number };

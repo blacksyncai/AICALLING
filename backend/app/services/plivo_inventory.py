@@ -10,8 +10,9 @@ from app.models.campaign import Campaign
 from app.services import plivo, telephony
 
 log = structlog.get_logger(__name__)
-INTERVAL = 300
-CONFIRM_AFTER = timedelta(seconds=60)
+# Every minute, so a number deleted in Plivo stops being dialed within ~2 minutes (seen missing twice, 60 s apart).
+INTERVAL = 60
+CONFIRM_AFTER = timedelta(seconds=55)
 PURCHASE_GRACE = timedelta(minutes=2)
 
 

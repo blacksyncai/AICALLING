@@ -9,6 +9,7 @@ release numbers for any account.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import structlog
@@ -118,6 +119,13 @@ async def my_numbers(ctx: CtxDep, db: DbDep):
         "self_serve": (bool(cfg["self_serve_numbers"]) or pricing["pack_credits"] > 0) and bool(telephony.purchase_carriers()),
         "purchase_carriers": telephony.purchase_carriers(),
         "recordings_enabled": settings.recordings_ready,
+        # Numbers the carrier removed (e.g. deleted in Plivo) in the last 14 days, so the page can say so.
+        "deactivated": [{"number": n.number, "released_at": n.released_at.isoformat() if n.released_at else None}
+                        for n in (await db.execute(select(PhoneNumber).where(
+                            PhoneNumber.org_id == ctx.org.id, PhoneNumber.status == "released",
+                            PhoneNumber.provider_missing_since.is_not(None),
+                            PhoneNumber.released_at >= datetime.now(timezone.utc) - timedelta(days=14))
+                            .order_by(PhoneNumber.released_at.desc()).limit(20))).scalars()],
     }
 
 
