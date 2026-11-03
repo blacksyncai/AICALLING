@@ -123,7 +123,10 @@ def _parse_time(v: Any) -> dt.datetime | None:
     try:
         if isinstance(v, (int, float)):
             return dt.datetime.fromtimestamp(v / 1000 if v > 1e11 else v, tz=UTC)
-        d = dt.datetime.fromisoformat(str(v).replace("Z", "+00:00").replace(" ", "T", 1))
+        text = str(v).strip()
+        if text.endswith("GMT") or text.endswith("UTC"):  # Lofty: "2026-11-01T00:00:46GMT"
+            text = text[:-3].rstrip() + "+00:00"
+        d = dt.datetime.fromisoformat(text.replace("Z", "+00:00").replace(" ", "T", 1))
         return d if d.tzinfo else d.replace(tzinfo=UTC)
     except (ValueError, OverflowError):
         return None
@@ -2209,108 +2212,91 @@ class Lofty(Provider):
     can_map_fields = True
 
     can_scan = True
-    # Lofty's GET /v1.0/leads only accepts these sort values (docs: Default, LastContact, LastCall,
-    # LastEmail, LastActivity, CreateTime, ...); there is no "UpdateTime". "fields" is not a
-    # documented parameter either, so it is dropped — the list endpoint returns full lead objects.
-    # (lead sort, desc?, page cap, per-lead call history?, activity cap)
-    # (lead sort, desc?, page cap, read per-lead call history?)
-    # (lead sort, desc?, page cap, per-lead call history?, per-lead activities?)
-    # All depths sort by CreateTime: it's on every key's scope, while LastActivity can be
-    # rejected (20024) by narrower keys. "recent" still reads activities/calls to find active leads.
-    _DEPTHS = {"quick": ("CreateTime", "true", 50, True, False),
-               "recent": ("CreateTime", "true", 200, True, True),
-               "old": ("CreateTime", "false", 50, True, False)}
+    # Lofty's GET /v1.0/leads sorts by CreateTime on every key's scope (LastActivity can be rejected, 20024).
+    # Per lead, GET /v2.0/leads/{id}/activities is the one timeline with calls, texts and emails, each with
+    # direction (and the call outcome): it gives call history and inbound signals in a single request.
+    # (lead sort, desc?, how many leads per batch)
+    _DEPTHS = {"quick": ("CreateTime", "true", 100), "recent": ("CreateTime", "true", 300),
+               "old": ("CreateTime", "false", 150)}
+    _TALKED = {"talked", "connected", "answered", "spoke", "contacted"}
 
-    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
+    @staticmethod
+    def _lead_signals(r: dict, c: Contact):
         from app.services.crm.radar import Signals
 
-        # quick: the newest leads; recent: leads active lately (with their call history); old: oldest first
-        # to dig up old leads. Batches continue where the last one stopped (cursor -> state["next"]).
+        return Signals(
+            external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
+            created_at=c.created_at, last_activity_at=_parse_time(r.get("lastUpdateTime") or r.get("updateTime")),
+            deal_stage=c.stage, status=c.stage, source=r.get("source") or "",
+            deal_open=not c.dnc and (c.stage or "").lower() not in ("trash", "closed", "dead", "lost"),
+            # Lofty's list gives no stage-entry timestamp, so "stuck" is never fabricated from lastUpdateTime.
+            tags=c.tags, dnc=c.dnc)
+
+    async def _activities(self, http, lead_id: str) -> list[dict]:
+        page = await http.request("GET", f"/v2.0/leads/{int(lead_id)}/activities")
+        return (page or {}).get("activities") or [] if isinstance(page, dict) else []
+
+    def _apply_activities(self, s, acts: list[dict]) -> None:
+        calls = [a for a in acts if "call" in str(a.get("communicationType") or a.get("channel") or "").lower()]
+        outbound = [a for a in calls if str(a.get("direction") or "outbound").lower().startswith("out")]
+        connected = [a for a in outbound if str(a.get("callingOutcome") or "").lower() in self._TALKED]
+        last = max(outbound, key=lambda a: str(a.get("activityTime") or "")) if outbound else None
+        s.calls, s.connected_calls, s.calls_known = len(outbound), len(connected), True
+        s.last_call_at = _parse_time(last.get("activityTime")) if last else None
+        s.last_call_result = str(last.get("callingOutcome") or "") if last else ""
+        for a in acts:  # the lead reached out: an inbound call, text or email reply
+            if not str(a.get("direction") or "").lower().startswith("in"):
+                continue
+            when = _parse_time(a.get("activityTime"))
+            if when and (not s.last_inbound_at or when > s.last_inbound_at):
+                kind = str(a.get("communicationType") or a.get("channel") or "Reached out").lower()
+                s.last_inbound_at = when
+                s.inbound_kind = "Called you" if "call" in kind else "Texted you" if ("text" in kind or "sms" in kind) \
+                    else "Emailed you" if "email" in kind else "Reached out"
+        if acts and not s.last_activity_at:
+            s.last_activity_at = max((_parse_time(a.get("activityTime")) for a in acts if a.get("activityTime")),
+                                     default=None, key=lambda d: d or dt.datetime.min.replace(tzinfo=UTC))
+
+    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
+        import asyncio
+
+        # quick: the newest leads; recent: a larger newest-first batch; old: oldest first to dig up old leads.
+        # Batches continue where the last one stopped (cursor -> state["next"]).
         depth = depth or ("quick" if quick else "recent")
-        sort, desc, batch, with_calls, with_activities = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        sort, desc, batch = self._DEPTHS.get(depth, self._DEPTHS["recent"])
+        batch = min(batch, limit)
         offset = cursor[0] if cursor else 0
-        out: list[Signals] = []
-        while len(out) < limit:
-            params = {"offset": offset, "limit": min(batch, 100), "sort": sort, "desc": desc}
-            try:
-                res = await http.request("GET", "/v1.0/leads", params=params)
-            except CrmError:
-                if sort == "CreateTime":
-                    raise
-                # some keys reject non-default sorts — retry once with no sort at all
-                params.pop("sort", None); params.pop("desc", None)
-                res = await http.request("GET", "/v1.0/leads", params=params)
+        out = []
+        while len(out) < batch:
+            params = {"offset": offset, "limit": 100, "sort": sort, "desc": desc}
+            res = await http.request("GET", "/v1.0/leads", params=params)
             # Lofty can answer 200 with an error body and no "leads" key — that's a failure, not an empty CRM.
             if isinstance(res, dict) and "leads" not in res and (res.get("code") not in (None, 0) or res.get("error") or res.get("message")):
-                if params.get("sort") and params["sort"] != "CreateTime":
-                    params.pop("sort", None); params.pop("desc", None)
-                    res = await http.request("GET", "/v1.0/leads", params=params)
-                else:
-                    raise CrmError(f"Lofty rejected the lead list: {res.get('message') or res.get('error') or res}")
+                raise CrmError(f"Lofty rejected the lead list: {res.get('message') or res.get('error') or res}")
             rows = (res or {}).get("leads") or []
             for r in rows:
                 c = self._contact(r)
                 if c:
-                    out.append(Signals(
-                        external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
-                        created_at=c.created_at, last_activity_at=_parse_time(r.get("lastUpdateTime") or r.get("updateTime")),
-                        deal_stage=c.stage, status=c.stage, source=r.get("source") or "",
-                        deal_open=not c.dnc and (c.stage or "").lower() not in ("trash", "closed", "dead", "lost"),
-                        # Lofty's list gives no stage-entry timestamp; deal_updated_at stays None so
-                        # "stuck" is never fabricated from generic lastUpdateTime.
-                        tags=c.tags, dnc=c.dnc))
-            if len(rows) < 100 or len(out) >= batch:
+                    out.append(self._lead_signals(r, c))
+            offset += len(rows)
+            if len(rows) < 100:
                 offset = None
                 break
-            offset += 100
         if state is not None:
             state["next"] = [offset, {}] if offset is not None else None
-        # Per-lead history: calls from GET /v1.0/communication/call, inbound signals from the
-        # lead's activity timeline (GET /v1.0/leads/{id}/activities — site views/searches/inquiries).
-        by_lead: dict[str, list[dict]] = {}
-        inbound: dict[str, tuple[dt.datetime, str]] = {}
-        for s in out:
-            lid = s.external_id
-            if not with_calls or not lid.isdigit():
-                continue
-            try:
-                page = await http.request("GET", "/v1.0/communication/call",
-                                          params={"leadId": int(lid), "offset": 0, "limit": 100})
-                for c in (page or {}).get("calls") or []:
-                    by_lead.setdefault(lid, []).append(c)
-                    if (c.get("direction") or "").lower() == "inbound":
-                        when = _parse_time(c.get("startTime") or c.get("createTime"))
-                        if when and (lid not in inbound or when > inbound[lid][0]):
-                            inbound[lid] = (when, "Called you")
-            except CrmError:
-                pass  # lead not visible to this key — signals still work without its calls
-        for s in out:
-            if not with_activities or not s.external_id.isdigit():
-                continue
-            try:
-                page = await http.request("GET", f"/v1.0/leads/{int(s.external_id)}/activities",
-                                          params={"offset": 0, "limit": 50})
-                for a in (page or {}).get("activities") or (page or {}).get("data") or []:
-                    when = _parse_time(a.get("created") or a.get("createTime") or a.get("activityTime"))
-                    if when and (s.external_id not in inbound or when > inbound[s.external_id][0]):
-                        kind = a.get("type") or a.get("trackingType") or "Activity"
-                        inbound[s.external_id] = (when, str(kind).replace("Site", "").replace("site", ""))
-            except CrmError:
-                pass
-        for s in out:
-            lc = by_lead.get(s.external_id, [])
-            outbound = [c for c in lc if (c.get("direction") or "Outbound").lower() == "outbound"]
-            connected = [c for c in outbound if (c.get("status") == "Completed" and (c.get("duration") or 0) >= 30)
-                         or c.get("callingOutcome") == "Talked"]
-            last = max(outbound, key=lambda c: c.get("startTime") or c.get("createTime") or "") if outbound else None
-            inb = inbound.get(s.external_id)
-            s.calls = len(outbound)
-            s.connected_calls = len(connected)
-            s.last_call_at = _parse_time(last.get("startTime") or last.get("createTime")) if last else None
-            s.last_call_result = (last.get("status") or last.get("callingOutcome") or "") if last else ""
-            s.last_inbound_at = inb[0] if inb else None
-            s.inbound_kind = inb[1] if inb else ""
-        return out[:limit]
+        out = out[:batch]
+        gate = asyncio.Semaphore(8)  # a few leads at a time: fast, without tripping Lofty's rate limit
+
+        async def history(s):
+            if not s.external_id.isdigit():
+                return
+            async with gate:
+                try:
+                    self._apply_activities(s, await self._activities(http, s.external_id))
+                except CrmError:
+                    s.calls_known = False  # this lead's timeline isn't visible to the key: judge it on the rest
+        await asyncio.gather(*(history(s) for s in out))
+        return out
 
     # ── Radar "open a list": ponds, sources and pipeline stages ──
     can_segment = True

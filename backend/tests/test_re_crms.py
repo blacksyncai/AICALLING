@@ -160,61 +160,52 @@ def test_lofty_radar_scan(api):
     assert p.can_scan
     http = p.native_http("key1", {})
     now = dt.datetime.now(dt.timezone.utc)
+    gmt = lambda days: (now - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SGMT")  # Lofty's real format
+    local = lambda days: (now - dt.timedelta(days=days)).astimezone(dt.timezone(dt.timedelta(hours=-6))).isoformat()
     leads = [
         {"leadId": 5, "firstName": "Hot", "lastName": "Inbound", "phones": ["4155550105"], "emails": ["hot@x.com"],
-         "createTime": (now - dt.timedelta(days=2)).isoformat(), "updateTime": (now - dt.timedelta(days=2)).isoformat(),
+         "createTime": gmt(2), "lastUpdateTime": gmt(2),
          "stage": "New Lead", "source": "Zillow", "tags": [{"tagName": "Buyer"}], "cannotCall": False},
         {"leadId": 4, "firstName": "Never", "lastName": "Called", "phones": ["4155550104"],
-         "createTime": (now - dt.timedelta(days=10)).isoformat(), "stage": "Active", "source": "Website",
-         "tags": [], "cannotCall": False},
+         "createTime": gmt(10), "stage": "Active", "source": "Website", "tags": [], "cannotCall": False},
         {"leadId": 7, "firstName": "Old", "lastName": "Lead", "phones": ["4155550107"],
-         "createTime": (now - dt.timedelta(days=400)).isoformat(), "updateTime": (now - dt.timedelta(days=395)).isoformat(), "stage": "Active", "tags": [], "cannotCall": False},
+         "createTime": gmt(400), "lastUpdateTime": gmt(395), "stage": "Active", "tags": [], "cannotCall": False},
         {"leadId": 8, "firstName": "Fresh", "lastName": "Signup", "phones": ["4155550108"],
-         "createTime": (now - dt.timedelta(days=3)).isoformat(), "updateTime": (now - dt.timedelta(days=3)).isoformat(),
-         "stage": "New Lead", "source": "Website", "tags": [], "cannotCall": False},
+         "createTime": gmt(3), "lastUpdateTime": gmt(3), "stage": "New Lead", "source": "Website", "tags": [], "cannotCall": False},
         {"leadId": 6, "firstName": "Dnc", "lastName": "Dude", "phones": ["4155550106"],
-         "createTime": (now - dt.timedelta(days=1)).isoformat(), "stage": "New Lead", "cannotCall": True},
+         "createTime": gmt(1), "stage": "New Lead", "cannotCall": True},
     ]
+    acts = {"5": [{"communicationType": "Call", "channel": "Phone", "direction": "Inbound", "activityTime": local(1)}],
+            "4": [{"communicationType": "Call", "channel": "Phone", "direction": "Outbound", "callingOutcome": "NoAnswer",
+                   "activityTime": local(4)},
+                  {"communicationType": "Call", "channel": "Phone", "direction": "Outbound", "callingOutcome": "NoAnswer",
+                   "activityTime": local(6)},
+                  {"communicationType": "Email", "channel": "Email", "direction": "Outbound", "activityTime": local(5)}]}
     def handler(req):
         path = req.url.path
         if req.method == "GET" and path == "/v1.0/leads":
-            assert req.url.params["sort"] in ("CreateTime", "LastActivity"), req.url.params
-            return httpx.Response(200, json={"leads": leads})
-        if req.method == "GET" and path == "/v1.0/communication/call":
-            lid = req.url.params["leadId"]
-            calls = {"5": [{"leadId": 5, "direction": "Inbound", "status": "Completed", "duration": 200,
-                            "startTime": (now - dt.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")}],
-                     "4": [{"leadId": 4, "direction": "Outbound", "status": "NoAnswer", "duration": 0,
-                            "startTime": (now - dt.timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S")},
-                           {"leadId": 4, "direction": "Outbound", "status": "NoAnswer", "duration": 0,
-                            "startTime": (now - dt.timedelta(days=6)).strftime("%Y-%m-%d %H:%M:%S")}]}.get(lid, [])
-            return httpx.Response(200, json={"calls": calls})
-        if req.method == "GET" and path.endswith("/activities"):
-            return httpx.Response(200, json={"activities": []})
+            assert req.url.params["sort"] == "CreateTime", req.url.params
+            return httpx.Response(200, json={"_metadata": {}, "leads": leads})
+        if req.method == "GET" and path.startswith("/v2.0/leads/") and path.endswith("/activities"):
+            return httpx.Response(200, json={"activities": acts.get(path.split("/")[3], [])})
         return httpx.Response(404, json={})
 
     api["handler"] = handler
-    signals = run(p.scan_signals(http, {}, limit=100, depth="recent"))
-    by_id = {s.external_id: s for s in signals}
-    assert set(by_id) == {"4", "5", "6", "7", "8"}
-    assert by_id["5"].last_inbound_at and by_id["5"].inbound_kind == "Called you"
-    assert by_id["4"].calls == 2 and by_id["4"].connected_calls == 0
-    assert by_id["4"].last_call_result == "NoAnswer" and by_id["4"].calls_known
-    assert by_id["6"].dnc is True
-    plays = {pl["key"]: pl for pl in build_plays(signals, now=now)["plays"]}
-    assert [i["external_id"] for i in plays["hot"]["items"]] == ["5"]
-    assert [i["external_id"] for i in plays["unreached"]["items"]] == ["4"]
-    assert [i["external_id"] for i in plays["never_called"]["items"]] == ["7", "8"]
-    assert not any(i["external_id"] == "6" for pl in plays.values() for i in pl["items"])
-
-    n_seen = len(api["seen"])
-    quick = run(p.scan_signals(http, {}, limit=100, depth="quick"))
-    assert all(s.calls_known for s in quick)  # quick reads call counts for its (small) batch
-    assert any(r.url.path == "/v1.0/communication/call" for r in api["seen"][n_seen:])
-    assert not any(r.url.path.endswith("/activities") for r in api["seen"][n_seen:])  # but never activities
-    quick_plays = {pl["key"]: pl for pl in build_plays(quick, now=now)["plays"]}
-    assert [i["external_id"] for i in quick_plays["never_called"]["items"]] == ["8"]
-    assert [i["external_id"] for i in quick_plays["revive"]["items"]] == ["7"]
+    for depth in ("recent", "quick"):  # quick reads the same timeline for its smaller batch
+        signals = run(p.scan_signals(http, {}, limit=100, depth=depth))
+        by_id = {s.external_id: s for s in signals}
+        assert set(by_id) == {"4", "5", "6", "7", "8"}
+        assert by_id["8"].created_at and by_id["8"].last_activity_at  # "...GMT" dates are read
+        assert by_id["5"].last_inbound_at and by_id["5"].inbound_kind == "Called you"
+        assert by_id["4"].calls == 2 and by_id["4"].connected_calls == 0
+        assert by_id["4"].last_call_result == "NoAnswer" and by_id["4"].calls_known
+        assert by_id["6"].dnc is True
+        plays = {pl["key"]: pl for pl in build_plays(signals, now=now)["plays"]}
+        assert [i["external_id"] for i in plays["hot"]["items"]] == ["5"]
+        assert [i["external_id"] for i in plays["unreached"]["items"]] == ["4"]
+        assert sorted(i["external_id"] for i in plays["never_called"]["items"]) == ["7", "8"]
+        assert not any(i["external_id"] == "6" for pl in plays.values() for i in pl["items"])
+    assert not any(r.url.path == "/v1.0/communication/call" for r in api["seen"])  # one timeline request per lead
 
 
 def test_lofty_radar_segments(api):
