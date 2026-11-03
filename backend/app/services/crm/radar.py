@@ -93,6 +93,9 @@ def classify(s: Signals, now: dt.datetime) -> tuple[str, str] | None:
     never = s.contacted is False or (s.calls_known and s.calls == 0 and s.contacted is not True)
     if never and s.created_at and _days(s.created_at, now) >= 1:
         return "never_called", f"Added {_when(s.created_at)}, " + ("nobody has contacted them" if s.contacted is False else "never called")
+    if never and s.created_at is None and s.extra.get("age_unknown"):
+        # The CRM keeps no "added" date and the contact has no history at all (e.g. Cloze).
+        return "never_called", "No calls, texts or emails on record"
     if 1 <= s.calls <= 5 and s.connected_calls == 0 and s.last_call_at and _days(s.last_call_at, now) >= 3:
         res = f" ({s.last_call_result})" if s.last_call_result else ""
         return "unreached", f"{s.calls} call{'s' if s.calls > 1 else ''}, never reached · last try {_when(s.last_call_at)}{res}"

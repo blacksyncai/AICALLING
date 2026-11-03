@@ -363,6 +363,13 @@ def test_cloze(api):
         {"syncKey": "sk3", "name": "No Phone"},
     ]
     created = {}
+    now_ms = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)
+    day = 86_400_000
+    history = {  # sk1 texted 2 days ago and was never called back; sk2 was called twice, never reached
+        "sk1": {"m1": {"style": "text", "direction": "inbound", "date": now_ms - 2 * day}},
+        "sk2": {"m2": {"style": "call", "direction": "outbound", "outcome": "noanwser", "date": now_ms - 5 * day},
+                "m3": {"style": "call", "direction": "outbound", "outcome": "leftvm", "date": now_ms - 9 * day}},
+    }
 
     def handler(req):
         path, q = req.url.path, dict(req.url.params)
@@ -387,6 +394,13 @@ def test_cloze(api):
             body = json.loads(req.content)
             created["new"] = {**body, "syncKey": "sk99"}
             return httpx.Response(200, json={"errorcode": 0})
+        if path == "/people/timeline":
+            pid = json.loads(req.content)["id"]
+            return httpx.Response(200, json={"errorcode": 0, "messages": [{"key": k} for k in history.get(pid, {})]})
+        if path == "/messages/get":
+            keys = json.loads(req.content)["messages"]
+            allm = {k: v for h in history.values() for k, v in h.items()}
+            return httpx.Response(200, json={"errorcode": 0, "messages": [{"key": k, **allm[k]} for k in keys]})
         if path in ("/timeline/communication/create", "/timeline/content/create", "/people/update"):
             return httpx.Response(200, json={"errorcode": 0})
         if path == "/user/stages/people":
@@ -424,5 +438,15 @@ def test_cloze(api):
     assert [o["value"] for o in opts["stage"]] == ["lead", "current", "out"]
     sigs = run(p.segment_signals(http, {}, "stage", "lead"))
     assert [s.external_id for s in sigs] == ["sk1"]
+
+    from app.services.crm.radar import build_plays
+    people[1].pop("doNotContact")  # Bob can be called for the scan below
+    people.append({"syncKey": "sk4", "name": "Cy New", "phones": [{"value": "+14155550104"}], "stage": "lead"})
+    scan = run(p.scan_signals(http, {}, depth="quick"))
+    by = {x.external_id: x for x in scan}
+    assert set(by) == {"sk1", "sk2", "sk4"}  # no phone → not callable
+    assert by["sk1"].inbound_kind == "Texted you" and by["sk2"].calls == 2 and by["sk2"].connected_calls == 0
+    plays = {pl["key"]: [i["external_id"] for i in pl["items"]] for pl in build_plays(scan)["plays"]}
+    assert plays["hot"] == ["sk1"] and plays["unreached"] == ["sk2"] and plays["never_called"] == ["sk4"]
 
 

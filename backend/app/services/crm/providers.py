@@ -3060,8 +3060,84 @@ class Cloze(Provider):
     def _slug(s: str) -> str:
         return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
 
+    # ── Radar scan ──
+    # People records carry no dates, so each person's timeline gives them: POST /people/timeline lists the
+    # keys of their calls, texts and emails; POST /messages/get reads those (date, style, direction, outcome)
+    # in one batch. The earliest item stands in for "added" (people with no history are of unknown age).
+    can_scan = True
+    _DEPTHS = {"quick": 100, "recent": 300, "old": 300}
+    _TIMELINE = ["call", "sms", "mail", "message", "meeting"]
+
+    async def _history(self, http, key: str) -> list[dict]:
+        tl = await self._call(http, "POST", "/people/timeline",
+                              json={"id": key, "limit": 30, "filter": self._TIMELINE, "directOnly": True})
+        keys = [m.get("key") for m in tl.get("messages") or [] if isinstance(m, dict) and m.get("key")][:30]
+        if not keys:
+            return []
+        got = await self._call(http, "POST", "/messages/get", json={"messages": keys, "wait": 0})
+        return [m for m in got.get("messages") or [] if isinstance(m, dict)]
+
+    @staticmethod
+    def _apply_history(s, msgs: list[dict]) -> None:
+        dated = [(m, _parse_time(m.get("date") if m.get("date") is not None else m.get("changed"))) for m in msgs]
+        dated = [(m, d) for m, d in dated if d]
+        calls = [(m, d) for m, d in dated if m.get("style") == "call" and str(m.get("direction") or "").lower() != "inbound"]
+        connected = [m for m, _ in calls if m.get("outcome") == "connected" or (m.get("duration") or 0) >= 1]
+        s.calls, s.connected_calls, s.calls_known = len(calls), len(connected), True
+        if calls:
+            last, when = max(calls, key=lambda x: x[1])
+            s.last_call_at = when
+            s.last_call_result = {"connected": "Connected", "leftvm": "Left voicemail", "noanwser": "No answer"}.get(
+                str(last.get("outcome") or ""), "")
+        for m, when in dated:
+            if str(m.get("direction") or "").lower() == "inbound" and (not s.last_inbound_at or when > s.last_inbound_at):
+                style = m.get("style")
+                s.last_inbound_at = when
+                s.inbound_kind = {"call": "Called you", "text": "Texted you", "sms": "Texted you",
+                                  "email": "Emailed you", "mail": "Emailed you"}.get(style, "Reached out")
+        if dated:
+            s.created_at = min(d for _, d in dated)
+            s.last_activity_at = max(d for _, d in dated)
+        else:
+            s.extra["age_unknown"] = True
+
+    async def scan_signals(self, http, config, limit=1000, quick=False, depth="", cursor=None, state=None):
+        import asyncio
+        from app.services.crm.radar import Signals
+
+        depth = depth or ("quick" if quick else "recent")
+        batch = min(self._DEPTHS.get(depth, 300), limit)
+        out, next_cursor = [], cursor[0] if cursor else None
+        while len(out) < batch:
+            q = {"cursor": next_cursor} if next_cursor else {"pagesize": 100}
+            res = await self._call(http, "GET", "/people/feed", params=q)
+            for r in res.get("people") or []:
+                c = self._contact(r)
+                if c and c.phone:
+                    lost = (r.get("stage") or "") == "out"
+                    out.append(Signals(external_id=c.external_id, name=c.name, phone=c.phone, email=c.email,
+                                       deal_stage=c.stage, status="Lost" if lost else c.stage, tags=c.tags, dnc=c.dnc,
+                                       deal_open=not lost and not c.dnc,
+                                       won_at=None))
+            next_cursor = res.get("cursor") or None
+            if not res.get("people") or not next_cursor:
+                next_cursor = None
+                break
+        if state is not None:
+            state["next"] = [next_cursor, {}] if next_cursor else None
+        out = out[:batch]
+        gate = asyncio.Semaphore(8)
+
+        async def history(s):
+            async with gate:
+                try:
+                    self._apply_history(s, await self._history(http, s.external_id))
+                except CrmError:
+                    s.calls_known = False
+        await asyncio.gather(*(history(s) for s in out))
+        return out
+
     # ── Radar "open a list": everyone in one Cloze stage ──
-    # (Cloze's people records carry no created / last-contact dates, so the scored Radar scan isn't offered.)
     can_segment = True
 
     async def segment_options(self, http, config) -> dict:
