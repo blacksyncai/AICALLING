@@ -46,6 +46,26 @@ async def run():
             log.info("fub_stage_read", fetched=len(people), in_stage=len(staged), more=bool(state.get("next")),
                      with_phone=sum(1 for p in staged if any(x.get("value") for x in p.get("phones") or [])),
                      seconds=round(time.monotonic() - t, 1))
+            import re
+            nophone = [p for p in staged if not any(x.get("value") for x in p.get("phones") or [])]
+            sample_ids = [str(p["id"]) for p in nophone[:40]]
+            fields_with_digits, has_email, created = {}, 0, {}
+            for pid in sample_ids:
+                full = await http.request("GET", f"/v1/people/{int(pid)}", params={"fields": "allFields"})
+                if full.get("emails"):
+                    has_email += 1
+                d = str(full.get("created") or "")[:10]
+                created[d] = created.get(d, 0) + 1
+                for k, v in full.items():
+                    if k.startswith("custom") and isinstance(v, (str, int)) and len(re.sub(r"\D", "", str(v))) >= 10:
+                        fields_with_digits[k] = fields_with_digits.get(k, 0) + 1
+            created_all = {}
+            for p in nophone:
+                d = str(p.get("created") or "")[:10]
+                created_all[d] = created_all.get(d, 0) + 1
+            log.info("fub_nophone_check", no_phone=len(nophone), sampled=len(sample_ids), with_email=has_email,
+                     phone_like_custom_fields=fields_with_digits,
+                     no_phone_by_day=dict(sorted(created_all.items(), key=lambda x: -x[1])[:8]))
             for pond in []:
                 pid = str(pond.get("id"))
                 t = time.monotonic()
