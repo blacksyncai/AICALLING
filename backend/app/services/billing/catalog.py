@@ -179,13 +179,24 @@ async def resolve_prices(force: bool = False) -> dict[str, dict]:
         return _CACHE["prices"]
 
     keys = [item["lookup_key"] for _, item, _ in all_items()]
-    by_lookup = await stripe_api.prices_by_lookup_keys(keys)
+    try:
+        by_lookup = await stripe_api.prices_by_lookup_keys(keys)
+    except Exception as exc:  # e.g. an expired or revoked key: show the catalog as unavailable, don't break pages
+        import structlog
+
+        structlog.get_logger(__name__).warning("stripe_prices_unavailable", error=f"{type(exc).__name__}: {str(exc)[:160]}")
+        return {item["key"]: {"price_id": None, "status": "error",
+                              "detail": "Stripe rejected the request. Check the Stripe API key."}
+                for _, item, _ in all_items()}
     out: dict[str, dict] = {}
     for kind, item, expected_type in all_items():
         explicit = item.get("price_id") or (getattr(settings, item["price_env"], "") if item.get("price_env") else "")
         price = None
         if explicit:
-            price = await stripe_api.retrieve_price(explicit)
+            try:
+                price = await stripe_api.retrieve_price(explicit)
+            except Exception:
+                price = None
         if price is None:
             price = by_lookup.get(item["lookup_key"])
         if price is None:
