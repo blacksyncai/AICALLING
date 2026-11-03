@@ -930,7 +930,7 @@ class FollowUpBoss(Provider):
                     return None  # deleted or not visible to this key
         return [p for p in await asyncio.gather(*(one(pid) for pid in ids)) if p and p.get("id")]
 
-    async def segment_signals(self, http, config, kind: str, value: str, cap: int = 5000):
+    async def segment_signals(self, http, config, kind: str, value: str, cap: int = 20000):
         """Everyone in the pond / lead source / stage / deal stage (up to cap). The filter is sent to FUB and also checked
         here, so the list is right even if FUB ignores it (just slower)."""
         from app.services.crm.radar import Signals
@@ -2336,7 +2336,7 @@ class Lofty(Provider):
         stages = [{"value": n, "label": n} for n in sorted(stage_names)]
         return {"pond": ponds, "source": sources, "stage": stages, "deal": []}
 
-    async def segment_signals(self, http, config, kind: str, value: str, cap: int = 5000):
+    async def segment_signals(self, http, config, kind: str, value: str, cap: int = 20000):
         from app.services.crm.radar import Signals
 
         params: dict = {"offset": 0, "limit": min(cap, 100), "sort": "CreateTime", "desc": "true"}
