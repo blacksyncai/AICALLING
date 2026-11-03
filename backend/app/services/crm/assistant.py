@@ -98,8 +98,7 @@ async def add_note(p, http, cfg, external_id, text, title):
     if p.key == "lofty":
         return await http.request("POST", "/v1.0/notes", json={"leadId": int(external_id), "content": (title + "\n\n" + text)[:5000]})
     if p.key == "cloze":
-        return await http.request("POST", "/timeline/note/create", json={
-            "relation_key": external_id, "subject": title[:200], "body": text[:5000]})
+        return await p.add_note(http, external_id, title, text)
     raise CrmError("Native notes are not enabled for this CRM.")
 
 

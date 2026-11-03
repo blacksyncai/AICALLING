@@ -352,51 +352,77 @@ def test_totalexpert_bad_credentials(api):
 
 
 def test_cloze(api):
+    """Shapes from Cloze's OpenAPI spec (api.cloze.com/api-docs/cloze-openapi.json)."""
     p = PROVIDERS["cloze"]
     http = p.native_http("key1", {})
     people = [
-        {"id": "p1", "first_name": "Ann", "last_name": "Lee", "phones": [{"value": "+14155550101"}],
-         "emails": [{"value": "ann@x.com"}], "stage": "lead", "created": "2026-10-20T10:00:00Z",
-         "custom_fields": [{"name": "Do Not Contact", "value": False}]},
-        {"id": "p2", "first_name": "Bob", "phones": [{"value": "+14155550102"}], "stage": "customer",
-         "created": "2025-01-01T10:00:00Z", "custom_fields": [{"name": "Do Not Contact", "value": True}]},
+        {"syncKey": "sk1", "name": "Ann Lee", "first": "Ann", "last": "Lee", "phones": [{"value": "+14155550101"}],
+         "emails": [{"value": "ann@x.com"}], "stage": "lead", "keywords": ["seller"]},
+        {"syncKey": "sk2", "name": "Bob Ray", "phones": [{"value": "+14155550102"}], "stage": "current",
+         "doNotContact": {"no-calls": True}},
+        {"syncKey": "sk3", "name": "No Phone"},
     ]
+    created = {}
 
     def handler(req):
-        path = req.url.path
+        path, q = req.url.path, dict(req.url.params)
+        assert path.startswith("/v1/"), path
+        path = path[3:]
         if path == "/user/profile":
-            return httpx.Response(200, json={"errorcode": 0, "first_name": "Gabe", "last_name": "Ruiz"})
+            return httpx.Response(200, json={"errorcode": 0, "profile": {"name": "Gabe Ruiz", "email": "gabe@x.com"}})
         if path == "/people/feed":
-            return httpx.Response(200, json={"errorcode": 0, "list": people, "total": 2})
+            if q.get("cursor") == "c2":
+                return httpx.Response(200, json={"errorcode": 0, "people": people[2:], "cursor": ""})
+            assert q["pagesize"]
+            rows = [r for r in people if not q.get("stage") or r.get("stage") == q["stage"]]
+            return httpx.Response(200, json={"errorcode": 0, "people": rows[:2] if not q.get("stage") else rows,
+                                             "cursor": "c2" if not q.get("stage") else ""})
         if path == "/people/find":
-            return httpx.Response(200, json={"errorcode": 0, "list": [people[0]] if req.url.params.get("email") == "ann@x.com" else []})
+            if q.get("countonly"):
+                return httpx.Response(200, json={"errorcode": 0, "availablecount": 3})
+            hits = [r for r in people + list(created.values())
+                    if q["freeformquery"] in [e["value"] for e in r.get("emails", []) + r.get("phones", [])]]
+            return httpx.Response(200, json={"errorcode": 0, "people": hits})
         if path == "/people/create":
-            return httpx.Response(200, json={"errorcode": 0, "id": "p99"})
-        if path == "/timeline/communication/create":
+            body = json.loads(req.content)
+            created["new"] = {**body, "syncKey": "sk99"}
             return httpx.Response(200, json={"errorcode": 0})
-        if path == "/account/contact_stages":
-            return httpx.Response(200, json={"errorcode": 0, "list": [{"key": "lead", "label": "Lead"}, {"key": "customer", "label": "Customer"}]})
-        if path == "/people/update":
+        if path in ("/timeline/communication/create", "/timeline/content/create", "/people/update"):
             return httpx.Response(200, json={"errorcode": 0})
-        if path == "/timeline/communications":
-            return httpx.Response(200, json={"errorcode": 0, "list": []})
+        if path == "/user/stages/people":
+            return httpx.Response(200, json={"errorcode": 0, "list": [{"key": "lead", "name": "Lead"},
+                                                                         {"key": "current", "name": "Active"},
+                                                                         {"key": "out", "name": "Lost"}]})
         return httpx.Response(200, json={"errorcode": 1001, "message": "nope"})
 
     api["handler"] = handler
     assert run(p.verify(http, {})) == "Gabe Ruiz"
     assert api["seen"][-1].headers["authorization"] == "Bearer key1"
-    assert run(p.find_or_create(http, {}, Contact("Ann Lee", "", "ann@x.com"), create=False)) == "p1"
-    assert run(p.find_or_create(http, {}, Contact("Jo", "+14155550199", "jo@x.com"), create=True)) == "p99"
-    run(p.log_call(http, {}, "p1", CALL))
+    assert run(p.find_or_create(http, {}, Contact("Ann Lee", "", "ann@x.com"), create=False)) == "sk1"
+    assert run(p.find_or_create(http, {}, Contact("Nobody", "+14155550177", ""), create=False)) is None
+    assert run(p.find_or_create(http, {}, Contact("Jo Park", "+14155550199", "jo@x.com"), create=True)) == "sk99"
+    body = json.loads([r for r in api["seen"] if r.url.path == "/v1/people/create"][-1].content)
+    assert body["first"] == "Jo" and body["last"] == "Park" and body["emails"] == [{"value": "jo@x.com"}]
+
+    run(p.log_call(http, {}, "sk1", CALL))
     body = json.loads(api["seen"][-1].content)
-    assert body["relation_key"] == "p1" and body["style"] == "call" and body["direction"] == "outbound"
-    contacts = run(p.list_contacts(http, {}, limit=10))
-    assert [(c.external_id, c.dnc, c.stage) for c in contacts] == [("p1", False, "lead"), ("p2", True, "customer")]
-    assert run(p.contact_count(http, {})) == 2
+    assert body["style"] == "call" and body["direction"] == "outbound"
+    assert body["references"] == [{"type": "person", "ids": ["sk1"]}]
+    assert body["duration"] == round(CALL.duration_seconds / 60, 1) and isinstance(body["date"], int)
+
+    contacts = run(p.list_contacts(http, {}, limit=10))  # two feed pages, follows the cursor
+    assert [(c.external_id, c.dnc, c.stage) for c in contacts] == [("sk1", False, "lead"), ("sk2", True, "current")]
+    assert run(p.contact_count(http, {})) == 3
     pipes = run(p.pipelines(http, {}))
-    assert [s["label"] for s in pipes[0]["stages"]] == ["Lead", "Customer"]
-    assert run(p.set_stage(http, {}, "p1", pipes[0], "customer", create=False, forward_only=True)) == "Moved to Customer"
-    run(p.mark_dnc(http, {}, "p2"))
-    assert json.loads(api["seen"][-1].content) == {"custom_fields": [{"name": "Do Not Contact", "value": True}]}
-    sigs = run(p.scan_signals(http, {}, depth="quick"))
-    assert len(sigs) == 2
+    assert [s["label"] for s in pipes[0]["stages"]] == ["Lead", "Active", "Lost"]
+    assert run(p.set_stage(http, {}, "sk1", pipes[0], "current", create=False, forward_only=True)) == "Moved to Active"
+    assert json.loads(api["seen"][-1].content) == {"stage": "current", "syncKey": "sk1"}
+    run(p.mark_dnc(http, {}, "sk2"))
+    assert json.loads(api["seen"][-1].content)["doNotContact"]["no-calls"] is True
+
+    opts = run(p.segment_options(http, {}))
+    assert [o["value"] for o in opts["stage"]] == ["lead", "current", "out"]
+    sigs = run(p.segment_signals(http, {}, "stage", "lead"))
+    assert [s.external_id for s in sigs] == ["sk1"]
+
+
