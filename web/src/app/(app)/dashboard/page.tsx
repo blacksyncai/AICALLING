@@ -223,7 +223,7 @@ export default function DashboardPage() {
                 ),
               },
               {
-                label: "Meaningful conversations",
+                label: "Conversations",
                 value: overview.meaningful_calls.toLocaleString(),
                 icon: MessagesSquare,
                 note: (
