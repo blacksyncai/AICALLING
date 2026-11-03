@@ -1368,7 +1368,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     channel = "web" if call_type == "web" else "phone"
 
     # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
-    from app.agent.runtime import personal_greeting_match, voicemail_greeting_match
+    from app.agent.runtime import number_greeting_match, personal_greeting_match, voicemail_greeting_match
 
     vm = {"detected": False, "heard": "", "speaking": False, "changed": _time.monotonic()}
     vm_action = (cfg.get("voicemail_action") or "hang_up")
@@ -1572,7 +1572,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             vm["live_hello"] = len(text.split()) <= 3 and "?" in text
         match = voicemail_greeting_match(vm["heard"])
         if not match and run.t0 and elapsed < 20 and not vm.get("live_hello") and not screen["seen"]:
-            match = personal_greeting_match(vm["heard"])
+            match = personal_greeting_match(vm["heard"]) or number_greeting_match(vm["heard"])
         if match:
             vm["detected"] = True
             # The matched phrase (not what was said) — enough to spot a false positive in the logs.

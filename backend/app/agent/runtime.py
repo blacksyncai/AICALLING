@@ -472,6 +472,27 @@ _VOICEMAIL_STRICT = (
 )
 
 
+_DIGIT_WORDS = {"zero", "oh", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
+
+
+def _reads_out_number(t: str) -> bool:
+    """A carrier's default greeting reads the phone number aloud ("Your message for nine five four five nine
+    four zero seven two nine." / "Five six one two six zero four three six one"). People say their number one
+    or two digits at a time when asked, never seven-plus digits as the whole turn unprompted."""
+    words = re.findall(r"[a-z]+|\d", t)
+    digits = sum(w in _DIGIT_WORDS or w.isdigit() for w in words)
+    return digits >= 7 and digits >= 0.6 * len(words)
+
+
+def number_greeting_match(text: str) -> str | None:
+    """The carrier's default voicemail greeting, judged only on what's heard at the start of a call (a live
+    person can read out their number later, e.g. for a callback)."""
+    t = (text or "").lower().replace("’", "'")
+    if re.search(r"\b(?:your )?message for\b", t) or _reads_out_number(t):
+        return "number read out"
+    return None
+
+
 def voicemail_greeting_match(text: str) -> str | None:
     t = (text or "").lower().replace("’", "'")
     return next((h for h in _VOICEMAIL_STRICT if h in t), None)
@@ -588,7 +609,8 @@ def _live_contact_turns(transcript: list[dict] | None) -> list[str]:
             continue
         # Only the opening can be a personal recorded greeting. A busy person
         # responding after screening or a live hello is still a person.
-        if not live and not machine and not screened and looks_like_personal_greeting(greeting + " " + text):
+        if not live and not machine and not screened and (
+                looks_like_personal_greeting(greeting + " " + text) or number_greeting_match(greeting + " " + text)):
             machine = True
             greeting += " " + text
             continue
@@ -626,7 +648,7 @@ def voicemail_answered(transcript: list[dict] | None) -> bool:
     ) for t in transcript or []):
         return True
     text = " ".join(contact_turns(transcript))
-    return is_voicemail_greeting(text) or looks_like_personal_greeting(text)
+    return is_voicemail_greeting(text) or looks_like_personal_greeting(text) or bool(number_greeting_match(text))
 
 
 def callback_requested(transcript: list[dict] | None, quote: str | None = None) -> bool:

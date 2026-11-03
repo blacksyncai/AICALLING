@@ -63,3 +63,19 @@ def test_call_screener_giving_up_is_voicemail():
         assert voicemail_greeting_match(text) and not is_screener_hold(text)
     # A live person saying someone isn't around is not a machine.
     assert voicemail_greeting_match("He's not available right now, who's calling?") is None
+
+
+def test_carrier_greeting_that_reads_out_the_number_is_voicemail():
+    from app.agent.runtime import number_greeting_match, voicemail_answered, voicemail_greeting_match
+    for heard in ("Your message for nine five four five nine four zero seven two nine.",
+                  "Five six one two six zero four three six one",
+                  "Message for four one five eight six seven five four five eight."):
+        assert number_greeting_match(heard), heard
+    for live in ("Hello?", "Hola. Gracias.", "Legacy Management Group, this is Kelly.", "My number? Four one five."):
+        assert number_greeting_match(live) is None, live
+    # Only judged at the start of a call: the always-on strict list doesn't treat a read-out number as voicemail.
+    assert voicemail_greeting_match("Sure, call me back at four one five five five five zero one zero one") is None
+    call = [{"role": "assistant", "text": "Hey, this is Ava with William Raveis. Is this Chun?"},
+            {"role": "user", "text": "Five six one two six zero four three six one"},
+            {"role": "assistant", "text": "Got it. Is this Chun?"}]
+    assert voicemail_answered(call)
