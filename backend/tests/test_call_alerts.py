@@ -206,3 +206,21 @@ def test_admin_call_search_filters_before_pagination_and_scopes_account(client,s
     assert client.get(base+'/calls',params={'q':'not found'}).json()['items']==[]
     assert client.get(base+'/calls',params={'q':'%'}).json()['items']==[]
     assert any(r['id']==good for r in client.get(base+'/calls',params={'q':'0123','outcome':'qualified'}).json()['items'])
+
+
+def test_admin_can_edit_the_email_before_sending(client,setup,monkeypatch):
+    org,owner,uid,base=setup
+    cid=add_call(org,outcome='not_interested')
+    sent=[]
+    async def fake(*args,**kwargs):sent.append((args,kwargs));return True
+    monkeypatch.setattr(call_alerts.email,'send_email',fake)
+    body={'call_ids':[cid],'user_ids':[uid],'edits':{cid:{'subject':'Potential follow-up: home search on pause',
+          'heading':'Potential follow-up','message':'Search is on pause. Worth a check-in next month.'}}}
+    assert client.post(base+'/notify',json=body).json()['queued']==1
+    asyncio.run(call_alerts.tick())
+    mine=[x for x in sent if x[1].get('kind')=='call_alert']
+    assert len(mine)==1
+    args,_=mine[0]
+    assert args[1]=='Potential follow-up: home search on pause'
+    assert 'Worth a check-in next month.' in args[2] and 'Potential follow-up' in args[2]
+    assert 'Interested in a visit' not in args[2]

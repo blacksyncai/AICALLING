@@ -45,7 +45,7 @@ export function humanize(s: string | null | undefined): string {
 /** How a call outcome or contact status reads in the app ("screened" → "Call screener · no answer"). */
 const OUTCOME_LABEL: Record<string, string> = {
   no_decision: "Spoke — no decision", insufficient_conversation: "Insufficient conversation",
-  busy: "Busy / bad timing", information_requested: "Information requested", declined_conversation: "Declined conversation",
+  busy: "Busy / bad timing", information_requested: "Information requested", potential_follow_up: "Potential follow-up", declined_conversation: "Declined conversation",
   completed: "Completed (legacy)",
   callback: "Callback requested",
   screened: "Call screener · no answer",
@@ -63,7 +63,7 @@ export const NEXT_ACTION_LABELS: Record<string, string> = { none_agreed: "No nex
   send_information: "Send requested information", meeting_booked: "Meeting booked", human_review: "Human review needed" };
 
 export const OUTCOME_TONE: Record<string, "green" | "blue" | "amber" | "red" | "gray" | "violet"> = {
-  no_decision: "blue", insufficient_conversation: "gray", busy: "amber", information_requested: "blue", declined_conversation: "gray",
+  no_decision: "blue", insufficient_conversation: "gray", busy: "amber", information_requested: "blue", potential_follow_up: "amber", declined_conversation: "gray",
   meeting_booked: "green",
   qualified: "blue",
   interested: "blue",

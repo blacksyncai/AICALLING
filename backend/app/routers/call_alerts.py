@@ -22,9 +22,17 @@ class SettingsIn(BaseModel):
     agent_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
     crm_base_url: str = Field(default='', max_length=300)
 
+class EmailEdit(BaseModel):
+    subject: str = Field(default='', max_length=240)
+    heading: str = Field(default='', max_length=120)
+    message: str = Field(default='', max_length=6000)
+
+
 class NotifyIn(BaseModel):
     call_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
     user_ids: list[uuid.UUID] = Field(min_length=1, max_length=20)
+    # Admin edits to the generated email, by call id (empty fields keep the generated text).
+    edits: dict[str, EmailEdit] | None = None
 
 async def org_for(db, org_id):
     org = await db.get(Organization, org_id)
@@ -178,7 +186,8 @@ async def admin_notify(org_id: uuid.UUID, body: NotifyIn, user: AdminDep, db: Db
     if not email.email_enabled():
         raise HTTPException(400,'Email delivery is not configured.')
     try:
-        count=await alerts.enqueue(db,org_id,body.call_ids,body.user_ids,requested_by=user.id)
+        edits={k: v.model_dump() for k, v in (body.edits or {}).items()}
+        count=await alerts.enqueue(db,org_id,body.call_ids,body.user_ids,requested_by=user.id,edits=edits or None)
     except ValueError as exc:
         raise HTTPException(400,str(exc)) from exc
     await db.commit()

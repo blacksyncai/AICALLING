@@ -10,6 +10,7 @@ RESPONSE_OUTCOMES = (
     "busy",
     "information_requested",
     "declined_conversation",
+    "potential_follow_up",
 )
 NEXT_ACTIONS = (
     "none_agreed",
@@ -84,6 +85,23 @@ def action_quote_from_contact(quote, action, transcript):
         ):
             return grounded
     return None
+
+
+# "It's on pause", "not right now", "maybe next year": a no for now, not for good.
+_LATER = re.compile(
+    r"\b(?:on (?:pause|hold)|paused|put (?:it )?on hold|not (?:right )?now|not (?:at )?this time|not yet|"
+    r"maybe (?:later|next (?:year|month|spring|summer|fall))|next (?:year|spring|summer|fall)|"
+    r"in a (?:few|couple(?: of)?) (?:months|weeks)|after the (?:holidays|new year)|down the road|"
+    r"waiting (?:a (?:few|couple)|until|till)|(?:later|early) (?:this|next) year|not ready yet)\b")
+_FOR_GOOD = re.compile(r"\b(?:don't call|do not call|stop calling|remove me|take me off|never|not interested at all)\b")
+
+
+def later_quote(transcript):
+    """The live contact's words saying "not now, maybe later", unless they also refused for good."""
+    turns = _live_contact_turns(transcript)
+    if any(_FOR_GOOD.search(_normalized(t)) for t in turns):
+        return None
+    return next((t.strip()[:1200] for t in turns if _LATER.search(_normalized(t))), None)
 
 
 def review_response(result, transcript):
@@ -213,6 +231,14 @@ def review_response(result, transcript):
         action, action_quote = "human_review", None
     if outcome == "callback" and action != "callback_requested":
         outcome = unresolved(transcript)
+    if outcome in ("not_interested", "no_decision", "busy", "insufficient_conversation", "potential_follow_up"):
+        later = later_quote(transcript)
+        if later:
+            outcome, quote, scope, certainty = "potential_follow_up", later, "timing", "clear"
+            if out.get("sentiment") == "negative":
+                out["sentiment"] = "neutral"  # "on pause" isn't a hostile reaction
+        elif outcome == "potential_follow_up" and not quote:
+            outcome = unresolved(transcript)
     out["outcome"] = outcome
     out["response_analysis"] = {
         "version": 1,

@@ -22,6 +22,8 @@ def _now() -> datetime:
 #          | wrong_number | do_not_call
 CALL_OUTCOMES = (
     "no_decision", "insufficient_conversation", "busy", "information_requested", "declined_conversation",
+    # Not now, but maybe later: plans on pause/hold, "not yet", "maybe next year". Worth a future follow-up.
+    "potential_follow_up",
     "meeting_booked", "qualified", "not_qualified", "interested", "not_interested",
     "callback", "transferred", "voicemail", "no_answer", "completed", "failed",
     "wrong_number", "do_not_call",

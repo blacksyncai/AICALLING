@@ -280,7 +280,10 @@ Outcome definitions (pick the single best one):
   An agent offering a callback alone is not a contact request. Require a live request or agreement to talk again.
   Busy/driving alone is busy. Wanting to think is no_decision unless a next conversation was agreed.
   Requests for text/email information are information_requested, with send_information as the next action.
-- not_interested: explicitly rejected the ACTUAL OFFER or service. Quote the refusal and mark response_scope=offer.
+- potential_follow_up: not now, but not a permanent no: their plans are paused, on hold or later ("it's on pause",
+  "not right now", "maybe next year", "not yet", "after the holidays", "we're waiting a few months"), even if they
+  also said "no" to doing it today. Worth a future follow-up. Sentiment is neutral unless they were hostile.
+- not_interested: explicitly rejected the ACTUAL OFFER or service, for good (not "on pause" or "not right now"). Quote the refusal and mark response_scope=offer.
   A no to hearing the introduction is declined_conversation; a no to a meeting alone is not rejecting the offer.
 - declined_conversation: explicitly declined permission to explain the reason for calling; interest in the offer is unknown.
 - busy: bad timing / unavailable now, without a request or agreement to another call. Never assume callback permission.

@@ -400,7 +400,7 @@ BLACKSYNC_STAGES = [
 ]
 OUTCOME_TO_KEY = {
     "no_decision": None, "insufficient_conversation": None, "busy": None, "declined_conversation": None,
-    "information_requested": "follow_up",
+    "information_requested": "follow_up", "potential_follow_up": "follow_up",
     "meeting_booked": "booked", "interested": "follow_up", "qualified": "follow_up", "callback": "follow_up",
     "completed": "follow_up", "transferred": "follow_up", "voicemail": "voicemail", "no_answer": "no_answer",
     "failed": "no_answer", "not_interested": "not_interested", "not_qualified": "not_interested",

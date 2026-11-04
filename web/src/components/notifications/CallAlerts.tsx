@@ -38,6 +38,7 @@ type Preview = {
     call_id: string;
     subject: string;
     summary: string;
+    outcome: string;
     contact: string;
     crm_url: string;
     call_url: string;
@@ -274,6 +275,8 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
   const [calls, setCalls] = useState<string[]>([]);
   const [users, setUsers] = useState<string[]>([]);
   const [preview, setPreview] = useState<Preview>();
+  // The admin's edits to each generated email, by call id.
+  const [edits, setEdits] = useState<Record<string, { subject: string; heading: string; message: string }>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const { data: prefs } = useSWR<Preferences>(base, fetcher);
@@ -503,7 +506,9 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
               setBusy(true);
               setMessage("");
               try {
-                setPreview(await post<Preview>(`${base}/preview`, selected));
+                const p = await post<Preview>(`${base}/preview`, selected);
+                setEdits(Object.fromEntries(p.items.map((c) => [c.call_id, { subject: c.subject, heading: c.outcome, message: c.summary }])));
+                setPreview(p);
               } catch (e) {
                 setMessage((e as Error).message);
               } finally {
@@ -547,10 +552,31 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
                 key={c.call_id}
                 className="space-y-2 rounded-xl bg-zinc-50 p-4"
               >
-                <h3 className="font-semibold">{c.subject}</h3>
-                <p className="whitespace-pre-wrap text-sm text-zinc-600">
-                  {c.summary}
-                </p>
+                <label className="block text-xs font-medium text-zinc-600">
+                  Subject
+                  <input
+                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900"
+                    value={edits[c.call_id]?.subject ?? c.subject}
+                    onChange={(e) => setEdits((x) => ({ ...x, [c.call_id]: { ...x[c.call_id], subject: e.target.value } }))}
+                  />
+                </label>
+                <label className="block text-xs font-medium text-zinc-600">
+                  Headline
+                  <input
+                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900"
+                    value={edits[c.call_id]?.heading ?? c.outcome}
+                    onChange={(e) => setEdits((x) => ({ ...x, [c.call_id]: { ...x[c.call_id], heading: e.target.value } }))}
+                  />
+                </label>
+                <label className="block text-xs font-medium text-zinc-600">
+                  Message
+                  <textarea
+                    rows={5}
+                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700"
+                    value={edits[c.call_id]?.message ?? c.summary}
+                    onChange={(e) => setEdits((x) => ({ ...x, [c.call_id]: { ...x[c.call_id], message: e.target.value } }))}
+                  />
+                </label>
                 {c.crm_url ? (
                   <a
                     href={c.crm_url}
@@ -590,6 +616,7 @@ export function AdminCallNotifications({ orgId }: { orgId: string }) {
                   }>(`${base}/notify`, {
                     call_ids: preview.items.map((c) => c.call_id),
                     user_ids: preview.recipients.map((u) => u.id),
+                    edits,
                   });
                   setPreview(undefined);
                   setCalls([]);

@@ -163,7 +163,7 @@ def parse_contacts_csv(text: str, phone_cols: list[str] | None = None,
 NO_CONVERSATION = ("no_answer", "voicemail", "screened", "failed")
 _OPEN = (None, "", "new", "calling", *NO_CONVERSATION)
 _VAGUE = ("completed", "hung_up", "language_barrier", "no_decision", "insufficient_conversation", "busy", "declined_conversation")
-_RANK = {"interested": 1, "information_requested": 1, "callback": 1, "qualified": 2, "transferred": 3, "meeting_booked": 3}
+_RANK = {"interested": 1, "information_requested": 1, "callback": 1, "potential_follow_up": 1, "qualified": 2, "transferred": 3, "meeting_booked": 3}
 
 
 def next_status(current: str | None, outcome: str | None) -> str | None:

@@ -194,3 +194,21 @@ def test_call_result_is_recorded_on_the_number_it_dialed(client):
 
     upd = client.patch(f"/api/contacts/{c['id']}", json={"phones": [p2, p3]}).json()
     assert upd["phone"] == p2 and upd["phones"][0]["status"] == "wrong_number"
+
+
+def test_on_pause_is_a_potential_follow_up_not_a_refusal():
+    from app.services.response_review import review_response
+
+    t = [{"role": "assistant", "text": "Are you still looking around Alameda, or leaning towards somewhere else?"},
+         {"role": "user", "text": "No. It's not not doing any of that."},
+         {"role": "assistant", "text": "Got it. Is it on pause, or off the table for now?"},
+         {"role": "user", "text": "Yeah. It's on pause. Thanks for the call. Bye."}]
+    r = review_response({"outcome": "not_interested", "sentiment": "negative", "response_analysis": {
+        "evidence_quote": "No. It's not not doing any of that.", "response_scope": "offer", "certainty": "clear",
+        "next_action": "none_agreed"}}, t)
+    assert r["outcome"] == "potential_follow_up" and r["sentiment"] == "neutral"
+    t2 = [{"role": "assistant", "text": "Still looking?"}, {"role": "user", "text": "Not right now. Take me off your list."}]
+    r2 = review_response({"outcome": "not_interested", "sentiment": "negative", "response_analysis": {
+        "evidence_quote": "Not right now. Take me off your list.", "response_scope": "offer", "certainty": "clear",
+        "next_action": "none_agreed"}}, t2)
+    assert r2["outcome"] == "not_interested"

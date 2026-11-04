@@ -19,7 +19,7 @@ import { useSession } from "@/lib/session";
 import type { Agent, Call } from "@/lib/types";
 import { NEXT_ACTION_LABELS, cn, formatDateTime, formatDuration, formatPhone, humanize, outcomeLabel, timeAgo } from "@/lib/utils";
 
-const OUTCOMES = ["no_decision", "insufficient_conversation", "busy", "information_requested", "declined_conversation", "wrong_number", "meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "language_barrier", "hung_up", "completed", "failed"];
+const OUTCOMES = ["no_decision", "insufficient_conversation", "busy", "information_requested", "potential_follow_up", "declined_conversation", "wrong_number", "meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "language_barrier", "hung_up", "completed", "failed"];
 const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
 const TYPE_CHIP: Record<string, string> = { outbound: "Outbound calls", inbound: "Inbound calls", web: "Browser tests" };
 const PAGE = 25;

@@ -20,7 +20,8 @@ from app.services import email, email_templates as t
 
 log = structlog.get_logger(__name__)
 OUTCOMES = {'meeting_booked': 'Appointment booked', 'qualified': 'Qualified follow-up',
-            'callback': 'Callback requested', 'interested': 'Interested lead', 'transferred': 'Call transferred'}
+            'callback': 'Callback requested', 'interested': 'Interested lead', 'transferred': 'Call transferred',
+            'potential_follow_up': 'Potential follow-up'}
 DEFAULT_OUTCOMES = ['meeting_booked', 'qualified', 'callback']
 
 
@@ -39,7 +40,8 @@ async def members(db, org_id):
         .where(Membership.org_id == org_id).order_by(User.first_name, User.email))).scalars().all()
 
 
-async def payload(db, org, call, prefs):
+async def payload(db, org, call, prefs, edit: dict | None = None):
+    """The alert email. `edit` (admin-sent alerts) replaces the generated subject, heading and message."""
     if call.org_id != org.id or call.call_type not in ('outbound', 'inbound') or not call.ended_at:
         raise ValueError('Choose a completed phone call in this account; browser tests are excluded.')
     lead = await db.get(Lead, call.lead_id) if call.lead_id else None
@@ -54,7 +56,12 @@ async def payload(db, org, call, prefs):
     ref = str((lead.crm_refs or {}).get('followupboss') or '') if lead else ''
     if prefs and prefs.crm_base_url and ref.isdigit():
         crm = f'{clean_crm_url(prefs.crm_base_url)}/2/people/view/{ref}'
-    subject = f'{label}: {name}'[:240]
+    edit = edit or {}
+    if (edit.get('heading') or '').strip():
+        label = edit['heading'].strip()[:120]
+    if (edit.get('message') or '').strip():
+        summary = edit['message'].strip()[:6000]
+    subject = (edit.get('subject') or '').strip()[:240] or f'{label}: {name}'[:240]
     details = [('Workspace', org.name), ('Contact', name), ('Phone', call.to_phone or ''),
                ('Agent', agent.name if agent and agent.org_id == org.id else 'AI agent'),
                ('Appointment', call.agreed_meeting_time or '')]
@@ -69,8 +76,11 @@ async def payload(db, org, call, prefs):
             'html': t.layout(title=html.escape(subject), preheader=html.escape(summary[:150]), heading=html.escape(label), body_html=content)}
 
 
-async def enqueue(db, org_id, call_ids, user_ids, requested_by=None, automatic=False):
-    allowed = {u.id for u in await members(db, org_id)}
+async def enqueue(db, org_id, call_ids, user_ids, requested_by=None, automatic=False, edits: dict | None = None):
+    members_by_id = {u.id: u for u in await members(db, org_id)}
+    allowed = set(members_by_id)
+    org = await db.get(Organization, org_id) if edits else None
+    prefs = await db.get(CallAlertSettings, org_id) if edits else None
     if not set(user_ids) <= allowed:
         raise ValueError('Recipients must be current members of this account.')
     count = 0
@@ -81,10 +91,15 @@ async def enqueue(db, org_id, call_ids, user_ids, requested_by=None, automatic=F
         for user_id in dict.fromkeys(user_ids):
             if await db.scalar(select(CallAlert.id).where(CallAlert.call_id == call_id, CallAlert.user_id == user_id)):
                 continue
+            edit = (edits or {}).get(str(call_id))
+            message = None
+            if edit:  # the admin's edited email, stored so delivery (and retries) send exactly that
+                message = {**(await payload(db, org, call, prefs, edit)), 'to': members_by_id[user_id].email,
+                           'sender': settings.email_from_calls}
             try:
                 async with db.begin_nested():
                     db.add(CallAlert(org_id=org_id, call_id=call_id, user_id=user_id,
-                        requested_by=requested_by, automatic=automatic))
+                        requested_by=requested_by, automatic=automatic, message_payload=message))
                     await db.flush()
                 count += 1
             except IntegrityError:

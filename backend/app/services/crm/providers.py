@@ -99,7 +99,7 @@ class CallInfo:
 
 OUTCOME_LABELS = {
     "no_decision": "Spoke — no decision", "insufficient_conversation": "Insufficient conversation",
-    "busy": "Busy / bad timing", "information_requested": "Information requested", "declined_conversation": "Declined conversation",
+    "busy": "Busy / bad timing", "information_requested": "Information requested", "potential_follow_up": "Potential follow-up", "declined_conversation": "Declined conversation",
     "meeting_booked": "Meeting booked", "interested": "Interested", "not_interested": "Not interested",
     "callback": "Callback requested", "no_answer": "No answer", "voicemail": "Left voicemail",
     "screened": "Call screener, no answer", "language_barrier": "Language barrier", "hung_up": "Hung up",
@@ -1090,7 +1090,8 @@ class FollowUpBoss(Provider):
         # Hand the human a task when there's something to do next.
         task = {"meeting_booked": ("Prep for meeting booked by AI" + (f": {call.meeting_time}" if call.meeting_time else ""), 0),
                 "callback": ("Call back: asked for a callback on an AI call", 1),
-                "interested": ("Follow up: interested on an AI call", 0)}.get(call.routing_outcome)
+                "interested": ("Follow up: interested on an AI call", 0),
+                "potential_follow_up": ("Follow up later: plans on pause (AI call)", 30)}.get(call.routing_outcome)
         if task:
             try:
                 person = await self._person(http, external_id, "id,assignedUserId")
@@ -3704,6 +3705,7 @@ _HINTS = {
     "interested": ("interested", "engaged", "warm", "hot", "follow up", "needs follow"),
     "qualified": ("qualified", "engaged"),
     "callback": ("follow up", "callback", "call back", "nurture"),
+    "potential_follow_up": ("nurture", "long term", "follow up", "future", "watch"),
     "completed": ("contacted", "conversation", "attempted contact", "spoke"),
     "voicemail": ("voicemail", "voice mail", "left message", "vm"),
     "no_answer": ("dialing", "attempted", "no answer", "contact attempted", "attempting"),
