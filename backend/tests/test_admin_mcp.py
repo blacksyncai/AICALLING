@@ -131,3 +131,30 @@ def test_admin_works_in_any_account_and_everything_is_logged(client, make_client
     conn = next(c["id"] for c in page["connections"] if c["account"] == "Acme Roofing")
     assert client.delete(f"/api/admin/ai-access/{conn}").status_code == 204
     assert _rpc(anon, token, "tools/list").status_code == 401
+
+
+def test_contacts_get_their_variables_from_add_csv_and_update(client, make_client):
+    org = _customer(client, "Porch Light")
+    anon = make_client()
+    token = _admin_connect(client, anon)
+    _tool(anon, token, "admin_use_account", {"account_id": org})
+
+    added, err = _tool(anon, token, "add_contacts", {"contacts": [
+        {"name": "Ann", "phone": "+14155550201", "variables": {"Area": "Austin", "loan amount": "250k"}},
+        {"name": "Bob", "phone": "+14155550202"}]})
+    assert not err and added["added"] == 2, added
+    # Bob was added without his columns: the CSV fills them in, and adds Cy as a new contact.
+    csv = "name,phone,area,property\nBob,+14155550202,Dallas,Condo\nCy,+14155550203,Houston,House\n"
+    out, err = _tool(anon, token, "import_contacts_csv", {"csv": csv})
+    assert not err and out["created"] == 1 and out["duplicates"] == 1 and out["updated"] == 0
+    out, err = _tool(anon, token, "import_contacts_csv", {"csv": csv, "update_existing": True})
+    assert not err and out["updated"] == 2 and out["created"] == 0
+
+    people = {c["name"]: c for c in _tool(anon, token, "list_contacts", {"limit": 10})[0]["contacts"]}
+    assert people["Ann"]["variables"] == {"area": "Austin", "loan_amount": "250k"}
+    assert people["Bob"]["variables"] == {"area": "Dallas", "property": "Condo"}
+    assert people["Cy"]["variables"] == {"area": "Houston", "property": "House"}
+
+    upd, err = _tool(anon, token, "update_contact", {"contact_id": people["Ann"]["id"],
+                                                     "variables": {"area": "Round Rock", "loan_amount": ""}})
+    assert not err and upd["variables"] == {"area": "Round Rock"}

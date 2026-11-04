@@ -630,7 +630,10 @@ async def get_analytics(s: Session, args: dict) -> dict:
 
 def _contact_brief(c: dict) -> dict:
     keep = ("id", "name", "phone", "email", "company", "role", "status", "tags", "dnc", "last_called_at")
-    return {k: c.get(k) for k in keep if k in c}
+    out = {k: c.get(k) for k in keep if k in c}
+    if c.get("custom_fields"):
+        out["variables"] = c["custom_fields"]
+    return out
 
 
 @tool("list_contacts", "List contacts", "Search the account's contacts by name, phone, email or company.",
@@ -646,11 +649,15 @@ async def list_contacts(s: Session, args: dict) -> dict:
 
 @tool("add_contacts", "Add contacts",
       """Adds people to the account's contacts (up to 200 at a time), optionally straight into a campaign.
-Each needs a phone number.""",
+Each needs a phone number. Put any other column (city, area, property, loan amount...) in variables so the
+agent's script can use it as {{variable}}. For a CSV file, use import_contacts_csv instead.""",
       {"contacts": {"type": "array", "minItems": 1, "maxItems": 200, "items": {
           "type": "object", "required": ["phone"], "additionalProperties": False,
           "properties": {"name": STR, "phone": STR, "email": STR, "company": STR, "role": STR, "notes": STR,
-                         "tags": {"type": "array", "items": STR}}}},
+                         "tags": {"type": "array", "items": STR},
+                         "variables": {"type": "object", "additionalProperties": {"type": "string"},
+                                       "description": "Extra fields the agent's script can use as {{variables}}, "
+                                                      "e.g. {\"area\": \"Austin\", \"loan_amount\": \"250k\"}."}}}},
        "campaign_id": ID},
       ["contacts"], read_only=False)
 async def add_contacts(s: Session, args: dict) -> dict:
@@ -663,8 +670,11 @@ async def add_contacts(s: Session, args: dict) -> dict:
         if not isinstance(raw, dict):
             continue
         try:
-            c = await create_contact(ContactIn(**{k: v for k, v in raw.items() if k in ContactIn.model_fields},
-                                               campaign_id=campaign_id), ctx, s.db)
+            fields = {k: v for k, v in raw.items() if k in ContactIn.model_fields and k != "custom_fields"}
+            variables = raw.get("variables") if isinstance(raw.get("variables"), dict) else None
+            c = await create_contact(ContactIn(**fields, campaign_id=campaign_id,
+                                               custom_fields={str(k): str(v) for k, v in (variables or {}).items()}
+                                               or None), ctx, s.db)
             added.append(c.get("id"))
         except HTTPException as exc:
             await s.db.rollback()
@@ -672,6 +682,31 @@ async def add_contacts(s: Session, args: dict) -> dict:
         except ValueError as exc:
             failed.append({"phone": raw.get("phone"), "reason": str(exc)[:200]})
     return {"added": len(added), "failed": failed}
+
+
+@tool("import_contacts_csv", "Import contacts from a CSV",
+      """Imports a CSV (header row required, needs a phone column) exactly like the app's upload: name, email,
+company and role are recognised, and every other column (area, city, property, loan amount...) is saved on the
+contact as a {{variable}} the agent's script can use. Pass the file's full text. Numbers already in contacts are
+skipped, or with update_existing=true their variables are filled in from the CSV instead (use that to fix contacts
+that were added without their columns). Optionally puts new contacts straight into a campaign.""",
+      {"csv": {"type": "string", "description": "The whole CSV file's text, header row first."},
+       "campaign_id": ID, "tags": {"type": "array", "items": STR},
+       "update_existing": {"type": "boolean", "description": "Fill in variables on contacts that already exist."}},
+      ["csv"], read_only=False)
+async def import_contacts_csv(s: Session, args: dict) -> dict:
+    from app.routers.contacts import ContactImport, import_contacts
+
+    ctx = s.need_account()
+    text = str(args.get("csv") or "")
+    if not text.strip():
+        raise ToolError("csv is empty: pass the file's full text, header row first.")
+    if len(text) > 5_000_000:
+        raise ToolError("That CSV is too big for one call (5 MB). Split it into parts.")
+    body = ContactImport(csv=text, campaign_id=_uuid(args, "campaign_id", False),
+                         tags=[str(t) for t in (args.get("tags") or [])],
+                         update_existing=bool(args.get("update_existing")))
+    return await import_contacts(body, ctx, s.db)
 
 
 def _campaign_brief(c: dict) -> dict:
@@ -815,12 +850,16 @@ async def get_contact_tool(s: Session, args: dict) -> dict:
 tags, notes, campaign or Do-Not-Call flag. Only the fields you pass change.""",
       {"contact_id": ID, "name": STR, "phone": STR, "email": STR, "company": STR, "role": STR, "notes": STR,
        "status": STR, "tags": {"type": "array", "items": STR}, "campaign_id": ID,
-       "do_not_call": {"type": "boolean"}},
+       "do_not_call": {"type": "boolean"},
+       "variables": {"type": "object", "additionalProperties": {"type": "string"},
+                     "description": "Set {{variables}} on the contact (merged with what it has; \"\" removes one)."}},
       ["contact_id"], read_only=False, idempotent=True)
 async def update_contact_tool(s: Session, args: dict) -> dict:
     from app.routers.contacts import ContactPatch, update_contact
 
-    fields = {k: v for k, v in args.items() if k != "contact_id" and v is not None}
+    fields = {k: v for k, v in args.items() if k not in ("contact_id", "variables") and v is not None}
+    if isinstance(args.get("variables"), dict):
+        fields["custom_fields"] = {str(k): str(v) for k, v in args["variables"].items()}
     try:
         body = ContactPatch(**fields)
     except ValueError as exc:

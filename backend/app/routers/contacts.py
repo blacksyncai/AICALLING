@@ -39,6 +39,29 @@ class ContactIn(BaseModel):
     notes: str = ""
     tags: list[str] = []
     campaign_id: uuid.UUID | None = None
+    # Extra fields usable as {{variables}} in agent prompts (e.g. {"area": "Austin"}).
+    custom_fields: dict[str, str] | None = None
+
+
+def _variables(raw: dict | None) -> dict[str, str]:
+    """Variable names as the CSV import stores them (lowercase, spaces to underscores), values trimmed."""
+    out: dict[str, str] = {}
+    for k, v in (raw or {}).items():
+        key = str(k).strip().lower().replace(" ", "_")[:60]
+        if key:
+            out[key] = "" if v is None else str(v).strip()[:500]
+    return out
+
+
+def _merge_variables(current: dict | None, new: dict | None) -> dict | None:
+    """Sets the given variables on top of the current ones; an empty value removes one."""
+    merged = dict(current or {})
+    for k, v in _variables(new).items():
+        if v:
+            merged[k] = v
+        else:
+            merged.pop(k, None)
+    return merged or None
 
 
 class ContactPatch(BaseModel):
@@ -52,12 +75,15 @@ class ContactPatch(BaseModel):
     tags: list[str] | None = None
     campaign_id: uuid.UUID | None = None
     do_not_call: bool | None = None
+    custom_fields: dict[str, str] | None = None  # merged into the contact's variables; "" removes one
 
 
 class ContactImport(BaseModel):
     csv: str
     campaign_id: uuid.UUID | None = None
     tags: list[str] = []
+    # Numbers already in contacts: fill in this CSV's columns (variables, blank details) instead of skipping them.
+    update_existing: bool = False
 
 
 class CallContact(BaseModel):
@@ -228,6 +254,7 @@ async def create_contact(body: ContactIn, ctx: CtxDep, db: DbDep):
         company=body.company.strip(), email=body.email.strip(), role=body.role.strip(),
         notes=body.notes.strip() or None, tags=_clean_tags(body.tags) or None,
         campaign_id=campaign.id if campaign else None, intent_source="manual", status="new",
+        custom_fields=_merge_variables(None, body.custom_fields),
     )
     db.add(lead)
     if campaign:
@@ -248,9 +275,26 @@ async def import_contacts(body: ContactImport, ctx: CtxDep, db: DbDep):
         raise HTTPException(status_code=400, detail=str(exc))
     existing = set((await db.execute(select(Lead.phone).where(Lead.org_id == ctx.org.id))).scalars().all())
     tags = _clean_tags(body.tags) or None
-    created, duplicates = [], 0
+    created, duplicates, updated = [], 0, 0
+    by_phone: dict[str, list[Lead]] = {}
+    if body.update_existing:
+        for lead in (await db.execute(select(Lead).where(Lead.org_id == ctx.org.id,
+                                                         Lead.phone.in_([r["phone"] for r in rows])))).scalars():
+            by_phone.setdefault(lead.phone, []).append(lead)
     for row in rows:
         if row["phone"] in existing:
+            if row["phone"] in by_phone:
+                for lead in by_phone[row["phone"]]:
+                    lead.custom_fields = _merge_variables(lead.custom_fields, row.get("custom_fields"))
+                    for field in ("company", "email", "role"):
+                        if row.get(field) and not getattr(lead, field):
+                            setattr(lead, field, row[field])
+                    if row.get("name") and (not lead.name or lead.name == lead.phone):
+                        lead.name = row["name"]
+                    lead.updated_at = datetime.now(timezone.utc)
+                updated += 1
+                by_phone.pop(row["phone"])
+                continue
             duplicates += 1
             continue
         existing.add(row["phone"])
@@ -261,10 +305,11 @@ async def import_contacts(body: ContactImport, ctx: CtxDep, db: DbDep):
     if campaign:
         campaign.total_targets = (campaign.total_targets or 0) + len(created)
     await db.commit()
-    log.info("contacts_imported", org_id=str(ctx.org.id), created=len(created), skipped=skipped, dupes=duplicates)
+    log.info("contacts_imported", org_id=str(ctx.org.id), created=len(created), skipped=skipped, dupes=duplicates,
+             updated=updated)
     for lead in created[:500]:
         await emit_event(ctx.org.id, "contact.created", contact_to_dict(lead, campaign.name if campaign else None))
-    return {"created": len(created), "skipped": skipped, "duplicates": duplicates}
+    return {"created": len(created), "skipped": skipped, "duplicates": duplicates, "updated": updated}
 
 
 @router.post("/bulk")
@@ -366,6 +411,8 @@ async def update_contact(contact_id: uuid.UUID, body: ContactPatch, ctx: CtxDep,
         data["tags"] = _clean_tags(data["tags"])
     if "campaign_id" in data:
         await _campaign_in_org(db, ctx, data["campaign_id"])
+    if "custom_fields" in data:
+        lead.custom_fields = _merge_variables(lead.custom_fields, data.pop("custom_fields"))
     for key, value in data.items():
         if key == "campaign_id" or value is not None:
             setattr(lead, key, value.strip() if isinstance(value, str) else value)
