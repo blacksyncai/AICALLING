@@ -772,6 +772,30 @@ async def fix_mislabeled_outcomes(limit: int = 500) -> int:
     return len(ids)
 
 
+async def fix_missed_voicemails(days: int = 14, limit: int = 1000) -> int:
+    """Repair: recent calls scored as a conversation (often "callback requested") that were really a recorded
+    greeting, e.g. "For a quicker response, text me. Looking forward to connecting soon." Re-analyzing applies
+    the voicemail rule and puts the contact back in line for a retry."""
+    from app.agent.runtime import NO_CONVERSATION_OUTCOMES, voicemail_answered
+    from app.database import AsyncSessionLocal
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CallLog.id, CallLog.transcript).where(
+            CallLog.started_at >= since, CallLog.transcript.isnot(None),
+            CallLog.outcome.notin_((*NO_CONVERSATION_OUTCOMES, "failed", "meeting_booked", "transferred", "do_not_call")),
+        ).order_by(CallLog.started_at.desc()).limit(limit))).all()
+    ids = [str(r.id) for r in rows if voicemail_answered(r.transcript)]
+    for cid in ids:
+        try:
+            await _analyze(cid)
+        except Exception as exc:
+            log.warning("missed_voicemail_repair_failed", call_log_id=cid, error=str(exc))
+    if ids:
+        log.info("missed_voicemails_repaired", count=len(ids))
+    return len(ids)
+
+
 async def repair_contact_statuses() -> int:
     """Repair: contacts whose calls say more than their status (a reviewed "Follow-up" left at "Talked, no
     decision", or a later voicemail that wiped out an earlier "call me back"). Replays each contact's calls

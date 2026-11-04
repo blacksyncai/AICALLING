@@ -79,3 +79,27 @@ def test_carrier_greeting_that_reads_out_the_number_is_voicemail():
             {"role": "user", "text": "Five six one two six zero four three six one"},
             {"role": "assistant", "text": "Got it. Is this Chun?"}]
     assert voicemail_answered(call)
+
+
+def test_text_me_greeting_is_voicemail_not_a_callback():
+    from app.agent.runtime import reconcile_outcome, voicemail_answered
+
+    transcript = [
+        {"role": "assistant", "text": "Hey Nicole this is Sofia. Real quick I'm a next gen AI agent. I know"},
+        {"role": "user", "text": "For a quicker response, text me. Looking forward to connecting soon. Have a great day."},
+        {"role": "tool", "tool": "end_call", "args": {"outcome": "callback"}},
+    ]
+    assert voicemail_answered(transcript)
+    assert reconcile_outcome("callback", transcript, callback_request="For a quicker response, text me.") == "voicemail"
+
+
+def test_a_live_person_saying_have_a_great_day_is_still_a_person():
+    from app.agent.runtime import person_answered
+
+    transcript = [
+        {"role": "assistant", "text": "Hey Nicole this is Sofia, is now an okay time?"},
+        {"role": "user", "text": "Hello? Who is this?"},
+        {"role": "assistant", "text": "It's Sofia with Acme about your listing."},
+        {"role": "user", "text": "Not interested, have a great day."},
+    ]
+    assert person_answered(transcript)

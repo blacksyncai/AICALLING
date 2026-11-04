@@ -434,6 +434,10 @@ _PERSONAL_WEAK = (
     "i will call you back", "text me", "send me a text", "shoot me a text", "not available right now",
     "send a text", "read those faster", "respond to texts", "look forward to connecting", "get back to you",
     "return your call",
+    # "For a quicker response, text me. Looking forward to connecting soon. Have a great day."
+    "looking forward to connecting", "forward to speaking with you", "quicker response", "faster response",
+    "quickest response", "quicker reply", "faster reply", "best way to reach me", "text is best",
+    "have a great day", "have a blessed day", "have a wonderful day",
 )
 _PERSONAL_GREETING = _PERSONAL_STRONG + _PERSONAL_WEAK
 
