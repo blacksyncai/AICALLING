@@ -23,7 +23,7 @@ from app.routers import account_tree
 from app.database import create_all_tables
 from app.routers import (
     number_registration, account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, radar_automations, internal, lead_finder, meetings, phone_numbers, speech,
-    public_api, search, support,
+    public_api, search, support, voice_samples,
     settings as settings_router,
 )
 
@@ -211,7 +211,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-for r in (number_registration, auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, radar_automations, integrations, public_api, search, support,
+for r in (number_registration, auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, radar_automations, integrations, public_api, search, support, voice_samples,
           settings_router, internal):
     app.include_router(r.router)
 app.include_router(phone_numbers.admin_router)
