@@ -271,7 +271,7 @@ export default function DashboardPage() {
               />
             )}
             {activeCampaigns.map((c) => {
-              const pct = c.total_targets ? Math.min(100, Math.round((c.total_dialed / c.total_targets) * 100)) : 0;
+              const pct = c.total_targets ? Math.min(100, Math.round(((c.leads_dialed ?? c.total_dialed) / c.total_targets) * 100)) : 0;
               const agentName = agents?.find((a) => a.id === c.agent_id)?.name;
               return (
                 <Link key={c.id} href={`/campaigns/${c.id}`} className="group flex min-w-0 flex-col gap-2">
@@ -290,7 +290,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex gap-4 text-xs text-zinc-500">
                     <span>
-                      <span className="font-medium text-zinc-900 tabular-nums">{c.total_dialed}</span> dialed
+                      <span className="font-medium text-zinc-900 tabular-nums">{c.leads_dialed ?? c.total_dialed}</span> dialed
                     </span>
                     <span>
                       <span className="font-medium text-zinc-900 tabular-nums">{c.total_qualified}</span> qualified

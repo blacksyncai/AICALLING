@@ -246,6 +246,9 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                       <div className="flex flex-wrap items-center gap-2">
                         <OutcomeBadge outcome={call.outcome} status={call.status} />
                         <span className="text-sm font-medium text-zinc-800">{call.agent_name ?? "Agent"}</span>
+                        {call.number && (contact.phones?.length ?? 0) > 1 && (
+                          <span className="font-mono text-xs text-zinc-500">{call.number}</span>
+                        )}
                         <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
                           <Clock className="h-3 w-3" />
                           {formatDuration(call.duration_seconds)}
@@ -265,6 +268,25 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
 
         {/* Side column */}
         <div className="min-w-0 space-y-6">
+          {(contact.phones?.length ?? 0) > 1 && (
+            <Card>
+              <CardHeader title="Phone numbers" description="In call order. Campaigns with Try other numbers on work down this list." />
+              <ul className="divide-y divide-zinc-100">
+                {contact.phones!.map((p, i) => (
+                  <li key={p.number} className="flex items-center gap-3 px-5 py-2.5">
+                    <span className="w-5 text-xs tabular-nums text-zinc-400">{i + 1}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono text-sm text-zinc-900">{p.number}</div>
+                      <div className="text-xs text-zinc-500">
+                        {p.label || (i === 0 ? "Primary" : `Phone ${i + 1}`)} · {p.attempts} {p.attempts === 1 ? "try" : "tries"}
+                      </div>
+                    </div>
+                    <PhoneStatus status={p.status} />
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
           <Card>
             <CardHeader title="Calling" />
             <div className="space-y-3 p-5">
@@ -390,4 +412,19 @@ function BackLink() {
       <ArrowLeft className="h-3 w-3" /> Contacts
     </Link>
   );
+}
+
+const PHONE_STATUS: Record<string, [string, "gray" | "green" | "amber" | "red" | "blue"]> = {
+  untried: ["Not tried", "gray"],
+  no_answer: ["No answer", "gray"],
+  voicemail: ["Voicemail", "blue"],
+  reached: ["Reached", "green"],
+  wrong_number: ["Wrong number", "amber"],
+  disconnected: ["Disconnected", "red"],
+  do_not_call: ["Do not call", "red"],
+};
+
+function PhoneStatus({ status }: { status: string }) {
+  const [label, tone] = PHONE_STATUS[status] ?? [status, "gray"];
+  return <Badge tone={tone}>{label}</Badge>;
 }

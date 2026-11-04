@@ -13,6 +13,11 @@ const SAMPLE_CSV = `name,phone,company,email,role,city
 Jane Cooper,+14155550123,Acme Inc,jane@acme.com,Head of Sales,San Francisco
 Marcus Lee,+14155550188,Globex,marcus@globex.com,Founder,Austin`;
 
+/** Phone columns the server detects on its own (Phone, Phone 2, Mobile, Home, Work, Cell...). */
+const PHONE_COL = /^(?:primary |owner |contact |best )?(phone|phone number|phone_number|phonenumber|mobile|mobile phone|cell|cell phone|cellphone|home|home phone|work|work phone|office phone|telephone|tel|landline|wireless|number)(?:[\s_#-]*\d{1,2})?(?: number)?$/i;
+const COMPANION = /dnc|do[\s_-]*not[\s_-]*call|status|type|litigator/i;
+const isPhoneCol = (h: string) => PHONE_COL.test(h.trim()) && !COMPANION.test(h);
+
 /** Naive split — good enough for a preview; the server does the real parsing. */
 function splitLine(line: string) {
   return line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
@@ -41,12 +46,20 @@ export function ImportContactsModal({
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
+  // Phone columns in call order; null = the server's automatic detection.
+  const [phoneCols, setPhoneCols] = useState<string[] | null>(null);
+  const [updateExisting, setUpdateExisting] = useState(false);
+  const [skipDnc, setSkipDnc] = useState(false);
 
   const lines = useMemo(() => csv.trim().split(/\r?\n/).filter((l) => l.trim()), [csv]);
   const rows = Math.max(0, lines.length - 1);
   const header = lines[0] ? splitLine(lines[0]) : [];
   const preview = lines.slice(1, 4).map(splitLine);
-  const hasPhone = header.some((h) => /phone|mobile|number|tel/i.test(h));
+  const detected = header.filter(isPhoneCol);
+  const chosen = phoneCols ?? detected;
+  const hasPhone = chosen.length > 0;
+  const togglePhoneCol = (h: string) =>
+    setPhoneCols(header.filter((c) => (c === h ? !chosen.includes(h) : chosen.includes(c))));
 
   function readFile(f: File) {
     const reader = new FileReader();
@@ -54,6 +67,7 @@ export function ImportContactsModal({
       setCsv(String(reader.result ?? ""));
       setFileName(f.name);
       setResult(null);
+      setPhoneCols(null);
     };
     reader.onerror = () => toast("Couldn't read that file", "error");
     reader.readAsText(f);
@@ -67,7 +81,14 @@ export function ImportContactsModal({
   async function submit() {
     setBusy(true);
     try {
-      const res = await post<ImportResult>("/api/contacts/import", { csv, campaign_id: campaignId || null, tags: [...new Set([...defaultTags, ...parseTags(tags)])] });
+      const res = await post<ImportResult>("/api/contacts/import", {
+        csv,
+        campaign_id: campaignId || null,
+        tags: [...new Set([...defaultTags, ...parseTags(tags)])],
+        phone_columns: phoneCols && phoneCols.length ? phoneCols : null,
+        update_existing: updateExisting,
+        skip_dnc: skipDnc,
+      });
       setResult(res);
       toast(`Imported ${res.created} contact${res.created === 1 ? "" : "s"}`);
       setCsv("");
@@ -85,7 +106,8 @@ export function ImportContactsModal({
       <div className="space-y-4">
         {result && (
           <Notice tone="green">
-            <b>{result.created}</b> created · <b>{result.duplicates}</b> duplicate{result.duplicates === 1 ? "" : "s"} skipped (phone already in contacts) ·{" "}
+            <b>{result.created}</b> created · {result.updated ? <><b>{result.updated}</b> updated · </> : null}
+            <b>{result.duplicates}</b> duplicate{result.duplicates === 1 ? "" : "s"} skipped (phone already in contacts) ·{" "}
             <b>{result.skipped}</b> skipped (missing or invalid phone)
           </Notice>
         )}
@@ -186,7 +208,33 @@ export function ImportContactsModal({
                 </tbody>
               </table>
             </div>
-            {!hasPhone && <p className="mt-1.5 text-xs text-amber-700">No phone column detected in the header row.</p>}
+            {!hasPhone && <p className="mt-1.5 text-xs text-amber-700">No phone column detected. Pick it below.</p>}
+            <div className="mt-3">
+              <div className="mb-1.5 text-xs font-medium text-zinc-700">Phone columns, in call order</div>
+              <div className="flex flex-wrap gap-1.5">
+                {header.filter(Boolean).map((h) => {
+                  const on = chosen.includes(h);
+                  return (
+                    <button
+                      key={h}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => togglePhoneCol(h)}
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                        on ? "border-brand-600 bg-brand-600 text-white" : isPhoneCol(h) ? "border-zinc-300 bg-white text-zinc-700" : "border-zinc-200 bg-white text-zinc-400 hover:text-zinc-700",
+                      )}
+                    >
+                      {on ? `${chosen.indexOf(h) + 1}. ` : ""}
+                      {h}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-xs text-zinc-500">
+                Every selected column is saved on the same contact.
+              </p>
+            </div>
           </div>
         )}
 
@@ -205,6 +253,21 @@ export function ImportContactsModal({
             <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="webinar, q4" />
           </Field>
         </div>
+
+        <label className="flex items-start gap-2 text-sm text-zinc-700">
+          <input type="checkbox" className="mt-0.5 accent-brand-600" checked={skipDnc} onChange={(e) => setSkipDnc(e.target.checked)} />
+          <span>
+            Skip DNC numbers
+            <span className="block text-xs text-zinc-500">Numbers your file flags as DNC are saved but never called. Off: they&apos;re called like any other number.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm text-zinc-700">
+          <input type="checkbox" className="mt-0.5 accent-brand-600" checked={updateExisting} onChange={(e) => setUpdateExisting(e.target.checked)} />
+          <span>
+            Update contacts that are already here
+            <span className="block text-xs text-zinc-500">Adds missing numbers and columns to a contact that has one of the row&apos;s numbers, instead of skipping it.</span>
+          </span>
+        </label>
 
         <div className="flex items-center justify-end gap-2">
           <Button onClick={close}>{result ? "Done" : "Cancel"}</Button>

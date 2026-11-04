@@ -343,7 +343,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
         {[
           ["Contacts", campaign.total_targets],
           ["To call", counts.new ?? 0],
-          ["Dialed", campaign.total_dialed],
+          ["Dialed", campaign.leads_dialed ?? campaign.total_dialed],
           ["Qualified", campaign.total_qualified],
           ["Booked", campaign.total_booked],
         ].map(([label, value]) => (

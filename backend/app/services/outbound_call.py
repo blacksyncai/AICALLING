@@ -581,6 +581,7 @@ class CallService:
             if outcome == "do_not_call":
                 lead_values["do_not_call"] = True  # the contact asked not to be called again
             await db.execute(update(Lead).where(Lead.id == call_log.lead_id).values(**lead_values))
+            await _mark_number(db, call_log.lead_id, call_log.to_phone, outcome)
 
         already_counted = bool(review_meta.get("_counted_outcome")) or prev_outcome in ("meeting_booked", "qualified", "interested")  # a repeated report
         if call_log.campaign_id and not already_counted:
@@ -709,6 +710,8 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             if latest == call_log.id:
                 await db.execute(update(Lead).where(Lead.id == call_log.lead_id, Lead.status == "completed")
                                  .values(status="voicemail"))
+        if call_log.lead_id and call_log.outcome:
+            await _mark_number(db, call_log.lead_id, call_log.to_phone, call_log.outcome, reviewed=True)
         # Someone who asked not to be called again goes on the Do-Not-Call list.
         if call_log.outcome == "do_not_call" and call_log.lead_id:
             lead = await db.get(Lead, call_log.lead_id)
@@ -726,6 +729,27 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             log.warning("radar_enqueue_failed", call_log_id=call_log_id, error=str(exc)[:200])
         await db.commit()
         log.info("call_analyzed", call_log_id=call_log_id, outcome=call_log.outcome)
+
+
+async def _mark_number(db, lead_id, number: str | None, outcome: str | None, reviewed: bool = False) -> None:
+    """Record a call's result on the number it dialed (a contact can have several, see lead_phones)."""
+    from app.services import lead_phones
+
+    status = lead_phones.status_for_outcome(outcome)
+    if not number or not status:
+        return
+    lead = await db.get(Lead, lead_id)
+    if lead is None:
+        return
+    rows = lead_phones.numbers(lead)
+    if reviewed:
+        # The review can correct the live result (e.g. a "conversation" that was really a voicemail greeting).
+        for p in rows:
+            if p["number"] == number and p.get("status") in ("reached", "no_answer", "voicemail"):
+                p["status"] = status
+        lead.phones = rows
+    else:
+        lead_phones.mark(lead, number, status)
 
 
 async def fix_mislabeled_outcomes(limit: int = 500) -> int:

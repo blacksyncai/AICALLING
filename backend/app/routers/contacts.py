@@ -21,6 +21,7 @@ from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.services.accounts import emit_event
 from app.services.auth import CtxDep, DbDep
+from app.services import lead_phones
 from app.services.contacts import CsvError, normalize_phone, parse_contacts_csv
 
 log = structlog.get_logger(__name__)
@@ -33,6 +34,8 @@ PIPELINE = ("no_decision", "insufficient_conversation", "busy", "information_req
 class ContactIn(BaseModel):
     name: str = ""
     phone: str = ""
+    # Every number, in call order: "+1415..." or {"number", "label", "status"}. The first is the primary.
+    phones: list | None = None
     company: str = ""
     email: str = ""
     role: str = ""
@@ -76,14 +79,19 @@ class ContactPatch(BaseModel):
     campaign_id: uuid.UUID | None = None
     do_not_call: bool | None = None
     custom_fields: dict[str, str] | None = None  # merged into the contact's variables; "" removes one
+    phones: list | None = None  # the full number list in call order (replaces it; known numbers keep their history)
 
 
 class ContactImport(BaseModel):
     csv: str
+    # Phone columns to use, in call order (default: every phone column the file has, detected automatically).
+    phone_columns: list[str] | None = None
     campaign_id: uuid.UUID | None = None
     tags: list[str] = []
     # Numbers already in contacts: fill in this CSV's columns (variables, blank details) instead of skipping them.
     update_existing: bool = False
+    # Numbers the file flags DNC: mark them do-not-call (never dialed). Off = they're called like any other.
+    skip_dnc: bool = False
 
 
 class CallContact(BaseModel):
@@ -110,6 +118,7 @@ def contact_to_dict(l: Lead, campaign_name: str | None = None) -> dict:
         "name": l.name,
         "company": l.company,
         "phone": l.phone,
+        "phones": lead_phones.public(l),
         "email": l.email,
         "role": l.role or "",
         "status": l.status,
@@ -186,7 +195,7 @@ async def list_contacts(
     if q.strip():
         like = f"%{q.strip()}%"
         base = base.where(or_(Lead.name.ilike(like), Lead.company.ilike(like), Lead.email.ilike(like),
-                              Lead.phone.ilike(like)))
+                              Lead.phone.ilike(like), cast(Lead.phones, String).ilike(like)))
     if campaign_id:
         base = base.where(Lead.campaign_id == campaign_id)
     # Status counts reflect the search/campaign filter but not the status filter itself.
@@ -245,7 +254,8 @@ async def list_contacts(
 @router.post("", status_code=201)
 @router.post("/", status_code=201)
 async def create_contact(body: ContactIn, ctx: CtxDep, db: DbDep):
-    phone = normalize_phone(body.phone)
+    numbers = lead_phones.build([*([body.phone] if body.phone else []), *(body.phones or [])])
+    phone = numbers[0]["number"] if numbers else normalize_phone(body.phone)
     if len(phone) < 11:
         raise HTTPException(status_code=400, detail="Enter a valid phone number, e.g. +14155550123.")
     campaign = await _campaign_in_org(db, ctx, body.campaign_id)
@@ -255,6 +265,7 @@ async def create_contact(body: ContactIn, ctx: CtxDep, db: DbDep):
         notes=body.notes.strip() or None, tags=_clean_tags(body.tags) or None,
         campaign_id=campaign.id if campaign else None, intent_source="manual", status="new",
         custom_fields=_merge_variables(None, body.custom_fields),
+        phones=numbers if len(numbers) > 1 else None,
     )
     db.add(lead)
     if campaign:
@@ -270,21 +281,31 @@ async def import_contacts(body: ContactImport, ctx: CtxDep, db: DbDep):
     """Import a CSV. Numbers already in your contacts are skipped as duplicates."""
     campaign = await _campaign_in_org(db, ctx, body.campaign_id)
     try:
-        rows, skipped = parse_contacts_csv(body.csv)
+        rows, skipped = parse_contacts_csv(body.csv, body.phone_columns, body.skip_dnc)
     except CsvError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    existing = set((await db.execute(select(Lead.phone).where(Lead.org_id == ctx.org.id))).scalars().all())
+    # Dedupe by contact, not by number: a row matches a contact that has any of its numbers.
+    owners: dict[str, uuid.UUID] = {}
+    for lid, phone, phones in (await db.execute(select(Lead.id, Lead.phone, Lead.phones)
+                                                .where(Lead.org_id == ctx.org.id))).all():
+        for n in [phone, *[p.get("number") for p in (phones or []) if isinstance(p, dict)]]:
+            if n:
+                owners.setdefault(n, lid)
     tags = _clean_tags(body.tags) or None
     created, duplicates, updated = [], 0, 0
-    by_phone: dict[str, list[Lead]] = {}
-    if body.update_existing:
-        for lead in (await db.execute(select(Lead).where(Lead.org_id == ctx.org.id,
-                                                         Lead.phone.in_([r["phone"] for r in rows])))).scalars():
-            by_phone.setdefault(lead.phone, []).append(lead)
+    touched: set[uuid.UUID] = set()
     for row in rows:
-        if row["phone"] in existing:
-            if row["phone"] in by_phone:
-                for lead in by_phone[row["phone"]]:
+        row_numbers = [p["number"] for p in row["phones"]]
+        match = next((owners[n] for n in row_numbers if n in owners), None)
+        if match is not None:
+            if body.update_existing and isinstance(match, uuid.UUID) and match not in touched:
+                touched.add(match)
+                for lead in [await db.get(Lead, match)]:
+                    if lead is None:
+                        continue
+                    lead_phones.add_numbers(lead, row["phones"])
+                    for n in lead_phones.all_numbers(lead):
+                        owners.setdefault(n, match)
                     lead.custom_fields = _merge_variables(lead.custom_fields, row.get("custom_fields"))
                     for field in ("company", "email", "role"):
                         if row.get(field) and not getattr(lead, field):
@@ -293,11 +314,13 @@ async def import_contacts(body: ContactImport, ctx: CtxDep, db: DbDep):
                         lead.name = row["name"]
                     lead.updated_at = datetime.now(timezone.utc)
                 updated += 1
-                by_phone.pop(row["phone"])
                 continue
             duplicates += 1
             continue
-        existing.add(row["phone"])
+        for n in row_numbers:
+            owners[n] = "new"  # a later row with one of these numbers is the same person
+        if len(row["phones"]) == 1 and row["phones"][0]["status"] == "untried":
+            row = {**row, "phones": None}
         lead = Lead(id=uuid.uuid4(), org_id=ctx.org.id, campaign_id=campaign.id if campaign else None,
                     intent_source="csv", status="new", tags=tags, **row)
         db.add(lead)
@@ -368,7 +391,7 @@ async def get_contact(contact_id: uuid.UUID, ctx: CtxDep, db: DbDep):
         **contact_to_dict(lead, campaign.name if campaign else None),
         "calls": [{
             "id": str(c.id), "status": c.status, "outcome": c.outcome, "summary": public_summary(c.status, c.summary),
-            "duration_seconds": c.duration_seconds, "agent_name": a.name if a else None,
+            "duration_seconds": c.duration_seconds, "agent_name": a.name if a else None, "number": c.to_phone,
             "started_at": _iso(c.started_at),
         } for c, a in calls],
     }
@@ -413,6 +436,13 @@ async def update_contact(contact_id: uuid.UUID, body: ContactPatch, ctx: CtxDep,
         await _campaign_in_org(db, ctx, data["campaign_id"])
     if "custom_fields" in data:
         lead.custom_fields = _merge_variables(lead.custom_fields, data.pop("custom_fields"))
+    if data.get("phones") is not None:
+        rows = lead_phones.build(data.pop("phones"), lead_phones.numbers(lead))
+        if not rows:
+            raise HTTPException(status_code=400, detail="Enter at least one valid phone number, e.g. +14155550123.")
+        lead.phones, lead.phone = rows, rows[0]["number"]
+        data.pop("phone", None)
+    data.pop("phones", None)
     for key, value in data.items():
         if key == "campaign_id" or value is not None:
             setattr(lead, key, value.strip() if isinstance(value, str) else value)

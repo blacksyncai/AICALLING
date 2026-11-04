@@ -631,6 +631,8 @@ async def get_analytics(s: Session, args: dict) -> dict:
 def _contact_brief(c: dict) -> dict:
     keep = ("id", "name", "phone", "email", "company", "role", "status", "tags", "dnc", "last_called_at")
     out = {k: c.get(k) for k in keep if k in c}
+    if len(c.get("phones") or []) > 1:
+        out["phones"] = c["phones"]
     if c.get("custom_fields"):
         out["variables"] = c["custom_fields"]
     return out
@@ -649,12 +651,15 @@ async def list_contacts(s: Session, args: dict) -> dict:
 
 @tool("add_contacts", "Add contacts",
       """Adds people to the account's contacts (up to 200 at a time), optionally straight into a campaign.
-Each needs a phone number. Put any other column (city, area, property, loan amount...) in variables so the
+Each needs a phone number; put every extra number in phones (in call order). Put any other column (city, area, property, loan amount...) in variables so the
 agent's script can use it as {{variable}}. For a CSV file, use import_contacts_csv instead.""",
       {"contacts": {"type": "array", "minItems": 1, "maxItems": 200, "items": {
           "type": "object", "required": ["phone"], "additionalProperties": False,
           "properties": {"name": STR, "phone": STR, "email": STR, "company": STR, "role": STR, "notes": STR,
                          "tags": {"type": "array", "items": STR},
+                         "phones": {"type": "array", "maxItems": 10, "items": STR,
+                                    "description": "Every number in call order (first = primary), e.g. mobile, "
+                                                   "phone 2, home. The dialer can try them in turn."},
                          "variables": {"type": "object", "additionalProperties": {"type": "string"},
                                        "description": "Extra fields the agent's script can use as {{variables}}, "
                                                       "e.g. {\"area\": \"Austin\", \"loan_amount\": \"250k\"}."}}}},
@@ -687,11 +692,16 @@ async def add_contacts(s: Session, args: dict) -> dict:
 @tool("import_contacts_csv", "Import contacts from a CSV",
       """Imports a CSV (header row required, needs a phone column) exactly like the app's upload: name, email,
 company and role are recognised, and every other column (area, city, property, loan amount...) is saved on the
-contact as a {{variable}} the agent's script can use. Pass the file's full text. Numbers already in contacts are
+contact as a {{variable}} the agent's script can use. Every phone column (Phone, Phone 2..., Mobile, Home, Work,
+Cell) is kept on the same contact in the file's order; phone_columns picks which columns and their order instead.
+DNC flags in the file are ignored unless skip_dnc=true (ask the user; then flagged numbers are never dialed). Pass the file's full text. Numbers already in contacts are
 skipped, or with update_existing=true their variables are filled in from the CSV instead (use that to fix contacts
 that were added without their columns). Optionally puts new contacts straight into a campaign.""",
       {"csv": {"type": "string", "description": "The whole CSV file's text, header row first."},
        "campaign_id": ID, "tags": {"type": "array", "items": STR},
+       "phone_columns": {"type": "array", "items": STR,
+                         "description": "Optional: the phone column names to use, in call order."},
+       "skip_dnc": {"type": "boolean", "description": "Skip numbers the file flags DNC (default false: call them)."},
        "update_existing": {"type": "boolean", "description": "Fill in variables on contacts that already exist."}},
       ["csv"], read_only=False)
 async def import_contacts_csv(s: Session, args: dict) -> dict:
@@ -705,7 +715,8 @@ async def import_contacts_csv(s: Session, args: dict) -> dict:
         raise ToolError("That CSV is too big for one call (5 MB). Split it into parts.")
     body = ContactImport(csv=text, campaign_id=_uuid(args, "campaign_id", False),
                          tags=[str(t) for t in (args.get("tags") or [])],
-                         update_existing=bool(args.get("update_existing")))
+                         update_existing=bool(args.get("update_existing")), skip_dnc=bool(args.get("skip_dnc")),
+                         phone_columns=[str(c) for c in (args.get("phone_columns") or [])] or None)
     return await import_contacts(body, ctx, s.db)
 
 
@@ -851,6 +862,8 @@ tags, notes, campaign or Do-Not-Call flag. Only the fields you pass change.""",
       {"contact_id": ID, "name": STR, "phone": STR, "email": STR, "company": STR, "role": STR, "notes": STR,
        "status": STR, "tags": {"type": "array", "items": STR}, "campaign_id": ID,
        "do_not_call": {"type": "boolean"},
+       "phones": {"type": "array", "maxItems": 10, "items": STR,
+                  "description": "The full number list in call order (replaces it; the first becomes the primary)."},
        "variables": {"type": "object", "additionalProperties": {"type": "string"},
                      "description": "Set {{variables}} on the contact (merged with what it has; \"\" removes one)."}},
       ["contact_id"], read_only=False, idempotent=True)

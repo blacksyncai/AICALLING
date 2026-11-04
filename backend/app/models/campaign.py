@@ -79,6 +79,11 @@ class Campaign(Base):
     caller_rotation_cursor: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Rotation: most calls each number may place in a rolling 24 h (NULL = 75).
     max_calls_per_number_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Contacts with several numbers: work through them in order, `rounds_per_number` tries each (NULL = 2),
+    # `number_gap_minutes` apart (NULL = 10). NULL/False = only the primary number is dialed.
+    try_other_numbers: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    rounds_per_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    number_gap_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # ── Counters ──────────────────────────────────────────────────────────────
     total_targets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

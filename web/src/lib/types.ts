@@ -150,11 +150,17 @@ export interface Campaign {
   warmup_rest_seconds?: number | null;
   retry_caller_policy?: "same" | "different";
   max_calls_per_number_day?: number;
+  /** Contacts with several numbers: try each in order, rounds_per_number tries each, number_gap_minutes apart. */
+  try_other_numbers?: boolean;
+  rounds_per_number?: number;
+  number_gap_minutes?: number;
   within_calling_hours: boolean;
   next_window_at: string | null;
   pending_retries: number;
   total_targets: number;
   total_dialed: number;
+  /** Contacts called at least once (progress counts people, not dials). */
+  leads_dialed?: number;
   total_qualified: number;
   total_booked: number;
   created_at: string;
@@ -425,11 +431,21 @@ export interface CreditHistory {
 
 // ── Contacts (CRM) ────────────────────────────────────────────────────────────
 
+export interface ContactPhone {
+  number: string;
+  label: string;
+  status: "untried" | "no_answer" | "voicemail" | "wrong_number" | "disconnected" | "do_not_call" | "reached";
+  attempts: number;
+  last_attempt_at: string | null;
+}
+
 export interface Contact {
   id: string;
   name: string;
   company: string;
   phone: string;
+  /** Every number in call order (the first is the primary) with its status. */
+  phones?: ContactPhone[];
   email: string;
   role: string;
   status: string;
@@ -450,6 +466,8 @@ export interface Contact {
 }
 
 export interface ContactCall {
+  /** The number this call dialed. */
+  number?: string | null;
   id: string;
   status: string;
   outcome: string | null;

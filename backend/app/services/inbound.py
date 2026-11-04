@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import structlog
 from livekit import api
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -199,6 +199,9 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
     lead = None
     if caller:
         lead = (await db.execute(select(Lead).where(Lead.org_id == row.org_id, Lead.phone == caller).limit(1))).scalar_one_or_none()
+        if lead is None:  # one of a contact's other numbers (see lead_phones)
+            lead = (await db.execute(select(Lead).where(
+                Lead.org_id == row.org_id, cast(Lead.phones, String).like(f'%"{caller}"%')).limit(1))).scalar_one_or_none()
     now = datetime.now(timezone.utc)
     call = CallLog(id=uuid.uuid4(), org_id=row.org_id, agent_id=agent.id, lead_id=lead.id if lead else None,
                    campaign_id=row.inbound_campaign_id, call_type="inbound", livekit_room_name=room,

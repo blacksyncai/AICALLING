@@ -168,7 +168,7 @@ export default function CampaignsPage() {
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {data.campaigns.map((c) => {
-                  const pct = c.total_targets ? Math.min(100, Math.round((c.total_dialed / c.total_targets) * 100)) : 0;
+                  const pct = c.total_targets ? Math.min(100, Math.round(((c.leads_dialed ?? c.total_dialed) / c.total_targets) * 100)) : 0;
                   return (
                     <tr key={c.id} className="hover:bg-zinc-50">
                       <td className="px-5 py-3">
@@ -200,7 +200,7 @@ export default function CampaignsPage() {
                             <div className="h-1.5 rounded-full bg-brand-500" style={{ width: `${pct}%` }} />
                           </div>
                           <span className="text-xs text-zinc-500">
-                            {c.total_dialed}/{c.total_targets}
+                            {c.leads_dialed ?? c.total_dialed}/{c.total_targets}
                           </span>
                         </div>
                       </td>

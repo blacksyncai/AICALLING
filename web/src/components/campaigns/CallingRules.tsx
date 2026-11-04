@@ -145,6 +145,9 @@ type Form = {
   caller_number_pool: string[];
   retry_caller_policy: "same" | "different";
   max_calls_per_number_day: number;
+  try_other_numbers: boolean;
+  rounds_per_number: number;
+  number_gap_minutes: number;
   warmup_enabled: boolean;
   warmup_min_gap_seconds: number;
   warmup_max_gap_seconds: number;
@@ -162,6 +165,9 @@ function formFrom(c: Campaign): Form {
     caller_number_pool: c.caller_number_pool ?? [],
     retry_caller_policy: c.retry_caller_policy ?? "same",
     max_calls_per_number_day: c.max_calls_per_number_day ?? 75,
+    try_other_numbers: !!c.try_other_numbers,
+    rounds_per_number: c.rounds_per_number ?? 2,
+    number_gap_minutes: c.number_gap_minutes ?? 10,
     warmup_enabled: !!c.warmup_enabled,
     warmup_min_gap_seconds: c.warmup_min_gap_seconds ?? 180,
     warmup_max_gap_seconds: c.warmup_max_gap_seconds ?? 300,
@@ -278,6 +284,26 @@ export function CallingRulesCard({ campaign, onSaved, onDirtyChange }: { campaig
           </Field>
         </div>
         <div className="space-y-4">
+          <div className="rounded-xl border border-zinc-200 p-4">
+            <Toggle checked={form.try_other_numbers} onChange={(checked) => setForm((f) => ({ ...f, try_other_numbers: checked }))}
+              label="Try other numbers"
+              description="For contacts with more than one number: call number 1, then number 2 and so on before the next retry. It stops as soon as the person is reached. Off: only the primary number is called." />
+            {form.try_other_numbers && (
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <Field label="Tries on each number">
+                  <Input type="number" min={1} max={10} value={form.rounds_per_number}
+                    onChange={(e) => setForm((f) => ({ ...f, rounds_per_number: Math.max(1, Math.min(10, Number(e.target.value) || 1)) }))} />
+                </Field>
+                <Field label="Minutes between tries">
+                  <Input type="number" min={1} max={1440} value={form.number_gap_minutes}
+                    onChange={(e) => setForm((f) => ({ ...f, number_gap_minutes: Math.max(1, Math.min(1440, Number(e.target.value) || 1)) }))} />
+                </Field>
+                <p className="col-span-2 text-xs text-zinc-500">
+                  Going through all of a contact&apos;s numbers counts as one try. Numbers marked wrong, disconnected or do-not-call are skipped.
+                </p>
+              </div>
+            )}
+          </div>
           <div className="rounded-xl border border-zinc-200 p-4">
             <Toggle checked={form.number_rotation_enabled} onChange={(checked) => setForm((f) => ({ ...f, number_rotation_enabled: checked }))}
               label="Rotate caller numbers" description="Spread calls across the numbers you pick so contacts don't see the same caller ID every time. Off: every call comes from the agent's number or your account default." />

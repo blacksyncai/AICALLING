@@ -29,7 +29,10 @@ class Lead(Base):
     # ── Contact ───────────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     company: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    phone: Mapped[str] = mapped_column(String(50), nullable=False)
+    phone: Mapped[str] = mapped_column(String(50), nullable=False)  # the primary number (first in `phones`)
+    # Every number on file, in call order, with each one's status (see app/services/lead_phones.py).
+    # NULL = just `phone`.
+    phones: Mapped[list | None] = mapped_column(JSON, nullable=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     role: Mapped[str] = mapped_column(String(255), nullable=True)
 

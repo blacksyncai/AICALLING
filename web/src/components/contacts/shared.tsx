@@ -27,6 +27,7 @@ export interface ImportResult {
   created: number;
   skipped: number;
   duplicates: number;
+  updated?: number;
 }
 
 const AVATAR_TONES = [

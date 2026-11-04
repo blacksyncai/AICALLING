@@ -57,6 +57,10 @@ class CallingRules(BaseModel):
     warmup_rest_seconds: int | None = Field(default=None, ge=60, le=7200)
     retry_caller_policy: str | None = Field(default=None, pattern="^(same|different)$")
     max_calls_per_number_day: int | None = Field(default=None, ge=5, le=500)
+    # Contacts with several numbers: try each in order before the next retry.
+    try_other_numbers: bool | None = None
+    rounds_per_number: int | None = Field(default=None, ge=1, le=10)
+    number_gap_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 
 class CampaignCreate(CallingRules):
@@ -147,6 +151,9 @@ def calling_rules(c) -> dict:
         "warmup_rest_seconds": getattr(c, "warmup_rest_seconds", None) or 900,
         "retry_caller_policy": getattr(c, "retry_caller_policy", None) or "same",
         "max_calls_per_number_day": getattr(c, "max_calls_per_number_day", None) or 75,
+        "try_other_numbers": bool(getattr(c, "try_other_numbers", None)),
+        "rounds_per_number": getattr(c, "rounds_per_number", None) or 2,
+        "number_gap_minutes": getattr(c, "number_gap_minutes", None) or 10,
     }
 
 
@@ -261,14 +268,21 @@ def dial_eligibility(lead, campaign, now_utc: datetime) -> str | None:
       "later" — an unanswered contact with a retry still to come
       None    — nothing left to do for it (answered, out of tries, Do-Not-Call…)
     """
+    from app.services import lead_phones
+
     if lead.do_not_call:
         return None
+    if getattr(lead, "phone", None) and lead_phones.pick(lead, campaign) is None:
+        return None  # every number on file is ruled out (wrong, disconnected, do-not-call)
     if lead.status == "new":
         return "now"
-    if lead.status in RETRY_STATUSES:
+    # A wrong number on one of several numbers moves on to the next one when the campaign tries other numbers.
+    if lead.status in RETRY_STATUSES or (lead.status == "wrong_number" and lead_phones.sequencing(campaign)
+                                         and getattr(lead, "phone", None)):
         # Contacts called before tries were tracked count as one attempt.
         attempts = max(lead.attempts or 0, 1)
-        if attempts >= calling_rules(campaign)["max_attempts"]:
+        if attempts >= calling_rules(campaign)["max_attempts"] and not (
+                getattr(lead, "phone", None) and lead_phones.mid_pass(lead, campaign)):
             return None
         due = lead.next_attempt_at
         if due is None or _aware(due) <= _aware(now_utc):
@@ -277,7 +291,8 @@ def dial_eligibility(lead, campaign, now_utc: datetime) -> str | None:
     return None
 
 
-def _campaign_to_dict(c: Campaign, pending_retries: int = 0, now: datetime | None = None) -> dict:
+def _campaign_to_dict(c: Campaign, pending_retries: int = 0, now: datetime | None = None,
+                      leads_dialed: int | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     nxt = next_window_start(c, now)
     return {
@@ -297,6 +312,8 @@ def _campaign_to_dict(c: Campaign, pending_retries: int = 0, now: datetime | Non
         "pending_retries": pending_retries,
         "total_targets": c.total_targets,
         "total_dialed": c.total_dialed,
+        # Contacts called at least once: progress counts people, not dials (retries and extra numbers).
+        "leads_dialed": leads_dialed if leads_dialed is not None else c.total_dialed,
         "total_qualified": c.total_qualified,
         "total_booked": c.total_booked,
         "created_at": c.created_at.isoformat() if c.created_at else None,
@@ -322,8 +339,17 @@ async def _pending_retries(db, campaign_ids: list[uuid.UUID]) -> dict:
     return dict(rows.all())
 
 
+async def _leads_dialed(db, campaign_ids: list[uuid.UUID]) -> dict:
+    if not campaign_ids:
+        return {}
+    rows = await db.execute(select(Lead.campaign_id, func.count()).where(
+        Lead.campaign_id.in_(campaign_ids), Lead.last_called_at.is_not(None)).group_by(Lead.campaign_id))
+    return dict(rows.all())
+
+
 async def _campaign_out(db, c: Campaign) -> dict:
-    return _campaign_to_dict(c, (await _pending_retries(db, [c.id])).get(c.id, 0))
+    return _campaign_to_dict(c, (await _pending_retries(db, [c.id])).get(c.id, 0),
+                             leads_dialed=(await _leads_dialed(db, [c.id])).get(c.id, 0))
 
 
 async def _get_campaign(db, ctx: Context, campaign_id: uuid.UUID) -> Campaign:
@@ -377,8 +403,9 @@ async def list_campaigns(
     result = await db.execute(stmt)
     campaigns = result.scalars().all()
     pending = await _pending_retries(db, [c.id for c in campaigns])
+    dialed = await _leads_dialed(db, [c.id for c in campaigns])
     now = datetime.now(timezone.utc)
-    return {"campaigns": [_campaign_to_dict(c, pending.get(c.id, 0), now) for c in campaigns]}
+    return {"campaigns": [_campaign_to_dict(c, pending.get(c.id, 0), now, dialed.get(c.id, 0)) for c in campaigns]}
 
 
 @router.get("/{campaign_id}")
@@ -868,11 +895,20 @@ async def _wait_for_capacity(campaign_uuid: uuid.UUID, keep_going: set[str] | fr
         await asyncio.sleep(3)
 
 
-def _record_attempt(lead: Lead, campaign: Campaign, now: datetime | None = None) -> None:
-    """Count a dial and schedule when a retry would be due if nobody picks up."""
+def _record_attempt(lead: Lead, campaign: Campaign, now: datetime | None = None, number: str | None = None) -> None:
+    """Count a dial and schedule when a retry would be due if nobody picks up. With "Try other numbers", a pass
+    through the contact's numbers is one try: dials inside a pass are `number_gap_minutes` apart, and the retry
+    schedule applies once every number has had its rounds."""
+    from app.services import lead_phones
+
     now = now or datetime.now(timezone.utc)
-    lead.attempts = (lead.attempts or 0) + 1
+    starts_pass = lead_phones.record_dial(lead, campaign, number or getattr(lead, "phone", None), now)
+    if starts_pass or not lead_phones.sequencing(campaign):
+        lead.attempts = (lead.attempts or 0) + 1
     lead.last_called_at = now
+    if not lead_phones.pass_done(lead, campaign):
+        lead.next_attempt_at = now + timedelta(minutes=lead_phones.gap_minutes(campaign))
+        return
     waits = retry_waits(campaign)
     wait = waits[min(lead.attempts, len(waits)) - 1] if waits else calling_rules(campaign)["retry_delay_minutes"]
     lead.next_attempt_at = now + timedelta(minutes=wait)
@@ -902,11 +938,13 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
         select(Lead)
         .where(
             Lead.campaign_id == campaign.id,
-            Lead.status.in_(("new", "calling", *RETRY_STATUSES)),
+            Lead.status.in_(("new", "calling", "wrong_number", *RETRY_STATUSES)),
             or_(Lead.do_not_call.is_(None), Lead.do_not_call.is_(False)),
         )
         .order_by(Lead.created_at.asc())
     )).scalars().all()
+    from app.services import lead_phones
+
     waiting, earliest = 0, None
     max_attempts = calling_rules(campaign)["max_attempts"]
     recent = now - timedelta(minutes=20)
@@ -914,7 +952,7 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
         if lead.status == "calling":
             if lead.last_called_at and _aware(lead.last_called_at) >= recent:
                 # A call in progress may still end unanswered and need another try.
-                if max_attempts > 1 and (lead.attempts or 0) < max_attempts:
+                if (max_attempts > 1 and (lead.attempts or 0) < max_attempts) or lead_phones.mid_pass(lead, campaign):
                     waiting += 1
                     due = now + timedelta(seconds=60)
                     earliest = due if earliest is None else min(earliest, due)
@@ -931,7 +969,7 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
                 continue
             lead.status = "no_answer"
         state = dial_eligibility(lead, campaign, now)
-        if state == "now" and not quiet_hours.ok_to_call(lead.phone, now):
+        if state == "now" and not quiet_hours.ok_to_call(lead_phones.pick(lead, campaign) or lead.phone, now):
             # Inside the campaign's hours but too early or late where this contact lives — try again soon.
             waiting += 1
             due = now + timedelta(minutes=15)
@@ -1090,6 +1128,9 @@ async def _process_call_queue(campaign_id: str) -> None:
                 else:
                     wait = 0
                     lead_id, prev_attempts = lead.id, lead.attempts or 0
+                    from app.services import lead_phones
+
+                    number = lead_phones.pick(lead, campaign) or lead.phone
                     per_number = _per_number_pacing(campaign)
                     from app.services import number_health
 
@@ -1097,8 +1138,8 @@ async def _process_call_queue(campaign_id: str) -> None:
                     # Read by the caller-ID pick during this dispatch (this dialer task only); reset every call.
                     number_health.pacing_blocked.set(blocked)
                     try:
-                        _record_attempt(lead, campaign, now)
-                        call_log = await outbound_call_service.dispatch_call(lead, db)
+                        _record_attempt(lead, campaign, now, number)
+                        call_log = await outbound_call_service.dispatch_call(lead, db, to_phone=number)
                         campaign.total_dialed += 1
                         campaign.updated_at = datetime.now(timezone.utc)
                         await db.commit()
@@ -1137,7 +1178,9 @@ async def _process_call_queue(campaign_id: str) -> None:
                         if fresh and campaign:
                             await db.refresh(fresh)
                             if (fresh.attempts or 0) == prev_attempts:
-                                _record_attempt(fresh, campaign)
+                                _record_attempt(fresh, campaign, number=number)
+                            if isinstance(exc, ValueError):
+                                lead_phones.mark(fresh, number, "disconnected")  # a number that can't be dialed
                             if fresh.status in ("new", "calling"):
                                 fresh.status = "failed"
                             await db.commit()
