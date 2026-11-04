@@ -41,6 +41,8 @@ function Approve() {
   const [error, setError] = useState("");
   const [account, setAccount] = useState<string>("");
   const [busy, setBusy] = useState<"" | "allow" | "deny">("");
+  const [password, setPassword] = useState("");
+  const [denied, setDenied] = useState("");
 
   useEffect(() => {
     if (!req) {
@@ -58,10 +60,17 @@ function Approve() {
   async function decide(approve: boolean) {
     setBusy(approve ? "allow" : "deny");
     try {
-      const r = await post<{ redirect: string }>("/api/oauth/approve", { req, approve, org_id: account || null });
+      const r = await post<{ redirect: string }>("/api/oauth/approve", {
+        req,
+        approve,
+        org_id: account || null,
+        admin_password: info?.admin && !info.admin_unlocked ? password : "",
+      });
       window.location.href = r.redirect;
     } catch (e) {
-      setError((e as Error).message);
+      // A wrong admin password: let them try again on the same screen.
+      if (info?.admin && approve) setDenied((e as Error).message);
+      else setError((e as Error).message);
       setBusy("");
     }
   }
@@ -96,11 +105,19 @@ function Approve() {
       )}
 
       {info.admin && !info.admin_unlocked && (
-        <Notice tone="amber">
-          Unlock the admin portal first: open <a className="font-medium underline" href="/admin" target="_blank" rel="noreferrer">Admin</a>{" "}
-          in a new tab, enter the admin password, then come back and click Allow.
-        </Notice>
+        <label className="block space-y-1.5 text-sm">
+          <span className="font-medium text-zinc-800">Admin password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && password && void decide(true)}
+            autoComplete="current-password"
+            className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm"
+          />
+        </label>
       )}
+      {denied && <Notice tone="red">{denied}</Notice>}
 
       {!info.admin && info.accounts.length > 1 && (
         <label className="block space-y-1.5 text-sm">
@@ -153,7 +170,13 @@ function Approve() {
         <Button className="flex-1" disabled={!!busy} loading={busy === "deny"} onClick={() => void decide(false)}>
           Cancel
         </Button>
-        <Button variant="primary" className="flex-1" disabled={!!busy} loading={busy === "allow"} onClick={() => void decide(true)}>
+        <Button
+          variant="primary"
+          className="flex-1"
+          disabled={!!busy || (!!info.admin && !info.admin_unlocked && !password)}
+          loading={busy === "allow"}
+          onClick={() => void decide(true)}
+        >
           Allow
         </Button>
       </div>

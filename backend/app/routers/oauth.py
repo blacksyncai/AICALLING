@@ -36,7 +36,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.models.account import Membership, Organization, User
 from app.models.oauth import OAuthClient, OAuthCode, OAuthToken
-from app.services.auth import DbDep, UserDep, admin_unlocked
+from app.services.auth import DbDep, UserDep, admin_unlocked, check_admin_password
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/oauth", tags=["oauth"])
@@ -361,6 +361,7 @@ class Approval(BaseModel):
     req: str
     approve: bool = True
     org_id: uuid.UUID | None = None
+    admin_password: str = ""  # BlackSync Admin only: the admin password, when the portal isn't unlocked here
 
 
 @router.post("/approve")
@@ -372,8 +373,9 @@ async def approve(body: Approval, request: Request, user: UserDep, db: DbDep):
         if not user.is_superadmin:
             raise HTTPException(status_code=403, detail="BlackSync Admin is only for BlackSync platform admins.")
         if not admin_unlocked(request, user):
-            raise HTTPException(status_code=423, detail="Unlock the admin portal with the admin password first, "
-                                                        "then click Allow again.")
+            if not body.admin_password:
+                raise HTTPException(status_code=423, detail="Enter the admin password to connect BlackSync Admin.")
+            check_admin_password(user, body.admin_password)
         body.org_id = None
     client = await get_client(db, p["c"])
     if client is None or p["r"] not in client.redirect_uris:

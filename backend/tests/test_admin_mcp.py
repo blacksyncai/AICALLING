@@ -80,6 +80,9 @@ def test_approval_needs_a_super_admin_with_the_portal_unlocked(client, make_clie
     _, _, req = _request(make_client())
     assert locked.get("/api/oauth/request", params={"req": req}).json()["admin_unlocked"] is False
     assert locked.post("/api/oauth/approve", json={"req": req, "approve": True}).status_code == 423
+    assert locked.post("/api/oauth/approve", json={"req": req, "approve": True, "admin_password": "nope"}).status_code == 403
+    ok = locked.post("/api/oauth/approve", json={"req": req, "approve": True, "admin_password": "portal-pass-456"})
+    assert ok.status_code == 200 and "code=" in ok.json()["redirect"]
 
 
 def test_admin_works_in_any_account_and_everything_is_logged(client, make_client):
