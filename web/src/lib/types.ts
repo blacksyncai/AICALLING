@@ -193,6 +193,8 @@ export interface ResponseAnalysis {
   version: number; response: string; evidence_quote: string | null; response_scope: string;
   certainty: string; next_action: string; next_action_quote: string | null;
   channel: string | null; timeline: string | null; meeting_response: string;
+  /** Why they said no or not now (see REASON_LABELS), with their own words. */
+  reason?: string | null; reason_quote?: string | null;
 }
 
 export interface Call {

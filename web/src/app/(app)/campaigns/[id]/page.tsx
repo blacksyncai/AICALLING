@@ -189,6 +189,8 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
   }, [fieldsAsked, leadsData, id, refreshLeads]);
   const { data: calls } = useSWR<{ items: Call[] }>(`/api/calls/?campaign_id=${id}&page_size=50`, fetcher, { refreshInterval: live ? 5000 : 30000 });
   const { data: agents } = useSWR<Agent[]>("/api/agents/", fetcher);
+  const { data: reasons } = useSWR<{ reasons: { reason: string; label: string; count: number }[]; total: number }>(
+    `/api/calls/reasons?campaign_id=${id}`, fetcher, { refreshInterval: 60000 });
   const { data: status } = useSWR<SettingsStatus>("/api/settings/status", fetcher);
   const [importOpen, setImportOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -543,6 +545,18 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
 
       <Card>
         <CardHeader title="Calls in this campaign" />
+        {!!reasons?.reasons.length && (
+          <div className="border-b border-zinc-100 px-5 py-4">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Why people said no or not now</div>
+            <div className="flex flex-wrap gap-2">
+              {reasons.reasons.map((r) => (
+                <Link key={r.reason} href={`/calls?reason=${r.reason}`} className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700 hover:bg-zinc-50">
+                  {r.label} <span className="font-semibold tabular-nums text-zinc-900">{r.count}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
         {!calls?.items.length ? (
           <p className="px-5 py-6 text-sm text-zinc-500">No calls yet.</p>
         ) : (
@@ -553,7 +567,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
                   <div className="truncate text-sm font-medium">{c.contact_name ?? c.to_phone}</div>
                   <div className="truncate text-xs text-zinc-500">{c.summary ?? c.to_phone}</div>
                 </div>
-                <OutcomeBadge outcome={c.outcome} status={c.status} />
+                <OutcomeBadge outcome={c.outcome} status={c.status} reason={c.response_analysis?.reason} />
                 <span className="w-12 text-right text-xs text-zinc-500">{formatDuration(c.duration_seconds)}</span>
                 <span className="w-16 text-right text-xs text-zinc-400">{timeAgo(c.started_at)}</span>
               </Link>

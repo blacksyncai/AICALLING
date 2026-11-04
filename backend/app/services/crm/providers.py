@@ -63,7 +63,10 @@ class CallInfo:
 
     @property
     def outcome_label(self) -> str:
-        return OUTCOME_LABELS.get(self.outcome or "", (self.outcome or "Completed").replace("_", " ").title())
+        base = OUTCOME_LABELS.get(self.outcome or "", (self.outcome or "Completed").replace("_", " ").title())
+        from app.services.call_reasons import label as reason_label
+        reason = reason_label((self.response_analysis or {}).get("reason"))
+        return f"{base} · {reason}" if reason else base
 
     @property
     def connected(self) -> bool:

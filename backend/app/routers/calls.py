@@ -143,6 +143,7 @@ async def list_calls(
     campaign_id: uuid.UUID | None = None,
     outcome: str | None = None,
     next_action: str | None = None,
+    reason: str | None = None,
     call_type: str | None = None,
     # A calendar day (YYYY-MM-DD) in the organization's reporting time zone.
     day: Date | None = Query(default=None, alias="date"),
@@ -174,6 +175,8 @@ async def list_calls(
             raise HTTPException(422, "Choose a supported next action.")
         filters += [CallLog.response_analysis["version"].as_integer() == 1,
                     CallLog.response_analysis["next_action"].as_string() == next_action]
+    if reason:
+        filters.append(CallLog.response_analysis["reason"].as_string() == reason)
     if call_type:
         filters.append(CallLog.call_type == call_type)
     if day:
@@ -198,6 +201,27 @@ async def list_calls(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.get("/reasons")
+async def call_reasons(ctx: CtxDep, db: DbDep, campaign_id: uuid.UUID | None = None, agent_id: uuid.UUID | None = None,
+                       days: int = Query(default=90, ge=1, le=365)):
+    """Why contacts said no or not now (already sold, working with an agent...), counted per reason."""
+    from datetime import timedelta, timezone as tz
+
+    from app.services.call_reasons import REASONS
+
+    key = CallLog.response_analysis["reason"].as_string()
+    stmt = select(key, func.count()).where(CallLog.org_id == ctx.org.id, key.is_not(None),
+                                           CallLog.started_at >= datetime.now(tz.utc) - timedelta(days=days))
+    if campaign_id:
+        stmt = stmt.where(CallLog.campaign_id == campaign_id)
+    if agent_id:
+        stmt = stmt.where(CallLog.agent_id == agent_id)
+    rows = (await db.execute(stmt.group_by(key))).all()
+    counts = sorted(((r, n) for r, n in rows if r in REASONS), key=lambda x: -x[1])
+    return {"reasons": [{"reason": r, "label": REASONS[r], "count": n} for r, n in counts],
+            "total": sum(n for _, n in counts), "labels": REASONS}
 
 
 @router.get("/overview")

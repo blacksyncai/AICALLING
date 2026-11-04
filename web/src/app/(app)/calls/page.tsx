@@ -17,7 +17,7 @@ import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model"
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import type { Agent, Call } from "@/lib/types";
-import { NEXT_ACTION_LABELS, cn, formatDateTime, formatDuration, formatPhone, humanize, outcomeLabel, timeAgo } from "@/lib/utils";
+import { NEXT_ACTION_LABELS, REASON_LABELS, cn, formatDateTime, formatDuration, formatPhone, humanize, outcomeLabel, timeAgo } from "@/lib/utils";
 
 const OUTCOMES = ["no_decision", "insufficient_conversation", "busy", "information_requested", "potential_follow_up", "declined_conversation", "wrong_number", "meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "language_barrier", "hung_up", "completed", "failed"];
 const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
@@ -54,6 +54,7 @@ function CallLogs() {
   const agentId = params.get("agent_id") ?? "";
   const outcome = params.get("outcome") ?? "";
   const nextAction = params.get("next_action") ?? "";
+  const reason = params.get("reason") ?? "";
   const type = params.get("call_type") ?? "";
   const sort = params.get("sort") ?? "";
   const [page, setPage] = useState(1);
@@ -89,6 +90,7 @@ function CallLogs() {
   if (agentId) qs.set("agent_id", agentId);
   if (outcome) qs.set("outcome", outcome);
   if (nextAction) qs.set("next_action", nextAction);
+  if (reason) qs.set("reason", reason);
   if (type) qs.set("call_type", type);
   if (date) qs.set("date", date);
   if (sort) qs.set("sort", sort);
@@ -106,6 +108,7 @@ function CallLogs() {
   if (agentId) chips.push({ key: "agent_id", label: `Agent ${agents?.find((a) => a.id === agentId)?.name ?? "…"}` });
   if (outcome) chips.push({ key: "outcome", label: OUTCOME_CHIP[outcome] ?? outcomeLabel(outcome) });
   if (nextAction) chips.push({ key: "next_action", label: NEXT_ACTION_LABELS[nextAction] ?? humanize(nextAction) });
+  if (reason) chips.push({ key: "reason", label: REASON_LABELS[reason] ?? humanize(reason) });
   if (type) chips.push({ key: "call_type", label: TYPE_CHIP[type] ?? humanize(type) });
 
   return (
@@ -148,6 +151,10 @@ function CallLogs() {
               {outcomeLabel(o)}
             </option>
           ))}
+        </Select>
+        <Select className="rounded-full! border-zinc-200 bg-zinc-50 sm:w-48" value={reason} onChange={(e) => setFilter("reason", e.target.value)} aria-label="Reason">
+          <option value="">All reasons</option>
+          {Object.entries(REASON_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </Select>
         <Select className="rounded-full! border-zinc-200 bg-zinc-50 sm:w-48" value={nextAction} onChange={e => setFilter("next_action", e.target.value)} aria-label="Next step">
           <option value="">All next steps</option>{Object.entries(NEXT_ACTION_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -332,7 +339,7 @@ function TranscriptPeek({ call: c }: { call: Call }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-        <OutcomeBadge outcome={c.outcome} status={c.status} />
+        <OutcomeBadge outcome={c.outcome} status={c.status} reason={c.response_analysis?.reason} />
         <span>{durationWords(c.duration_seconds)}</span>
         <span>{formatDateTime(c.started_at)}</span>
         <Link href={`/calls/${c.id}`} className="ml-auto font-medium text-brand-700 hover:underline">
@@ -370,7 +377,7 @@ function CallAvatar({ call: c }: { call: Call }) {
 
 function CallOutcome({ call: c }: { call: Call }) {
   if (!c.outcome) return <OutcomeBadge outcome={null} status={c.status} />;
-  return <span className="inline-flex flex-col items-start gap-1"><StatusPill status={c.outcome} label={outcomeLabel(c.outcome)} />
+  return <span className="inline-flex flex-col items-start gap-1"><StatusPill status={c.outcome} label={(c.response_analysis?.reason && REASON_LABELS[c.response_analysis.reason]) || outcomeLabel(c.outcome)} />
     {c.response_analysis?.version === 1 && <span className="text-[10px] text-zinc-400">{NEXT_ACTION_LABELS[c.response_analysis.next_action] ?? humanize(c.response_analysis.next_action)}</span>}</span>;
 }
 

@@ -260,6 +260,13 @@ def review_response(result, transcript):
         in ("accepted", "declined", "not_discussed", "unclear")
         else "not_discussed",
     }
+    if outcome not in technical and outcome not in ("meeting_booked", "transferred"):
+        from app.services.call_reasons import decide
+
+        reason, reason_quote = decide(raw.get("reason"), raw.get("reason_quote"), _live_contact_turns(transcript))
+        if reason:
+            out["response_analysis"]["reason"] = reason
+            out["response_analysis"]["reason_quote"] = reason_quote
     return out
 
 

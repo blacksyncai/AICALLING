@@ -772,6 +772,35 @@ async def fix_mislabeled_outcomes(limit: int = 500) -> int:
     return len(ids)
 
 
+async def backfill_call_reasons(days: int = 60, limit: int = 5000) -> int:
+    """Tag recent analyzed calls with the reason the contact gave (e.g. "My house already sold" = already_sold),
+    using the same rules new calls use. Only adds a missing reason; never changes outcomes."""
+    from app.agent.runtime import NO_CONVERSATION_OUTCOMES, _live_contact_turns
+    from app.database import AsyncSessionLocal
+    from app.services.call_reasons import from_rules
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    tagged = 0
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CallLog).where(
+            CallLog.started_at >= since, CallLog.transcript.isnot(None), CallLog.response_analysis.isnot(None),
+            CallLog.outcome.notin_((*NO_CONVERSATION_OUTCOMES, "failed", "meeting_booked", "transferred")),
+        ).order_by(CallLog.started_at.desc()).limit(limit))).scalars().all()
+        for call in rows:
+            ra = dict(call.response_analysis or {})
+            if ra.get("version") != 1 or ra.get("reason"):
+                continue
+            hit = from_rules(_live_contact_turns(call.transcript))
+            if hit:
+                ra["reason"], ra["reason_quote"] = hit
+                call.response_analysis = ra
+                tagged += 1
+        await db.commit()
+    if tagged:
+        log.info("call_reasons_backfilled", count=tagged)
+    return tagged
+
+
 async def fix_missed_voicemails(days: int = 14, limit: int = 1000) -> int:
     """Repair: recent calls scored as a conversation (often "callback requested") that were really a recorded
     greeting, e.g. "For a quicker response, text me. Looking forward to connecting soon." Re-analyzing applies

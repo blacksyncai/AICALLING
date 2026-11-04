@@ -46,7 +46,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
         <div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">{call.contact_name ?? call.to_phone ?? "Call"}</h1>
-            <OutcomeBadge outcome={call.outcome} status={call.status} />
+            <OutcomeBadge outcome={call.outcome} status={call.status} reason={call.response_analysis?.reason} />
             {call.sentiment && <Badge tone={call.sentiment === "positive" ? "green" : call.sentiment === "negative" ? "red" : "gray"}>{humanize(call.sentiment)} sentiment</Badge>}
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">

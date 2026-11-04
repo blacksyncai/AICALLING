@@ -55,6 +55,15 @@ const OUTCOME_LABEL: Record<string, string> = {
   do_not_call: "Do not call",
 };
 
+/** Why a contact said no or not now (response_analysis.reason). */
+export const REASON_LABELS: Record<string, string> = {
+  already_sold: "Already sold", already_bought: "Already bought", working_with_agent: "Working with an agent",
+  not_owner: "Not the owner", renting_out: "Renting it out", not_selling: "Not selling anymore",
+  not_looking: "Not looking anymore", has_provider: "Already has a provider", cost: "Cost / commission",
+  price_value: "Price or value", timing: "Bad timing", no_need: "No need", privacy: "Asked how we got their number",
+  other: "Other reason",
+};
+
 export function outcomeLabel(s: string | null | undefined): string {
   return (s && OUTCOME_LABEL[s]) || humanize(s);
 }
