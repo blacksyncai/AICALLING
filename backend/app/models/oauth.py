@@ -8,7 +8,7 @@ tokens plus rotating refresh tokens. Only SHA-256 hashes of codes, tokens and cl
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -71,3 +71,25 @@ class OAuthToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Platform admin mode, switched on from the password-locked admin portal for one connection at a time. While
+    # admin_until is in the future, a super-admin's tools can act inside any account (admin_org_id is the current one).
+    admin_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    admin_org_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+
+class AdminMcpAction(Base):
+    """Every tool call made through a connection in admin mode: who, which account, what, and whether it worked."""
+
+    __tablename__ = "admin_mcp_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    token_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    admin_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    org_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    tool: Mapped[str] = mapped_column(String(80), nullable=False)
+    read_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    arguments: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)

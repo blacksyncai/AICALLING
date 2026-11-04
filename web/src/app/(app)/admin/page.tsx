@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Building2, CreditCard, Hash, LifeBuoy, Lock, Mail, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
+import { Bot, BookOpen, Building2, CreditCard, Hash, LifeBuoy, Lock, Mail, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
@@ -10,6 +10,7 @@ import { PlaybooksTab } from "@/components/admin/playbooks";
 import { BillingAdminTab } from "@/components/admin/BillingAdminTab";
 import { TelephonyTab } from "@/components/admin/TelephonyTab";
 import { EmailsTab } from "@/components/admin/EmailsTab";
+import { AiAccessTab } from "@/components/admin/AiAccessTab";
 import { AdminGuard, Avatar, StatTile, fmt } from "@/components/admin/shared";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Spinner, Tabs } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
@@ -28,7 +29,7 @@ type AdminUser = {
   accounts: { org_id: string; org_name: string; role: string }[];
 };
 
-type Tab = "accounts" | "users" | "playbooks" | "numbers" | "billing" | "emails";
+type Tab = "accounts" | "users" | "playbooks" | "numbers" | "billing" | "emails" | "ai";
 
 export default function AdminPage() {
   return (
@@ -42,7 +43,7 @@ function AdminPortal() {
   const [tab, setTab] = useState<Tab>("accounts");
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    if (t === "playbooks" || t === "emails") setTab(t);
+    if (t === "playbooks" || t === "emails" || t === "ai") setTab(t);
   }, []);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
@@ -116,7 +117,7 @@ function AdminPortal() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="w-full overflow-x-auto sm:w-[42rem]">
+        <div className="w-full overflow-x-auto sm:w-[48rem]">
           <Tabs<Tab>
             value={tab}
             onChange={setTab}
@@ -127,6 +128,7 @@ function AdminPortal() {
               { value: "numbers", label: "Numbers", icon: <Hash className="h-3.5 w-3.5" /> },
               { value: "billing", label: "Billing", icon: <CreditCard className="h-3.5 w-3.5" /> },
               { value: "emails", label: "Emails", icon: <Mail className="h-3.5 w-3.5" /> },
+              { value: "ai", label: "AI access", icon: <Bot className="h-3.5 w-3.5" /> },
             ]}
           />
         </div>
@@ -174,6 +176,8 @@ function AdminPortal() {
         <BillingAdminTab />
       ) : tab === "emails" ? (
         <EmailsTab />
+      ) : tab === "ai" ? (
+        <AiAccessTab />
       ) : (
         <PlaybooksTab />
       )}

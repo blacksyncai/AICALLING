@@ -32,8 +32,13 @@ class Session:
     user: User
     db: Any
     ctx: Context | None  # None until the user has an account
+    token: Any = None  # the OAuth connection (OAuthToken)
+    admin: bool = False  # platform admin mode: tools act in whichever account the admin picked
 
     def need_account(self) -> Context:
+        if self.ctx is None and self.admin:
+            raise ToolError("Admin mode: pick the customer account first. Find it with admin_list_accounts, then "
+                            "call admin_use_account, or pass account_id to this tool.")
         if self.ctx is None:
             raise ToolError("You don't have a BlackSync account yet. Use create_account to set one up first "
                             "(ask for the company name and industry).")
