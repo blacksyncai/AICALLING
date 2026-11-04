@@ -428,6 +428,10 @@ _PERSONAL_STRONG = (
     "can't get to the phone", "can't come to the phone", "unable to come to the phone", "call you back as soon",
     "get back to you as soon", "away from my phone", "you've reached", "you have reached", "sorry i missed your call",
     "sorry i missed you",
+    # The tail of "please leave a message and I will return your call" (the transcript often starts mid-greeting).
+    "will return your call", "i'll return your call", "return your call as soon", "message and i will",
+    "message, and i will", "message and i'll", "message, and i'll", "and i'll get back to you",
+    "and i will get back to you", "i'll get back to you as soon", "return the call as soon",
 )
 _PERSONAL_WEAK = (
     "can't answer", "can't talk right now", "can't talk at the moment", "unable to answer", "i'll call you back",

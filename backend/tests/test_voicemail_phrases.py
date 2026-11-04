@@ -103,3 +103,27 @@ def test_a_live_person_saying_have_a_great_day_is_still_a_person():
         {"role": "user", "text": "Not interested, have a great day."},
     ]
     assert person_answered(transcript)
+
+
+def test_greeting_tail_return_your_call_is_voicemail():
+    from app.agent.runtime import reconcile_outcome, voicemail_answered
+
+    transcript = [
+        {"role": "assistant", "text": "Hey Kelly this is Sofia. Real quick I'm a next gen AI agent."},
+        {"role": "user", "text": "Message, and I will return your call. Thank you."},
+    ]
+    assert voicemail_answered(transcript)
+    assert reconcile_outcome("no_decision", transcript) == "voicemail"
+    assert reconcile_outcome("callback", transcript, callback_request="Message, and I will return your call.") == "voicemail"
+
+
+def test_a_live_person_saying_they_will_call_back_is_still_a_person():
+    from app.agent.runtime import person_answered
+
+    transcript = [
+        {"role": "assistant", "text": "Hey Kelly, this is Sofia, do you have a minute?"},
+        {"role": "user", "text": "Hello? Who is this?"},
+        {"role": "assistant", "text": "It's Sofia with Acme about your listing."},
+        {"role": "user", "text": "I'm driving, I will return your call later."},
+    ]
+    assert person_answered(transcript)
