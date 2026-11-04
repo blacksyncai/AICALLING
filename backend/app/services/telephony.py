@@ -355,9 +355,12 @@ async def purchase(db: AsyncSession, org_id: uuid.UUID, number: str, label: str 
 async def import_owned(db: AsyncSession, org_id: uuid.UUID, number: str, label: str = "") -> PhoneNumber:
     """Assign a number that's already in the Twilio (or Bandwidth) account."""
     number = normalize(number)
-    owned = {n["number"]: n for n in await list_owned()}
+    # One carrier failing (e.g. Twilio credentials rejected) must not block a number owned in another one.
+    problems: list[str] = []
+    owned = {n["number"]: n for n in await list_owned(problems)}
     if number not in owned:
-        raise TelephonyError("That number isn't in a configured carrier account.")
+        raise TelephonyError("That number isn't in a configured carrier account."
+                             + (f" ({' '.join(problems)})" if problems else ""))
     carrier = owned[number].get("carrier")
     if carrier == "signalwire":
         from app.services import signalwire
