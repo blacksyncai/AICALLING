@@ -1,5 +1,4 @@
 -- The normal schema startup also adds these idempotently.
-ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS admin_until TIMESTAMPTZ;
 ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS admin_org_id UUID;
 CREATE TABLE IF NOT EXISTS admin_mcp_actions (
     id UUID PRIMARY KEY,

@@ -36,7 +36,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.models.account import Membership, Organization, User
 from app.models.oauth import OAuthClient, OAuthCode, OAuthToken
-from app.services.auth import DbDep, UserDep
+from app.services.auth import DbDep, UserDep, admin_unlocked
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/oauth", tags=["oauth"])
@@ -67,6 +67,20 @@ def resource_url() -> str:
 
 def resource_metadata_url() -> str:
     return f"{base_url()}/.well-known/oauth-protected-resource/api/mcp"
+
+
+# The separate platform-admin MCP server (app/routers/admin_mcp.py). Its tokens never work on /api/mcp and the
+# customer connector's tokens never work here.
+def admin_resource_url() -> str:
+    return f"{base_url()}/api/admin-mcp"
+
+
+def admin_resource_metadata_url() -> str:
+    return f"{base_url()}/.well-known/oauth-protected-resource/api/admin-mcp"
+
+
+def is_admin_resource(resource: str | None) -> bool:
+    return (resource or "").rstrip("/") == admin_resource_url()
 
 
 def _hash(value: str) -> str:
@@ -106,6 +120,11 @@ async def protected_resource():
     return _protected_resource()
 
 
+@well_known.get("/.well-known/oauth-protected-resource/api/admin-mcp")
+async def admin_protected_resource():
+    return {**_protected_resource(), "resource": admin_resource_url(), "resource_name": "BlackSync Admin"}
+
+
 def _server_metadata() -> dict:
     api = f"{base_url()}/api/oauth"
     return {
@@ -129,6 +148,7 @@ def _server_metadata() -> dict:
 
 @well_known.get("/.well-known/oauth-authorization-server")
 @well_known.get("/.well-known/oauth-authorization-server/api/mcp")
+@well_known.get("/.well-known/oauth-authorization-server/api/admin-mcp")
 async def authorization_server():
     return _server_metadata()
 
@@ -271,7 +291,7 @@ def _redirect_with(uri: str, params: dict) -> str:
 
 
 def _resource_ok(resource: str) -> bool:
-    return not resource or resource.rstrip("/") in (resource_url(), base_url())
+    return not resource or resource.rstrip("/") in (resource_url(), base_url(), admin_resource_url())
 
 
 @router.get("/authorize")
@@ -315,11 +335,14 @@ async def _accounts(db, user: User) -> list[dict]:
 
 
 @router.get("/request")
-async def request_info(req: str, user: UserDep, db: DbDep):
+async def request_info(req: str, request: Request, user: UserDep, db: DbDep):
     """What the approval page shows: which app is asking and which accounts the user can connect."""
     p = _unsign(req)
     if not p:
         raise HTTPException(status_code=400, detail="This connection request expired. Start again from the app.")
+    admin = is_admin_resource(p.get("rs"))
+    if admin and not user.is_superadmin:
+        raise HTTPException(status_code=403, detail="BlackSync Admin is only for BlackSync platform admins.")
     client = await get_client(db, p["c"])
     if client is None:
         raise HTTPException(status_code=400, detail="Unknown app. Remove the BlackSync connector and add it again.")
@@ -328,7 +351,8 @@ async def request_info(req: str, user: UserDep, db: DbDep):
     return {"client_name": client.client_name or "An AI assistant", "redirect_host": host,
             # The name is whatever the app registered with; only these hosts are known assistants.
             "verified": any(host == h or host.endswith("." + h) for h in CIMD_HOSTS),
-            "email": user.email, "accounts": accounts,
+            "email": user.email, "accounts": [] if admin else accounts,
+            "admin": admin, "admin_unlocked": admin and admin_unlocked(request, user),
             "default_account": str(user.active_org_id) if any(a["id"] == str(user.active_org_id) for a in accounts)
             else (accounts[0]["id"] if accounts else None)}
 
@@ -340,10 +364,17 @@ class Approval(BaseModel):
 
 
 @router.post("/approve")
-async def approve(body: Approval, user: UserDep, db: DbDep):
+async def approve(body: Approval, request: Request, user: UserDep, db: DbDep):
     p = _unsign(body.req)
     if not p:
         raise HTTPException(status_code=400, detail="This connection request expired. Start again from the app.")
+    if body.approve and is_admin_resource(p.get("rs")):
+        if not user.is_superadmin:
+            raise HTTPException(status_code=403, detail="BlackSync Admin is only for BlackSync platform admins.")
+        if not admin_unlocked(request, user):
+            raise HTTPException(status_code=423, detail="Unlock the admin portal with the admin password first, "
+                                                        "then click Allow again.")
+        body.org_id = None
     client = await get_client(db, p["c"])
     if client is None or p["r"] not in client.redirect_uris:
         raise HTTPException(status_code=400, detail="Unknown app. Remove the BlackSync connector and add it again.")
@@ -494,13 +525,15 @@ async def revoke(request: Request, db: DbDep):
     return JSONResponse({}, headers={"Cache-Control": "no-store"})
 
 
-async def token_for(db, raw: str) -> OAuthToken | None:
-    """The live connection behind an access token, or None."""
+async def token_for(db, raw: str, admin: bool = False) -> OAuthToken | None:
+    """The live connection behind an access token, or None. admin=True: a BlackSync Admin connection only."""
     if not raw:
         return None
     t = (await db.execute(select(OAuthToken).where(OAuthToken.access_hash == _hash(raw)))).scalar_one_or_none()
     if t is None or t.revoked_at or _aware(t.access_expires_at) < _now():
         return None
+    if admin:
+        return t if is_admin_resource(t.resource) else None
     if t.resource and t.resource.rstrip("/") not in (resource_url(), base_url()):
         return None
     return t
@@ -513,6 +546,7 @@ async def token_for(db, raw: str) -> OAuthToken | None:
 async def connections(user: UserDep, db: DbDep):
     rows = (await db.execute(select(OAuthToken).where(OAuthToken.user_id == user.id, OAuthToken.revoked_at.is_(None))
                              .order_by(OAuthToken.created_at.desc()))).scalars().all()
+    rows = [r for r in rows if not is_admin_resource(r.resource)]  # BlackSync Admin is managed in the admin portal
     names = {str(o.id): o.name for o in (await db.execute(select(Organization).where(
         Organization.id.in_([r.org_id for r in rows if r.org_id])))).scalars()} if rows else {}
     live = [r for r in rows if r.refresh_expires_at is None or _aware(r.refresh_expires_at) > _now()]

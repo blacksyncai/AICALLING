@@ -18,11 +18,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 
-from app.connector.admin_tools import ADMIN_TOOLS, parse_account_id, with_account_id
 from app.connector.tools import TOOLS, Session, ToolError
 from app.database import AsyncSessionLocal
 from app.models.account import Membership, Organization, User
-from app.models.oauth import AdminMcpAction
 from app.routers import oauth
 from app.services.auth import Context, resolve_org
 
@@ -100,66 +98,10 @@ def _content(data: dict) -> dict:
             "structuredContent": data}
 
 
-def admin_mode(token, user: User | None) -> bool:
-    """A super-admin's connection with admin mode switched on (from the admin portal) and not yet expired."""
-    until = token.admin_until
-    if until is not None and until.tzinfo is None:
-        until = until.replace(tzinfo=timezone.utc)
-    return bool(user is not None and user.is_superadmin and until and until > datetime.now(timezone.utc))
-
-
-async def _record(db, token, user, org, name: str, args: dict, read_only: bool, error: str = "") -> None:
-    try:
-        db.add(AdminMcpAction(token_id=token.id, admin_id=user.id, org_id=org.id if org else None,
-                              org_name=org.name if org else "", tool=name, read_only=read_only,
-                              arguments=json.dumps(args, default=str)[:4000], ok=not error, error=error[:1000]))
-        await db.commit()
-    except Exception as exc:  # the audit row must never break the tool call, but it must be noticed
-        await db.rollback()
-        log.error("admin_mcp_audit_failed", tool=name, error=str(exc)[:300])
-
-
-async def _call_admin(db, token, user: User, name: str, args: dict) -> dict:
-    """Admin mode: admin tools, or any regular tool aimed at the account the admin picked."""
-    t = ADMIN_TOOLS.get(name) or TOOLS.get(name)
-    if t is None:
-        raise KeyError(name)
-    args = dict(args)
-    org = None
-    try:
-        if name not in ADMIN_TOOLS:
-            org_id = parse_account_id(args.pop("account_id", None)) or token.admin_org_id
-            org = await db.get(Organization, org_id) if org_id else None
-            if org_id and org is None:
-                raise ToolError("No account with that id. Use admin_list_accounts to find it.")
-        elif args.get("account_id"):
-            org = await db.get(Organization, parse_account_id(args["account_id"]))
-        ctx = Context(user=user, org=org, role="superadmin") if org else None
-        data = await t.handler(Session(user=user, db=db, ctx=ctx, token=token, admin=True), args)
-    except (ToolError, HTTPException) as exc:
-        await db.rollback()
-        msg = str(exc) if isinstance(exc, ToolError) else (
-            exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail, default=str))
-        await _record(db, token, user, org, name, args, t.read_only, msg or "error")
-        return {**_content({"error": msg}), "isError": True}
-    except Exception as exc:
-        await db.rollback()
-        log.error("mcp_tool_failed", tool=name, admin=True, error=str(exc)[:300])
-        await _record(db, token, user, org, name, args, t.read_only, "internal error")
-        return {**_content({"error": "Something went wrong on BlackSync's side. Please try again."}), "isError": True}
-    if name == "admin_use_account":
-        org = await db.get(Organization, token.admin_org_id) if token.admin_org_id else None
-    await _record(db, token, user, org, name, args, t.read_only)
-    log.info("mcp_tool", tool=name, admin=True, org_id=str(org.id) if org else None, client=token.client_name)
-    if org is not None and isinstance(data, dict):
-        data = {**data, "acting_account": {"id": str(org.id), "name": org.name}}
-    return _content(data)
-
-
 async def _call_tool(db, token, params: dict) -> dict:
     name = params.get("name")
     args = params.get("arguments") or {}
-    t = TOOLS.get(name) or ADMIN_TOOLS.get(name)
+    t = TOOLS.get(name)
     if t is None and name in RETIRED:
         return {**_content({"error": RETIRED[name]}), "isError": True}
     if t is None:
@@ -178,11 +120,6 @@ async def _call_tool(db, token, params: dict) -> dict:
     if user is None:
         return {**_content({"error": "This connection is no longer valid."}), "isError": True,
                 "_meta": {"mcp/www_authenticate": [_challenge("invalid_token", "Reconnect BlackSync.")]}}
-    if admin_mode(token, user):
-        return await _call_admin(db, token, user, name, args)
-    if name in ADMIN_TOOLS or "account_id" in args:
-        return {**_content({"error": "Admin mode is off for this connection. Turn it on in the BlackSync admin "
-                                     "portal (Admin, AI admin access), then try again."}), "isError": True}
     session = Session(user=user, db=db, ctx=ctx)
     try:
         data = await t.handler(session, args)
@@ -218,9 +155,6 @@ async def _handle(db, token, msg: dict) -> dict | None:
     if method == "ping":
         return _result(id_, {})
     if method == "tools/list":
-        if admin_mode(token, await db.get(User, token.user_id)):
-            return _result(id_, {"tools": [t.descriptor() for t in ADMIN_TOOLS.values()]
-                                 + [with_account_id(t) for t in TOOLS.values()]})
         return _result(id_, {"tools": [t.descriptor() for t in TOOLS.values()]})
     if method == "tools/call":
         try:

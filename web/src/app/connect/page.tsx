@@ -14,9 +14,18 @@ interface RequestInfo {
   email: string;
   accounts: { id: string; name: string; role: string }[];
   default_account: string | null;
+  admin?: boolean;
+  admin_unlocked?: boolean;
 }
 
 const card = "w-full max-w-md space-y-5 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm sm:p-8";
+
+const ADMIN_CAN = [
+  "See and work in every customer account on BlackSync",
+  "Create and edit agents, knowledge, contacts and campaigns in any account",
+  "Add calling credits and read the admin action log",
+  "Place calls and start campaigns, asking you first",
+];
 
 const CAN = [
   "See your agents, calls, transcripts, contacts, campaigns and results",
@@ -71,7 +80,9 @@ function Approve() {
     <div className={card}>
       <Logo />
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900">Connect {info.client_name} to BlackSync</h1>
+        <h1 className="text-lg font-semibold text-zinc-900">
+          Connect {info.client_name} to {info.admin ? "BlackSync Admin" : "BlackSync"}
+        </h1>
         <p className="mt-1 text-sm text-zinc-500">
           Signed in as <span className="font-medium text-zinc-800">{info.email}</span>
         </p>
@@ -84,7 +95,14 @@ function Approve() {
         </Notice>
       )}
 
-      {info.accounts.length > 1 && (
+      {info.admin && !info.admin_unlocked && (
+        <Notice tone="amber">
+          Unlock the admin portal first: open <a className="font-medium underline" href="/admin" target="_blank" rel="noreferrer">Admin</a>{" "}
+          in a new tab, enter the admin password, then come back and click Allow.
+        </Notice>
+      )}
+
+      {!info.admin && info.accounts.length > 1 && (
         <label className="block space-y-1.5 text-sm">
           <span className="font-medium text-zinc-800">Account</span>
           <select
@@ -100,12 +118,12 @@ function Approve() {
           </select>
         </label>
       )}
-      {info.accounts.length === 1 && (
+      {!info.admin && info.accounts.length === 1 && (
         <p className="text-sm text-zinc-600">
           Account: <span className="font-medium text-zinc-900">{info.accounts[0].name}</span>
         </p>
       )}
-      {info.accounts.length === 0 && (
+      {!info.admin && info.accounts.length === 0 && (
         <p className="text-sm text-zinc-600">
           You don&apos;t have an account yet — {info.client_name} can set one up for you once connected.
         </p>
@@ -114,7 +132,7 @@ function Approve() {
       <div className="rounded-xl bg-zinc-50 p-4">
         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">{info.client_name} will be able to</div>
         <ul className="space-y-1.5 text-sm text-zinc-700">
-          {CAN.map((c) => (
+          {(info.admin ? ADMIN_CAN : CAN).map((c) => (
             <li key={c} className="flex gap-2">
               <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> {c}
             </li>
@@ -124,7 +142,10 @@ function Approve() {
 
       <p className="flex gap-2 text-xs leading-relaxed text-zinc-500">
         <ShieldCheck className="h-4 w-4 shrink-0 text-zinc-400" />
-        It acts as you, with your permissions. You can disconnect it any time under Integrations. You&apos;ll return to{" "}
+        {info.admin
+          ? "Every action is logged. You can disconnect it any time under Admin, AI access. "
+          : "It acts as you, with your permissions. You can disconnect it any time under Integrations. "}
+        You&apos;ll return to{" "}
         {info.redirect_host}.
       </p>
 

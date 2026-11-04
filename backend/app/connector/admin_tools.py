@@ -1,21 +1,37 @@
 """
-Platform-admin tools for the BlackSync connector.
+Tools for the BlackSync Admin MCP server (app/routers/admin_mcp.py), a separate connector for platform admins.
 
-These only appear for a super-admin whose connection has admin mode switched on in the admin portal
-(Admin -> AI admin access), which needs the admin password and expires on its own. In admin mode every regular
-tool also takes an optional account_id, and admin_use_account sets the account the tools act in by default.
-Every call made in admin mode is written to admin_mcp_actions.
+It serves these admin tools plus every regular connector tool with an optional account_id, so the admin can do
+anything a customer's own connector can do, in any account. admin_use_account sets the default account.
+Every call is written to admin_mcp_actions.
 """
 
 from __future__ import annotations
 
 import uuid
 
+from dataclasses import dataclass
+from typing import Any
+
 from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.connector.tools import LIMIT, STR, Session, Tool, ToolError, _int, _uuid
 from app.models.account import Organization
+from app.services.auth import Context
+
+
+@dataclass
+class AdminSession(Session):
+    """A regular tool session, aimed at whichever customer account the admin picked."""
+
+    token: Any = None  # the BlackSync Admin connection (OAuthToken)
+
+    def need_account(self) -> Context:
+        if self.ctx is None:
+            raise ToolError("Pick the customer account first: find it with admin_list_accounts, then call "
+                            "admin_use_account, or pass account_id to this tool.")
+        return self.ctx
 
 ADMIN_TOOLS: dict[str, Tool] = {}
 

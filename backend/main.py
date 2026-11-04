@@ -229,6 +229,8 @@ from app.routers import mcp, oauth  # noqa: E402
 app.include_router(oauth.router)
 app.include_router(oauth.well_known)
 app.include_router(mcp.router)
+from app.routers import admin_mcp  # noqa: E402
+app.include_router(admin_mcp.router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

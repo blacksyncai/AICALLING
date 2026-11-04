@@ -659,11 +659,7 @@ async def grant_lead_credits(org_id: uuid.UUID, body: LeadCreditGrant, admin: Ad
     return {"credits": balance}
 
 
-# ── AI admin access (admin mode for one MCP connection) ─────────────────────
-
-
-class AiAccessBody(BaseModel):
-    hours: int = Field(default=12, ge=1, le=24)
+# ── BlackSync Admin MCP connections (app/routers/admin_mcp.py) ─────────────
 
 
 def _aware(d: datetime | None) -> datetime | None:
@@ -672,51 +668,38 @@ def _aware(d: datetime | None) -> datetime | None:
 
 @router.get("/ai-access")
 async def ai_access(admin: AdminDep, db: DbDep):
-    """This admin's ChatGPT/Claude connections and whether admin mode is on for each."""
+    """The BlackSync Admin server URL, the admin's connections to it, and the latest admin actions."""
     from app.models.oauth import AdminMcpAction, OAuthToken
+    from app.routers.oauth import admin_resource_url, is_admin_resource
 
     now = datetime.now(timezone.utc)
     rows = (await db.execute(select(OAuthToken).where(OAuthToken.user_id == admin.id, OAuthToken.revoked_at.is_(None))
                              .order_by(OAuthToken.created_at.desc()))).scalars().all()
-    rows = [r for r in rows if r.refresh_expires_at is None or _aware(r.refresh_expires_at) > now]
+    rows = [r for r in rows if is_admin_resource(r.resource)
+            and (r.refresh_expires_at is None or _aware(r.refresh_expires_at) > now)]
     names = {o.id: o.name for o in (await db.execute(select(Organization).where(
         Organization.id.in_([r.admin_org_id for r in rows if r.admin_org_id])))).scalars()} if rows else {}
     actions = (await db.execute(select(AdminMcpAction).order_by(AdminMcpAction.created_at.desc()).limit(50))).scalars().all()
     iso = lambda d: _aware(d).isoformat() if d else None  # noqa: E731
     return {
-        "connections": [{
-            "id": str(r.id), "app": r.client_name or "AI assistant",
-            "connected_at": iso(r.created_at), "last_used_at": iso(r.last_used_at),
-            "admin_until": iso(r.admin_until) if r.admin_until and _aware(r.admin_until) > now else None,
-            "account": names.get(r.admin_org_id) if r.admin_org_id else None,
-        } for r in rows],
+        "server_url": admin_resource_url(),
+        "connections": [{"id": str(r.id), "app": r.client_name or "AI assistant", "connected_at": iso(r.created_at),
+                         "last_used_at": iso(r.last_used_at),
+                         "account": names.get(r.admin_org_id) if r.admin_org_id else None} for r in rows],
         "actions": [{"id": str(a.id), "at": iso(a.created_at), "account": a.org_name or None, "tool": a.tool,
                      "changed": not a.read_only, "ok": a.ok, "error": a.error or None} for a in actions],
     }
 
 
-async def _my_connection(db, admin: User, connection_id: uuid.UUID):
+@router.delete("/ai-access/{connection_id}", status_code=204)
+async def disconnect_ai_access(connection_id: uuid.UUID, admin: AdminDep, db: DbDep):
     from app.models.oauth import OAuthToken
+    from app.routers.oauth import is_admin_resource
 
     t = await db.get(OAuthToken, connection_id)
-    if t is None or t.user_id != admin.id or t.revoked_at:
+    if t is None or t.user_id != admin.id or t.revoked_at or not is_admin_resource(t.resource):
         raise HTTPException(status_code=404, detail="Connection not found")
-    return t
-
-
-@router.post("/ai-access/{connection_id}")
-async def enable_ai_access(connection_id: uuid.UUID, body: AiAccessBody, admin: AdminDep, db: DbDep):
-    t = await _my_connection(db, admin, connection_id)
-    t.admin_until = datetime.now(timezone.utc) + timedelta(hours=body.hours)
+    t.revoked_at = datetime.now(timezone.utc)
     await db.commit()
-    log.warning("admin_mcp_enabled", connection=str(t.id), app=t.client_name, by=str(admin.id), hours=body.hours)
-    return {"admin_until": t.admin_until.isoformat()}
-
-
-@router.delete("/ai-access/{connection_id}", status_code=204)
-async def disable_ai_access(connection_id: uuid.UUID, admin: AdminDep, db: DbDep):
-    t = await _my_connection(db, admin, connection_id)
-    t.admin_until, t.admin_org_id = None, None
-    await db.commit()
-    log.info("admin_mcp_disabled", connection=str(t.id), by=str(admin.id))
+    log.warning("admin_mcp_disconnected", connection=str(t.id), by=str(admin.id))
     return Response(status_code=204)
