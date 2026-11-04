@@ -52,6 +52,8 @@ class CallInfo:
     started_at: dt.datetime | None = None
     url: str = ""
     extracted: dict = field(default_factory=dict)
+    direction: str = "outbound"
+    transcript: str = ""
     response_analysis: dict = field(default_factory=dict)
 
     @property
@@ -3541,8 +3543,141 @@ class TotalExpert(Provider):
         return out[:limit]
 
 
+
+class BlackSyncCloud(Provider):
+    key, name = "blacksync_cloud", "BlackSync Cloud"
+    description = "Sync completed calls, summaries and transcripts to your BlackSync Cloud CRM contacts."
+    can_new_leads = False
+    docs_url = "https://blacksync.cloud/landing"
+    auth_fields = [
+        AuthField("api_key", "CRM API key", help="BlackSync Cloud → Connect & automate → API. Use a role that can read contacts and create notes and note targets."),
+        AuthField("instance_url", "CRM workspace URL", secret=False, placeholder="https://your-workspace.blacksync.cloud",
+                  help="The HTTPS URL of your CRM workspace, without /rest or /mcp."),
+    ]
+
+    def native_http(self, secret, config):
+        import ipaddress
+        from urllib.parse import urlsplit
+        base = str(config.get("instance_url") or "").strip().rstrip("/")
+        try:
+            url = urlsplit(base)
+            valid = url.scheme == "https" and url.hostname and not (url.username or url.password or url.query or url.fragment or url.path)
+            if url.port not in (None, 443):
+                valid = False
+            host = (url.hostname or "").lower()
+            if host == "localhost" or "." not in host or host.endswith((".localhost", ".local", ".internal")):
+                valid = False
+            try:
+                if not ipaddress.ip_address(host).is_global:
+                    valid = False
+            except ValueError:
+                pass
+        except ValueError:
+            valid = False
+        if not valid:
+            raise CrmError("Enter your public HTTPS BlackSync Cloud workspace URL without a path, credentials or query string.")
+        if not secret or secret != secret.strip() or any(c.isspace() for c in secret):
+            raise CrmError("Paste only the CRM API key, without a Bearer prefix or spaces.")
+        return NativeHttp(base, headers={"Authorization": f"Bearer {secret}"})
+
+    @staticmethod
+    def _people(result):
+        rows = (result.get("data") or {}).get("people") if isinstance(result, dict) else None
+        if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("id") for row in rows):
+            raise CrmError("The workspace did not return valid BlackSync Cloud contacts. Check the URL and API key permissions.")
+        return rows
+
+    async def verify(self, http, config):
+        import asyncio
+        from app.services.accounts import is_public_url
+        if not await asyncio.to_thread(is_public_url, str(config.get("instance_url") or "")):
+            raise CrmError("The CRM workspace URL must resolve to a public internet address.")
+        self._people(await http.request("GET", "/rest/people", params={"limit": 1}))
+        return "BlackSync Cloud workspace"
+
+    @staticmethod
+    def _contact(row):
+        phones = row.get("phones") or {}
+        name = row.get("name") or {}
+        return Contact(external_id=str(row["id"]), name=" ".join(filter(None, (name.get("firstName"), name.get("lastName")))),
+                       phone=normalize_phone(str(phones.get("primaryPhoneCallingCode") or "") + str(phones.get("primaryPhoneNumber") or "")),
+                       email=(row.get("emails") or {}).get("primaryEmail") or "", tags=row.get("tags") or [],
+                       created_at=_parse_time(row.get("createdAt")))
+
+    async def find_or_create(self, http, config, c, create):
+        import json
+        import phonenumbers
+        phone = normalize_phone(c.phone)
+        try:
+            parsed = phonenumbers.parse(phone, None)
+        except phonenumbers.NumberParseException:
+            raise CrmError("A valid international phone number is required to match the CRM contact.")
+        number = str(parsed.national_number)
+        result = await http.request("GET", "/rest/people", params={
+            "filter": f'phones.primaryPhoneNumber[eq]:{json.dumps(number)}', "limit": 100,
+        })
+        rows = self._people(result)
+        if (result.get("pageInfo") or {}).get("hasNextPage"):
+            raise CrmError("Too many CRM phone matches. Import or map the exact contact before syncing calls.")
+        matches = [row for row in rows if self._contact(row).phone == phone]
+        if len(matches) > 1:
+            raise CrmError("More than one CRM contact has this phone number. Import or map the exact contact before syncing calls.")
+        if matches:
+            return str(matches[0]["id"])
+        if not create:
+            return None
+        first, last = split_name(c.name)
+        body = {"name": {"firstName": first, "lastName": last},
+                "phones": {"primaryPhoneNumber": number, "primaryPhoneCountryCode": phonenumbers.region_code_for_number(parsed) or "", "primaryPhoneCallingCode": f"+{parsed.country_code}"}}
+        if c.email:
+            body["emails"] = {"primaryEmail": c.email}
+        result = await http.request("POST", "/rest/people", json=body)
+        person = (result.get("data") or {}).get("createPerson") or {}
+        if not person.get("id"):
+            raise CrmError("The CRM did not confirm creation of the contact.")
+        return str(person["id"])
+
+    async def log_call(self, http, config, external_id, call):
+        outcomes = {"no_answer": "no-answer", "screened": "no-answer", "failed": "failed", "voicemail": "voicemail"}
+        if not call.call_id:
+            raise CrmError("The saved BlackSync call ID is required for safe delivery retries.")
+        # Keep the sales outcome, agent, meeting and source link in the summary;
+        # the CRM call outcome describes the telephone connection itself.
+        body = {"source": "blacksync-si", "externalId": call.call_id,
+                "personId": str(external_id), "phoneNumber": normalize_phone(call.phone),
+                "direction": call.direction, "durationSeconds": max(0, int(call.duration_seconds)),
+                "outcome": outcomes.get(call.outcome, "answered" if call.duration_seconds > 0 else "no-answer"),
+                "summary": call.note()[:20000]}
+        if call.transcript:
+            body["transcript"] = call.transcript[:100000]
+        result = await http.request("POST", "/rest/pulse/calls", json=body)
+        if not isinstance(result, dict) or not isinstance(result.get("noteId"), str) or not isinstance(result.get("created"), bool):
+            raise CrmError("The CRM did not acknowledge this call. Check that the BlackSync call API is deployed.")
+
+    async def list_contacts(self, http, config, limit=500, since=None, filters=None):
+        out, cursor = [], None
+        while len(out) < limit:
+            params = {"limit": min(100, limit - len(out))}
+            if cursor:
+                params["starting_after"] = cursor
+            if since:
+                import json
+                params["filter"] = f'createdAt[gt]:{json.dumps(since.isoformat())}'
+            result = await http.request("GET", "/rest/people", params=params)
+            rows = self._people(result)
+            out.extend(self._contact(row) for row in rows)
+            page = result.get("pageInfo") or {}
+            next_cursor = page.get("endCursor")
+            if not page.get("hasNextPage") or not rows:
+                break
+            if not next_cursor or next_cursor == cursor:
+                raise CrmError("The CRM returned an invalid contact pagination cursor.")
+            cursor = next_cursor
+        return out[:limit]
+
+
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
-    FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
+    BlackSyncCloud(), FollowUpBoss(), Close(), HubSpot(), HighLevel(), Pipedrive(), Salesforce(), ZohoCrm(), Attio(),
     BoldTrail(), Lofty(), SierraInteractive(), OracleSales(), RealGeeks(), Brivity(), Apollo(), Rechat(), BoomTown(), TotalExpert(), Cloze(), GoogleSheets(), Slack(),
 )}
 

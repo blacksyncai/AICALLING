@@ -93,3 +93,18 @@ class CrmTranscriptDelivery(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     note_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class CrmCallDelivery(Base):
+    """Durable BlackSync Cloud receipt; retrying uses the same upstream call ID."""
+
+    __tablename__ = "crm_call_deliveries"
+    __table_args__ = (UniqueConstraint("connection_id", "call_id", name="uq_crm_call_delivery"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    connection_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("crm_connections.id", ondelete="CASCADE"), index=True)
+    call_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("call_logs.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

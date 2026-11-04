@@ -106,11 +106,13 @@ def call_info(data: dict) -> CallInfo:
         meeting_link=data.get("meeting_link") or "", started_at=started,
         url=f"{base}/calls/{data.get('call_id')}" if base and data.get("call_id") else "",
         extracted=data.get("extracted_data") or {},
+        direction="inbound" if data.get("direction") == "inbound" else "outbound",
+        transcript=data.get("transcript") if isinstance(data.get("transcript"), str) else "",
         response_analysis=data.get("response_analysis") or {},
     )
 
 
-async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
+async def push_call_to(db, conn: CrmConnection, data: dict, *, raise_errors: bool = False) -> None:
     if not getattr(PROVIDERS.get(conn.provider), "can_log_calls", True):
         return
     cfg = conn_settings(conn)
@@ -132,6 +134,8 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
         call.summary = ""
     if not cfg.get("note_details", True):
         call.extracted = {}
+    if not cfg.get("note_transcript", True):
+        call.transcript = ""
     if not cfg.get("note_link", True):
         call.url = ""
     contact = data.get("contact") or {}
@@ -173,6 +177,8 @@ async def push_call_to(db, conn: CrmConnection, data: dict) -> None:
         log.warning("crm_push_failed", provider=conn.provider, error=str(exc))
         await add_log(db, conn, "call", "error", f"Couldn't log the call with {c.name or c.phone}: {exc}",
                       call_id=uuid.UUID(call.call_id) if call.call_id else None)
+        if raise_errors:
+            raise
 
 
 async def _move_stage(db, conn: CrmConnection, p: Provider, http, ref: str, call: CallInfo, c: Contact) -> str | None:
@@ -197,7 +203,8 @@ async def push_call(org_id: uuid.UUID, data: dict) -> None:
     async with AsyncSessionLocal() as db:
         conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == org_id))).scalars().all()
         for conn in conns:
-            await push_call_to(db, conn, data)
+            if conn.provider != "blacksync_cloud":
+                await push_call_to(db, conn, data)
         await db.commit()
 
 
@@ -788,6 +795,8 @@ async def check_activity(db, conn: CrmConnection, now: dt.datetime | None = None
 
 
 async def poll_once() -> None:
+    from app.services.crm.blacksync_delivery import poll_deliveries
+    await poll_deliveries()
     from app.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
