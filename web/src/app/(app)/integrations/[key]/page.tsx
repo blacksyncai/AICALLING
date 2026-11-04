@@ -12,6 +12,7 @@ import { MultiPicker, type FilterDef, type Preview } from "@/components/contacts
 import {
   BlackSyncPipelines, ConnectModal, Logo, PipelineSync, errText, type Activity, type AutoRule, type Connection, type Provider,
 } from "@/components/integrations/CrmIntegrations";
+import { BlackSyncDeliveryStatus } from "@/components/integrations/BlackSyncDeliveryStatus";
 import { AnimatedTabList } from "@/components/ui/animated-tabs";
 import { Badge, Button, Card, Field, Input, Notice, Select, Spinner, Toggle } from "@/components/ui";
 import { del, fetcher, patch, post, put } from "@/lib/api";
@@ -299,7 +300,7 @@ export default function IntegrationSetupPage({ params }: { params: Promise<{ key
 
       {section === "push" && (p.can_log_calls === false ? (
         <Notice tone="amber">{p.description} This connection does not send call notes or opt-out updates back to {p.name}.</Notice>
-      ) : <PushCalls p={p} c={c} isCrm={isCrm} onSaved={refresh} />)}
+      ) : <div className="space-y-5">{key === "blacksync_cloud" && <BlackSyncDeliveryStatus />}<PushCalls p={p} c={c} isCrm={isCrm} onSaved={refresh} /></div>)}
       {section === "pipeline" && (
         <div className="space-y-5">
           {p.pipeline_noun && <PipelineSync p={p} c={c} onSaved={refresh} />}

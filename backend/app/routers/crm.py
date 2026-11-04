@@ -740,3 +740,24 @@ async def save_script_variables(key: str, body: VariablesIn, ctx: ManagerDep, db
     await sync.add_log(db, conn, "test", "ok", f"Script variables saved for {agent.name}.")
     await db.commit()
     return {"saved": len(clean)}
+
+
+@router.get("/blacksync_cloud/deliveries")
+async def blacksync_delivery_status(ctx: ManagerDep, db: DbDep):
+    from sqlalchemy import func
+    from app.models.crm import CrmCallDelivery
+    conn = await _require_conn(db, ctx.org.id, "blacksync_cloud")
+    counts = dict((await db.execute(select(CrmCallDelivery.status, func.count()).where(
+        CrmCallDelivery.connection_id == conn.id).group_by(CrmCallDelivery.status))).all())
+    return {"pending": counts.get("pending", 0), "sent": counts.get("sent", 0), "blocked": counts.get("blocked", 0)}
+
+
+@router.post("/blacksync_cloud/deliveries/retry")
+async def retry_blacksync_deliveries(ctx: ManagerDep, db: DbDep):
+    from sqlalchemy import update
+    from app.models.crm import CrmCallDelivery
+    conn = await _require_conn(db, ctx.org.id, "blacksync_cloud")
+    result = await db.execute(update(CrmCallDelivery).where(
+        CrmCallDelivery.connection_id == conn.id, CrmCallDelivery.status.in_(("pending", "blocked")),
+    ).values(status="pending", next_attempt_at=dt.datetime.now(dt.timezone.utc)))
+    return {"queued": result.rowcount}
