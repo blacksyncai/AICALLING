@@ -47,7 +47,7 @@ from app.agent.models import MISTRAL_MODELS, NEEDS_USER_TURN
 from app.agent.runtime import contact_turns, should_hold_hangup
 
 CALL_CONNECTED_CUE = "[The call just connected.]"
-from app.agent.voices import DEFAULT_VOICE_ID
+from app.agent.voices import DEFAULT_VOICE_ID, VOICE_MODELS
 from app.agent.state import CallState
 from app.config import settings
 
@@ -401,6 +401,29 @@ def _api_client() -> httpx.AsyncClient:
         _shared_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
     return _shared_client
 
+
+
+def cartesia_tts(voice: str, *, language: str, speed: float, volume: float | None, emotion: str | None, tokenizer):
+    """Our own Cartesia (Sonic 3.5). If it errors or hits the plan's limit of voices at once, the same voice
+    continues through Cartesia on LiveKit Inference (billed to LiveKit) instead of the agent going silent."""
+    primary = cartesia.TTS(
+        model=VOICE_MODELS[0], voice=voice, language=None if language in ("en", "multi") else language,
+        speed=speed, volume=volume, emotion=[emotion] if emotion else None,
+        api_key=settings.cartesia_api_key, tokenizer=tokenizer)
+    if not (settings.cartesia_fallback_enabled and settings.livekit_ready):
+        return primary
+    try:
+        from livekit.agents import inference
+        from livekit.agents.tts import FallbackAdapter
+
+        lang = "en" if language in ("", "multi", None) else language
+        backup = inference.TTS(model="cartesia/" + VOICE_MODELS[0], voice=voice, language=lang, sample_rate=primary.sample_rate,
+                               api_key=settings.livekit_api_key, api_secret=settings.livekit_api_secret,
+                               extra_kwargs={"speed": max(0.6, min(1.5, speed))})
+        return FallbackAdapter([primary, backup], max_retry_per_tts=0)
+    except Exception as exc:  # never let the backup stop a call from starting
+        log.warning("cartesia_fallback_unavailable", error=str(exc)[:200])
+        return primary
 
 async def _api_post(path: str, *, json: dict, timeout: float = 10.0) -> httpx.Response:
     """POST to the internal API on the shared pooled connection."""
@@ -1285,13 +1308,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         if is_elevenlabs_voice(voice_id) else
         make_inference_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
         if is_inference_voice(voice_id) else
-        make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia.TTS(
-            model="sonic-3",
-            voice=DEFAULT_VOICE_ID if is_mistral_voice(voice_id) else voice_id,
-            language=None if language in ("en", "multi") else language,
+        make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia_tts(
+            DEFAULT_VOICE_ID if is_mistral_voice(voice_id) else voice_id,
+            language=language,
             speed=float(cfg.get("voice_speed") or 1.0),
             volume=tuning["volume"] if tuning["volume"] != 1.0 else None,
-            api_key=settings.cartesia_api_key,
+            emotion=tuning.get("emotion"),
             tokenizer=short_sentence_tokenizer(settings.voice_short_sentence_streaming),
         ),
         vad=_job_vad(ctx),
@@ -2065,7 +2087,7 @@ async def entrypoint(ctx: JobContext) -> None:
             api_key=settings.openai_api_key,
         ),
         tts=cartesia.TTS(
-            model="sonic-3",
+            model=VOICE_MODELS[0],
             voice=_BLAKE_VOICE_ID,
             language=None,          # auto-detect from LLM text
             speed=0.96,             # slightly below neutral — clearer, less rushed

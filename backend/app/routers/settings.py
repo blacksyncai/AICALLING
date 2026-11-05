@@ -10,7 +10,7 @@ from collections import OrderedDict
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,7 @@ from app.agent.mistral_tts import MISTRAL_TTS_MODEL, is_mistral_voice, synthesiz
 from app.agent import elevenlabs_tts
 from app.agent.voices import FEATURED_VOICES, HIDDEN_VOICE_IDS, VOICE_MODELS
 from app.config import settings
-from app.services.auth import get_current_user
+from app.services.auth import CtxDep, DbDep, ManagerDep, get_current_user
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depends(get_current_user)])
@@ -245,9 +245,18 @@ async def integration_status(user=Depends(get_current_user)):
     }
 
 
+async def _account_clone_ids(db) -> set[str]:
+    from sqlalchemy import select
+
+    from app.models.account_voice import AccountVoice
+
+    return set((await db.execute(select(AccountVoice.voice_id))).scalars().all())
+
+
 @router.get("/voices")
-async def list_voices():
-    """The Cartesia voice catalog, split into premium / standard categories."""
+async def list_voices(db: DbDep):
+    """The Cartesia voice catalog, split into premium / standard categories. Customers' own clones are left out
+    (each account sees its own through /voices/mine)."""
     if not settings.cartesia_api_key:
         return _fallback_response("The full voice library isn't available right now — showing a short list.")
     fresh = _voice_cache["public"] is not None and time.time() - _voice_cache["at"] < _CACHE_TTL
@@ -260,7 +269,9 @@ async def list_voices():
         if not public and not owned:
             return _fallback_response("No voices came back from the voice library — showing a short list.")
         _voice_cache.update(at=time.time(), public=public, owned=owned)
-    voices = build_catalog(_voice_cache["public"], _voice_cache["owned"], can_preview=True)
+    private = await _account_clone_ids(db)
+    owned = [v for v in _voice_cache["owned"] if v.get("id") not in private]
+    voices = build_catalog(_voice_cache["public"], owned, can_preview=True)
     return _voices_response("cartesia", voices)
 
 
@@ -281,6 +292,7 @@ class VoicePreview(BaseModel):
     text: str = Field(default="Hi, this is your AI agent. How does this voice sound?", max_length=300)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     language: str = "en"
+    tone: str = ""  # warm | upbeat | calm | friendly | empathetic (see voice_tuning.TONES)
 
 
 # Small LRU of generated preview WAVs keyed by (voice_id, speed, language, text).
@@ -358,7 +370,10 @@ async def preview_voice(body: VoicePreview):
     if not settings.cartesia_api_key:
         raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
     lang = body.language if body.language not in ("multi", "") else "en"
-    key = (voice_id, round(body.speed, 2), lang, body.text)
+    from app.agent.voice_tuning import TONES
+
+    emotion = TONES.get(body.tone.lower()) if body.tone else None
+    key = (voice_id, round(body.speed, 2), lang, body.text, emotion)
     if key in _preview_cache:
         _preview_cache.move_to_end(key)
         return Response(content=_preview_cache[key], media_type="audio/wav")
@@ -368,10 +383,132 @@ async def preview_voice(body: VoicePreview):
         "voice": {"mode": "id", "id": voice_id},
         "output_format": {"container": "wav", "encoding": "pcm_s16le", "sample_rate": 24000},
         "language": lang,
-        "generation_config": {"speed": body.speed},
+        "generation_config": {"speed": body.speed, **({"emotion": emotion} if emotion else {})},
     }
     audio = await _synthesize(payload)
     _preview_cache[key] = audio
     while len(_preview_cache) > _PREVIEW_CACHE_MAX:
         _preview_cache.popitem(last=False)
     return Response(content=audio, media_type="audio/wav")
+
+
+# ── Account-wide pronunciations ───────────────────────────────────────────────
+
+
+class PronunciationsIn(BaseModel):
+    pronunciations: list[dict] = Field(default_factory=list, max_length=200)
+
+
+def _clean_pronunciations(raw: list[dict]) -> list[dict]:
+    out, seen = [], set()
+    for p in raw:
+        word, say = str(p.get("word") or "").strip()[:60], str(p.get("say") or "").strip()[:120]
+        if word and say and word.lower() not in seen:
+            seen.add(word.lower())
+            out.append({"word": word, "say": say})
+    return out
+
+
+@router.get("/pronunciations")
+async def get_pronunciations(ctx: CtxDep):
+    """How every agent in this account says certain words (on top of each agent's own list)."""
+    return {"pronunciations": ctx.org.pronunciations or []}
+
+
+@router.put("/pronunciations")
+async def save_pronunciations(body: PronunciationsIn, ctx: ManagerDep, db: DbDep):
+    ctx.org.pronunciations = _clean_pronunciations(body.pronunciations) or None
+    await db.commit()
+    return {"pronunciations": ctx.org.pronunciations or []}
+
+
+# ── Your own voice (instant clone) ────────────────────────────────────────────
+
+MAX_ACCOUNT_VOICES = 5
+_CLONE_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _account_voice_dict(v) -> dict:
+    return {"id": v.voice_id, "name": v.name, "provider": "cartesia", "category": "premium", "language": v.language,
+            "accent": None, "gender": None, "description": "Your cloned voice", "is_clone": True, "mine": True,
+            "preview": bool(settings.cartesia_api_key), "models": list(VOICE_MODELS), "status": "available",
+            "created_at": v.created_at.isoformat() if v.created_at else None}
+
+
+@router.get("/voices/mine")
+async def my_voices(ctx: CtxDep, db: DbDep):
+    """This account's own cloned voices (no other account sees them)."""
+    from sqlalchemy import select
+
+    from app.models.account_voice import AccountVoice
+
+    rows = (await db.execute(select(AccountVoice).where(AccountVoice.org_id == ctx.org.id)
+                             .order_by(AccountVoice.created_at))).scalars().all()
+    return {"voices": [_account_voice_dict(v) for v in rows], "limit": MAX_ACCOUNT_VOICES}
+
+
+@router.post("/voices/clone", status_code=201)
+async def clone_voice(ctx: ManagerDep, db: DbDep, file: UploadFile = File(...), name: str = Form(...),
+                      language: str = Form("en")):
+    """Clone a voice from a short recording (10 seconds to a few minutes of clear speech)."""
+    from sqlalchemy import func, select
+
+    from app.models.account_voice import AccountVoice
+
+    if not settings.cartesia_api_key:
+        raise HTTPException(status_code=503, detail="Voice cloning isn't available right now.")
+    name = name.strip()[:100]
+    if not name:
+        raise HTTPException(status_code=400, detail="Give the voice a name.")
+    count = await db.scalar(select(func.count()).select_from(AccountVoice).where(AccountVoice.org_id == ctx.org.id))
+    if (count or 0) >= MAX_ACCOUNT_VOICES:
+        raise HTTPException(status_code=400, detail=f"You can have up to {MAX_ACCOUNT_VOICES} cloned voices. Delete one first.")
+    audio = await file.read(_CLONE_MAX_BYTES + 1)
+    if len(audio) > _CLONE_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="That recording is too big (10 MB max). A minute or two is plenty.")
+    if len(audio) < 20_000:
+        raise HTTPException(status_code=400, detail="That recording is too short. Record at least 10 seconds of speech.")
+    lang = (language or "en").strip().lower()[:8] or "en"
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(
+                f"{_CARTESIA_URL}/voices/clone",
+                headers={"Authorization": f"Bearer {settings.cartesia_api_key}", "Cartesia-Version": _CARTESIA_VERSION},
+                files={"clip": (file.filename or "voice.wav", audio, file.content_type or "audio/wav")},
+                data={"name": f"{name} ({ctx.org.name})"[:100], "language": lang, "mode": "similarity", "enhance": "true"})
+    except httpx.HTTPError as exc:
+        log.warning("voice_clone_failed", org_id=str(ctx.org.id), error=str(exc)[:200])
+        raise HTTPException(status_code=502, detail="Couldn't clone the voice right now. Try again.")
+    if resp.status_code >= 400:
+        log.warning("voice_clone_rejected", org_id=str(ctx.org.id), status=resp.status_code, body=resp.text[:300])
+        raise HTTPException(status_code=400, detail="Couldn't clone that recording. Use a clear recording of one "
+                                                    "person talking, with no music or background noise.")
+    voice_id = (resp.json() or {}).get("id")
+    if not voice_id:
+        raise HTTPException(status_code=502, detail="Couldn't clone the voice right now. Try again.")
+    row = AccountVoice(org_id=ctx.org.id, voice_id=voice_id, name=name, language=lang, created_by=ctx.user.id)
+    db.add(row)
+    await db.commit()
+    log.info("voice_cloned", org_id=str(ctx.org.id), voice_id=voice_id)
+    return _account_voice_dict(row)
+
+
+@router.delete("/voices/mine/{voice_id}", status_code=204)
+async def delete_my_voice(voice_id: str, ctx: ManagerDep, db: DbDep):
+    from sqlalchemy import select
+
+    from app.models.account_voice import AccountVoice
+
+    row = (await db.execute(select(AccountVoice).where(AccountVoice.org_id == ctx.org.id,
+                                                       AccountVoice.voice_id == voice_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Voice not found")
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            await client.delete(f"{_CARTESIA_URL}/voices/{voice_id}", headers={
+                "Authorization": f"Bearer {settings.cartesia_api_key}", "Cartesia-Version": _CARTESIA_VERSION})
+    except httpx.HTTPError as exc:
+        log.warning("voice_delete_failed", voice_id=voice_id, error=str(exc)[:200])
+    await db.delete(row)
+    await db.commit()
+    return Response(status_code=204)

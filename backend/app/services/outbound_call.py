@@ -122,7 +122,7 @@ def _us_number_missing_1(digits: str) -> bool:
 
 
 def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, call_type: str,
-                    lead: Lead | None, max_seconds: int | None = None) -> str:
+                    lead: Lead | None, max_seconds: int | None = None, pronunciations: list | None = None) -> str:
     meta: dict = {
         "call_log_id": str(call_log.id),
         "call_type": call_type,
@@ -138,7 +138,8 @@ def _build_metadata(call_log: CallLog, agent: Agent | None, variables: dict, cal
     }
     if agent is not None:
         meta["agent_id"] = str(agent.id)
-        meta["agent"] = agent_to_runtime(agent)
+        from app.agent.runtime import with_pronunciations
+        meta["agent"] = with_pronunciations(agent_to_runtime(agent), pronunciations)
         if max_seconds:
             meta["agent"]["max_duration_seconds"] = min(meta["agent"].get("max_duration_seconds") or 600, max_seconds)
     raw = json.dumps(meta)
@@ -281,7 +282,9 @@ class CallService:
         db.add(call_log)
         await db.flush()
         variables = {"name": "there", **(variables or {})}
-        metadata = _build_metadata(call_log, agent, variables, "web", None)
+        from app.agent.runtime import account_pronunciations
+        metadata = _build_metadata(call_log, agent, variables, "web", None,
+                                   pronunciations=await account_pronunciations(db, agent.org_id if agent else None))
         if record and settings.recordings_ready:
             from app.services import recordings
 
@@ -429,7 +432,9 @@ class CallService:
 
             conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == org.id))).scalars().all()
             variables = crm_vars.apply(variables, lead, agent, list(conns))
-        metadata = _build_metadata(call_log, agent, variables, "outbound", lead, max_seconds=max_seconds)
+        from app.agent.runtime import account_pronunciations
+        metadata = _build_metadata(call_log, agent, variables, "outbound", lead, max_seconds=max_seconds,
+                                   pronunciations=await account_pronunciations(db, agent.org_id if agent else None))
         if record and carrier in ("signalwire", "plivo") and settings.recording_via_twilio:
             # Twilio-recording mode: carriers off the Twilio trunk are recorded in our worker instead.
             call_log.recording_key = recordings.key_for(org.id, call_log.id)

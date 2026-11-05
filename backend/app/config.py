@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     voice_fast_identity_turns: bool = True
     # Canary only; changes sentence aggregation, never the selected voice/model.
     voice_short_sentence_streaming: bool = False
+    # A Cartesia error or plan limit mid-call: keep talking through Cartesia on LiveKit Inference.
+    cartesia_fallback_enabled: bool = True
     # Voice picker categories. Premium = the featured house voices + voices
     # owned/cloned in your Cartesia account + any ids listed here (comma-separated).
     voice_premium_label: str = "Premium Human Voices"

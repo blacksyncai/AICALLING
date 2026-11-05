@@ -228,7 +228,8 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
         task.add_done_callback(_BACKGROUND.discard)
     variables = lead_variables(lead) if lead else {"phone": caller}
     log.info("inbound_call_routed", to=row.number, agent=agent.name, call_log_id=str(call.id), known_caller=bool(lead))
-    cfg = agent_to_runtime(agent, secrets=True)
+    from app.agent.runtime import runtime_for
+    cfg = await runtime_for(db, agent, secrets=True)
     cfg["max_duration_seconds"] = min(cfg.get("max_duration_seconds") or 600, max_seconds)
     from app.services import telephony
     from app.services.outbound_call import outbound_trunk

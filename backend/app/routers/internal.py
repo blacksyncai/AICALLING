@@ -73,7 +73,8 @@ async def agent_runtime(agent_id: uuid.UUID, db: Annotated[AsyncSession, Depends
     agent = await db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return agent_to_runtime(agent, secrets=True)
+    from app.agent.runtime import runtime_for
+    return await runtime_for(db, agent, secrets=True)
 
 
 @router.post("/calls/{call_log_id}/live-event")

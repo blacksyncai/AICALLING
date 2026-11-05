@@ -4,11 +4,12 @@ import { ChevronDown, Plus, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { createPortal } from "react-dom";
-import { Field, Input, Modal, Select, Toggle } from "@/components/ui";
-import { fetcher } from "@/lib/api";
+import { Button, Field, Input, Modal, Select, Toggle } from "@/components/ui";
+import { fetcher, put } from "@/lib/api";
 import type { Agent, ModelCatalog, VoiceCatalog, VoiceTuning } from "@/lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { VoicePicker } from "./VoicePicker";
+import { CloneVoiceButton, useMyVoices } from "./CloneVoice";
 
 // Used only if /api/settings/models can't be loaded.
 const FALLBACK_MODEL_IDS = ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"];
@@ -68,6 +69,7 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
       settingsButton.current?.focus();
     };
   }, [settingsOpen]);
+  const { data: myVoices } = useMyVoices();
   const languages = models?.languages?.length ? models.languages : FALLBACK_LANGUAGES;
   const langOptions = languages.some((l) => l.code === draft.language) ? languages : [{ code: draft.language, label: draft.language }, ...languages];
   const traits = [draft.enable_booking && "booking", draft.transfer_number && "transfer"].filter(Boolean) as string[];
@@ -101,7 +103,7 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
   return (
     <div className="space-y-4">
       <div className="mb-1.5 text-xs font-medium text-zinc-700">Voice</div>
-      <VoicePicker voices={voices?.voices ?? []} featured={voices?.featured ?? []} categories={voices?.categories}
+      <VoicePicker voices={[...(myVoices?.voices ?? []), ...(voices?.voices ?? [])]} featured={voices?.featured ?? []} categories={voices?.categories}
         message={voices?.message} loading={!voices} source={voices?.source} value={draft.voice_id}
         speed={draft.voice_speed} language={draft.language} agentLanguage={draft.language}
         onChange={(id) => { set("voice_id", id); if (id === "elevenlabs:Ywuz3KyW2N5pqKNpwcCL") set("language", "ar"); }} inline defaultOpen keepOpen suspendDismiss={settingsOpen}
@@ -119,6 +121,7 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
                 {langOptions.map((l) => <option key={l.code} value={l.code}>{LANGUAGE_FLAGS[l.code] || "🌐"} {l.label}</option>)}
               </Select>
             </div>
+            <CloneVoiceButton onCloned={(v) => set("voice_id", v.id)} />
             <button ref={settingsButton} type="button" aria-label="Voice settings" title="Voice settings" onClick={() => setSettingsOpen(true)}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-200 px-3 text-sm font-medium text-zinc-600 transition hover:border-brand-400 hover:text-brand-600 focus-visible:outline-2 focus-visible:outline-brand-500">
               <SlidersHorizontal className="h-4 w-4" /><span className="hidden lg:inline">Voice settings</span>
@@ -166,6 +169,16 @@ function VoiceTuningSettings({ value, onChange }: { value: VoiceTuning; onChange
   return (
     <div className="space-y-5 rounded-xl border border-zinc-200 p-4">
       <div className="text-sm font-medium text-zinc-800">Voice tuning</div>
+      <Field label="Tone" hint="How the voice delivers every line. Natural leaves it to the voice.">
+        <Select value={value.tone ?? ""} onChange={(e) => patch({ tone: e.target.value })}>
+          <option value="">Natural</option>
+          <option value="warm">Warm</option>
+          <option value="friendly">Friendly</option>
+          <option value="upbeat">Upbeat</option>
+          <option value="calm">Calm</option>
+          <option value="empathetic">Empathetic</option>
+        </Select>
+      </Field>
       <div className="grid gap-5 sm:grid-cols-3">
         <Slider label="Volume" hint="How loud the agent speaks." value={t.volume} min={0.5} max={1.5} step={0.05}
           format={(v) => `${v.toFixed(2)}x`} onChange={(v) => patch({ volume: v })} />
@@ -198,6 +211,56 @@ function VoiceTuningSettings({ value, onChange }: { value: VoiceTuning; onChange
             <Plus className="h-4 w-4" /> Add pronunciation
           </button>
         )}
+      </div>
+      <AccountPronunciations />
+    </div>
+  );
+}
+
+/** The account-wide list: every agent in the account says these words this way (saved on its own). */
+function AccountPronunciations() {
+  const { data, mutate } = useSWR<{ pronunciations: { word: string; say: string }[] }>("/api/settings/pronunciations", fetcher);
+  const [list, setList] = useState<{ word: string; say: string }[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const rows = list ?? data?.pronunciations ?? [];
+  const dirty = list !== null && JSON.stringify(list) !== JSON.stringify(data?.pronunciations ?? []);
+  async function save() {
+    setSaving(true);
+    try {
+      await put("/api/settings/pronunciations", { pronunciations: rows.filter((p) => p.word.trim() && p.say.trim()) });
+      await mutate();
+      setList(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="border-t border-zinc-100 pt-4">
+      <div className="mb-1 text-xs font-medium text-zinc-700">For every agent in this account</div>
+      <p className="mb-2 text-xs text-zinc-500">Names, streets and brands all your agents should say the same way, e.g. eXp → E X P, Caliston → Cal-is-ton.</p>
+      <div className="space-y-2">
+        {rows.map((p, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <Input aria-label="Word" placeholder="Word" value={p.word} maxLength={60}
+              onChange={(e) => setList(rows.map((x, j) => (j === i ? { ...x, word: e.target.value } : x)))} />
+            <span className="text-zinc-400">→</span>
+            <Input aria-label="Say it as" placeholder="Say it as" value={p.say} maxLength={120}
+              onChange={(e) => setList(rows.map((x, j) => (j === i ? { ...x, say: e.target.value } : x)))} />
+            <button type="button" aria-label="Remove" onClick={() => setList(rows.filter((_, j) => j !== i))}
+              className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-3">
+        {rows.length < 200 && (
+          <button type="button" onClick={() => setList([...rows, { word: "", say: "" }])}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:text-brand-700">
+            <Plus className="h-4 w-4" /> Add for all agents
+          </button>
+        )}
+        {dirty && <Button size="sm" variant="primary" loading={saving} onClick={() => void save()}>Save for all agents</Button>}
       </div>
     </div>
   );

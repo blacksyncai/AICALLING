@@ -58,6 +58,8 @@ export interface Agent {
 export interface VoiceTuning {
   voicemail_min_connected_seconds?: number;
   volume?: number;
+  /** Delivery preset: "" (natural) | warm | upbeat | calm | friendly | empathetic. */
+  tone?: string;
   responsiveness?: number;
   interruption?: number;
   pronunciations?: { word: string; say: string }[];

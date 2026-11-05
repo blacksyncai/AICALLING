@@ -91,6 +91,30 @@ def agent_to_runtime(agent, *, secrets: bool = False) -> dict:
     return cfg
 
 
+async def account_pronunciations(db, org_id) -> list[dict]:
+    """The account-wide pronunciations every agent in the account uses."""
+    if not org_id:
+        return []
+    from app.models.account import Organization
+
+    org = await db.get(Organization, org_id)
+    return [p for p in (getattr(org, "pronunciations", None) or []) if isinstance(p, dict)]
+
+
+def with_pronunciations(cfg: dict, shared: list[dict] | None) -> dict:
+    if shared:
+        tuning = dict(cfg.get("voice_tuning") or {})
+        tuning["pronunciations"] = [*(tuning.get("pronunciations") or []), *shared]
+        cfg["voice_tuning"] = tuning
+    return cfg
+
+
+async def runtime_for(db, agent, *, secrets: bool = False) -> dict:
+    """agent_to_runtime plus the account-wide pronunciations (applied after the agent's own)."""
+    return with_pronunciations(agent_to_runtime(agent, secrets=secrets),
+                               await account_pronunciations(db, getattr(agent, "org_id", None)))
+
+
 def missing_vars(text: str, variables: dict | None) -> list[str]:
     """Placeholders in `text` with no value for this contact."""
     have = {k for k, v in (variables or {}).items() if v not in (None, "")}

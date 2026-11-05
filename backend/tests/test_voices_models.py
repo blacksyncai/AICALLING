@@ -109,7 +109,7 @@ def test_voice_metadata_fields(client, cartesia, monkeypatch):
         assert v["provider"] == {"lkcartesia": "cartesia"}.get(prefix, prefix)
         assert v["models"] == {"elevenlabs": ["eleven_flash_v2_5"], "mistral": ["voxtral-mini-tts-latest"],
                                "fishaudio": ["fishaudio/s2.1-pro"], "inworld": ["inworld/inworld-tts-2"],
-                               "lkcartesia": ["cartesia/sonic-3.5"]}.get(prefix, ["sonic-3"])
+                               "lkcartesia": ["cartesia/sonic-3.5"]}.get(prefix, ["sonic-3.5"])
         assert v["status"] == "available"
         inference = prefix in ("fishaudio", "inworld", "lkcartesia")
         assert v["preview"] is (bool(settings.elevenlabs_api_key) if v["provider"] == "elevenlabs"

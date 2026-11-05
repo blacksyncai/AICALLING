@@ -350,11 +350,11 @@ async def get_agent(s: Session, args: dict) -> dict:
 
 @tool("list_voices", "List voices", "Voices an agent can use (pass the id to create_agent or update_agent).")
 async def list_voices(s: Session, args: dict) -> dict:
-    from app.routers.settings import list_voices as lv
+    from app.routers.settings import list_voices as lv, my_voices
 
-    s.need_account()
-    out = await lv()
-    voices = out.get("voices", []) if isinstance(out, dict) else []
+    ctx = s.need_account()
+    out = await lv(s.db)
+    voices = [*(await my_voices(ctx, s.db))["voices"], *(out.get("voices", []) if isinstance(out, dict) else [])]
     keep = ("id", "name", "gender", "accent", "language", "description", "category")
     return {"voices": [{k: v.get(k) for k in keep if v.get(k) is not None} for v in voices[:60]]}
 

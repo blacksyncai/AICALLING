@@ -52,6 +52,7 @@ class Pronunciation(BaseModel):
 class VoiceTuning(BaseModel):
     voicemail_min_connected_seconds: float = Field(default=8.0, ge=0, le=60)  # the worker never goes under 8
     volume: float = Field(default=1.0, ge=0.5, le=2)
+    tone: str = Field(default="", pattern="^(|warm|upbeat|calm|friendly|empathetic)$")
     # 0–1. Defaults reproduce the worker's standard turn-taking.
     responsiveness: float = Field(default=0.75, ge=0, le=1)
     interruption: float = Field(default=0.75, ge=0, le=1)
@@ -259,6 +260,12 @@ async def update_agent(agent_id: uuid.UUID, body: AgentUpdate, ctx: CtxDep, db: 
             changes["transfer_number"] = validate_e164(changes["transfer_number"]) if changes["transfer_number"].strip() else ""
         except ValueError:
             raise HTTPException(status_code=422, detail="Enter a valid transfer phone number, for example +14155550123.") from None
+    if changes.get("voice_id"):
+        from app.models.account_voice import AccountVoice
+
+        clone = (await db.execute(select(AccountVoice).where(AccountVoice.voice_id == changes["voice_id"]))).scalar_one_or_none()
+        if clone is not None and clone.org_id != agent.org_id:
+            raise HTTPException(status_code=403, detail="That voice belongs to another account.")
     if {"voice_id", "voice_speed"} & changes.keys():
         from app.agent.elevenlabs_tts import is_elevenlabs_voice, provider_voice_id, voice_settings
         selected_voice = changes.get("voice_id", agent.voice_id)

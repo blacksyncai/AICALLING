@@ -10,7 +10,7 @@ The rest of Cartesia's public library isn't listed (a voice id can still be past
 Language/accent come from the live Cartesia catalog; nothing here is a guess about them.
 """
 
-VOICE_MODELS = ["sonic-3"]  # the Cartesia TTS model the voice worker uses
+VOICE_MODELS = ["sonic-3.5"]  # the Cartesia TTS model the voice worker uses (more natural, faster first audio)
 
 FEATURED_VOICES: list[dict] = [
     # Premium families in picker order; keep each family's versions together.
