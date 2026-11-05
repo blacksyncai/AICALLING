@@ -142,7 +142,7 @@ def test_contacts_crm(client, make_client):
     csv = "first name,last name,phone,company,industry\nJamie,Rivera,(415) 555-0123,Globex,SaaS\n" \
           "Sam,Lee,4155550124,Initech,\nBad,Row,12,,\nDupe,Person,415-555-0123,,\n"
     r = c.post("/api/contacts/import", json={"csv": csv, "tags": ["webinar"]}).json()
-    assert r == {"created": 2, "skipped": 1, "duplicates": 1}
+    assert r == {"created": 2, "skipped": 1, "duplicates": 1, "updated": 0}
 
     listing = c.get("/api/contacts?q=globex").json()
     assert listing["total"] == 1
