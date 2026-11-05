@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Calendar, Clock, Coins, ExternalLink, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, Coins, ExternalLink, Pencil, RefreshCw, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { use, useState } from "react";
 import useSWR from "swr";
@@ -9,10 +9,10 @@ import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
 import { ResponseReview } from "@/components/calls/ResponseReview";
 import { TranscriptLines } from "@/components/calls/Transcript";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, CardHeader, Notice, Spinner } from "@/components/ui";
-import { fetcher, post } from "@/lib/api";
+import { Badge, Button, Card, CardHeader, Field, Modal, Notice, Select, Spinner, Textarea } from "@/components/ui";
+import { fetcher, patch, post } from "@/lib/api";
 import type { Call } from "@/lib/types";
-import { formatCredits, formatDateTime, formatDuration, humanize, parseDate } from "@/lib/utils";
+import { formatCredits, formatDateTime, formatDuration, humanize, outcomeLabel, parseDate } from "@/lib/utils";
 
 
 export default function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -81,6 +81,8 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         </div>
         {!live && (
+          <div className="flex gap-2">
+          <EditResult callId={id} outcome={call.outcome} summary={call.summary} onSaved={() => mutate()} />
           <Button
             size="sm"
             loading={reanalyzing}
@@ -101,6 +103,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
           >
             <RefreshCw className="h-3.5 w-3.5" /> Re-analyze
           </Button>
+          </div>
         )}
       </div>
 
@@ -185,6 +188,58 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
           )}
         </div>
       </div>
+    </>
+  );
+}
+
+const EDITABLE_OUTCOMES = [
+  "potential_follow_up", "callback", "interested", "information_requested", "qualified", "meeting_booked",
+  "no_decision", "insufficient_conversation", "busy", "not_interested", "not_qualified", "declined_conversation",
+  "wrong_number", "do_not_call", "voicemail", "no_answer", "hung_up", "language_barrier", "completed",
+];
+
+/** Correct a call's result by hand (sticks through re-analysis). */
+function EditResult({ callId, outcome, summary, onSaved }: { callId: string; outcome: string | null; summary: string | null; onSaved: () => void }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(outcome ?? "");
+  const [text, setText] = useState(summary ?? "");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      await patch(`/api/calls/${callId}`, { outcome: value || null, summary: text });
+      toast("Call result updated");
+      setOpen(false);
+      onSaved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't save", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <Button size="sm" onClick={() => { setValue(outcome ?? ""); setText(summary ?? ""); setOpen(true); }}>
+        <Pencil className="h-3.5 w-3.5" /> Edit result
+      </Button>
+      <Modal open={open} onClose={() => !busy && setOpen(false)} title="Edit call result">
+        <div className="space-y-4">
+          <Field label="Outcome">
+            <Select value={value} onChange={(e) => setValue(e.target.value)}>
+              {EDITABLE_OUTCOMES.map((o) => <option key={o} value={o}>{outcomeLabel(o)}</option>)}
+            </Select>
+          </Field>
+          <Field label="Summary">
+            <Textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} />
+          </Field>
+          <p className="text-xs text-zinc-500">Your outcome stays even if the call is re-analyzed. The contact moves to the matching stage.</p>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
+            <Button variant="primary" loading={busy} onClick={() => void save()}>Save</Button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

@@ -93,6 +93,13 @@ _LATER = re.compile(
     r"maybe (?:later|next (?:year|month|spring|summer|fall))|next (?:year|spring|summer|fall)|"
     r"in a (?:few|couple(?: of)?) (?:months|weeks)|after the (?:holidays|new year)|down the road|"
     r"waiting (?:a (?:few|couple)|until|till)|(?:later|early) (?:this|next) year|not ready yet)\b")
+# A call that never got going but where the person signalled a need or interest ("I kinda need help",
+# "yeah I'm looking", "I'm interested"): worth a follow-up, not "no decision".
+_INTEREST = re.compile(
+    r"\b(?:need(?:s|ed)? (?:some |a little )?(?:help|to help)|need to (?:sell|buy|move)|(?:i'm|i am|we're|we are|still) "
+    r"(?:looking|interested|thinking about)|yes,? (?:i'm|we're|i am|we are) (?:looking|interested)|"
+    r"(?:want|wanted|planning) to (?:sell|buy|move)|interested in)\b")
+_NOT_INTERESTED = re.compile(r"\b(?:not|no longer|never|don't|do not) (?:looking|interested|need|want)|not anymore\b")
 _FOR_GOOD = re.compile(r"\b(?:don't call|do not call|stop calling|remove me|take me off|never|not interested at all)\b")
 
 
@@ -102,6 +109,14 @@ def later_quote(transcript):
     if any(_FOR_GOOD.search(_normalized(t)) for t in turns):
         return None
     return next((t.strip()[:1200] for t in turns if _LATER.search(_normalized(t))), None)
+
+
+def interest_quote(transcript):
+    """The live contact's words signalling a need or interest, unless they also turned it down."""
+    turns = _live_contact_turns(transcript)
+    if any(_NOT_INTERESTED.search(_normalized(t)) or _FOR_GOOD.search(_normalized(t)) for t in turns):
+        return None
+    return next((t.strip()[:1200] for t in turns if _INTEREST.search(_normalized(t))), None)
 
 
 def review_response(result, transcript):
@@ -237,6 +252,9 @@ def review_response(result, transcript):
             outcome, quote, scope, certainty = "potential_follow_up", later, "timing", "clear"
             if out.get("sentiment") == "negative":
                 out["sentiment"] = "neutral"  # "on pause" isn't a hostile reaction
+        elif outcome in ("no_decision", "insufficient_conversation") and interest_quote(transcript):
+            # The call never got anywhere (cut off, garbled audio), but they said they need help / are looking.
+            outcome, quote, scope, certainty = "potential_follow_up", interest_quote(transcript), "offer", "clear"
         elif outcome == "potential_follow_up" and not quote:
             outcome = unresolved(transcript)
     out["outcome"] = outcome

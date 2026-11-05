@@ -9,6 +9,7 @@ import uuid
 from collections import Counter
 from datetime import date as Date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.services.billing.credits import exact, exact_balance_milli
@@ -17,7 +18,7 @@ from app.models.agent import Agent
 from app.models.call_log import CallLog
 from app.models.campaign import Campaign
 from app.models.lead import Lead
-from app.services.auth import CtxDep, DbDep
+from app.services.auth import CtxDep, DbDep, ManagerDep
 from app.services.reporting import local_day_bounds, org_zone
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
@@ -367,3 +368,38 @@ async def reanalyze_call(call_id: uuid.UUID, background_tasks: BackgroundTasks,
         raise HTTPException(status_code=404, detail="Call not found")
     background_tasks.add_task(analyze_and_store, str(call_id), True)
     return {"queued": True}
+
+
+class CallEdit(BaseModel):
+    outcome: str | None = None
+    summary: str | None = Field(default=None, max_length=4000)
+
+
+@router.patch("/{call_id}")
+async def edit_call(call_id: uuid.UUID, body: CallEdit, ctx: ManagerDep, db: DbDep):
+    """Correct a call's result by hand (e.g. a garbled call that is really a follow-up). A manual outcome sticks:
+    re-analysis refreshes the summary and details but keeps it."""
+    from app.models.call_log import CALL_OUTCOMES
+    from app.services.contacts import next_status
+
+    call = await db.get(CallLog, call_id)
+    if not call or call.org_id != ctx.org.id:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if body.outcome is not None:
+        if body.outcome not in CALL_OUTCOMES:
+            raise HTTPException(status_code=422, detail="Choose a valid outcome.")
+        call.outcome = body.outcome
+        call.status = {"no_answer": "no_answer", "voicemail": "no_answer", "failed": "failed"}.get(body.outcome, "completed")
+        ra = dict(call.response_analysis or {})
+        ra["_manual_outcome"] = body.outcome
+        if ra.get("version") == 1:
+            ra["response"] = body.outcome
+        call.response_analysis = ra
+        if call.lead_id:
+            lead = await db.get(Lead, call.lead_id)
+            if lead and lead.org_id == ctx.org.id:
+                lead.status = next_status(None, body.outcome) or lead.status
+    if body.summary is not None:
+        call.summary = body.summary.strip() or call.summary
+    await db.commit()
+    return {"id": str(call.id), "outcome": call.outcome, "summary": call.summary}

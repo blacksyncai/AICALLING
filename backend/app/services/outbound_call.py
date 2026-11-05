@@ -674,6 +674,10 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
                                                      callback_request=result.get("callback_request"))
                 call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                    "failed": "failed"}.get(call_log.outcome, "completed")
+        if review_meta.get("_manual_outcome"):  # someone corrected this call by hand: that result stays
+            call_log.outcome = review_meta["_manual_outcome"]
+            call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
+                               "failed": "failed"}.get(call_log.outcome, "completed")
         if reviewed:
             call_log.response_analysis = {**review_meta, **result["response_analysis"], "response": call_log.outcome}
             if call_log.outcome == "do_not_call":

@@ -282,7 +282,9 @@ Outcome definitions (pick the single best one):
   Requests for text/email information are information_requested, with send_information as the next action.
 - potential_follow_up: not now, but not a permanent no: their plans are paused, on hold or later ("it's on pause",
   "not right now", "maybe next year", "not yet", "after the holidays", "we're waiting a few months"), even if they
-  also said "no" to doing it today. Worth a future follow-up. Sentiment is neutral unless they were hostile.
+  also said "no" to doing it today. Also when the call never got going (cut off, garbled or muffled audio) but the
+  contact said they need help, are looking or are interested ("I kinda need help", "yeah I'm looking"). Worth a
+  future follow-up. Sentiment is neutral unless they were hostile.
 - not_interested: explicitly rejected the ACTUAL OFFER or service, for good (not "on pause" or "not right now"). Quote the refusal and mark response_scope=offer.
   A no to hearing the introduction is declined_conversation; a no to a meeting alone is not rejecting the offer.
 - declined_conversation: explicitly declined permission to explain the reason for calling; interest in the offer is unknown.

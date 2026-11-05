@@ -58,3 +58,40 @@ def test_reasons_are_counted_and_filterable(client):
     assert counts["already_sold"] >= 2 and counts["working_with_agent"] >= 1
     items = client.get("/api/calls/", params={"reason": "working_with_agent"}).json()["items"]
     assert items and all(c["response_analysis"]["reason"] == "working_with_agent" for c in items)
+
+
+def test_garbled_call_with_a_need_is_a_potential_follow_up():
+    t = [{"role": "assistant", "text": "Are you still looking around, or leaning towards somewhere else?"},
+         {"role": "user", "text": "I kinda need to help. So that's the reason why I'm"},
+         {"role": "assistant", "text": "Got it. Just to confirm, are you still looking around the area?"}]
+    r = review_response({"outcome": "no_decision", "sentiment": "neutral", "response_analysis": {
+        "evidence_quote": "I kinda need to help. So that's the reason why I'm", "response_scope": "permission_to_speak",
+        "certainty": "ambiguous", "next_action": "none_agreed"}}, t)
+    assert r["outcome"] == "potential_follow_up"
+    t2 = [{"role": "assistant", "text": "Still looking?"}, {"role": "user", "text": "No, I'm not looking anymore."}]
+    r2 = review_response({"outcome": "no_decision", "sentiment": "neutral", "response_analysis": {
+        "evidence_quote": "No, I'm not looking anymore.", "response_scope": "offer", "certainty": "ambiguous",
+        "next_action": "none_agreed"}}, t2)
+    assert r2["outcome"] != "potential_follow_up"
+
+
+def test_a_call_result_can_be_corrected_by_hand(client):
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+
+    async def add():
+        async with AsyncSessionLocal() as db:
+            c = CallLog(org_id=org_id, livekit_room_name="e-" + uuid.uuid4().hex, call_type="outbound",
+                        status="completed", outcome="no_decision", started_at=datetime.now(timezone.utc),
+                        response_analysis={"version": 1, "response": "no_decision"})
+            db.add(c)
+            await db.commit()
+            return str(c.id)
+    cid = asyncio.run(add())
+    r = client.patch(f"/api/calls/{cid}", json={"outcome": "potential_follow_up", "summary": "Audio was muffled."})
+    assert r.status_code == 200 and r.json()["outcome"] == "potential_follow_up"
+    call = client.get(f"/api/calls/{cid}").json()
+    assert call["outcome"] == "potential_follow_up" and call["summary"] == "Audio was muffled."
+    assert client.patch(f"/api/calls/{cid}", json={"outcome": "made_up"}).status_code == 422
