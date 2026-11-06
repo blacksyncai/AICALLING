@@ -43,7 +43,7 @@ from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
 from app.agent.elevenlabs_tts import is_elevenlabs_voice, make_livekit_tts as make_elevenlabs_tts
 from app.agent.inference_tts import is_inference_voice, make_livekit_tts as make_inference_tts, provider_of as inference_provider
-from app.agent.models import MISTRAL_MODELS, NEEDS_USER_TURN
+from app.agent.models import CARTESIA_STT_LANGUAGES, MISTRAL_MODELS, NEEDS_USER_TURN
 from app.agent.runtime import contact_turns, should_hold_hangup
 
 CALL_CONNECTED_CUE = "[The call just connected.]"
@@ -1298,8 +1298,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if sends_temperature:
         llm_kwargs["temperature"] = float(cfg.get("temperature", 0.5))
     session_kwargs = dict(
-        stt=cartesia.STT(model="ink-whisper", language="tl", api_key=settings.cartesia_api_key)
-        if language == "tl" else deepgram.STT(
+        stt=cartesia.STT(model="ink-whisper", language=language, api_key=settings.cartesia_api_key)
+        if language in CARTESIA_STT_LANGUAGES else deepgram.STT(
             model="nova-3", language=language if language != "multi" else "multi",
             api_key=settings.deepgram_api_key,
         ),
@@ -1701,7 +1701,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     session.on("conversation_item_added", _on_item)
     log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,
              has_first_message=bool((cfg.get("first_message") or "").strip()), voicemail_action=vm_action,
-             stt_provider="cartesia" if language == "tl" else "deepgram", language=language,
+             stt_provider="cartesia" if language in CARTESIA_STT_LANGUAGES else "deepgram", language=language,
              tts_provider="elevenlabs" if is_elevenlabs_voice(voice_id) else inference_provider(voice_id) if is_inference_voice(voice_id) else "mistral" if is_mistral_voice(voice_id) and settings.mistral_api_key else "cartesia",
              background_audio=bool(cfg.get("background_audio")), turn_detection="semantic" if turn_detector else "vad",
              preemptive_generation=True, preemptive_tts=True,

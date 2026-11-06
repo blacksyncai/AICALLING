@@ -240,7 +240,7 @@ GROUPS: list[tuple[str, str]] = [
     ("request", "On request"),
 ]
 
-# Languages the editor offers. Filipino uses Cartesia ink-whisper STT;
+# Languages the editor offers. Filipino and Chinese use Cartesia ink-whisper STT;
 # other languages retain the existing Deepgram path. "multi" = auto code-switching.
 LANGUAGES: list[dict] = [
     {"code": "en", "label": "English"},
@@ -255,7 +255,15 @@ LANGUAGES: list[dict] = [
     {"code": "nl", "label": "Dutch"},
     {"code": "hi", "label": "Hindi"},
     {"code": "ja", "label": "Japanese"},
+    {"code": "zh", "label": "Chinese (Mandarin)"},
+    {"code": "ko", "label": "Korean"},
+    {"code": "tr", "label": "Turkish"},
+    {"code": "ru", "label": "Russian"},
+    {"code": "pl", "label": "Polish"},
+    {"code": "vi", "label": "Vietnamese"},
 ]
+# Languages Deepgram nova-3 can't transcribe on calls: these use Cartesia ink-whisper instead.
+CARTESIA_STT_LANGUAGES = {"tl", "zh"}
 for _lang in LANGUAGES:
     _lang.update(stt=True, tts=True)
 

@@ -26,12 +26,18 @@ const FALLBACK_LANGUAGES = [
   { code: "nl", label: "Dutch" },
   { code: "hi", label: "Hindi" },
   { code: "ja", label: "Japanese" },
+  { code: "zh", label: "Chinese (Mandarin)" },
+  { code: "ko", label: "Korean" },
+  { code: "tr", label: "Turkish" },
+  { code: "ru", label: "Russian" },
+  { code: "pl", label: "Polish" },
+  { code: "vi", label: "Vietnamese" },
 ];
 
 const LANGUAGE_FLAGS: Record<string, string> = {
   en: "🇺🇸", es: "🇪🇸", fr: "🇫🇷", de: "🇩🇪", pt: "🇵🇹", it: "🇮🇹", nl: "🇳🇱",
   hi: "🇮🇳", ja: "🇯🇵", zh: "🇨🇳", ko: "🇰🇷", ru: "🇷🇺", ar: "🇸🇦", tr: "🇹🇷",
-  sv: "🇸🇪", pl: "🇵🇱", uk: "🇺🇦", multi: "🌐", tl: "🇵🇭",
+  sv: "🇸🇪", pl: "🇵🇱", uk: "🇺🇦", vi: "🇻🇳", multi: "🌐", tl: "🇵🇭",
 };
 
 /** Separate Voice and Model / Brain tabs share the existing saved draft. */
