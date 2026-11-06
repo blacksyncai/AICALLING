@@ -64,7 +64,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
             )}
             {!!call.credits_refunded && (
               <span className="flex items-center gap-1 font-medium text-emerald-700">
-                <Coins className="h-3 w-3" /> {formatCredits(call.credits_refunded)} credits refunded
+                <Coins className="h-3 w-3" /> {formatCredits(call.credits_refunded)} credits refunded by BlackSync{call.refund_note ? ` · ${call.refund_note}` : ""}
               </span>
             )}
             <span>

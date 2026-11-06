@@ -52,7 +52,8 @@ def test_admin_refunds_a_call_exactly_and_only_once(client, make_client):
 
     calls = owner.get("/api/calls").json()
     items = calls.get("calls") or calls.get("items") or calls
-    assert next(c for c in items if c["id"] == call_id)["credits_refunded"] == 12.33
+    mine = next(c for c in items if c["id"] == call_id)
+    assert mine["credits_refunded"] == 12.33 and mine["refund_note"] == "Prank caller"  # the account sees it
     history = owner.get("/api/billing/transactions").json() if owner.get("/api/billing/transactions").status_code == 200 else None
     if history is not None:
         rows = history.get("transactions") or history.get("items") or []

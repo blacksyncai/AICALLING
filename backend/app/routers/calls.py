@@ -72,6 +72,8 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         "call_type": c.call_type or "outbound",
         # Credits an admin gave back for this call.
         "credits_refunded": round(sum(int(r.get("milli") or 0) for r in ((c.response_analysis or {}).get("_refunds") or [])) / 1000, 3),
+        "refund_note": next((r.get("note") for r in reversed((c.response_analysis or {}).get("_refunds") or [])
+                             if r.get("note")), None),
         # Smart Callback Recognition: this inbound call returned an earlier outbound call.
         "callback": bool(c.call_type == "inbound" and (c.callback_of or c.callback_match)),
         "callback_of": str(c.callback_of) if c.callback_of else None,

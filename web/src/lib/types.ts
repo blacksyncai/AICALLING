@@ -233,6 +233,8 @@ export interface Call {
   credits_used?: number | null;
   /** Credits an admin gave back for this call. */
   credits_refunded?: number;
+  /** The reason given for the latest refund. */
+  refund_note?: string | null;
   /** How credits_used adds up (null when the call wasn't billed). */
   credit_breakdown?: { rate: number; ai: number; phone_fee: number; free_seconds: number; billed_seconds: number } | null;
   lead_id?: string | null;

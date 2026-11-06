@@ -495,10 +495,20 @@ function CreditsCell({ call: c }: { call: Call }) {
       ]
     : [];
   const tip = c.credits_used === 0 ? (c.call_type === "web" ? "Free test minutes" : "No charge — the call didn't connect") : lines.join("\n");
+  const refunded = c.credits_refunded ?? 0;
+  const why = c.refund_note ? ` (${c.refund_note})` : "";
   return (
-    <span className="inline-flex items-center gap-1.5 tabular-nums text-zinc-900" title={tip}>
-      {c.credits_used.toFixed(c.credits_used ? 3 : 0)}
-      <Info className="h-3.5 w-3.5 text-brand-500" aria-label={tip} />
+    <span className="inline-flex flex-col items-start">
+      <span className="inline-flex items-center gap-1.5 tabular-nums text-zinc-900" title={tip}>
+        <span className={refunded ? "text-zinc-400 line-through" : undefined}>{c.credits_used.toFixed(c.credits_used ? 3 : 0)}</span>
+        <Info className="h-3.5 w-3.5 text-brand-500" aria-label={tip} />
+      </span>
+      {refunded > 0 && (
+        <span className="mt-0.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200"
+          title={`${refunded.toFixed(3)} credits refunded by BlackSync${why}`}>
+          Refunded {refunded.toFixed(3)}
+        </span>
+      )}
     </span>
   );
 }
