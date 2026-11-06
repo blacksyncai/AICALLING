@@ -202,23 +202,9 @@ async def admin_correct_call(s: Session, args: dict) -> dict:
                 "transcript_turns_now": len(call.transcript or []), "transcript_turns_after": len(turns) or None,
                 "trim_recording_to_seconds": keep,
                 "note": "Confirm with the user, then repeat with confirmed=true."}
-    meta = dict(call.response_analysis or {})
-    record = dict(meta.get("_correction") or {})
-    record.setdefault("original_transcript", call.transcript)
-    record.update(at=datetime.now(timezone.utc).isoformat(), by=getattr(s.user, "email", None))
-    if keep is not None:
-        record["original_recording_key"] = await recordings.replace_with_trimmed(call.recording_key, keep)
-        record["kept_seconds"] = keep
-    if turns:
-        call.transcript = turns
-    meta["_correction"] = record
-    call.response_analysis = meta
-    await s.db.commit()
-    if turns:
-        from app.services.outbound_call import _analyze
+    from app.services.call_corrections import apply_correction
 
-        await _analyze(str(call.id), force=True)
-        await s.db.refresh(call)
+    await apply_correction(s.db, call, turns, keep, by=getattr(s.user, "email", None))
     return {"account": org.name, "call_id": str(call.id), "outcome": call.outcome, "summary": call.summary,
             "extracted": {k: v for k, v in (call.extracted_data or {}).items() if not k.startswith("_")},
             "recording_trimmed_to": keep}

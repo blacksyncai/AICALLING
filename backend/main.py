@@ -74,6 +74,11 @@ async def lifespan(app: FastAPI):
     from app.services.outbound_call import repair_contact_statuses
 
     async def _repairs():
+        try:
+            from app.services.call_corrections import fix_steven_call
+            await fix_steven_call()
+        except Exception as exc:
+            log.warning("call_correction_failed", error=str(exc)[:300])
         await fix_mislabeled_outcomes()
         from app.services.outbound_call import fix_missed_voicemails
         await fix_missed_voicemails()
