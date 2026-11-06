@@ -74,6 +74,8 @@ async def lifespan(app: FastAPI):
     from app.services.outbound_call import repair_contact_statuses
 
     async def _repairs():
+        from app.services.cartesia_probe import probe
+        await probe()
         await fix_mislabeled_outcomes()
         from app.services.outbound_call import fix_missed_voicemails
         await fix_missed_voicemails()
