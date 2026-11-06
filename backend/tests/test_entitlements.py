@@ -52,9 +52,9 @@ def test_catalog_has_four_tiers_and_managed_is_sales_led(client, make_client, st
     assert [plans[k]["amount_cents"] for k in plans] == [9800, 19700, 34900, None]
     assert plans["managed"]["quote_label"] == "Custom"
     assert [plans[k]["included_credits"] for k in plans] == [150, 400, 900, 1500]
-    assert [plans[k]["limits"]["agents"] for k in plans] == [2, 4, 8, 12]
+    assert [plans[k]["limits"]["agents"] for k in plans] == [2, 5, 8, 12]
     assert [plans[k]["limits"]["seats"] for k in plans] == [1, 4, 10, 15]
-    assert [plans[k]["limits"]["numbers"] for k in plans] == [1, 2, 4, 4]
+    assert [plans[k]["limits"]["numbers"] for k in plans] == [1, 3, 4, 4]
     assert plans["teams"]["recommended"] and plans["managed"]["self_serve"] is False
     assert cat["agent_addon"]["amount_cents"] == 1900 and cat["links"]["sales_booking_url"].startswith("https://")
     # No self-serve checkout or plan change into Managed.
@@ -94,7 +94,7 @@ def test_solo_limits_and_upgrade_prompts(client, make_client, stripe):
     assert an["locked"] == ["by_agent"] and an["by_agent"] == []
     # Concurrency above the plan's cap.
     agent = next(a for a in c.get("/api/agents/").json() if a["name"] == "One")
-    d = _limit(c.post("/api/campaigns/", json={"name": "Big", "agent_id": agent["id"], "max_concurrent_calls": 5}))
+    d = _limit(c.post("/api/campaigns/", json={"name": "Big", "agent_id": agent["id"], "max_concurrent_calls": 11}))
     assert d["feature"] == "concurrency"
     assert c.post("/api/campaigns/", json={"name": "Ok", "agent_id": agent["id"], "max_concurrent_calls": 2}).status_code == 201
 
