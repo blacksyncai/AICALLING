@@ -195,7 +195,10 @@ async def ensure_inbound_trunk(first_number: str) -> tuple[str, str]:
                          if t.name == INBOUND_NAME), None)
         pl_trunk = await _plivo_inbound_trunk()
         if lk_trunk is None or pl_trunk is None or not lk_trunk.auth_username:
-            user, password = "bsplivo" + secrets.token_hex(4), secrets.token_urlsafe(24)
+            # Plivo: 5-20 characters, letters and digits plus at least one of ~!@#$%^&*()_+
+            alnum = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+            user = "bsplivo" + secrets.token_hex(4)
+            password = "".join(secrets.choice(alnum) for _ in range(17)) + secrets.choice("!@#*_+") + secrets.choice(alnum)
             uri = await _request("POST", "Zentrunk/URI/", json={
                 "name": INBOUND_NAME, "uri": settings.livekit_sip_host, "authentication_needed": True,
                 "username": user, "password": password})
