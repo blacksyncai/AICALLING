@@ -48,6 +48,7 @@ const OUTCOME_LABEL: Record<string, string> = {
   busy: "Busy / bad timing", information_requested: "Information requested", potential_follow_up: "Potential follow-up", declined_conversation: "Declined conversation",
   completed: "Completed (legacy)",
   callback: "Callback requested",
+  missed_callback: "Missed callback",
   screened: "Call screener · no answer",
   language_barrier: "Language barrier",
   hung_up: "Hung up",

@@ -45,6 +45,8 @@ class Organization(Base):
     onboarding: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # How every agent in this account says certain words: [{"word", "say"}] (on top of each agent's own list).
     pronunciations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Smart Callback Recognition settings (see services/callbacks.DEFAULTS); None = defaults.
+    callback_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Lead-lookup credits — separate from calling credits. 1 credit = 1 property owner found.
     lead_credits_balance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     lead_credits_unlimited: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)

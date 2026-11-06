@@ -40,7 +40,8 @@ CALL_OUTCOMES = (
 class CallLog(Base):
     __tablename__ = "call_logs"
     # Dashboard reports read an org's calls by date range.
-    __table_args__ = (Index("ix_call_logs_org_started", "org_id", "started_at"),)
+    __table_args__ = (Index("ix_call_logs_org_started", "org_id", "started_at"),
+                      Index("ix_call_logs_org_to_started", "org_id", "to_phone", "started_at"))
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
@@ -113,6 +114,10 @@ class CallLog(Base):
     recording_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     recording_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     twilio_call_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Inbound callback recognition: the outbound call this caller was returning, and how it was matched
+    # ("dialed_number", "recent_call", "ambiguous").
+    callback_of: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    callback_match: Mapped[str | None] = mapped_column(String(16), nullable=True)
     events_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────────────────

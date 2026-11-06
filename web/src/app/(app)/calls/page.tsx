@@ -290,6 +290,11 @@ function CallLogs() {
                       <span className="inline-flex items-center gap-1.5">
                         {c.call_type === "web" ? <Globe className="h-3.5 w-3.5 text-zinc-400" /> : c.call_type === "inbound" ? <PhoneIncoming className="h-3.5 w-3.5 text-zinc-400" /> : <PhoneOutgoing className="h-3.5 w-3.5 text-zinc-400" />}
                         {c.call_type === "web" ? "Browser" : formatPhone(c.to_phone) || "—"}
+                        {c.callback && (
+                          <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 ring-1 ring-sky-200" title="This person called back after one of your campaigns called them">
+                            Callback
+                          </span>
+                        )}
                       </span>
                     </td>
                     <td className="px-3 py-3"><CallOutcome call={c} /></td>

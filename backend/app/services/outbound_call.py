@@ -588,6 +588,12 @@ class CallService:
             await db.execute(update(Lead).where(Lead.id == call_log.lead_id).values(**lead_values))
             await _mark_number(db, call_log.lead_id, call_log.to_phone, outcome)
 
+        if call_log.call_type == "inbound":
+            # A callback where the person talked to us: none of the account's campaigns redials that number.
+            from app.services.callbacks import after_call
+
+            await after_call(db, call_log, outcome, transcript)
+
         already_counted = bool(review_meta.get("_counted_outcome")) or prev_outcome in ("meeting_booked", "qualified", "interested")  # a repeated report
         if call_log.campaign_id and not already_counted:
             inc: dict = {}
@@ -905,9 +911,19 @@ async def emit_call_events(call_id: uuid.UUID) -> None:
         "started_at": call.started_at,
         "ended_at": call.ended_at,
     }
+    data["callback"] = bool(call.call_type == "inbound" and call.callback_match)
     await emit_event(call.org_id, "call.completed", data)
-    from app.services.crm.sync import schedule_push
-    schedule_push(call.org_id, data)
+    push = True
+    if data["callback"]:  # the account can keep callback results out of its CRM
+        from app.models.account import Organization
+        from app.services.callbacks import settings_for
+
+        async with AsyncSessionLocal() as db:
+            org = await db.get(Organization, call.org_id)
+            push = bool(org and settings_for(org)["crm_updates"])
+    if push:
+        from app.services.crm.sync import schedule_push
+        schedule_push(call.org_id, data)
     if call.outcome == "meeting_booked":
         await emit_event(call.org_id, "meeting.booked", data)
 

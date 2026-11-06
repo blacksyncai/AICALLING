@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { useToast } from "@/components/toast";
 import { TextingCard } from "@/components/phone/TextingCard";
 import { NumberPackCard } from "@/components/phone/NumberPackCard";
+import { CallbackCard } from "@/components/phone/CallbackCard";
 import MatteAlertFeedback from "@/components/ui/matte-alert-feedback";
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Notice, PageHeader, Spinner } from "@/components/ui";
 import { api, fetcher, patch, post } from "@/lib/api";
@@ -137,6 +138,7 @@ export default function PhoneNumbersPage() {
               />
             )}
             {data.numbers.length > 0 && getNumber}
+            <CallbackCard />
             <NumberPackCard onChanged={() => void mutate()} />
             <TextingCard />
             {data.requests.length > 0 && (

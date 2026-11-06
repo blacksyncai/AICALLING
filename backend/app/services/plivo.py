@@ -157,3 +157,98 @@ async def number_exists(number: str) -> bool:
     if "+" + str(data.get("number") or "").lstrip("+") != number:
         raise PlivoError("Plivo number ownership could not be verified.")
     return True
+
+
+# ── Inbound: callbacks on Plivo numbers reach BlackSync ───────────────────────
+# A Plivo Zentrunk inbound trunk sends calls on its numbers to LiveKit's SIP endpoint with digest auth; a matching
+# LiveKit inbound trunk (same credentials) accepts them and a dispatch rule starts our agent (see inbound.route_call).
+# Attaching a number sets its Plivo app_id to the trunk, replacing whatever Plivo application it used before.
+
+INBOUND_NAME = "BlackSync Plivo inbound"
+_INBOUND: dict = {}
+
+
+async def _plivo_inbound_trunk() -> dict | None:
+    data = await _request("GET", "Zentrunk/Trunk/")
+    return next((t for t in data.get("objects", []) if t.get("name") == INBOUND_NAME
+                 and t.get("trunk_direction") == "inbound"), None)
+
+
+async def ensure_inbound_trunk(first_number: str) -> tuple[str, str]:
+    """(Plivo trunk id, LiveKit trunk id) for callbacks, created together with fresh credentials when either is
+    missing."""
+    import secrets
+
+    from livekit import api
+
+    from app.services.inbound import _lk
+
+    if _INBOUND.get("plivo") and _INBOUND.get("livekit"):
+        return _INBOUND["plivo"], _INBOUND["livekit"]
+    if not ready() or not settings.livekit_ready or not re.fullmatch(r"[a-zA-Z0-9.-]+", settings.livekit_sip_host or ""):
+        raise PlivoError("Plivo inbound routing isn't configured on the platform.")
+    lk = _lk()
+    try:
+        lk_trunk = next((t for t in (await lk.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())).items
+                         if t.name == INBOUND_NAME), None)
+        pl_trunk = await _plivo_inbound_trunk()
+        if lk_trunk is None or pl_trunk is None or not lk_trunk.auth_username:
+            user, password = "bsplivo" + secrets.token_hex(4), secrets.token_urlsafe(24)
+            uri = await _request("POST", "Zentrunk/URI/", json={
+                "name": INBOUND_NAME, "uri": settings.livekit_sip_host, "authentication_needed": True,
+                "username": user, "password": password})
+            uri_id = uri.get("uri_uuid")
+            if not uri_id:
+                raise PlivoError("Plivo didn't create the inbound SIP URI.")
+            if pl_trunk is None:
+                created = await _request("POST", "Zentrunk/Trunk/", json={
+                    "name": INBOUND_NAME, "trunk_direction": "inbound", "primary_uri_uuid": uri_id})
+                pl_id = created.get("trunk_id")
+            else:
+                pl_id = pl_trunk["trunk_id"]
+                await _request("POST", f"Zentrunk/Trunk/{pl_id}/", json={"primary_uri_uuid": uri_id})
+            if lk_trunk is None:
+                lk_trunk = await lk.sip.create_inbound_trunk(api.CreateSIPInboundTrunkRequest(trunk=api.SIPInboundTrunkInfo(
+                    name=INBOUND_NAME, numbers=["+" + first_number.lstrip("+")], auth_username=user, auth_password=password, krisp_enabled=True)))
+            else:
+                lk_trunk = await lk.sip.update_inbound_trunk_fields(lk_trunk.sip_trunk_id, auth_username=user,
+                                                                   auth_password=password)
+        else:
+            pl_id = pl_trunk["trunk_id"]
+        if not pl_id:
+            raise PlivoError("Plivo didn't create the inbound trunk.")
+        lk_id = lk_trunk.sip_trunk_id
+        # A dispatch rule that starts our agent for calls on this trunk.
+        agent_name = settings.livekit_agent_name or "closer"
+        rules = (await lk.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())).items
+        if not any(lk_id in r.trunk_ids for r in rules):
+            import json as _json
+
+            await lk.sip.create_dispatch_rule(api.CreateSIPDispatchRuleRequest(
+                rule=api.SIPDispatchRule(dispatch_rule_individual=api.SIPDispatchRuleIndividual(room_prefix="call-")),
+                trunk_ids=[lk_id], name=INBOUND_NAME,
+                room_config=api.RoomConfiguration(agents=[api.RoomAgentDispatch(
+                    agent_name=agent_name, metadata=_json.dumps({"call_type": "inbound"}))])))
+    finally:
+        await lk.aclose()
+    _INBOUND.update(plivo=pl_id, livekit=lk_id)
+    return pl_id, lk_id
+
+
+async def route_inbound(number: str) -> None:
+    """Send inbound calls on this Plivo number to BlackSync."""
+    from livekit import api
+
+    from app.services.inbound import _lk
+
+    pl_id, lk_id = await ensure_inbound_trunk(number)
+    e164 = "+" + number.lstrip("+")
+    lk = _lk()
+    try:
+        trunk = next((t for t in (await lk.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())).items
+                      if t.sip_trunk_id == lk_id), None)
+        if trunk is not None and e164 not in trunk.numbers:
+            await lk.sip.update_inbound_trunk_fields(lk_id, numbers=api.ListUpdate(add=[e164]))
+    finally:
+        await lk.aclose()
+    await _request("POST", f"Number/{e164.lstrip('+')}/", json={"app_id": pl_id})

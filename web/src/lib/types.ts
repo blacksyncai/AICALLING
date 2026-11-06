@@ -203,6 +203,9 @@ export interface Call {
   response_analysis?: ResponseAnalysis | null;
   id: string;
   call_type: "outbound" | "web" | "inbound";
+  /** An inbound call from someone a campaign called (Smart Callback Recognition). */
+  callback?: boolean;
+  callback_match?: "dialed_number" | "recent_call" | "ambiguous" | null;
   status: string;
   outcome: string | null;
   sentiment: string | null;

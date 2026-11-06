@@ -270,6 +270,35 @@ async def sync_inbound_numbers() -> int:
     return len(nums)
 
 
+async def ensure_callback_routing(org_id: uuid.UUID | None = None) -> int:
+    """Make the account's numbers (or every account's, with no org_id) able to take callbacks: Twilio numbers on the
+    LiveKit inbound trunk, and Plivo numbers routed to BlackSync once the platform turns that on (it replaces the
+    Plivo app those numbers used before). SignalWire numbers keep their own provisioning."""
+    from app.database import AsyncSessionLocal
+    from app.services.billing import settings_store
+
+    async with AsyncSessionLocal() as db:
+        q = select(PhoneNumber.number, PhoneNumber.carrier).where(PhoneNumber.status == "active")
+        if org_id is not None:
+            q = q.where(PhoneNumber.org_id == org_id)
+        rows = (await db.execute(q)).all()
+        plivo_on = bool(await settings_store.get(db, "plivo_inbound_routing"))
+    done = 0
+    for number, carrier in rows:
+        try:
+            if carrier in (None, "twilio"):
+                await _inbound_ready(number)
+                done += 1
+            elif carrier == "plivo" and plivo_on:
+                from app.services import plivo
+
+                await plivo.route_inbound(number)
+                done += 1
+        except Exception as exc:
+            log.warning("callback_routing_failed", number=number, carrier=carrier, error=str(exc)[:200])
+    return done
+
+
 async def active_numbers(db: AsyncSession, org_id: uuid.UUID) -> list[PhoneNumber]:
     return list((await db.execute(
         select(PhoneNumber).where(PhoneNumber.org_id == org_id, PhoneNumber.status == "active")

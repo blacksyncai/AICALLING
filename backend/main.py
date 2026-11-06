@@ -74,8 +74,6 @@ async def lifespan(app: FastAPI):
     from app.services.outbound_call import repair_contact_statuses
 
     async def _repairs():
-        from app.services.inbound_probe import probe
-        await probe()
         await fix_mislabeled_outcomes()
         from app.services.outbound_call import fix_missed_voicemails
         await fix_missed_voicemails()
@@ -93,9 +91,9 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             log.warning("welcome_agents_refresh_failed", error=str(exc))
     if settings.run_startup_jobs and settings.livekit_ready:
-        from app.services.telephony import sync_inbound_numbers
-        try:
-            log.info("inbound_numbers_synced", count=await sync_inbound_numbers())
+        from app.services.telephony import ensure_callback_routing
+        try:  # every number can take calls: inbound campaigns and callbacks to outbound numbers
+            log.info("inbound_numbers_synced", count=await ensure_callback_routing())
         except Exception as exc:
             log.warning("inbound_numbers_sync_failed", error=str(exc))
     if settings.run_startup_jobs and settings.livekit_ready and settings.bandwidth_ready:

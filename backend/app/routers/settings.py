@@ -422,6 +422,35 @@ async def save_pronunciations(body: PronunciationsIn, ctx: ManagerDep, db: DbDep
     return {"pronunciations": ctx.org.pronunciations or []}
 
 
+# ── Smart Callback Recognition ────────────────────────────────────────────────
+
+
+@router.get("/callbacks")
+async def get_callback_settings(ctx: CtxDep):
+    """How inbound calls from people your campaigns called are recognized and answered."""
+    from app.services.callbacks import settings_for
+
+    return settings_for(ctx.org)
+
+
+@router.put("/callbacks")
+async def save_callback_settings(body: dict, ctx: ManagerDep, db: DbDep):
+    from app.services.callbacks import set_settings
+
+    try:
+        out = await set_settings(db, ctx.org, body or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await db.commit()
+    if out["enabled"]:  # make sure the account's numbers can take calls (best effort, in the background)
+        import asyncio
+
+        from app.services.telephony import ensure_callback_routing
+
+        asyncio.create_task(ensure_callback_routing(ctx.org.id))
+    return out
+
+
 # ── Your own voice (instant clone) ────────────────────────────────────────────
 
 MAX_ACCOUNT_VOICES = 5

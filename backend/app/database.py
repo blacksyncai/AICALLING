@@ -80,6 +80,9 @@ def _add_missing_columns(sync_conn) -> None:
             col_type = col.type.compile(dialect=sync_conn.dialect)
             sync_conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {col_type}'))
 
+    if "leads" in existing_tables:  # caller lookups (inbound callbacks) by account and phone
+        sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_leads_org_phone ON leads (org_id, phone)"))
+
     if "email_messages" in existing_tables:
         sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_messages_notification_key ON email_messages (notification_key)"))
 
@@ -88,6 +91,10 @@ def _add_missing_columns(sync_conn) -> None:
     if "call_logs" in existing_tables:
         sync_conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_call_logs_org_started ON call_logs (org_id, started_at)"
+        ))
+        # Callback recognition looks up an account's recent calls to a phone number.
+        sync_conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_call_logs_org_to_started ON call_logs (org_id, to_phone, started_at)"
         ))
 
     # Pre-agent Postgres schemas used native enums + a required lead_id; relax

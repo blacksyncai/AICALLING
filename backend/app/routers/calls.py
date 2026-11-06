@@ -70,6 +70,10 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
     d = {
         "id": str(c.id),
         "call_type": c.call_type or "outbound",
+        # Smart Callback Recognition: this inbound call returned an earlier outbound call.
+        "callback": bool(c.call_type == "inbound" and (c.callback_of or c.callback_match)),
+        "callback_of": str(c.callback_of) if c.callback_of else None,
+        "callback_match": c.callback_match,
         "status": c.status,
         "outcome": c.outcome,
         "response_analysis": {k: v for k, v in (c.response_analysis or {}).items() if not k.startswith("_")} or None,

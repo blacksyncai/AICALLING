@@ -166,26 +166,56 @@ async def _bandwidth_bridge(db: AsyncSession, to_number: str, from_number: str, 
 
 
 async def route_call(db: AsyncSession, to_number: str, from_number: str, room: str) -> dict | None:
-    """The agent config + a new call log for an inbound call, or None when nobody answers this number."""
-    from app.agent.runtime import agent_to_runtime, lead_variables
+    """The agent config + a new call log for an inbound call, or None when nobody answers this number.
+
+    A number with a live inbound campaign is answered by that campaign's agent. Any other account number is
+    answered when the caller is returning one of the account's outbound calls (Smart Callback Recognition, see
+    services/callbacks): by the agent that called them, or the account's fallback agent."""
+    import asyncio
+
+    from app.agent.runtime import lead_variables
+    from app.services import callbacks
 
     bridged = await _bandwidth_bridge(db, to_number, from_number, room)
     if bridged is not None:
         return bridged
     to_n = "+" + normalize_phone(to_number).lstrip("+") if to_number else ""
     row = (await db.execute(select(PhoneNumber).where(PhoneNumber.number == to_n, PhoneNumber.status == "active"))).scalar_one_or_none()
-    if not row or not row.inbound_agent_id:
-        return None
-    agent = await db.get(Agent, row.inbound_agent_id)
-    if not agent or agent.org_id != row.org_id:
+    if not row or not row.org_id:
         return None
     from app.models.account import Organization
-    from app.services.accounts import InsufficientCredits, ensure_can_call
-    from app.services.billing.credits import reserve_for_call
 
     org = await db.get(Organization, row.org_id)
     if org is None:
         return None
+    cb = callbacks.settings_for(org)
+    caller = normalize_phone(from_number or "")
+    match = None
+    # Bandwidth numbers reach LiveKit only through the outbound-call bridge (a late hand-off isn't a callback).
+    if cb["enabled"] and caller and row.carrier != "bandwidth":
+        try:  # never hold the caller up for long: an unmatched callback still gets answered below
+            match = await asyncio.wait_for(callbacks.find_match(db, row.org_id, caller, row.number, cb["window_days"]), 2.5)
+        except Exception as exc:
+            log.warning("callback_lookup_failed", to=row.number, error=f"{type(exc).__name__}: {str(exc)[:120]}")
+            match = None
+
+    via_campaign = bool(row.inbound_agent_id)
+    agent = None
+    if via_campaign:
+        agent = await db.get(Agent, row.inbound_agent_id)
+        if agent and agent.org_id != row.org_id:
+            agent = None
+    elif cb["enabled"]:
+        agent = await callbacks.original_agent(db, row.org_id, match, cb)
+    if agent is None:
+        if match is not None and not via_campaign:
+            await callbacks.record_missed(db, row.org_id, match, caller or from_number, row.number, room,
+                                          "no agent is available to answer callbacks")
+        return None
+
+    from app.services.accounts import InsufficientCredits, ensure_can_call
+    from app.services.billing.credits import reserve_for_call
+
     try:
         ensure_can_call(org)
         from app.services.entitlements import check_agent_can_call
@@ -194,19 +224,27 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
         max_seconds, rate, reserved = await reserve_for_call(db, org, agent, agent.max_duration_seconds or 600)
     except InsufficientCredits as exc:
         log.warning("inbound_call_refused", to=row.number, reason=str(exc)[:120])
+        if match is not None:
+            await callbacks.record_missed(db, row.org_id, match, caller or from_number, row.number, room,
+                                          "the account is out of calling credits")
         return None
-    caller = normalize_phone(from_number or "")
+
     lead = None
-    if caller:
+    if match is not None:
+        lead = match.lead  # None when the number matches several different contacts
+    elif caller:
         lead = (await db.execute(select(Lead).where(Lead.org_id == row.org_id, Lead.phone == caller).limit(1))).scalar_one_or_none()
         if lead is None:  # one of a contact's other numbers (see lead_phones)
             lead = (await db.execute(select(Lead).where(
                 Lead.org_id == row.org_id, cast(Lead.phones, String).like(f'%"{caller}"%')).limit(1))).scalar_one_or_none()
+    campaign_id = row.inbound_campaign_id or (match.campaign.id if match and match.campaign and match.lead else None)
     now = datetime.now(timezone.utc)
     call = CallLog(id=uuid.uuid4(), org_id=row.org_id, agent_id=agent.id, lead_id=lead.id if lead else None,
-                   campaign_id=row.inbound_campaign_id, call_type="inbound", livekit_room_name=room,
+                   campaign_id=campaign_id, call_type="inbound", livekit_room_name=room,
                    to_phone=row.number, from_phone=caller or from_number, status="connected", started_at=now, answered_at=now,
-                   credits_reserved=reserved, credit_rate=rate)
+                   credits_reserved=reserved, credit_rate=rate,
+                   callback_of=match.call.id if match and match.call else None,
+                   callback_match=match.confidence if match else None)
     from app.services import recordings
 
     record_key = None
@@ -217,20 +255,30 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
     elif recordings.enabled_for(agent):
         record_key = recordings.key_for(row.org_id, call.id)
     db.add(call)
+    if match is not None and caller:
+        await callbacks.hold_redials(db, row.org_id, caller)
     await db.commit()
     if record_key:
-        import asyncio
-
         from app.services.outbound_call import _BACKGROUND, _start_recording
 
         task = asyncio.create_task(_start_recording(call.id, room, record_key))
         _BACKGROUND.add(task)
         task.add_done_callback(_BACKGROUND.discard)
-    variables = lead_variables(lead) if lead else {"phone": caller}
-    log.info("inbound_call_routed", to=row.number, agent=agent.name, call_log_id=str(call.id), known_caller=bool(lead))
+    use_vars = lead is not None and (match is None or cb["use_variables"])
+    variables = lead_variables(lead) if use_vars else {"phone": caller}
+    log.info("inbound_call_routed", to=row.number, agent=agent.name, call_log_id=str(call.id), known_caller=bool(lead),
+             callback=match.confidence if match else None)
     from app.agent.runtime import runtime_for
     cfg = await runtime_for(db, agent, secrets=True)
     cfg["max_duration_seconds"] = min(cfg.get("max_duration_seconds") or 600, max_seconds)
+    if match is not None:
+        info = callbacks.brief(match, org.name or "", cb)
+        if not use_vars:
+            info["first_name"] = ""
+        cfg["callback"] = info
+        if not via_campaign or not (cfg.get("first_message") or "").strip():
+            # The agent's own opening is written for calls it places ("Hi, this is Sofia calling about...").
+            cfg["first_message"] = callbacks.greeting(info)
     from app.services import telephony
     from app.services.outbound_call import outbound_trunk
 
