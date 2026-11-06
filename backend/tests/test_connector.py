@@ -318,6 +318,18 @@ def test_create_agent_from_a_written_script(client, make_client):
     assert a["builder"]["sections"]["rules"].startswith("Never quote prices") and "Never quote prices" in a["system_prompt"]
     assert a["builder"]["sections"]["identity"].startswith("You are Maya")  # untouched sections stay
 
+    # A whole new script for a sectioned agent updates the sections too (the editor shows and saves those).
+    new_script = a["system_prompt"].replace("Never quote prices.", "Always offer a callback.")
+    upd, err = _tool(anon, token, "update_agent", {"agent_id": made["id"], "system_prompt": new_script})
+    assert not err, upd
+    a = client.get(f"/api/agents/{made['id']}").json()
+    assert a["builder"]["sections"]["rules"].startswith("Always offer a callback") and a["system_prompt"] == new_script
+    # A script that no longer follows the sections: the agent switches to editing the full script.
+    upd, err = _tool(anon, token, "update_agent", {"agent_id": made["id"], "system_prompt": "You are Maya. " + long})
+    assert not err, upd
+    a = client.get(f"/api/agents/{made['id']}").json()
+    assert not a["builder"].get("sections") and a["system_prompt"].startswith("You are Maya.")
+
     # An assistant with an old tool list is told how to refresh instead of failing silently.
     old = _rpc(anon, token, "tools/call", {"name": "build_agent", "arguments": {}})["result"]
     assert old["isError"] and "create_agent" in old["structuredContent"]["error"]

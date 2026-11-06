@@ -39,7 +39,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
           window.dispatchEvent(new CustomEvent("plan-limit", { detail }));
       }
     } catch {
-      if (res.status >= 500) message = "Backend unreachable — is the API running on BACKEND_ORIGIN?";
+      if (res.status >= 500) message = "BlackSync is restarting for an update. Try again in a few seconds.";
     }
     throw new ApiError(res.status, message, parsed);
   }

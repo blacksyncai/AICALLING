@@ -530,6 +530,18 @@ async def update_agent(s: Session, args: dict) -> dict:
         merged = {**b["sections"], **changed}
         fields["system_prompt"] = _assemble(merged)
         fields["builder"] = {**b, **_sectioned_builder(merged)}
+    if "system_prompt" in fields and not changed:
+        # An agent built in sections shows (and saves) its sections in the editor: keep them in step with the new
+        # script, or the editor would show the old text and its next save would put the old script back.
+        from app.agent.composer import SECTIONS_V4, split_sections
+        from app.routers.agents import get_agent as ga
+
+        current = await ga(_uuid(args, "agent_id"), s.need_account(), s.db)
+        b = current.get("builder") or {}
+        if isinstance(b, dict) and b.get("sections"):
+            order = [tuple(x) for x in b.get("section_order") or []] or SECTIONS_V4
+            split = split_sections(fields["system_prompt"], order)
+            fields["builder"] = {**b, "sections": split if split is not None else {}}
     if not fields:
         raise ToolError("Nothing to change.")
     try:

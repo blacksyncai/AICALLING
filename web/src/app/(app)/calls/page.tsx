@@ -129,8 +129,9 @@ function CallLogs() {
       </Modal>
       <Card className="min-w-0 overflow-hidden rounded-2xl">
         <div className="border-b border-zinc-100 px-4 py-4 sm:px-5">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-            <div className="flex min-w-0 items-center gap-2.5 xl:flex-1">
+          {/* Title on its own line: next to six filters it got squeezed and its icon and count overlapped them. */}
+          <div className="flex flex-col gap-3">
+            <div className="flex min-w-0 shrink-0 items-center gap-2.5">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-700"><PhoneCall className="h-4 w-4" /></span>
               <h2 className="font-semibold text-zinc-900">All calls</h2>
               {data && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-500">{data.total.toLocaleString()}</span>}

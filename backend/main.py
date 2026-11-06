@@ -246,6 +246,7 @@ app.include_router(admin_mcp.router)
 
 
 @app.get("/health", tags=["infra"])
+@app.get("/api/health", tags=["infra"], include_in_schema=False)  # through the web app: the deploy health check
 async def health():
     return {
         "status": "ok",

@@ -10,7 +10,7 @@ import { ResponseReview } from "@/components/calls/ResponseReview";
 import { TranscriptLines } from "@/components/calls/Transcript";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Textarea } from "@/components/ui";
-import { fetcher, patch, post } from "@/lib/api";
+import { ApiError, fetcher, patch, post } from "@/lib/api";
 import type { Call } from "@/lib/types";
 import { useSession } from "@/lib/session";
 import { formatCredits, formatDateTime, formatDuration, humanize, outcomeLabel, parseDate } from "@/lib/utils";
@@ -215,11 +215,18 @@ function RefundCredits({ callId, used, refunded, onDone }: { callId: string; use
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [password, setPassword] = useState("");
   if (!session?.user.is_superadmin || left <= 0) return null;
 
   async function submit() {
     setBusy(true);
     try {
+      if (locked) {
+        await post("/api/admin/unlock", { password });  // this browser hasn't unlocked the admin portal yet
+        setLocked(false);
+        setPassword("");
+      }
       const credits = amount.trim() ? Number(amount) : undefined;
       if (credits !== undefined && !(credits > 0)) throw new Error("Enter a credit amount above zero.");
       const r = await post<{ refunded: number; balance: number }>(`/api/admin/calls/${callId}/refund`, { credits, note });
@@ -229,7 +236,12 @@ function RefundCredits({ callId, used, refunded, onDone }: { callId: string; use
       setNote("");
       onDone();
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn't refund", "error");
+      if (e instanceof ApiError && e.status === 423) {
+        setLocked(true);
+        toast("Enter the admin password to unlock refunds on this device.", "error");
+      } else {
+        toast(e instanceof Error ? e.message : "Couldn't refund", "error");
+      }
     } finally {
       setBusy(false);
     }
@@ -252,9 +264,14 @@ function RefundCredits({ callId, used, refunded, onDone }: { callId: string; use
           <Field label="Reason (shown in the account's credit history)">
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Prank caller" maxLength={300} />
           </Field>
+          {locked && (
+            <Field label="Admin password" hint="The admin portal isn't unlocked on this device yet.">
+              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+            </Field>
+          )}
           <div className="flex justify-end gap-2">
             <Button onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
-            <Button variant="primary" loading={busy} onClick={() => void submit()}>Refund</Button>
+            <Button variant="primary" loading={busy} disabled={locked && !password} onClick={() => void submit()}>Refund</Button>
           </div>
         </div>
       </Modal>

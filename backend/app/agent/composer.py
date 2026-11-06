@@ -86,6 +86,24 @@ def assemble(sections: dict, order=SECTIONS_V4) -> str:
                        for k, title in order if (sections.get(k) or "").strip())
 
 
+def split_sections(prompt: str, order=SECTIONS_V4) -> dict | None:
+    """The sections back out of an assembled script ("## Title" blocks, see assemble), or None when the text
+    doesn't follow that layout (text before the first heading, or a heading that isn't one of the sections)."""
+    import re
+
+    keys = {title.strip().lower(): key for key, title in order}
+    parts = re.split(r"(?m)^##[ \t]+(.+?)[ \t]*$", (prompt or "").strip())
+    if len(parts) < 3 or parts[0].strip():
+        return None
+    out = {key: "" for key, _ in order}
+    for title, body in zip(parts[1::2], parts[2::2]):
+        key = keys.get(title.strip().lower())
+        if key is None:
+            return None
+        out[key] = (out[key] + "\n\n" + body.strip()).strip() if out[key] else body.strip()
+    return out
+
+
 def _bullets(items) -> str:
     return "\n".join(f"- {x}" for x in items if x)
 
