@@ -44,7 +44,7 @@ DEFAULTS: dict = {
     # Free calling credits for a self-serve signup (no card).
     "trial_credits": 30,
     # Route inbound calls on Plivo numbers into BlackSync (callbacks). Replaces whatever Plivo app the numbers use.
-    "plivo_inbound_routing": False,
+    "plivo_inbound_routing": True,
     # Entitlements for accounts without a paid plan (free trial). "teams" keeps today's access; "solo" is stricter.
     "no_plan_entitlements": "teams",
     # Plans whose accounts can use Radar (paid or admin-assigned). Accounts without a plan get the demo preview.
