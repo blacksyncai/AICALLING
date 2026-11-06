@@ -29,10 +29,12 @@ async def _request(method: str, path: str, **kw) -> dict:
         raise PlivoError(f"Plivo rejected the request (HTTP {r.status_code}). Check the Auth ID and token.")
     if r.status_code >= 400:
         try:
-            msg = r.json().get("error") or ""
+            body = r.json()
+            msg = body.get("error") or body.get("message") or body
         except ValueError:
-            msg = ""
-        raise PlivoError(f"Plivo error (HTTP {r.status_code}){': ' + str(msg)[:200] if msg else ''}.", status_code=r.status_code)
+            msg = r.text or ""
+        raise PlivoError(f"Plivo error (HTTP {r.status_code}) on {method} {path.split('?')[0]}"
+                         f"{': ' + str(msg)[:300] if msg else ''}.", status_code=r.status_code)
     try:
         return r.json() if r.content else {}
     except ValueError:
