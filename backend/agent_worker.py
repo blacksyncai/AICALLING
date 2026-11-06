@@ -1247,9 +1247,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if (metadata.get("fetch_config") or needs_key) and metadata.get("agent_id"):
         fetched = await _fetch_agent_config(metadata["agent_id"])
         if fetched:
-            # Keep the per-call cap (credits / trial) the dispatcher set.
-            cap = cfg.get("max_duration_seconds")
-            cfg = {**fetched, **({"max_duration_seconds": cap} if cap else {})}
+            # Keep what the dispatcher set for this call: the cap (credits / trial) and, for a recognized
+            # callback, its brief and opening line (the stored agent's opening is written for outbound calls).
+            keep = {k: cfg[k] for k in ("max_duration_seconds", "callback") if cfg.get(k)}
+            if cfg.get("callback") and cfg.get("first_message"):
+                keep["first_message"] = cfg["first_message"]
+            cfg = {**fetched, **keep}
     variables = metadata.get("variables") or {}
     call_type = metadata.get("call_type", "outbound")
     run = _CallRun(metadata.get("call_log_id", ""), call_type)

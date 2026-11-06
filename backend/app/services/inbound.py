@@ -267,7 +267,7 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
     use_vars = lead is not None and (match is None or cb["use_variables"])
     variables = lead_variables(lead) if use_vars else {"phone": caller}
     log.info("inbound_call_routed", to=row.number, agent=agent.name, call_log_id=str(call.id), known_caller=bool(lead),
-             callback=match.confidence if match else None)
+             callback=match.confidence if match else None, variables=sorted(variables)[:20])
     from app.agent.runtime import runtime_for
     cfg = await runtime_for(db, agent, secrets=True)
     cfg["max_duration_seconds"] = min(cfg.get("max_duration_seconds") or 600, max_seconds)
