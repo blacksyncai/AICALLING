@@ -9,9 +9,10 @@ import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
 import { ResponseReview } from "@/components/calls/ResponseReview";
 import { TranscriptLines } from "@/components/calls/Transcript";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Card, CardHeader, Field, Modal, Notice, Select, Spinner, Textarea } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Textarea } from "@/components/ui";
 import { fetcher, patch, post } from "@/lib/api";
 import type { Call } from "@/lib/types";
+import { useSession } from "@/lib/session";
 import { formatCredits, formatDateTime, formatDuration, humanize, outcomeLabel, parseDate } from "@/lib/utils";
 
 
@@ -61,6 +62,11 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
                 <Coins className="h-3 w-3" /> {call.credits_used ? `${formatCredits(call.credits_used)} credits` : "No charge (didn't connect)"}
               </span>
             )}
+            {!!call.credits_refunded && (
+              <span className="flex items-center gap-1 font-medium text-emerald-700">
+                <Coins className="h-3 w-3" /> {formatCredits(call.credits_refunded)} credits refunded
+              </span>
+            )}
             <span>
               {call.call_type === "web"
                 ? "Browser test"
@@ -83,6 +89,7 @@ export default function CallDetailPage({ params }: { params: Promise<{ id: strin
         {!live && (
           <div className="flex gap-2">
           <EditResult callId={id} outcome={call.outcome} summary={call.summary} onSaved={() => mutate()} />
+          <RefundCredits callId={id} used={call.credits_used ?? 0} refunded={call.credits_refunded ?? 0} onDone={() => mutate()} />
           <Button
             size="sm"
             loading={reanalyzing}
@@ -199,6 +206,62 @@ const EDITABLE_OUTCOMES = [
 ];
 
 /** Correct a call's result by hand (sticks through re-analysis). */
+/** Platform admins only: give the account back credits this call used (shown on the call and in its credit history). */
+function RefundCredits({ callId, used, refunded, onDone }: { callId: string; used: number; refunded: number; onDone: () => void }) {
+  const { session } = useSession();
+  const toast = useToast();
+  const left = Math.max(0, Math.round((used - refunded) * 1000) / 1000);
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!session?.user.is_superadmin || left <= 0) return null;
+
+  async function submit() {
+    setBusy(true);
+    try {
+      const credits = amount.trim() ? Number(amount) : undefined;
+      if (credits !== undefined && !(credits > 0)) throw new Error("Enter a credit amount above zero.");
+      const r = await post<{ refunded: number; balance: number }>(`/api/admin/calls/${callId}/refund`, { credits, note });
+      toast(`Refunded ${formatCredits(r.refunded)} credits`, "success");
+      setOpen(false);
+      setAmount("");
+      setNote("");
+      onDone();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't refund", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        <Coins className="h-4 w-4" /> Refund credits
+      </Button>
+      <Modal open={open} onClose={() => !busy && setOpen(false)} title="Refund credits for this call">
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-600">
+            This call used {formatCredits(used)} credits{refunded ? `, ${formatCredits(refunded)} already refunded` : ""}. The refund goes
+            back to the account&apos;s balance and shows in its credit history. Only platform admins see this.
+          </p>
+          <Field label="Credits to refund" hint={`Leave empty to refund the rest (${formatCredits(left)}).`}>
+            <Input type="number" min="0" step="0.001" max={left} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={String(left)} />
+          </Field>
+          <Field label="Reason (shown in the account's credit history)">
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Prank caller" maxLength={300} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
+            <Button variant="primary" loading={busy} onClick={() => void submit()}>Refund</Button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
 function EditResult({ callId, outcome, summary, onSaved }: { callId: string; outcome: string | null; summary: string | null; onSaved: () => void }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);

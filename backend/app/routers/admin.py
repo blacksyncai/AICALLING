@@ -397,6 +397,39 @@ async def grant_credits(org_id: uuid.UUID, body: CreditGrant, admin: AdminDep, d
     return {"balance": org.credits_balance, "transaction": credit_tx_to_dict(tx) if tx else None}
 
 
+class CallRefund(BaseModel):
+    credits: float | None = Field(default=None, gt=0, le=100000)  # None: the rest of what the call cost
+    note: str = Field(default="", max_length=300)
+
+
+@router.post("/calls/{call_id}/refund")
+async def refund_call_credits(call_id: uuid.UUID, body: CallRefund, admin: AdminDep, db: DbDep):
+    """Give an account back the credits a call used (all of it by default, or part). Audited; shows in the
+    account's credit history and on the call."""
+    from app.models.billing import BillingAudit
+    from app.models.call_log import CallLog
+    from app.services.billing.credits import call_cost_milli, call_refunded_milli, exact_balance_milli, refund_call
+
+    call = await db.get(CallLog, call_id)
+    if call is None or call.org_id is None:
+        raise HTTPException(status_code=404, detail="Call not found")
+    org = await _org_or_404(db, call.org_id)
+    left = call_cost_milli(call) - call_refunded_milli(call)
+    if left <= 0:
+        raise HTTPException(status_code=400, detail="Nothing left to refund on this call.")
+    want = left if body.credits is None else round(body.credits * 1000)
+    if want > left:
+        raise HTTPException(status_code=400, detail=f"This call has {left / 1000:g} credits left to refund.")
+    before = exact_balance_milli(org)
+    done = await refund_call(db, org, call, want, note=body.note.strip(), created_by=admin.id)
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="call_refund", previous=f"{before / 1000:g}",
+                        adjustment=f"+{done / 1000:g}", new=f"{exact_balance_milli(org) / 1000:g}",
+                        reason=(body.note.strip() or "Call refund") + f" (call {call.id})"))
+    await db.commit()
+    return {"refunded": done / 1000, "call_refunded": call_refunded_milli(call) / 1000,
+            "balance": exact_balance_milli(org) / 1000}
+
+
 @router.post("/orgs/{org_id}/invites", status_code=201)
 async def invite_to_org(org_id: uuid.UUID, body: AdminInvite, request: Request, admin: AdminDep, db: DbDep):
     org = await _org_or_404(db, org_id)

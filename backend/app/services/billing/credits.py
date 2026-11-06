@@ -373,3 +373,49 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
     if shortfall:
         log.warning("call_credit_shortfall", org_id=str(org.id), call_id=str(call.id), shortfall=shortfall)
     return usage
+
+
+def call_cost_milli(call: CallLog) -> int:
+    """What a call cost, in thousandths of a credit."""
+    if call.credits_used_milli is not None:
+        return int(call.credits_used_milli)
+    return int(call.credits_charged or 0) * 1000
+
+
+def call_refunded_milli(call: CallLog) -> int:
+    return sum(int(r.get("milli") or 0) for r in ((call.response_analysis or {}).get("_refunds") or []))
+
+
+async def refund_call(db: AsyncSession, org: Organization, call: CallLog, milli: int, *, note: str,
+                      created_by: uuid.UUID | None = None) -> int:
+    """Give back up to what a call cost (exact to a thousandth of a credit). Caller commits. Returns the milli
+    actually refunded."""
+    left = call_cost_milli(call) - call_refunded_milli(call)
+    milli = max(0, min(int(milli), left))
+    if milli <= 0:
+        return 0
+    await reconcile(db, org)
+    carry = (org.credit_carry_milli or 0) - milli
+    whole = 0
+    if carry < 0:
+        whole = math.ceil(-carry / 1000)
+        carry += whole * 1000
+    text = f"Refund for call to {call.to_phone or 'contact'}" + (f": {note}" if note else "")
+    if whole:
+        lot = CreditLot(org_id=org.id, source="grant", credits_granted=whole, credits_remaining=whole)
+        db.add(lot)
+        await db.flush()
+        await _change_balance(db, org, whole)
+    await db.execute(update(Organization).where(Organization.id == org.id).values(credit_carry_milli=carry))
+    org.credit_carry_milli = carry
+    db.add(CreditTransaction(org_id=org.id, amount=whole, balance_after=org.credits_balance or 0, kind="refund",
+                             note=text[:500], amount_milli=milli, balance_after_milli=exact_balance_milli(org),
+                             call_id=call.id, created_by=created_by))
+    meta = dict(call.response_analysis or {})
+    meta["_refunds"] = [*(meta.get("_refunds") or []), {
+        "milli": milli, "note": note[:300], "by": str(created_by) if created_by else None,
+        "at": datetime.now(timezone.utc).isoformat()}]
+    call.response_analysis = meta
+    await db.flush()
+    log.info("call_refunded", org_id=str(org.id), call_id=str(call.id), milli=milli)
+    return milli
