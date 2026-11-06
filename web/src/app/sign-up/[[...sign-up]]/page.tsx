@@ -8,19 +8,23 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Create your account" };
 
-export default async function SignUpPage({ searchParams }: { searchParams: Promise<{ email?: string | string[] }> }) {
+export default async function SignUpPage({ searchParams }: { searchParams: Promise<{ email?: string | string[]; plan?: string | string[] }> }) {
   if (!clerkEnabled()) redirect("/login");
   const satellite = await satelliteAuthRedirect("sign-up");
   if (satellite) redirect(satellite);
   // An emailed invite links here with ?email=… so the address is filled in.
-  const raw = (await searchParams).email;
+  const params = await searchParams;
+  const raw = params.email;
+  // From the pricing page: ?plan=solo|growth opens that plan's checkout right after sign-up.
+  const plan = typeof params.plan === "string" && ["solo", "growth", "teams"].includes(params.plan) ? params.plan : null;
+  const next = plan ? `/billing?tab=plans&plan=${plan}` : "/dashboard";
   const email = typeof raw === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(raw) ? raw.slice(0, 320) : undefined;
   return (
     <AuthShell
       title="Create your account"
       subtitle="Get started with BlackSync in seconds — no card needed. Invited by a teammate? Use the email your invite was sent to."
     >
-      <SignUp fallbackRedirectUrl="/dashboard" appearance={authFormAppearance} initialValues={email ? { emailAddress: email } : undefined} />
+      <SignUp fallbackRedirectUrl={next} appearance={authFormAppearance} initialValues={email ? { emailAddress: email } : undefined} />
     </AuthShell>
   );
 }
