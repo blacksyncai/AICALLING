@@ -832,6 +832,8 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         })
 
     def _hangup(context: RunContext | None, outcome: str) -> None:
+        session_ref["hanging_up"] = True
+
         async def _go() -> None:
             # Hang up once the goodbye has actually finished playing (a fixed delay cut long goodbyes
             # off and left short ones hanging), plus a beat so it doesn't feel abrupt.
@@ -845,6 +847,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 # They talked over the goodbye ("wait, one more thing") and are still on — stay and let them
                 # finish. The outcome stays as the latest result; a later end_call or the shutdown reports it.
                 log.info("hangup_cancelled_interrupted", room=ctx.room.name, outcome=outcome)
+                session_ref["hanging_up"] = False
                 return
             if outcome == "voicemail":
                 session_ref["voicemail_detected"] = True
@@ -865,6 +868,7 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
         _keep(asyncio.create_task(_go()))
 
     guard = {"refused": False}
+    session_ref["hangup"] = _hangup  # the spoken-goodbye backstop in _run_configurable uses it
 
     async def end_call(outcome: str, context: RunContext, callback_request: str = "") -> str | None:
         """Hang up the call. Call this only AFTER you've said goodbye.
@@ -1698,8 +1702,38 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             # Per-turn trace for diagnosing dropped calls: the agent's words, only a word count for the contact.
             log.info("turn", room=ctx.room.name, role=role, words=len(text.split()),
                      t=round(_time.monotonic() - run.t0, 1), **({"text": text[:80]} if role == "assistant" else {}))
+            if role == "assistant" and call_type in ("outbound", "inbound"):
+                _goodbye_backstop(text)
         except Exception as exc:
             log.debug("transcript_capture_failed", error=str(exc))
+
+    def _goodbye_backstop(text: str) -> None:
+        """The agent said goodbye but didn't hang up (it sometimes just keeps chatting): hang up for it once the
+        line has played, unless the contact came back with something. A second goodbye always ends the call."""
+        from app.agent.runtime import is_farewell
+
+        if (not is_farewell(text) or session_ref.get("hanging_up") or run.transferring or run.handed_off
+                or session_ref.get("voicemail_detected") or run.outcome == "voicemail"):
+            return
+        session_ref["goodbyes"] = n = session_ref.get("goodbyes", 0) + 1
+        seen = len(run.transcript)
+
+        async def _later() -> None:
+            await asyncio.sleep(3.0)
+            if session_ref.get("hanging_up") or run.ended_wall is not None:
+                return
+            came_back = any(t.get("role") == "user" for t in run.transcript[seen:])
+            if came_back and n < 2:
+                return
+            outcome = run.outcome or "completed"
+            run.outcome = outcome
+            log.info("goodbye_backstop_hangup", room=ctx.room.name, goodbyes=n, contact_came_back=came_back,
+                     outcome=outcome)
+            hang = session_ref.get("hangup")
+            if hang:
+                hang(None, outcome)
+
+        _keep(asyncio.create_task(_later()))
 
     session.on("conversation_item_added", _on_item)
     log.info("call_config", room=ctx.room.name, call_type=call_type, model=model,

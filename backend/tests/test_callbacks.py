@@ -258,3 +258,16 @@ def test_callback_brief_rules():
     assert "never say you're calling them" in text and "confirm you're speaking with Jennifer" in text
     assert "they didn't pick up" in text and "Never mention caller ID" in text
     assert callbacks.clean_settings({"window_days": 7})["window_days"] == 7
+
+
+def test_goodbye_detection_and_wrap_up_rules():
+    from app.agent.runtime import guardrails, is_farewell
+
+    for line in ("Thanks, Nasreen. Take care.", "Understood. Goodbye.", "Thanks for chatting—have a wonderful day!",
+                 "Sounds good, bye now."):
+        assert is_farewell(line), line
+    for line in ("Before I say goodbye, what time works best?", "What's the best email?",
+                 "Great, I'll take care of that for you. What time works?", "Is goodbye the right word?"):
+        assert not is_farewell(line), line
+    text = guardrails({})
+    assert "Never promise that a named person will call" in text and "trolling" in text
