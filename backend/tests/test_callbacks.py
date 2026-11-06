@@ -271,3 +271,27 @@ def test_goodbye_detection_and_wrap_up_rules():
         assert not is_farewell(line), line
     text = guardrails({})
     assert "Never promise that a named person will call" in text and "trolling" in text
+
+
+def test_trim_ogg_cuts_on_a_page_and_ends_the_stream():
+    import struct
+
+    from app.services.recordings import _ogg_crc, trim_ogg
+
+    def page(granule, payload, flags=0, seq=0):
+        head = b"OggS" + bytes([0, flags]) + struct.pack("<qII", granule, 7, seq) + b"\0\0\0\0" + bytes([1, len(payload)])
+        p = bytearray(head + payload)
+        p[22:26] = struct.pack("<I", _ogg_crc(bytes(p)))
+        return bytes(p)
+
+    opus_head = b"OpusHead" + bytes([1, 2]) + struct.pack("<H", 312) + b"\0" * 7
+    data = page(0, opus_head, 2) + page(0, b"OpusTags" + b"\0" * 8, 0, 1) + b"".join(
+        page(312 + 48000 * i, b"x" * 20, 0, i + 2) for i in range(1, 11))
+    out = trim_ogg(data, 3.0)
+    pages = out.count(b"OggS")
+    assert pages == 5  # head, tags, then pages up to 3 s
+    last = out[out.rfind(b"OggS"):]
+    assert last[5] & 0x04  # end of stream
+    stored = struct.unpack("<I", last[22:26])[0]
+    zeroed = last[:22] + b"\0\0\0\0" + last[26:]
+    assert stored == _ogg_crc(zeroed)

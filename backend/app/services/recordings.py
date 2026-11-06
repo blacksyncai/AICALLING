@@ -164,3 +164,69 @@ async def download_url(key: str, filename: str) -> str | None:
     if not target:
         return None
     return await asyncio.to_thread(_presign_download, target, filename)
+
+
+# ── Trimming (admin corrections) ──────────────────────────────────────────────
+
+def _ogg_crc(page: bytes) -> int:
+    crc = 0
+    for byte in page:
+        crc ^= byte << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x04C11DB7) if crc & 0x80000000 else (crc << 1)
+            crc &= 0xFFFFFFFF
+    return crc
+
+
+def trim_ogg(data: bytes, seconds: float) -> bytes:
+    """An Ogg Opus recording cut after `seconds` (at the next page boundary), with a proper end-of-stream page.
+    No re-encoding, so the audio up to the cut is unchanged."""
+    import struct
+
+    if seconds <= 0:
+        raise ValueError("Keep at least a moment of audio.")
+    pages, pos, pre_skip = [], 0, 0
+    while pos < len(data):
+        if data[pos:pos + 4] != b"OggS":
+            raise ValueError("This recording isn't an Ogg file.")
+        nsegs = data[pos + 26]
+        body = sum(data[pos + 27:pos + 27 + nsegs])
+        end = pos + 27 + nsegs + body
+        pages.append(bytearray(data[pos:end]))
+        pos = end
+    for page in pages[:1]:
+        payload = bytes(page[27 + page[26]:])
+        if payload.startswith(b"OpusHead"):
+            pre_skip = struct.unpack("<H", payload[10:12])[0]
+    cutoff = pre_skip + int(seconds * 48000)
+    out = []
+    for i, page in enumerate(pages):
+        out.append(page)
+        granule = struct.unpack("<q", bytes(page[6:14]))[0]
+        if i >= 2 and granule >= cutoff:
+            break
+    last = out[-1]
+    last[5] |= 0x04  # end of stream
+    for page in out:
+        page[22:26] = b"\0\0\0\0"
+        page[22:26] = struct.pack("<I", _ogg_crc(bytes(page)))
+    return b"".join(bytes(p) for p in out)
+
+
+async def replace_with_trimmed(key: str, seconds: float) -> str:
+    """Trim the stored recording in place, keeping the untouched original next to it. Returns the original's key."""
+    import asyncio
+
+    def go() -> str:
+        s3 = _s3()
+        bucket = settings.recordings_s3_bucket
+        original = key.rsplit(".", 1)[0] + ".original." + key.rsplit(".", 1)[-1]
+        try:
+            s3.head_object(Bucket=bucket, Key=original)  # already trimmed once: always cut from the original
+        except Exception:
+            s3.copy_object(Bucket=bucket, Key=original, CopySource={"Bucket": bucket, "Key": key})
+        data = s3.get_object(Bucket=bucket, Key=original)["Body"].read()
+        s3.put_object(Bucket=bucket, Key=key, Body=trim_ogg(data, seconds), ContentType="audio/ogg")
+        return original
+
+    return await asyncio.to_thread(go)

@@ -160,3 +160,65 @@ def parse_account_id(raw) -> uuid.UUID | None:
         return uuid.UUID(str(raw).split(":")[-1])
     except ValueError:
         raise ToolError(f"account_id isn't a valid id: {raw}")
+
+
+@admin_tool("admin_correct_call", "Correct a call's transcript or recording",
+            """Fix a call whose transcript was lost or garbled (for example a call cut off by a restart): replace
+its transcript with what was actually said, optionally trim the recording to the first keep_seconds (the untouched
+original is kept next to it), then re-run the AI analysis so the summary, result and extracted details update.
+The original transcript is saved on the call. Without confirmed=true it only shows what would change.""",
+            {"account_id": ACCOUNT_ID, "call_id": {"type": "string"},
+             "transcript": {"type": "array", "items": {"type": "object", "properties": {
+                 "role": {"type": "string", "enum": ["assistant", "user"]}, "text": {"type": "string"}},
+                 "required": ["role", "text"]}, "description": "assistant = the agent, user = the contact."},
+             "keep_seconds": {"type": "number", "description": "Trim the recording to this many seconds (optional)."},
+             "confirmed": {"type": "boolean"}},
+            ["account_id", "call_id"], read_only=False, destructive=True)
+async def admin_correct_call(s: Session, args: dict) -> dict:
+    from datetime import datetime, timezone
+
+    from app.models.call_log import CallLog
+    from app.services import recordings
+
+    org = await _org(s, args)
+    call = await s.db.get(CallLog, _uuid(args, "call_id"))
+    if call is None or call.org_id != org.id:
+        raise ToolError("No call with that id in this account.")
+    turns = [{"role": t["role"], "text": " ".join(str(t.get("text") or "").split())[:2000]}
+             for t in (args.get("transcript") or []) if isinstance(t, dict) and t.get("role") in ("assistant", "user")]
+    turns = [t for t in turns if t["text"]]
+    keep = args.get("keep_seconds")
+    if keep is not None:
+        try:
+            keep = float(keep)
+        except (TypeError, ValueError):
+            raise ToolError("keep_seconds must be a number.")
+        if not call.recording_key:
+            raise ToolError("This call has no stored recording to trim.")
+    if not turns and keep is None:
+        raise ToolError("Give a transcript, keep_seconds, or both.")
+    if not args.get("confirmed"):
+        return {"needs_confirmation": True, "account": org.name, "call_id": str(call.id),
+                "transcript_turns_now": len(call.transcript or []), "transcript_turns_after": len(turns) or None,
+                "trim_recording_to_seconds": keep,
+                "note": "Confirm with the user, then repeat with confirmed=true."}
+    meta = dict(call.response_analysis or {})
+    record = dict(meta.get("_correction") or {})
+    record.setdefault("original_transcript", call.transcript)
+    record.update(at=datetime.now(timezone.utc).isoformat(), by=getattr(s.user, "email", None))
+    if keep is not None:
+        record["original_recording_key"] = await recordings.replace_with_trimmed(call.recording_key, keep)
+        record["kept_seconds"] = keep
+    if turns:
+        call.transcript = turns
+    meta["_correction"] = record
+    call.response_analysis = meta
+    await s.db.commit()
+    if turns:
+        from app.services.outbound_call import _analyze
+
+        await _analyze(str(call.id), force=True)
+        await s.db.refresh(call)
+    return {"account": org.name, "call_id": str(call.id), "outcome": call.outcome, "summary": call.summary,
+            "extracted": {k: v for k, v in (call.extracted_data or {}).items() if not k.startswith("_")},
+            "recording_trimmed_to": keep}
