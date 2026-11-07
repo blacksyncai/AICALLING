@@ -68,6 +68,9 @@ export interface VoiceTuning {
 export interface PhoneNumberItem {
   /** Part of a Fresh Number Pack: swapped for a new number on this date. */
   pack_refresh_at?: string | null;
+  /** Fresh number every month: swapped for a new number on auto_refresh_at, the day before it would renew. */
+  auto_refresh?: boolean;
+  auto_refresh_at?: string | null;
   registration?: { status: string; providers: {provider: string; status: string; prerequisite: string; request_id: string | null}[] };
   /** Plivo numbers: AT&T / T-Mobile spam-label registration (null for other carriers). */
   spam_protection?: {

@@ -194,6 +194,21 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
     }
   }
 
+  async function setFresh(n: PhoneNumberItem, on: boolean) {
+    if (on && !window.confirm(`Swap ${n.number} for a new number in the same area code the day before it renews each month? `
+      + "It's released then, so anyone calling the old number back can't reach you on it.")) return;
+    setBusy(n.id);
+    try {
+      await patch(`/api/phone-numbers/${n.id}`, { auto_refresh: on });
+      refresh();
+      toast(on ? `${n.number} will be swapped before it renews` : `${n.number} will renew as usual`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rename(n: PhoneNumberItem, label: string) {
     if (label === n.label) return;
     try {
@@ -227,6 +242,11 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
                       <Badge tone="amber">Fresh pack · new number {fmtDate(n.pack_refresh_at)}</Badge>
                     </span>
                   )}
+                  {n.auto_refresh && n.auto_refresh_at && (
+                    <span title="Swapped for a new number in the same area code the day before it renews">
+                      <Badge tone="amber">Fresh monthly · new number {fmtDate(n.auto_refresh_at)}</Badge>
+                    </span>
+                  )}
                   {n.registration && <span className="text-xs text-zinc-500">{n.registration.status}</span>}
                 </div>
                 {manager ? (
@@ -246,6 +266,12 @@ function NumbersList({ numbers, manager, refresh }: { numbers: PhoneNumberItem[]
               {manager && n.health?.resting_until && (
                 <Button size="sm" onClick={() => void resume(n)} loading={busy === n.id}>
                   Put back in rotation
+                </Button>
+              )}
+              {manager && !n.pack_refresh_at && n.source === "purchased" && (
+                <Button size="sm" onClick={() => void setFresh(n, !n.auto_refresh)} loading={busy === n.id}
+                  title="Release this number the day before it renews and switch to a new one in the same area code">
+                  {n.auto_refresh ? "Keep this number" : "Fresh number every month"}
                 </Button>
               )}
               {manager && !n.is_default && (

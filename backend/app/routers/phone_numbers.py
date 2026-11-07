@@ -33,6 +33,8 @@ admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
 class NumberPatch(BaseModel):
     label: str | None = Field(default=None, max_length=100)
     is_default: bool | None = None
+    # Release it the day before each monthly renewal and swap in a new number in the same area code.
+    auto_refresh: bool | None = None
 
 
 class NumberRequestIn(BaseModel):
@@ -164,6 +166,13 @@ async def update_number(number_id: uuid.UUID, body: NumberPatch, ctx: ManagerDep
         row.label = body.label.strip()
     if body.is_default:
         await telephony.set_default(db, row)
+    if body.auto_refresh is not None:
+        from app.services import phone_pack
+
+        try:
+            await phone_pack.set_auto_refresh(db, row, body.auto_refresh)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     await db.commit()
     return telephony.number_to_dict(row)
 

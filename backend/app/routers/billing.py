@@ -363,8 +363,8 @@ async def phone_packs_set(body: PhonePacksIn, ctx: ManagerDep, db: DbDep):
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Please confirm the change to your number packs.")
     row = await db.get(BillingSubscription, ctx.org.id)
-    if subscriptions.is_helcim(row):
-        raise HTTPException(status_code=409, detail="Number packs aren't available for accounts billed through Helcim yet. Contact support and we'll set it up.")
+    if subscriptions.is_helcim(row) or (row and (row.stripe_subscription_id or "").startswith("manual:")):
+        raise HTTPException(status_code=409, detail="Number packs aren't available for plans billed outside the app yet. Contact support and we'll set it up.")
     await _guard(subscriptions.set_phone_packs(db, ctx.org.id, body.quantity, ctx.user.id))
     await phone_pack.reconcile(db, ctx.org.id)
     return await _packs_payload(db, ctx.org.id)
@@ -701,6 +701,61 @@ async def admin_revoke_override(org_id: uuid.UUID, override_id: uuid.UUID, admin
                             adjustment="revoked", new="", reason=f"Override revoked ({row.reason})"[:500]))
         await db.commit()
     return entitlements.override_to_dict(row)
+
+
+# ── Admin: a plan paid outside the app (payment link, invoice...) ──────────
+
+
+class ManualPlanIn(BaseModel):
+    plan_key: str
+    start_date: str  # YYYY-MM-DD: the first billing day; credits then renew on that day each month
+    credits_per_month: int | None = Field(default=None, ge=0, le=1_000_000)  # empty: the plan's included credits
+    note: str = Field(default="", max_length=300)
+
+
+@admin_router.post("/billing/orgs/{org_id}/manual-plan")
+async def admin_set_manual_plan(org_id: uuid.UUID, body: ManualPlanIn, admin: AdminDep, db: DbDep):
+    """Put an account on a plan it paid for outside the app, from a start date. Included credits are granted on
+    that date and every month after on the same day."""
+    from datetime import date as _date
+
+    from app.services.billing import manual_plans
+
+    org = await _org_or_404(db, org_id)
+    try:
+        start = _date.fromisoformat(body.start_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Pick a start date.")
+    if start.year < 2020:
+        raise HTTPException(status_code=400, detail="Pick a start date.")
+    before = await db.get(BillingSubscription, org.id)
+    previous = f"{before.plan_key} ({before.status})" if before else "none"
+    try:
+        row = await manual_plans.set_plan(db, org, body.plan_key, start, credits_per_month=body.credits_per_month)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="plan", previous=previous[:64], adjustment="manual",
+                        new=f"{body.plan_key} from {start.isoformat()}"[:64],
+                        reason=(body.note.strip() or "Plan paid outside the app")[:500]))
+    await db.commit()
+    return {"plan": row.plan_key, "status": row.status, "start_date": start.isoformat(),
+            "next_renewal": _iso(row.current_period_end), "credits_per_month": row.custom_credits,
+            "credits_balance": (await db.get(Organization, org.id)).credits_balance}
+
+
+@admin_router.delete("/billing/orgs/{org_id}/manual-plan")
+async def admin_end_manual_plan(org_id: uuid.UUID, admin: AdminDep, db: DbDep, now: bool = False):
+    """End a manual plan at the end of its current cycle (or right away with ?now=true)."""
+    from app.services.billing import manual_plans
+
+    org = await _org_or_404(db, org_id)
+    row = await manual_plans.end_plan(db, org, now=now)
+    if row is None:
+        raise HTTPException(status_code=404, detail="This account has no plan set up by hand.")
+    db.add(BillingAudit(admin_id=admin.id, org_id=org.id, target="plan", previous=f"{row.plan_key} (manual)"[:64],
+                        adjustment="ended" if now else "ends at cycle end", new=row.status, reason="Manual plan ended"))
+    await db.commit()
+    return {"status": row.status, "cancel_at_period_end": row.cancel_at_period_end, "ends": _iso(row.current_period_end)}
 
 
 # ── Admin: Manage Plan (access tier without touching Stripe or credits) ──────

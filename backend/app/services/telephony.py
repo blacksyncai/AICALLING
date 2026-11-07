@@ -548,6 +548,9 @@ def number_to_dict(n: PhoneNumber) -> dict:
         "is_default": bool(n.is_default), "status": n.status,
         # Fresh Number Pack numbers are swapped for new ones on this date.
         "pack_refresh_at": n.pack_refresh_at.isoformat() if getattr(n, "pack_refresh_at", None) else None,
+        # Fresh number every month: swapped for a new number on this date, before the carrier renews it.
+        "auto_refresh": bool(getattr(n, "auto_refresh", None)),
+        "auto_refresh_at": n.auto_refresh_at.isoformat() if getattr(n, "auto_refresh_at", None) else None,
         # Plivo numbers: AT&T / T-Mobile spam-label registration progress (None for other carriers).
         "spam_protection": ({"status": getattr(n, "reputation_status", None) or "PENDING",
                              "carriers": getattr(n, "reputation_detail", None) or {}}

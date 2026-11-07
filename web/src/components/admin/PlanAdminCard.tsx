@@ -51,6 +51,7 @@ export function PlanAdminCard({ orgId }: { orgId: string }) {
   const [managed, setManaged] = useState({ amount: "797", credits: "1500", note: "" });
   const [quote, setQuote] = useState({ description: "", amount: "" });
   const [link, setLink] = useState<{ label: string; url: string } | null>(null);
+  const [manual, setManual] = useState({ plan: "growth", start: new Date().toISOString().slice(0, 10), credits: "", note: "" });
 
   async function run<T>(key: string, fn: () => Promise<T>, ok?: string) {
     setBusy(key);
@@ -82,6 +83,13 @@ export function PlanAdminCard({ orgId }: { orgId: string }) {
       amount_cents: Math.round(Number(managed.amount) * 100), credits: Number(managed.credits), note: managed.note.trim(),
     }));
     if (r) setLink({ label: "Managed plan payment link", url: r.url });
+  }
+
+  async function setManualPlan() {
+    await run("manual", () => post(`${url}/manual-plan`, {
+      plan_key: manual.plan, start_date: manual.start,
+      credits_per_month: manual.credits.trim() ? Number(manual.credits) : null, note: manual.note.trim(),
+    }), "Plan set");
   }
 
   async function sendQuote() {
@@ -184,6 +192,50 @@ export function PlanAdminCard({ orgId }: { orgId: string }) {
             </Field>
           </div>
           <Button className="mt-2" size="sm" loading={busy === "ov"} onClick={() => void addOverride()}>Add override</Button>
+        </div>
+
+        <div className="border-t border-zinc-100 pt-4">
+          <div className="mb-2 text-xs font-medium text-zinc-700">Plan paid outside the app</div>
+          <p className="mb-2 text-xs text-zinc-500">
+            For customers who paid by Stripe link, invoice or transfer. Their limits switch to the plan, and its credits are added on the
+            start date and again on that day every month. Past start dates add this month&apos;s credits now.
+          </p>
+          {s?.id.startsWith("manual:") && s.status !== "canceled" && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-xs">
+              <span className="min-w-0 flex-1">
+                On <strong>{s.plan_key}</strong> since {s.id.split(":").pop()} · next credits {fmtDate(s.current_period_end)}
+                {s.custom_credits != null && ` · ${s.custom_credits} credits/month`}
+                {s.cancel_at_period_end && " · ends then"}
+              </span>
+              {!s.cancel_at_period_end && (
+                <Button size="sm" loading={busy === "end"} onClick={() => void run("end", () => api(`${url}/manual-plan`, { method: "DELETE" }), "Plan ends after this cycle")}>
+                  End after this cycle
+                </Button>
+              )}
+              <Button size="sm" loading={busy === "endnow"} onClick={() => void run("endnow", () => api(`${url}/manual-plan?now=true`, { method: "DELETE" }), "Plan ended")}>
+                End now
+              </Button>
+            </div>
+          )}
+          <div className="grid gap-2 sm:grid-cols-4">
+            <Field label="Plan">
+              <Select value={manual.plan} onChange={(ev) => setManual({ ...manual, plan: ev.target.value })}>
+                {["solo", "growth", "teams", "managed"].map((p) => <option key={p} value={p}>{p}</option>)}
+              </Select>
+            </Field>
+            <Field label="Start date">
+              <Input type="date" value={manual.start} onChange={(ev) => setManual({ ...manual, start: ev.target.value })} />
+            </Field>
+            <Field label="Credits / month" hint="Empty = the plan's">
+              <Input inputMode="numeric" value={manual.credits} onChange={(ev) => setManual({ ...manual, credits: ev.target.value.replace(/\D/g, "") })} />
+            </Field>
+            <Field label="Note (audited)">
+              <Input value={manual.note} onChange={(ev) => setManual({ ...manual, note: ev.target.value })} placeholder="Paid by Stripe link" />
+            </Field>
+          </div>
+          <Button className="mt-2" size="sm" variant="primary" loading={busy === "manual"} disabled={!manual.start} onClick={() => void setManualPlan()}>
+            Set plan
+          </Button>
         </div>
 
         <div className="border-t border-zinc-100 pt-4">

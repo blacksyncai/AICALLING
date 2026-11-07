@@ -92,6 +92,10 @@ async def _swap_references(db: AsyncSession, old: PhoneNumber, new_number: str) 
             c.caller_number_pool = [new_number if n == old.number else n for n in pool]
     await db.execute(update(Agent).where(Agent.org_id == old.org_id, Agent.caller_number == old.number)
                      .values(caller_number=new_number))
+    new_row = (await db.execute(select(PhoneNumber).where(PhoneNumber.number == new_number))).scalar_one_or_none()
+    if new_row is not None:
+        await db.execute(update(Campaign).where(Campaign.org_id == old.org_id, Campaign.phone_number_id == old.id)
+                         .values(phone_number_id=new_row.id))
     if old.is_default:
         new = (await db.execute(select(PhoneNumber).where(PhoneNumber.number == new_number))).scalar_one()
         await db.execute(update(PhoneNumber).where(PhoneNumber.org_id == old.org_id).values(is_default=None))
@@ -159,6 +163,116 @@ async def refresh_due(db: AsyncSession, now: datetime | None = None) -> int:
     return swapped
 
 
+# ── Fresh number every month (any purchased number, not just packs) ─────────
+
+AUTO_LABEL_NOTE = "fresh monthly"
+
+
+def renewal_eve(row: PhoneNumber, now: datetime | None = None) -> datetime:
+    """Noon UTC the day before the number's next monthly renewal (its purchase day each month)."""
+    from app.services.billing.manual_plans import add_months
+
+    now = now or _now()
+    bought = (_aware(row.created_at) or now).date()
+    n = 1
+    while add_months(bought, n) - timedelta(days=1) <= now.date():
+        n += 1
+    eve = add_months(bought, n) - timedelta(days=1)
+    return datetime(eve.year, eve.month, eve.day, 12, tzinfo=timezone.utc)
+
+
+def can_auto_refresh(row: PhoneNumber) -> str | None:
+    """Why this number can't be swapped each month (None when it can)."""
+    if row.source != "purchased" or not row.provider_sid:
+        return "Only numbers bought through BlackSync can be swapped automatically."
+    if row.carrier not in ("plivo", None, "twilio"):
+        return "This carrier's numbers can't be swapped automatically yet."
+    if row.pack_refresh_at is not None:
+        return "Fresh Number Pack numbers are already swapped every month."
+    if row.inbound_campaign_id:
+        return "This number answers an inbound campaign, so its number has to stay the same."
+    return None
+
+
+async def set_auto_refresh(db: AsyncSession, row: PhoneNumber, on: bool) -> None:
+    if on:
+        reason = can_auto_refresh(row)
+        if reason:
+            raise ValueError(reason)
+        row.auto_refresh, row.auto_refresh_at = True, renewal_eve(row)
+    else:
+        row.auto_refresh, row.auto_refresh_at = None, None
+    await db.flush()
+
+
+async def refresh_auto_due(db: AsyncSession, now: datetime | None = None) -> int:
+    """Swap every "fresh number every month" number whose renewal is tomorrow: buy a new one in the same area code
+    on the same carrier, move it into the old one's place, then release the old one so it isn't renewed."""
+    now = now or _now()
+    due = (await db.execute(select(PhoneNumber).where(
+        PhoneNumber.status == "active", PhoneNumber.auto_refresh.is_(True), PhoneNumber.auto_refresh_at <= now,
+    ).order_by(PhoneNumber.auto_refresh_at).limit(50))).scalars().all()
+    swapped = 0
+    for old_id in [r.id for r in due]:
+        old = await db.get(PhoneNumber, old_id)
+        if old is None:
+            continue
+        if can_auto_refresh(old):
+            old.auto_refresh, old.auto_refresh_at = None, None
+            await db.commit()
+            continue
+        org_id, number, label, carrier = old.org_id, old.number, old.label or "", old.carrier or "twilio"
+        new = None
+        taken = {n.number for n in await telephony.active_numbers(db, org_id)}
+        for code in (number[2:5], ""):
+            try:
+                found = await telephony.search_available(code, carrier=carrier)
+            except Exception as exc:
+                log.warning("auto_refresh_search_failed", area_code=code, error=str(exc)[:200])
+                continue
+            for candidate in [n["number"] for n in found if n.get("number") and n["number"] not in taken][:5]:
+                try:
+                    new = await telephony.purchase(db, org_id, candidate, label, carrier=carrier)
+                    break
+                except Exception as exc:
+                    await db.rollback()  # that number was gone: try the next one
+                    log.warning("auto_refresh_buy_failed", org_id=str(org_id), error=str(exc)[:200])
+            if new:
+                break
+        old = await db.get(PhoneNumber, old_id)
+        if new is None:
+            # No replacement right now: keep the old number working (it renews) and try again next month.
+            old.auto_refresh_at = renewal_eve(old, now + timedelta(days=2))
+            await db.commit()
+            log.warning("auto_refresh_no_replacement", org_id=str(org_id), number=number[-4:])
+            continue
+        new.auto_refresh, new.auto_refresh_at = True, renewal_eve(new, now)
+        await _swap_references(db, old, new.number)
+        await db.commit()
+        if new.carrier == "plivo":
+            try:
+                from app.services.billing import settings_store
+                from app.services import plivo
+
+                if await settings_store.get(db, "plivo_inbound_routing"):
+                    await plivo.route_inbound(new.number)  # callbacks to the new number reach BlackSync
+            except Exception as exc:
+                log.warning("auto_refresh_inbound_routing_failed", number=new.number[-4:], error=str(exc)[:200])
+        try:
+            await _retire(db, old)
+        except Exception as exc:
+            # The new number is already in place; never buy yet another one for this number.
+            await db.rollback()
+            old = await db.get(PhoneNumber, old_id)
+            if old is not None:
+                old.auto_refresh, old.auto_refresh_at = None, None
+                await db.commit()
+            log.error("auto_refresh_release_failed", org_id=str(org_id), number=number[-4:], error=str(exc)[:200])
+        swapped += 1
+        log.info("auto_refresh_number_swapped", org_id=str(org_id), old=number[-4:], new=new.number[-4:])
+    return swapped
+
+
 async def tick() -> None:
     from app.database import AsyncSessionLocal
 
@@ -174,6 +288,7 @@ async def tick() -> None:
                 await db.rollback()
                 log.warning("phone_pack_reconcile_failed", org_id=str(org_id), error=str(exc)[:200])
         await refresh_due(db)
+        await refresh_auto_due(db)
 
 
 def start_worker() -> asyncio.Task:

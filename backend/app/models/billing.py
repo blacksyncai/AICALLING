@@ -218,6 +218,10 @@ class PhoneNumber(Base):
     # Part of a Fresh Number Pack: swapped for a new number at this time (None = a regular number).
     pack_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     pack_area_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # "Fresh number every month": released the day before its monthly renewal and replaced by a new number in the
+    # same area code (see phone_pack.refresh_auto_due), so the carrier never renews it.
+    auto_refresh: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    auto_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rest_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rest_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Plivo Caller Reputation (AT&T / T-Mobile spam-label registration): NOT_REGISTERED | PENDING | ACTIVE |

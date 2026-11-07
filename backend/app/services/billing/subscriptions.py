@@ -158,6 +158,10 @@ async def _live_sub(db: AsyncSession, org_id: uuid.UUID) -> tuple[BillingSubscri
         raise BillingError("There's no active subscription on this account.", 409)
     if is_helcim(row):
         raise BillingError("Your plan is billed through Helcim. Message support and we'll change it for you.", 409)
+    from app.services.billing.manual_plans import is_manual
+
+    if is_manual(row):
+        raise BillingError("Your plan was set up by the BlackSync team. Message support and we'll change it for you.", 409)
     sub = await stripe_api.retrieve_subscription(row.stripe_subscription_id)
     return row, sub
 
@@ -237,6 +241,12 @@ async def set_cancel(db: AsyncSession, org_id: uuid.UUID, cancel: bool) -> Billi
     row = await db.get(BillingSubscription, org_id)
     if is_helcim(row) and row.status in LIVE:
         return await _cancel_helcim(db, row, cancel)
+    from app.services.billing.manual_plans import is_manual
+
+    if is_manual(row) and row.status in LIVE:  # no Stripe subscription: it ends at the end of the current cycle
+        row.cancel_at_period_end = cancel
+        await db.commit()
+        return row
     row, sub = await _live_sub(db, org_id)
     updated = await stripe_api.set_cancel_at_period_end(sub["id"], cancel)
     row = await sync_from_stripe(db, updated, org_id)
@@ -389,7 +399,7 @@ async def phone_summary(db: AsyncSession, org_id: uuid.UUID) -> dict:
 async def sync_phone_quantity(db: AsyncSession, org_id: uuid.UUID) -> None:
     """Bill max(0, active numbers − included) on the subscription. No subscription = nothing billed."""
     row = await db.get(BillingSubscription, org_id)
-    if row is None or row.status not in LIVE or not stripe_api.ready() or is_helcim(row):
+    if row is None or row.status not in LIVE or not stripe_api.ready() or is_helcim(row) or (row.stripe_subscription_id or "").startswith("manual:"):
         return
     summary = await phone_summary(db, org_id)
     if summary["billable"] == row.phone_quantity:
@@ -412,7 +422,7 @@ async def charge_for_new_number(db: AsyncSession, org_id: uuid.UUID) -> bool:
     prorated charge now. Raises BillingError if the payment fails (the number isn't bought). Returns
     whether the quantity changed (so a failed purchase can undo it with sync_phone_quantity)."""
     row = await db.get(BillingSubscription, org_id)
-    if row is None or row.status not in LIVE or not stripe_api.ready() or is_helcim(row):
+    if row is None or row.status not in LIVE or not stripe_api.ready() or is_helcim(row) or (row.stripe_subscription_id or "").startswith("manual:"):
         return False
     summary = await phone_summary(db, org_id)
     wanted = max(0, summary["active"] + 1 - summary["included"])

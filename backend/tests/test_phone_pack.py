@@ -143,3 +143,68 @@ def test_card_failure_gives_no_credits(client, make_client, stripe, carrier):  #
     r = c.post("/api/billing/addons/phone-packs", json={"quantity": 1, "confirm": True})
     assert r.status_code == 402
     assert c.get("/api/billing/addons/phone-packs").json()["credits"]["open"] == 0
+
+
+def test_fresh_number_every_month_swaps_before_renewal(client, make_client, stripe, carrier, monkeypatch):  # noqa: F811
+    from sqlalchemy import select
+
+    from app.services import plivo
+
+    async def released(sid):
+        return None
+
+    monkeypatch.setattr(plivo, "release", released)
+
+    from app.database import AsyncSessionLocal
+    from app.models.agent import Agent
+    from app.models.billing import PhoneNumber
+    from app.services import phone_pack
+
+    org, c = _account(client, make_client, "Monthly Swap Co")
+
+    async def seed():
+        async with AsyncSessionLocal() as db:
+            bought = datetime(2026, 10, 15, 9, tzinfo=timezone.utc)
+            row = PhoneNumber(id=uuid.uuid4(), org_id=uuid.UUID(org["id"]), number="+15125550100", label="Main",
+                              source="purchased", provider_sid="+15125550100", carrier="plivo", status="active",
+                              created_at=bought, is_default=True)
+            inbound = PhoneNumber(id=uuid.uuid4(), org_id=uuid.UUID(org["id"]), number="+15125550199",
+                                  source="purchased", provider_sid="PN_y", carrier="plivo", status="active",
+                                  created_at=bought, inbound_campaign_id=uuid.uuid4())
+            agent = (await db.execute(select(Agent).where(Agent.org_id == uuid.UUID(org["id"])))).scalars().first()
+            agent.caller_number = row.number
+            db.add_all([row, inbound])
+            await db.commit()
+            return str(row.id), str(inbound.id), str(agent.id)
+
+    row_id, inbound_id, agent_id = _run(seed())
+    # Renewal eve: the day before its purchase day each month.
+    probe = __import__("types").SimpleNamespace(created_at=datetime(2026, 10, 15, tzinfo=timezone.utc))
+    assert phone_pack.renewal_eve(probe, datetime(2026, 11, 7, tzinfo=timezone.utc)).date().isoformat() == "2026-11-14"
+    assert phone_pack.renewal_eve(probe, datetime(2026, 11, 14, 13, tzinfo=timezone.utc)).date().isoformat() == "2026-12-14"
+
+    r = c.patch(f"/api/phone-numbers/{row_id}", json={"auto_refresh": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["auto_refresh"] is True and r.json()["auto_refresh_at"]
+    # A number an inbound campaign answers keeps its number.
+    r = c.patch(f"/api/phone-numbers/{inbound_id}", json={"auto_refresh": True})
+    assert r.status_code == 400 and "inbound" in r.json()["detail"]
+
+    async def swap():
+        async with AsyncSessionLocal() as db:
+            row = await db.get(PhoneNumber, uuid.UUID(row_id))
+            return await phone_pack.refresh_auto_due(db, (row.auto_refresh_at if row.auto_refresh_at.tzinfo else
+                                                          row.auto_refresh_at.replace(tzinfo=timezone.utc)) + timedelta(minutes=1))
+
+    assert _run(swap()) == 1
+    new = carrier["bought"][-1]
+    assert new.startswith("+1512") and carrier["released"] == ["+15125550100"]
+
+    async def check():
+        async with AsyncSessionLocal() as db:
+            fresh = (await db.execute(select(PhoneNumber).where(PhoneNumber.number == new))).scalar_one()
+            agent = await db.get(Agent, uuid.UUID(agent_id))
+            return fresh.auto_refresh, fresh.auto_refresh_at, bool(fresh.is_default), agent.caller_number
+
+    on, at, default, caller = _run(check())
+    assert on and at and default and caller == new  # the new number took over and keeps swapping monthly
