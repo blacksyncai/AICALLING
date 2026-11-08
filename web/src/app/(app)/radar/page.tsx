@@ -48,7 +48,7 @@ interface Item {
   source?: string;
   pond?: string;
   tags?: string[];
-  last_touch: string;
+  last_touch: string | null;
   created?: string | null;
   calls?: number | null;
   contacted?: boolean | null;
@@ -161,6 +161,7 @@ interface Crm {
   account_label: string;
   installs: { agent_id: string; agent_name: string; pipeline_name: string }[];
   last_scan: Scan | null;
+  capabilities?: { mode: "activity" | "contacts" | "unavailable"; can_scan: boolean; can_segment: boolean; can_install?: boolean; can_map_fields?: boolean; reason: string };
 }
 
 const DEPTH_LABEL: Record<Depth, string> = {
@@ -227,6 +228,7 @@ export default function RadarPage() {
   const [segValue, setSegValue] = useState("");
 
   const crm = data?.crms.find((c) => c.provider === crmKey) ?? data?.crms[0];
+  const discoveryMode = crm?.capabilities?.mode ?? "activity";
   const scan =
     fresh && crm && fresh.provider === crm.provider
       ? fresh
@@ -276,12 +278,13 @@ export default function RadarPage() {
   const header = (
     <PageHeader
       title="Radar"
-      description="Scans your CRM for the people worth calling right now — pick exactly who, and hand them to an agent."
+      description="Find people to call across your connected CRMs, choose your contacts, and hand them to an agent."
       action={
         crm && view === "discover" ? (
           <div className="flex flex-wrap gap-2">
+            {discoveryMode === "activity" ? <>
             <Button
-              disabled={scanning}
+              disabled={scanning || crm.capabilities?.can_segment === false}
               onClick={() => setListOpen((v) => !v)}
               title="Everyone in one pond, lead source, stage or deal stage from your CRM"
             >
@@ -309,6 +312,13 @@ export default function RadarPage() {
             >
               <RefreshCw className="h-4 w-4" /> Full scan
             </Button>
+            </> : discoveryMode === "contacts" ? (
+              <Button variant="primary" loading={scanning} onClick={() => void runScan("recent")}>
+                <RefreshCw className="h-4 w-4" /> Load contacts
+              </Button>
+            ) : (
+              <Link href={`/integrations/${crm.provider}`}><Button>Manage connection</Button></Link>
+            )}
           </div>
         ) : undefined
       }
@@ -387,7 +397,7 @@ export default function RadarPage() {
           <EmptyState
             icon={<RadarIcon className="h-5 w-5" />}
             title="Connect your CRM to use Radar"
-            description="Radar reads Close, Follow Up Boss or Lofty — leads, deals, calls, emails, texts, website visits — and finds who to call now."
+            description="Connect a CRM to review its contacts in Radar. Available discovery and routing actions depend on the connector."
             action={
               <Link href="/integrations">
                 <Button variant="primary">Connect a CRM</Button>
@@ -405,11 +415,14 @@ export default function RadarPage() {
       {header}
       {radarNavigation}
       <div className="space-y-6">
+        {discoveryMode === "unavailable" && <Notice tone="amber">{crm?.capabilities?.reason}</Notice>}
+        {discoveryMode === "contacts" && <Notice tone="blue">Load up to 500 contacts from {crm?.name}, select who to call, then create a campaign or add to an existing one. Activity history is not available in this view, so these contacts are not ranked as hot or never called.</Notice>}
         <div className="flex flex-wrap items-center gap-3">
           {data.crms.length > 1 && (
             <Select
               value={crm?.provider}
-              onChange={(e) => setCrmKey(e.target.value)}
+              aria-label="CRM"
+              onChange={(e) => { setCrmKey(e.target.value); setListOpen(false); setSegValue(""); setScanErr(""); }}
               className="w-auto"
             >
               {data.crms.map((c) => (
@@ -435,13 +448,13 @@ export default function RadarPage() {
               {DEPTH_LABEL[scan.depth ?? (scan.quick ? "quick" : "recent")]}{" "}
               {timeAgo(scan.created_at)}
             </p>
-          ) : (
+          ) : discoveryMode === "activity" ? (
             <p className="text-sm text-zinc-600">
               Quick scan checks your newest 50 leads (seconds). Dig old leads
               starts from your oldest contacts. Full scan reads recent activity
               with call history.
             </p>
-          )}
+          ) : null}
           {scan?.next ? (
             <Button
               size="sm"
@@ -452,7 +465,7 @@ export default function RadarPage() {
             </Button>
           ) : null}
         </div>
-        {listOpen && (
+        {listOpen && discoveryMode === "activity" && (
           <Card className="flex flex-wrap items-end gap-3 p-4">
             <div className="min-w-[150px]">
               <div className="mb-1 text-xs font-medium text-zinc-600">List type</div>
@@ -604,7 +617,7 @@ function PlayCard({
       }
       if (
         QUIET[quiet] &&
-        (now - new Date(i.last_touch).getTime()) / DAY < QUIET[quiet]
+        (!i.last_touch || (now - new Date(i.last_touch).getTime()) / DAY < QUIET[quiet])
       )
         return false;
       if (
@@ -900,7 +913,7 @@ function PlayCard({
               <ArrowRight className="h-4 w-4" />
             </Button>
           ) : (
-            agentId && (
+            agentId && crm.capabilities?.can_install !== false && (
               <Link
                 href="/integrations"
                 className="text-xs text-zinc-500 hover:text-zinc-800"
@@ -944,7 +957,7 @@ function PlayCard({
             Tick the people to call — or “Select all shown” after filtering.
           </p>
         )}
-        {agentId && (
+        {agentId && crm.capabilities?.can_map_fields !== false && (
           <Link
             href={`/integrations/${crm.provider}#variables`}
             className="inline-flex text-xs text-zinc-500 hover:text-brand-700"

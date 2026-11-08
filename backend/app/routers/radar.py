@@ -17,7 +17,7 @@ from app.models.lead import Lead
 from app.services import entitlements
 from app.services.auth import DbDep, ManagerDep
 from app.services.contacts import normalize_phone
-from app.services.crm import radar, sync
+from app.services.crm import radar, sync, radar_discovery
 
 log = structlog.get_logger(__name__)
 from app.services.crm.http import CrmError
@@ -99,11 +99,11 @@ async def overview(ctx: ManagerDep, db: DbDep):
     out = []
     for c in conns:
         p = PROVIDERS.get(c.provider)
-        if not p or not p.can_scan:
+        if not p or p.category != "crm":
             continue
         last = (await db.execute(select(CrmScan).where(CrmScan.connection_id == c.id)
                                  .order_by(CrmScan.created_at.desc()).limit(1))).scalar_one_or_none()
-        out.append({"provider": c.provider, "name": p.name, "account_label": c.account_label,
+        out.append({"provider": c.provider, "name": p.name, "account_label": c.account_label, "capabilities": radar_discovery.capabilities(p),
                     "installs": [{"agent_id": i["agent_id"], "agent_name": i.get("agent_name", ""),
                                   "pipeline_name": i["pipeline"]["name"]} for i in (c.settings or {}).get("installs") or []],
                     "last_scan": await _scan_view(db, ctx.org.id, last, c.provider) if last else None})
@@ -126,9 +126,15 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth:
     rate-limit-friendly steps instead of one huge pull."""
     await _require_radar(ctx, db)
     conn = await _conn(db, ctx.org.id, key)
-    p = PROVIDERS[key]
-    if not p.can_scan:
-        raise HTTPException(status_code=400, detail=f"Radar doesn't support {p.name} yet.")
+    p = PROVIDERS.get(key)
+    if not p or p.category != "crm":
+        raise HTTPException(status_code=400, detail="Choose a connected CRM.")
+    support = radar_discovery.capabilities(p)
+    if not support["can_scan"]:
+        raise HTTPException(status_code=400, detail=support["reason"])
+    contacts_only = support["mode"] == "contacts"
+    if contacts_only and continue_from:
+        raise HTTPException(status_code=400, detail="Refresh contacts to load the current CRM list.")
     previous = None
     if continue_from:
         previous = await db.get(CrmScan, continue_from)
@@ -141,8 +147,11 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth:
     state: dict = {}
     try:
         _, http = sync.http_for(conn)
-        signals = await p.scan_signals(http, conn.config or {}, quick=depth == "quick", depth=depth,
-                                       cursor=previous.result.get("next") if previous else None, state=state)
+        if contacts_only:
+            signals = await radar_discovery.contact_signals(p, http, conn.config or {})
+        else:
+            signals = await p.scan_signals(http, conn.config or {}, quick=depth == "quick", depth=depth,
+                                           cursor=previous.result.get("next") if previous else None, state=state)
     except CrmError as exc:
         raise HTTPException(status_code=400, detail=f"Couldn't scan {p.name}: {exc}") from exc
     # Skip anyone already on BlackSync's do-not-call list.
@@ -151,16 +160,27 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth:
     for s in signals:
         if normalize_phone(s.phone) in dnc:
             s.dnc = True
-    batch = radar.build_plays(signals)
+    batch = (radar.build_segment(signals, f"{p.name} contacts",
+             "Contacts loaded from your CRM. Activity and call history were not read; review who to call.")
+             if contacts_only else radar.build_plays(signals))
+    if contacts_only:
+        for play in batch["plays"]:
+            for item in play["items"]:
+                item["last_touch"] = None  # Contact creation is not an observed CRM activity.
     result = radar.merge(previous.result, batch) if previous else batch
     result.update(quick=depth == "quick", depth=depth, next=state.get("next"),
                   batches=(previous.result.get("batches", 1) + 1) if previous else 1)
+    if contacts_only:
+        result.update(depth="contacts", segment={"kind": "list", "value": "contacts", "label": f"{p.name} contacts"},
+                      discovery_mode="contacts", contact_limit=radar_discovery.CONTACT_LIMIT, next=None)
     row = CrmScan(org_id=ctx.org.id, connection_id=conn.id, result=result)
     db.add(row)
     found = sum(pl["count"] for pl in batch["plays"])
     log.info("radar_scan", provider=key, depth=depth, quick=depth == "quick", scanned=batch["scanned"],
              worth_calling=found, signals=len(signals), batches=(previous.result.get("batches", 1) + 1) if previous else 1)
-    await sync.add_log(db, conn, "import", "ok", f"Radar {depth} scan: {batch['scanned']} contacts scanned, {found} worth calling now.")
+    message = (f"Radar loaded {batch['scanned']} contacts for review; {found} available after suppression checks."
+               if contacts_only else f"Radar {depth} scan: {batch['scanned']} contacts scanned, {found} worth calling now.")
+    await sync.add_log(db, conn, "import", "ok", message)
     await db.commit()
     await db.refresh(row)
     return await _scan_view(db, ctx.org.id, row, key)
