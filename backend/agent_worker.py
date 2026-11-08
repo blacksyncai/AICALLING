@@ -1296,7 +1296,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             log.warning("turn_detector_unavailable", error=type(exc).__name__, reason=str(exc)[:240])
             turn_detector = None
 
-    from app.agent.expressions import enabled_for, speech_text, synthesize_expressions, allows_laughter
+    from app.agent.expressions import enabled_for, speech_text, synthesize_expressions, allows_laughter, opening_delivery
     expressions_enabled = enabled_for(cfg)
     laughter_allowed = allows_laughter(cfg)
     language = cfg.get("language") or "en"
@@ -1998,6 +1998,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         from app.agent.speech_guard import clean
 
         first = strip_tool_mentions(clean(first, expressions=expressions_enabled, allow_laughter=laughter_allowed))  # the drafted opening skips the reply filter
+        first = opening_delivery(first, cfg)
     opening["pending"] = False
     opening["line"] = first  # replayed the instant the real person picks up after a call screener
     try:

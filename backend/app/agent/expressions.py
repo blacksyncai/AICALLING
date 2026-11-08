@@ -188,6 +188,29 @@ async def synthesize_expressions(text, synthesize, *, allow_laughter=True):
         await source.aclose()
 
 
+_IDENTITY_QUESTION = re.compile(
+    r"\b(?:is this|am I (?:speaking|talking) (?:with|to)|have I reached|did I reach|are you)\b"
+    r"|\b(?:this is|you are|you're)\b[^?]{1,100}\b(?:right|correct)\s*\?"
+    r"|(?:^|[,!.]\s*)[\w’' -]{1,60},?\s+(?:right|correct)\s*\?", re.I)
+
+
+def opening_delivery(text: str, cfg: dict) -> str:
+    """Saved openings bypass the LLM; make an unannotated identity question curious too.
+
+    Explicit script emotions win. Any following text returns to neutral delivery;
+    wording and turn-taking remain intact.
+    """
+    if not enabled_for(cfg) or (cfg.get('voice_tuning') or {}).get('expression_mode') != 'automatic':
+        return text
+    if _EMOTION.search(text):
+        return text
+    question, mark, remainder = text.partition('?')
+    if not mark or not _IDENTITY_QUESTION.search(clean_markup(question + mark)):
+        return text
+    tail = '<emotion value="neutral"/>' + remainder if remainder.strip() else remainder
+    return '<emotion value="curious"/>' + question + mark + tail
+
+
 def instructions(cfg):
     if not enabled_for(cfg):
         return ''
@@ -202,6 +225,9 @@ def instructions(cfg):
                     'The user should not have to annotate their script. Preserve the script’s facts and purpose. '
                     'Most speech should remain untagged: use at most one emotion marker at the start of an utterance '
                     'only when it helps a specific part, not on every sentence or throughout the whole script. '
+                    'An identity check such as “Hey, this is James, right?” should use curious delivery: '
+                    'prefix that question with <emotion value="curious"/> and then wait for the real recipient’s answer. '
+                    'Return to natural delivery for the next reply unless its meaning calls for another expression. '
                     'For automatic choices, use only neutral, curious, calm, content, happy, sympathetic, confident or grateful. '
                     'Never change a neutral or sensitive conversation into an excited sales pitch. '
                     'Do not mention expressions, styles, controls, or this guidance to the caller. '

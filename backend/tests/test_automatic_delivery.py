@@ -68,3 +68,31 @@ def test_delivery_api_roundtrip_validation_and_toggle_off(client, agent_id):
     assert response.status_code==200
     assert instructions(response.json())==''
     assert response.json()['voice_tuning']['delivery_direction']==data['delivery_direction']
+
+
+@pytest.mark.parametrize('text', [
+    'Hey, this is James, right?', 'Hi, is this James?', 'Am I speaking with James?',
+    'Hi James, correct?', 'Have I reached James?', "You’re James, right?",
+])
+def test_saved_identity_openings_automatically_request_curiosity(text):
+    from app.agent.expressions import opening_delivery
+    assert opening_delivery(text,cfg()) == '<emotion value="curious"/>' + text
+
+
+def test_curiosity_does_not_spread_to_the_whole_saved_opening():
+    from app.agent.expressions import opening_delivery, clean_markup
+    text='Hey, this is James, right? I’m calling on behalf of Josh.'
+    result=opening_delivery(text,cfg())
+    assert result=='<emotion value="curious"/>Hey, this is James, right?<emotion value="neutral"/> I’m calling on behalf of Josh.'
+    assert clean_markup(result)==text
+
+
+def test_identity_opening_leaves_manual_disabled_other_voices_and_nonquestions_alone():
+    from app.agent.expressions import opening_delivery
+    question='Hey, this is James, right?'
+    for config in [cfg(expressions_enabled=False),cfg(expression_mode='script'),
+                   {'voice_id':'elevenlabs:example','voice_tuning':cfg()['voice_tuning']}]:
+        assert opening_delivery(question,config)==question
+    for text in ['Hi, I’m calling on behalf of Josh.', '<emotion value="calm"/>'+question,
+                 'What time works for you?']:
+        assert opening_delivery(text,cfg())==text
