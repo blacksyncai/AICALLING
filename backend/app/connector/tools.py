@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable
 import structlog
 from fastapi import BackgroundTasks, HTTPException
 
+from app.connector.voice_settings import VOICE_TUNING_SCHEMA
 from app.config import settings
 from app.models.account import User
 from app.services.auth import Context
@@ -321,6 +322,14 @@ async def add_knowledge(s: Session, args: dict) -> dict:
 # ── Agents ────────────────────────────────────────────────────────────────────
 
 
+def _validate_voice_tuning_patch(value):
+    if not isinstance(value, dict) or not value:
+        raise ToolError("voice_tuning must be a non-empty object of settings to change.")
+    unknown = set(value) - set(VOICE_TUNING_SCHEMA["properties"])
+    if unknown:
+        raise ToolError("Unknown voice_tuning settings: " + ", ".join(sorted(unknown)))
+
+
 def _agent_brief(a: dict) -> dict:
     return {"id": a["id"], "name": a["name"], "status": a.get("status"), "description": a.get("description"),
             "specialty": a.get("specialty"), "voice_id": a.get("voice_id"), "url": link(f"/agents/{a['id']}")}
@@ -337,26 +346,37 @@ async def list_agents(s: Session, args: dict) -> dict:
 
 @tool("get_agent", "Get an AI agent",
       """Full details of one agent: its call script/instructions, first message, voice, transfer number, voicemail
-handling, booking and status.""", {"agent_id": ID}, ["agent_id"])
+handling, booking, voice_tuning (including automatic delivery) and status.""", {"agent_id": ID}, ["agent_id"])
 async def get_agent(s: Session, args: dict) -> dict:
     from app.routers.agents import get_agent as ga
 
     a = await ga(_uuid(args, "agent_id"), s.need_account(), s.db)
     keep = ("id", "name", "description", "status", "first_message", "system_prompt", "language", "voice_id",
-            "voice_speed", "transfer_number", "enable_booking", "voicemail_action", "voicemail_message",
+            "voice_speed", "voice_tuning", "transfer_number", "enable_booking", "voicemail_action", "voicemail_message",
             "max_duration_seconds", "success_criteria", "ai_disclosure", "caller_number", "record_calls", "specialty")
-    return {**{k: a.get(k) for k in keep}, "url": link(f"/agents/{a['id']}")}
+    from app.agent.expressions import enabled_for
+    supported = enabled_for({"voice_id": a.get("voice_id"), "voice_tuning": {"expressions_enabled": True}})
+    return {**{k: a.get(k) for k in keep}, "voice_expressions_supported": supported, "url": link(f"/agents/{a['id']}")}
 
 
-@tool("list_voices", "List voices", "Voices an agent can use (pass the id to create_agent or update_agent).")
+@tool("list_voices", "List voices", "Voices and available Voice expressions styles/emotions. Pass a voice id and voice_tuning to create_agent or update_agent.")
 async def list_voices(s: Session, args: dict) -> dict:
     from app.routers.settings import list_voices as lv, my_voices
 
     ctx = s.need_account()
     out = await lv(s.db)
     voices = [*(await my_voices(ctx, s.db))["voices"], *(out.get("voices", []) if isinstance(out, dict) else [])]
-    keep = ("id", "name", "gender", "accent", "language", "description", "category")
-    return {"voices": [{k: v.get(k) for k in keep if v.get(k) is not None} for v in voices[:60]]}
+    from app.agent.expressions import enabled_for, DELIVERY_STYLES, EMOTIONS
+    keep = ("id", "name", "gender", "accent", "language", "description", "category", "provider")
+    return {"voices": [{**{k: v.get(k) for k in keep if v.get(k) is not None},
+                        "voice_expressions_supported": enabled_for({"voice_id": v["id"],
+                            "voice_tuning": {"expressions_enabled": True}})} for v in voices[:60]],
+            "voice_expressions": {"modes": ["automatic", "script"],
+                "styles": [{"value": key, "label": value[0]} for key, value in DELIVERY_STYLES.items()],
+                "emotions": list(EMOTIONS), "automatic_laughter_default": False,
+                "guide": "Use voice_tuning on create_agent or update_agent. To enable automatic delivery set "
+                         "expressions_enabled=true and expression_mode=automatic; choose delivery_style and/or delivery_direction. "
+                         "Only voices marked voice_expressions_supported apply these settings."}}
 
 
 SECTION_KEYS = ("identity", "context", "approved", "opening", "flow", "close", "situations", "rules")
@@ -459,6 +479,7 @@ its structure; write the full script, not a summary). The agent starts paused: o
                                                          "\"Hey, this is {{name}}, right?\""},
        "description": {"type": "string", "description": "One line on what the agent does."},
        "voice_id": {"type": "string", "description": "From list_voices (optional; a natural default is used)."},
+       "voice_tuning": VOICE_TUNING_SCHEMA,
        "transfer_number": {"type": "string", "description": "Number to transfer interested people to (optional)."},
        "voicemail_action": {"type": "string", "enum": ["hang_up", "leave_message", "ignore"]},
        "voicemail_message": STR,
@@ -474,6 +495,8 @@ async def create_agent(s: Session, args: dict) -> dict:
     from app.routers.agents import AgentUpdate, new_agent_from_template, update_agent as ua
 
     ctx = s.need_account()
+    if args.get("voice_tuning") is not None:
+        _validate_voice_tuning_patch(args["voice_tuning"])
     sections = _sections(args.get("sections"))
     script = _assemble(sections) if sections else str(args.get("system_prompt") or "")
     if len(script.split()) < 80:
@@ -488,7 +511,7 @@ async def create_agent(s: Session, args: dict) -> dict:
     await s.db.commit()
     fields = {k: args[k] for k in ("first_message", "description", "voice_id", "transfer_number",
                                    "voicemail_action", "voicemail_message", "ai_disclosure", "extraction_fields",
-                                   "success_criteria") if args.get(k) is not None}
+                                   "success_criteria", "voice_tuning") if args.get(k) is not None}
     fields["system_prompt"] = script
     if sections:
         fields["builder"] = _sectioned_builder(sections)
@@ -499,17 +522,19 @@ async def create_agent(s: Session, args: dict) -> dict:
         await s.db.commit()
         raise ToolError(f"Check the values: {exc}")
     a = await ua(agent.id, body, ctx, s.db)
-    return {**_agent_brief(a), "words": len(script.split()), "sections": list(sections) if sections else None,
+    return {**_agent_brief(a), "voice_tuning": a.get("voice_tuning"), "words": len(script.split()), "sections": list(sections) if sections else None,
             "next_step": "Offer a test call to the user's own phone (call_with_agent), then launch_agent."}
 
 
 @tool("update_agent", "Edit an AI agent",
       """Changes an agent's settings. Only pass what should change. system_prompt replaces the whole call script, so
-read it with get_agent first and keep everything that isn't meant to change.""",
+read it with get_agent first and keep everything that isn't meant to change. Voice expressions are in voice_tuning;
+pass only keys to change (they merge with saved tuning). list_voices lists delivery styles and emotions.""",
       {"agent_id": ID, "name": STR, "first_message": {"type": "string", "description": "What it says first."},
        "sections": {**SECTIONS_SCHEMA, "description": "Sections to replace (only the ones that change); the rest "
                                                       "stay. Works on agents built in sections."},
        "system_prompt": {"type": "string", "description": "The full call script/instructions."},
+       "voice_tuning": VOICE_TUNING_SCHEMA,
        "voice_id": STR, "transfer_number": {"type": "string", "description": "\"\" removes it."},
        "voicemail_action": {"type": "string", "enum": ["hang_up", "leave_message", "ignore"]},
        "voicemail_message": STR,
@@ -519,6 +544,11 @@ async def update_agent(s: Session, args: dict) -> dict:
     from app.routers.agents import AgentUpdate, update_agent as ua
 
     fields = {k: v for k, v in args.items() if k not in ("agent_id", "sections") and v is not None}
+    if "voice_tuning" in fields:
+        _validate_voice_tuning_patch(fields["voice_tuning"])
+        from app.routers.agents import get_agent as ga
+        current = await ga(_uuid(args, "agent_id"), s.need_account(), s.db)
+        fields["voice_tuning"] = {**(current.get("voice_tuning") or {}), **fields["voice_tuning"]}
     changed = _sections(args.get("sections"))
     if changed:
         from app.routers.agents import get_agent as ga
@@ -549,7 +579,8 @@ async def update_agent(s: Session, args: dict) -> dict:
     except ValueError as exc:
         raise ToolError(f"Check the values: {exc}")
     a = await ua(_uuid(args, "agent_id"), body, s.need_account(), s.db)
-    return {"updated": sorted(set(fields) - {"builder"} | ({"sections"} if changed else set())), **_agent_brief(a)}
+    return {"updated": sorted(set(fields) - {"builder"} | ({"sections"} if changed else set())),
+            **_agent_brief(a), "voice_tuning": a.get("voice_tuning")}
 
 
 @tool("launch_agent", "Turn an agent on",
