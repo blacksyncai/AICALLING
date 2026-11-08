@@ -145,7 +145,8 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice", onTestV
               onChange={(e) => set("voice_speed", Number(e.target.value))} className="w-full accent-brand-600" />
           </Field>
           <VoiceTuningSettings value={draft.voice_tuning ?? {}} onChange={(v) => set("voice_tuning", v)}
-            supported={!draft.voice_id.includes(":")} onTestVoice={onTestVoice ? () => { setSettingsOpen(false); onTestVoice(); } : undefined} emotions={voices?.expression_emotions ?? ["neutral", "curious", "calm", "happy", "sympathetic"]} />
+            supported={voices?.voices.find((v) => v.id === draft.voice_id)?.voice_expressions_supported ??
+              (!draft.voice_id.includes(":") || /^lkcartesia:[A-Za-z0-9_-]{4,64}$/.test(draft.voice_id))} onTestVoice={onTestVoice ? () => { setSettingsOpen(false); onTestVoice(); } : undefined} emotions={voices?.expression_emotions ?? ["neutral", "curious", "calm", "happy", "sympathetic"]} />
           <Toggle checked={draft.background_audio} onChange={(v) => set("background_audio", v)}
             label="Office background ambience" description="Plays subtle call-center noise on phone calls so the agent sounds like it's on a sales floor." />
         </div>

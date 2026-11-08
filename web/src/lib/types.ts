@@ -284,6 +284,7 @@ export interface SettingsStatus {
 }
 
 export interface Voice {
+  voice_expressions_supported?: boolean;
   id: string;
   name: string;
   provider?: "cartesia" | string;

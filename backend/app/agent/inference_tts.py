@@ -50,22 +50,31 @@ def provider_voice_id(voice_id: str) -> str:
     return value
 
 
-def _options(prefix: str, speed: float) -> dict:
+def _options(prefix: str, speed: float, *, emotion: str | None = None, volume: float | None = None) -> dict:
     if prefix == "fishaudio:":
         return {"latency": "low", "speed": speed}  # Fish Audio's fastest mode, for live calls
     if prefix == "inworld:":
         return {"speaking_rate": max(0.5, min(1.5, speed))}
-    return {"speed": max(0.6, min(1.5, speed))}
+    options = {"speed": max(0.6, min(1.5, speed))}
+    if emotion:
+        from app.agent.expressions import EMOTIONS
+        if emotion.lower() not in EMOTIONS:
+            raise ValueError("Choose a supported voice emotion")
+        options["emotion"] = emotion.lower()
+    if volume is not None:
+        options["volume"] = max(.5, min(2.0, volume))
+    return options
 
 
-def make_livekit_tts(voice_id: str, *, speed: float = 1.0, language: str = "en", http_session=None):
+def make_livekit_tts(voice_id: str, *, speed: float = 1.0, language: str = "en", http_session=None,
+                     emotion: str | None = None, volume: float | None = None):
     from livekit.agents import inference
 
     prefix = _prefix(voice_id)
     _, model, languages = PROVIDERS[prefix]
     kwargs = dict(model=model, voice=provider_voice_id(voice_id), sample_rate=SAMPLE_RATE,
                   api_key=settings.livekit_api_key, api_secret=settings.livekit_api_secret,
-                  extra_kwargs=_options(prefix, speed))
+                  extra_kwargs=_options(prefix, speed, emotion=emotion, volume=volume))
     lang = "en" if language in ("", "multi", None) else language
     if lang in languages:
         kwargs["language"] = lang
@@ -74,12 +83,15 @@ def make_livekit_tts(voice_id: str, *, speed: float = 1.0, language: str = "en",
     return inference.TTS(**kwargs)
 
 
-async def synthesize_wav(voice_id: str, text: str, *, speed: float = 1.0, language: str = "en") -> bytes:
+async def synthesize_wav(voice_id: str, text: str, *, speed: float = 1.0, language: str = "en",
+                         emotion: str | None = None, volume: float | None = None) -> bytes:
     """A short WAV for voice previews in the editor."""
     import aiohttp
 
     async with aiohttp.ClientSession() as session:
-        tts = make_livekit_tts(voice_id, speed=speed, language=language, http_session=session)
+        tts = make_livekit_tts(voice_id, speed=speed, language=language, http_session=session,
+                               **({"emotion": emotion} if emotion else {}),
+                               **({"volume": volume} if volume is not None else {}))
         pcm = bytearray()
         rate, channels = SAMPLE_RATE, 1
         async with tts.synthesize(text) as stream:

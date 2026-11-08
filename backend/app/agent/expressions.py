@@ -36,8 +36,9 @@ def allows_laughter(cfg: dict) -> bool:
 
 def enabled_for(cfg: dict) -> bool:
     voice = cfg.get('voice_id') or ''
-    # Prefixed voices use other providers/LiveKit hosted clones; do not assume their control contracts.
-    return bool((cfg.get('voice_tuning') or {}).get('expressions_enabled')) and ':' not in voice
+    # Hosted Sonic 3.5 uses the same controls through the inference SDK's CartesiaOptions.
+    supported = ':' not in voice or bool(re.fullmatch(r'lkcartesia:[A-Za-z0-9_-]{4,64}', voice))
+    return bool((cfg.get('voice_tuning') or {}).get('expressions_enabled')) and supported
 
 
 def default_emotion(raw: dict | None) -> str | None:

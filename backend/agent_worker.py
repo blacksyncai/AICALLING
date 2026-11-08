@@ -1320,7 +1320,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         llm=openai.LLM(**llm_kwargs),
         tts=make_elevenlabs_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
         if is_elevenlabs_voice(voice_id) else
-        make_inference_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
+        make_inference_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language,
+                           emotion=tuning.get("emotion") if expressions_enabled else None,
+                           volume=tuning["volume"] if expressions_enabled else None)
         if is_inference_voice(voice_id) else
         make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia_tts(
             DEFAULT_VOICE_ID if is_mistral_voice(voice_id) else voice_id,

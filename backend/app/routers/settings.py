@@ -127,6 +127,7 @@ def _accent(raw: dict) -> str | None:
 
 
 def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> dict:
+    from app.agent.expressions import enabled_for
     gender = _GENDERS.get(str(raw.get("gender") or "").strip().lower())
     out = {
         "id": raw.get("id"),
@@ -138,6 +139,8 @@ def _normalize(raw: dict, *, owned: bool, premium: bool, can_preview: bool) -> d
         "gender": gender,
         "description": (raw.get("description") or "")[:200],
         "is_clone": owned,
+        "voice_expressions_supported": enabled_for({"voice_id": raw.get("id"),
+            "voice_tuning": {"expressions_enabled": True}}),
         "preview": bool(settings.elevenlabs_api_key) if raw.get("provider") == "elevenlabs" else
                    settings.livekit_ready if inference_tts.is_inference_voice(raw.get("id")) else can_preview,
         "models": [elevenlabs_tts.MODEL] if raw.get("provider") == "elevenlabs" else
@@ -373,11 +376,14 @@ async def preview_voice(body: VoicePreview):
     if inference_tts.is_inference_voice(voice_id):
         if not settings.livekit_ready:
             raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
-        key = (voice_id, round(body.speed, 2), body.language, body.text)
+        from app.agent.voice_tuning import voice_tuning
+        emotion = voice_tuning(body.model_dump()).get("emotion") if enabled else None
+        extra = {"emotion": emotion} if enabled else {}
+        key = (voice_id, round(body.speed, 2), body.language, body.text, emotion) if enabled else (voice_id, round(body.speed, 2), body.language, body.text)
         if key not in _preview_cache:
             try:
                 _preview_cache[key] = await inference_tts.synthesize_wav(
-                    voice_id, body.text, speed=body.speed, language=body.language)
+                    voice_id, body.text, speed=body.speed, language=body.language, **extra)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
             except Exception as exc:
