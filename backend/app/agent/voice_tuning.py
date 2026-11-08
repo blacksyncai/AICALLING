@@ -39,7 +39,8 @@ def voice_tuning(raw: dict | None) -> dict:
     from app.agent.expressions import default_emotion
     return {
         "volume": round(_clamp(raw.get("volume"), 0.5, 2.0, 1.0), 2),
-        "emotion": default_emotion(raw) or TONES.get(str(raw.get("tone") or "").lower()),
+        "emotion": (None if raw.get("expressions_enabled") and raw.get("expression_mode") == "automatic" else
+                    default_emotion(raw) or TONES.get(str(raw.get("tone") or "").lower())),
         "min_delay": round(0.95 - 0.8 * r, 2),           # 0.95 s … 0.15 s
         "max_delay": round(4.0 - 2.0 * r, 2),            # 4.0 s … 2.0 s
         "min_duration": round(1.1 - 0.8 * i, 2),         # 1.1 s … 0.3 s of speech

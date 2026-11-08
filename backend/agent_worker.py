@@ -1296,8 +1296,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             log.warning("turn_detector_unavailable", error=type(exc).__name__, reason=str(exc)[:240])
             turn_detector = None
 
-    from app.agent.expressions import enabled_for, speech_text, synthesize_expressions
+    from app.agent.expressions import enabled_for, speech_text, synthesize_expressions, allows_laughter
     expressions_enabled = enabled_for(cfg)
+    laughter_allowed = allows_laughter(cfg)
     language = cfg.get("language") or "en"
     tuning = voice_tuning(cfg.get("voice_tuning"))
     model = cfg.get("llm_model") or "gpt-4.1-nano"
@@ -1347,7 +1348,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if turn_detector:
         session_kwargs["turn_detection"] = turn_detector
     if _lk_replace is not None:
-        session_kwargs["tts_text_transforms"] = [lambda text: speech_text(text, True), "filter_emoji"] if expressions_enabled else ["filter_markdown", "filter_emoji"]
+        session_kwargs["tts_text_transforms"] = [lambda text: speech_text(text, True, allow_laughter=laughter_allowed), "filter_emoji"] if expressions_enabled else ["filter_markdown", "filter_emoji"]
         session_kwargs["tts_text_transforms"].append(pronounce(tuning["pronunciations"] + BUILT_IN_PRONUNCIATIONS, preserve_markup=expressions_enabled))
 
     session = AgentSession(**session_kwargs)
@@ -1452,7 +1453,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             speech = owning_speech()
             observed_text = trace.stream(text, "tts_input", speech=speech)
             synthesize = lambda chunks: Agent.default.tts_node(self, chunks, model_settings)
-            audio = (synthesize_expressions(observed_text, synthesize) if expressions_enabled else
+            audio = (synthesize_expressions(observed_text, synthesize, allow_laughter=laughter_allowed) if expressions_enabled else
                      synthesize(speech_text(observed_text, False)))
             async for frame in trace.stream(audio,
                                             "tts_audio", speech=speech, audio=True):
@@ -1485,7 +1486,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
             first_text = True
             heard = getattr(user, "text_content", "") or "" if user else ""
-            async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat, heard), _cut, expressions=expressions_enabled):
+            async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat, heard), _cut, expressions=expressions_enabled, allow_laughter=laughter_allowed):
                 text = chunk if isinstance(chunk, str) else getattr(getattr(chunk, "delta", None), "content", None)
                 if text and first_text:
                     trace.mark("usable_text_first", speech=speech, turn_key=turn_key)
@@ -1996,7 +1997,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         from app.agent.runtime import strip_tool_mentions
         from app.agent.speech_guard import clean
 
-        first = strip_tool_mentions(clean(first, expressions=expressions_enabled))  # the drafted opening skips the reply filter
+        first = strip_tool_mentions(clean(first, expressions=expressions_enabled, allow_laughter=laughter_allowed))  # the drafted opening skips the reply filter
     opening["pending"] = False
     opening["line"] = first  # replayed the instant the real person picks up after a call screener
     try:

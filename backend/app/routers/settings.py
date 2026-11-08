@@ -198,10 +198,11 @@ def _categories(voices: list[dict]) -> list[dict]:
 
 
 def _voices_response(source: str, voices: list[dict], message: str | None = None) -> dict:
-    from app.agent.expressions import EMOTIONS
+    from app.agent.expressions import EMOTIONS, DELIVERY_STYLES
     by_id = {v["id"]: v for v in voices}
     return {
         "expression_emotions": list(EMOTIONS),
+        "expression_styles": [{"value": key, "label": value[0]} for key, value in DELIVERY_STYLES.items()],
         "source": source,
         "voices": voices,
         "featured": [by_id[f["id"]] for f in FEATURED_VOICES if f["id"] in by_id],
@@ -295,6 +296,10 @@ class VoicePreview(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     language: str = "en"
     expressions_enabled: bool = False
+    expression_mode: str = Field(default="script", pattern="^(script|automatic)$")
+    delivery_style: str = Field(default="natural", pattern="^(natural|warm|calm|confident|custom)$")
+    delivery_direction: str = Field(default="", max_length=500)
+    automatic_laughter: bool = False
     default_emotion: str = ""
 
     @field_validator("default_emotion")
@@ -302,7 +307,7 @@ class VoicePreview(BaseModel):
     def _emotion(cls, value):
         from app.agent.expressions import EMOTIONS
         if value and value not in EMOTIONS:
-            raise ValueError("Choose a supported Cartesia emotion")
+            raise ValueError("Choose a supported voice emotion")
         return value
 
     tone: str = ""  # warm | upbeat | calm | friendly | empathetic (see voice_tuning.TONES)
@@ -345,9 +350,10 @@ async def _preview_mistral(voice_id: str, text: str) -> Response:
 async def preview_voice(body: VoicePreview):
     """Speak a short line in the chosen voice (WAV) so it can be auditioned in the editor."""
     voice_id = body.voice_id.strip()
-    from app.agent.expressions import clean_markup, enabled_for
+    from app.agent.expressions import clean_markup, enabled_for, allows_laughter
     enabled = enabled_for({"voice_id": voice_id, "voice_tuning": body.model_dump()})
-    body = body.model_copy(update={"text": clean_markup(body.text, enabled)})
+    body = body.model_copy(update={"text": clean_markup(body.text, enabled,
+        allow_laughter=allows_laughter({"voice_tuning": body.model_dump()}))})
     if elevenlabs_tts.is_elevenlabs_voice(voice_id):
         if not settings.elevenlabs_api_key:
             raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
@@ -390,7 +396,9 @@ async def preview_voice(body: VoicePreview):
 
     emotion = (body.default_emotion if enabled and body.default_emotion else
                TONES.get(body.tone.lower()) if body.tone else None)
-    if enabled and emotion:
+    if enabled and body.expression_mode == "automatic":
+        emotion = None
+    elif enabled and emotion:
         emotion = emotion.lower()
     key = (voice_id, round(body.speed, 2), lang, body.text, emotion)
     if key in _preview_cache:

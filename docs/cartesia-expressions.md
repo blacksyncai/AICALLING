@@ -43,3 +43,13 @@ Official references:
 - https://github.com/cartesia-ai/cookbook/tree/main/examples/audiobook
 
 Release checks: 66 backend tests passed; production Next.js build passed; Playwright checks at 390px and 1440px passed for the expression toggle, default-emotion selection, save payload and modal rendering. Local screenshots are in /workspace/radar-review/{390,1440}-expression-controls.png. These browser tests used API fixtures and did not place calls or synthesize provider audio.
+
+## Automatic delivery
+
+Voice settings now offers Automatic delivery and Script controls. Newly enabling Voice expressions selects Automatic delivery. Existing enabled settings without a mode retain Script controls; no existing agents are silently migrated. Users can choose Natural and balanced, Warm and conversational, Calm and reassuring, Clear and confident, or Custom direction, and enter up to 500 characters of tone guidance. Advanced script syntax stays available but collapsed in Automatic delivery. Try in browser opens the existing browser-test tab without placing a call; starting that test uses the editor's existing save-before-test flow.
+
+Automatic delivery adds private, contextual delivery guidance to the existing voice LLM request. It does not rewrite the stored script, add an extra model request, or force a default emotion across the script. The existing global tone/default emotion is ignored only while Automatic delivery is enabled; switching back restores it. The model is asked to leave most speech untagged, use appropriate common emotions at utterance starts, preserve facts, avoid repetitive fillers, and wait after identity questions.
+
+Automatic laughter is off by default. Its opt-in flag is enforced in the first-message cleaner, the LLM speech guard, streaming text transforms, final TTS node and preview cleaner, not just by prompt instructions. Explicit Script controls preserve existing laughter behavior. Other voice providers remain excluded and receive cleaned speech.
+
+Additional validation: automatic-mode API roundtrip and invalid settings, all five style prompts, disabled/non-voice/provider exclusions, legacy tone and mode preservation, no forced generation emotion in automatic mode, laughter opt-out/opt-in through first-message and streamed synthesis paths. Total focused suite: 74 tests passed. Mobile/desktop browser checks verified style/direction saving, advanced defaults, the browser-test shortcut and legacy settings. Local screenshots: /workspace/radar-review/{390,1440}-automatic-delivery.png. No live model/audio quality claim is made; synthesis access remains blocked in this workspace.

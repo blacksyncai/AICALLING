@@ -528,7 +528,7 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
 
-          {section === "voice" && <VoiceModelSettings key="voice" draft={draft} set={set} voices={voices} view="voice" />}
+          {section === "voice" && <VoiceModelSettings key="voice" draft={draft} set={set} voices={voices} view="voice" onTestVoice={() => { setTestTab("voice"); requestAnimationFrame(scrollToTest); }} />}
           {section === "model" && <VoiceModelSettings key="model" draft={draft} set={set} voices={voices} view="model" />}
 
           {section === "actions" && (

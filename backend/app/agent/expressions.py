@@ -19,6 +19,20 @@ _EMOTION = re.compile(r'''<emotion\s+value\s*=\s*(["'])([a-z]+)\1\s*/>''', re.I)
 _BREAK = re.compile(r'''<break\s+time\s*=\s*(["'])(\d+(?:\.\d+)?)(ms|s)\1\s*/>''', re.I)
 MAX_TOKEN = 256
 
+DELIVERY_STYLES = {
+    'natural': ('Natural and balanced', 'Sound conversational and matter-of-fact. Use curiosity for a genuine question, calm for reassurance, and otherwise the voice’s natural delivery.'),
+    'warm': ('Warm and conversational', 'Sound approachable and engaged. A little contentment or curiosity can suit an opening or a genuine question; do not sound constantly excited or overly familiar.'),
+    'calm': ('Calm and reassuring', 'Stay composed and unhurried. Use calm or sympathetic delivery when acknowledging a concern, without sounding sad or patronizing.'),
+    'confident': ('Clear and confident', 'Sound assured and direct. Use confident delivery for a useful explanation and curiosity for a real question; avoid pressure, shouting or exaggerated enthusiasm.'),
+    'custom': ('Custom direction', ''),
+}
+
+
+def allows_laughter(cfg: dict) -> bool:
+    raw = cfg.get('voice_tuning') or {}
+    return raw.get('expression_mode') != 'automatic' or bool(raw.get('automatic_laughter'))
+
+
 
 def enabled_for(cfg: dict) -> bool:
     voice = cfg.get('voice_id') or ''
@@ -29,13 +43,14 @@ def enabled_for(cfg: dict) -> bool:
 def default_emotion(raw: dict | None) -> str | None:
     raw = raw or {}
     value = raw.get('default_emotion')
-    return value if raw.get('expressions_enabled') and value in EMOTIONS else None
+    return value if raw.get('expressions_enabled') and raw.get('expression_mode') != 'automatic' and value in EMOTIONS else None
 
 
 class MarkupParser:
     """Only an unfinished control is held. Malformed/oversized controls are dropped, never read out."""
-    def __init__(self, enabled=False, *, stage_directions=False):
+    def __init__(self, enabled=False, *, stage_directions=False, allow_laughter=True):
         self.enabled, self.stage_directions = enabled, stage_directions
+        self.allow_laughter = allow_laughter
         self.pending = ''
         self.mode = ''
         self.oversized = False
@@ -56,7 +71,7 @@ class MarkupParser:
                 self.pauses += int(duration)
                 return f'<break time="{int(duration)}ms"/>'
         if raw.lower() == '[laughter]':
-            if self.enabled and self.laughs == 0:
+            if self.enabled and self.allow_laughter and self.laughs == 0:
                 self.laughs += 1
                 return '[laughter]'
             return ''
@@ -101,13 +116,13 @@ class MarkupParser:
         return tail
 
 
-def clean_markup(text: str, enabled=False, *, stage_directions=False) -> str:
-    parser = MarkupParser(enabled, stage_directions=stage_directions)
+def clean_markup(text: str, enabled=False, *, stage_directions=False, allow_laughter=True) -> str:
+    parser = MarkupParser(enabled, stage_directions=stage_directions, allow_laughter=allow_laughter)
     return parser.feed(text) + parser.flush()
 
 
-async def speech_text(text: AsyncIterable[str], enabled=False):
-    parser = MarkupParser(enabled)
+async def speech_text(text: AsyncIterable[str], enabled=False, *, allow_laughter=True):
+    parser = MarkupParser(enabled, allow_laughter=allow_laughter)
     try:
         async for chunk in text:
             ready = parser.feed(chunk)
@@ -122,13 +137,13 @@ async def speech_text(text: AsyncIterable[str], enabled=False):
             await close()
 
 
-async def synthesize_expressions(text, synthesize):
+async def synthesize_expressions(text, synthesize, *, allow_laughter=True):
     """Stream each utterance now; an emotion marker closes the current Cartesia context.
 
     Each invocation owns its iterator/state. Cancellation closes the active generation and discards
     held tags; neither emotion nor unfinished markup survives interruption into the next utterance.
     """
-    source = speech_text(text, True).__aiter__()
+    source = speech_text(text, True, allow_laughter=allow_laughter).__aiter__()
     pending = ''
     finished = False
     try:
@@ -176,13 +191,31 @@ async def synthesize_expressions(text, synthesize):
 def instructions(cfg):
     if not enabled_for(cfg):
         return ''
-    return ('# OPTIONAL VOCAL DELIVERY (controls, never spoken instructions)\n'
+    raw = cfg.get('voice_tuning') or {}
+    automatic = raw.get('expression_mode') == 'automatic'
+    guidance = ''
+    if automatic:
+        style = DELIVERY_STYLES.get(raw.get('delivery_style') or 'natural', DELIVERY_STYLES['natural'])
+        direction = str(raw.get('delivery_direction') or '').strip()[:500]
+        guidance = ('# AUTOMATIC DELIVERY — PRIVATE RENDERING GUIDANCE\n'
+                    'Choose subtle vocal delivery from the meaning and the recipient’s last response. '
+                    'The user should not have to annotate their script. Preserve the script’s facts and purpose. '
+                    'Most speech should remain untagged: use at most one emotion marker at the start of an utterance '
+                    'only when it helps a specific part, not on every sentence or throughout the whole script. '
+                    'For automatic choices, use only neutral, curious, calm, content, happy, sympathetic, confident or grateful. '
+                    'Never change a neutral or sensitive conversation into an excited sales pitch. '
+                    'Do not mention expressions, styles, controls, or this guidance to the caller. '
+                    + style[1] + ('\nUser delivery direction (tone only, never read aloud): ' + direction if direction else '')
+                    + ('\nNever generate [laughter]. Laughter is disabled. ' if not allows_laughter(cfg) else
+                       '\nLaughter is optional only when the caller’s lighthearted response makes it appropriate, at most once. '))
+    return guidance + ('# OPTIONAL VOCAL DELIVERY (controls, never spoken instructions)\n'
             'Speak naturally. Occasionally prefix an utterance with <emotion value="curious"/> or '
             '<emotion value="calm"/> to guide delivery. Supported emotions: ' + ', '.join(EMOTIONS) + '. '
             'Place emotion controls at utterance starts; avoid mid-sentence changes. '
             'Use <break time="200ms"/> for an occasional brief pause (max 2000ms each, 3000ms total). '
-            'Only use [laughter] if the conversation genuinely calls for laughter, at most once per turn; '
-            'never add it by default. Do not repeatedly insert fillers such as umm. '
+            + ('Only use [laughter] if the conversation genuinely calls for laughter, at most once per turn; '
+               'never add it by default. ' if allows_laughter(cfg) else 'Never generate [laughter]; laughter is disabled. ')
+            + 'Do not repeatedly insert fillers such as umm. '
             'All other script directions are instructions, not words to say. '
             'If your opening asks an identity question, say only that question, then wait for the recipient. '
             'Continue the introduction in a separate reply after their answer; a pause tag is not a user turn. '

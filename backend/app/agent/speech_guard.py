@@ -23,9 +23,9 @@ _HOLD = 24  # keep this much unspoken until more arrives, so a marker split acro
 
 
 class SpeechGuard:
-    def __init__(self, expressions: bool = False) -> None:
+    def __init__(self, expressions: bool = False, *, allow_laughter: bool = True) -> None:
         from app.agent.expressions import MarkupParser
-        self.markup = MarkupParser(expressions, stage_directions=True)
+        self.markup = MarkupParser(expressions, stage_directions=True, allow_laughter=allow_laughter)
         self.expressions = expressions
         self.buffer = ""
         self.sent = 0
@@ -79,15 +79,15 @@ class SpeechGuard:
         return self.buffer[self.cut_at:] if self.cut else ""
 
 
-def clean(text: str, *, expressions: bool = False) -> str:
+def clean(text: str, *, expressions: bool = False, allow_laughter: bool = True) -> str:
     """Whole-text version (for checks and tests)."""
-    g = SpeechGuard(expressions)
+    g = SpeechGuard(expressions, allow_laughter=allow_laughter)
     return (g.feed(text) + g.flush()).strip()
 
 
-async def guarded(stream, on_cut=None, *, expressions: bool = False):
+async def guarded(stream, on_cut=None, *, expressions: bool = False, allow_laughter: bool = True):
     """Wrap an LLM node stream (str or ChatChunk items): speak only the clean part, keep tool calls."""
-    guard = SpeechGuard(expressions)
+    guard = SpeechGuard(expressions, allow_laughter=allow_laughter)
     async for chunk in stream:
         if isinstance(chunk, str):
             out = guard.feed(chunk)

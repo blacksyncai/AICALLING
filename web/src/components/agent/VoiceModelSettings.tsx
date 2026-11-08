@@ -4,7 +4,7 @@ import { ChevronDown, Plus, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { createPortal } from "react-dom";
-import { Button, Field, Input, Modal, Select, Toggle } from "@/components/ui";
+import { Button, Field, Input, Modal, Select, Textarea, Toggle } from "@/components/ui";
 import { fetcher, put } from "@/lib/api";
 import type { Agent, ModelCatalog, VoiceCatalog, VoiceTuning } from "@/lib/types";
 import { ModelPicker } from "./ModelPicker";
@@ -41,11 +41,12 @@ const LANGUAGE_FLAGS: Record<string, string> = {
 };
 
 /** Separate Voice and Model / Brain tabs share the existing saved draft. */
-export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
+export function VoiceModelSettings({ draft, set, voices, view = "voice", onTestVoice }: {
   draft: Agent;
   set: <K extends keyof Agent>(key: K, value: Agent[K]) => void;
   voices: VoiceCatalog | undefined;
   view?: "voice" | "model";
+  onTestVoice?: () => void;
 }) {
   const { data: models, error: modelsError, isLoading: modelsLoading } = useSWR<ModelCatalog>("/api/settings/models", fetcher, {
     revalidateOnFocus: false, shouldRetryOnError: false,
@@ -144,7 +145,7 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
               onChange={(e) => set("voice_speed", Number(e.target.value))} className="w-full accent-brand-600" />
           </Field>
           <VoiceTuningSettings value={draft.voice_tuning ?? {}} onChange={(v) => set("voice_tuning", v)}
-            supported={!draft.voice_id.includes(":")} emotions={voices?.expression_emotions ?? ["neutral", "curious", "calm", "happy", "sympathetic"]} />
+            supported={!draft.voice_id.includes(":")} onTestVoice={onTestVoice ? () => { setSettingsOpen(false); onTestVoice(); } : undefined} emotions={voices?.expression_emotions ?? ["neutral", "curious", "calm", "happy", "sympathetic"]} />
           <Toggle checked={draft.background_audio} onChange={(v) => set("background_audio", v)}
             label="Office background ambience" description="Plays subtle call-center noise on phone calls so the agent sounds like it's on a sales floor." />
         </div>
@@ -167,31 +168,66 @@ function Slider({ label, hint, value, min, max, step, format, onChange }: {
 }
 
 /** Volume, turn-taking and pronunciations — all applied by the voice worker on the next call. */
-function VoiceTuningSettings({ value, onChange, supported, emotions }: { value: VoiceTuning; onChange: (v: VoiceTuning) => void; supported: boolean; emotions: string[] }) {
+function VoiceTuningSettings({ value, onChange, supported, emotions, onTestVoice }: { value: VoiceTuning; onChange: (v: VoiceTuning) => void; supported: boolean; emotions: string[]; onTestVoice?: () => void }) {
   const t = { ...TUNING_DEFAULTS, ...value };
   const pron = value.pronunciations ?? [];
   const patch = (p: Partial<VoiceTuning>) => onChange({ ...value, ...p });
   const setPron = (list: { word: string; say: string }[]) => patch({ pronunciations: list });
+  const automatic = value.expression_mode === "automatic";
   const pct = (v: number) => `${Math.round(v * 100)}%`;
   return (
     <div className="space-y-5 rounded-xl border border-zinc-200 p-4">
       <div className="text-sm font-medium text-zinc-800">Voice tuning</div>
       {supported ? (
         <div className="space-y-3">
-          <Toggle checked={value.expressions_enabled ?? false} onChange={(v) => patch({ expressions_enabled: v })}
-            label="Voice expressions" description="Let the agent use occasional emotions, short pauses and optional laughter. Voice support and results vary; test in the browser first." />
+          <Toggle checked={value.expressions_enabled ?? false}
+            onChange={(v) => patch(v ? { expressions_enabled: true, expression_mode: "automatic" } : { expressions_enabled: false })}
+            label="Voice expressions" description="Let BlackSync add subtle, natural delivery where it fits the conversation." />
           {value.expressions_enabled && <>
-            <Field label="Default emotion" hint="Applies to each utterance. Inline emotion controls can override it.">
-              <Select aria-label="Default emotion" value={value.default_emotion ?? ""} onChange={(e) => patch({ default_emotion: e.target.value })}>
-                <option value="">Use existing tone</option>
-                {emotions.map((emotion) => <option key={emotion} value={emotion}>{emotion.charAt(0).toUpperCase() + emotion.slice(1)}</option>)}
+            <Field label="Delivery mode">
+              <Select aria-label="Delivery mode" value={value.expression_mode ?? "script"}
+                onChange={(e) => patch({ expression_mode: e.target.value as VoiceTuning["expression_mode"] })}>
+                <option value="automatic">Automatic delivery</option>
+                <option value="script">Script controls</option>
               </Select>
             </Field>
-            <p className="text-xs text-zinc-500">In the script, guide delivery with {`<emotion value="curious"/>`}, {`<break time="200ms"/>`} or [laughter]. Keep directions separate from spoken words. An identity question must wait for the recipient’s reply.</p>
+            {automatic && <div className="space-y-3 rounded-xl bg-zinc-50 p-3">
+              <Field label="Delivery style" hint="BlackSync adapts specific moments; it won’t make every line sound the same.">
+                <Select aria-label="Delivery style" value={value.delivery_style ?? "natural"}
+                  onChange={(e) => patch({ delivery_style: e.target.value as VoiceTuning["delivery_style"] })}>
+                  <option value="natural">Natural and balanced</option>
+                  <option value="warm">Warm and conversational</option>
+                  <option value="calm">Calm and reassuring</option>
+                  <option value="confident">Clear and confident</option>
+                  <option value="custom">Custom direction</option>
+                </Select>
+              </Field>
+              <Field label="Delivery direction (optional)" hint="Describe how it should sound. No tags needed.">
+                <Textarea aria-label="Delivery direction" rows={3} maxLength={500} value={value.delivery_direction ?? ""}
+                  placeholder="Sound curious when asking about the property, and softer if they say they’re busy."
+                  onChange={(e) => patch({ delivery_direction: e.target.value })} />
+              </Field>
+              <Toggle checked={value.automatic_laughter ?? false} onChange={(v) => patch({ automatic_laughter: v })}
+                label="Allow occasional laughter" description="Off by default. Only when it fits the conversation, never added to every reply." />
+              <p className="text-xs text-zinc-500">Your script and facts stay the same. BlackSync chooses occasional expression and short pauses without adding filler words. Test your chosen voice in the browser.</p>
+            </div>}
+            <details className="rounded-lg border border-zinc-200 p-3" open={automatic ? undefined : true}>
+              <summary className="cursor-pointer text-sm font-medium text-zinc-700">Advanced: script controls</summary>
+              <div className="mt-3 space-y-3">
+                {!automatic && <Field label="Default emotion" hint="Applies to each utterance. Inline emotion controls can override it.">
+                  <Select aria-label="Default emotion" value={value.default_emotion ?? ""} onChange={(e) => patch({ default_emotion: e.target.value })}>
+                    <option value="">Use existing tone</option>
+                    {emotions.map((emotion) => <option key={emotion} value={emotion}>{emotion.charAt(0).toUpperCase() + emotion.slice(1)}</option>)}
+                  </Select>
+                </Field>}
+                <p className="text-xs text-zinc-500">{automatic ? "You can still mark specific lines, but you don’t need to. " : "Mark only the lines you want to affect. "}Use {`<emotion value="curious"/>`} or {`<break time="200ms"/>`}. Use a neutral emotion to return to normal delivery. An identity question must wait for the recipient’s reply.</p>
+              </div>
+            </details>
+            {onTestVoice && <Button type="button" onClick={onTestVoice}>Try in browser</Button>}
           </>}
         </div>
       ) : <p className="text-xs text-zinc-500">Voice expressions aren’t available for this voice. Expression tags are removed automatically.</p>}
-      <Field label="Tone" hint="How the voice delivers every line. Natural leaves it to the voice.">
+      {!(value.expressions_enabled && automatic) && <Field label="Tone" hint="How the voice delivers every line. Natural leaves it to the voice.">
         <Select value={value.tone ?? ""} onChange={(e) => patch({ tone: e.target.value })}>
           <option value="">Natural</option>
           <option value="warm">Warm</option>
@@ -200,7 +236,7 @@ function VoiceTuningSettings({ value, onChange, supported, emotions }: { value: 
           <option value="calm">Calm</option>
           <option value="empathetic">Empathetic</option>
         </Select>
-      </Field>
+      </Field>}
       <div className="grid gap-5 sm:grid-cols-3">
         <Slider label="Volume" hint="How loud the agent speaks." value={t.volume} min={0.5} max={1.5} step={0.05}
           format={(v) => `${v.toFixed(2)}x`} onChange={(v) => patch({ volume: v })} />

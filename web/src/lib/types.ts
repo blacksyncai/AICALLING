@@ -57,6 +57,10 @@ export interface Agent {
 
 export interface VoiceTuning {
   expressions_enabled?: boolean;
+  expression_mode?: "script" | "automatic";
+  delivery_style?: "natural" | "warm" | "calm" | "confident" | "custom";
+  delivery_direction?: string;
+  automatic_laughter?: boolean;
   default_emotion?: string;
   voicemail_min_connected_seconds?: number;
   volume?: number;
@@ -310,6 +314,7 @@ export interface VoiceCategory {
 
 export interface VoiceCatalog {
   expression_emotions?: string[];
+  expression_styles?: { value: string; label: string }[];
   source: "cartesia" | "fallback" | string;
   voices: Voice[];
   featured?: Voice[];
