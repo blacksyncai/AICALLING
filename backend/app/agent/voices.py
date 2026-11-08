@@ -14,6 +14,14 @@ VOICE_MODELS = ["sonic-3.5"]  # the Cartesia TTS model the voice worker uses (mo
 
 FEATURED_VOICES: list[dict] = [
     # Premium families in picker order; keep each family's versions together.
+    {"id": "a207b2d0-08df-4188-a63d-0578c2fce93b", "name": "Sandra · Version 1", "family": "Sandra", "tone": "Version 1",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True},
+    {"id": "7c31c8f2-d694-4841-85ed-9dc23f319698", "name": "Sandra · Version 2", "family": "Sandra", "tone": "Version 2",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True},
+    {"id": "d75f83e9-9f2e-44fe-8958-af083cec86be", "name": "Sandra · Version 3", "family": "Sandra", "tone": "Version 3",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True},
+    {"id": "986c179c-181d-41a4-9ede-ac13b30cb920", "name": "Sandra · Version 4", "family": "Sandra", "tone": "Version 4",
+     "gender": "feminine", "description": "Live voice clone.", "clone": True},
     {"id": "97f03c16-fab2-4747-b655-9caefbd68fcf", "name": "Marissa M · Version 1", "family": "Marissa M", "tone": "Version 1",
      "gender": "feminine", "description": "Live voice clone.", "clone": True},
     {"id": "fishaudio:v_SriZAPqzgffq", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",

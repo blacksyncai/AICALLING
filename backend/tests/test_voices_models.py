@@ -280,10 +280,19 @@ def test_new_agents_default_to_marissa(client):
         assert agent["voice_id"] == marissa, template
 
 
-def test_kate_is_third_premium_family_and_mia_is_not_a_clone(client, cartesia):
+def test_sandra_is_first_premium_family_and_mia_is_not_a_clone(client, cartesia):
     voices = client.get("/api/settings/voices").json()["voices"]
     rows = list(dict.fromkeys(v.get("family") or v["name"] for v in voices if v["category"] == "premium"))
-    assert rows[:6] == ["Marissa M", "Zain", "Kate", "Mia", "Macco", "Lauren"]
+    assert rows[:7] == ["Sandra", "Marissa M", "Zain", "Kate", "Mia", "Macco", "Lauren"]
+    sandra = [v for v in voices if v.get("family") == "Sandra"]
+    assert [v["id"] for v in sandra] == [
+        "a207b2d0-08df-4188-a63d-0578c2fce93b",
+        "7c31c8f2-d694-4841-85ed-9dc23f319698",
+        "d75f83e9-9f2e-44fe-8958-af083cec86be",
+        "986c179c-181d-41a4-9ede-ac13b30cb920",
+    ]
+    assert [v["tone"] for v in sandra] == [f"Version {i}" for i in range(1, 5)]
+    assert all(v["category"] == "premium" and v["is_clone"] and v["provider"] == "cartesia" for v in sandra)
     mia = next(v for v in voices if v["id"] == "26def8d4-b397-4d79-b5f1-d554d16ba4fe")
     assert mia["category"] == "premium"
     assert mia["is_clone"] is False
