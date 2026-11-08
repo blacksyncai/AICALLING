@@ -23,7 +23,10 @@ _HOLD = 24  # keep this much unspoken until more arrives, so a marker split acro
 
 
 class SpeechGuard:
-    def __init__(self) -> None:
+    def __init__(self, expressions: bool = False) -> None:
+        from app.agent.expressions import MarkupParser
+        self.markup = MarkupParser(expressions, stage_directions=True)
+        self.expressions = expressions
         self.buffer = ""
         self.sent = 0
         self.cut_at: int | None = None
@@ -33,13 +36,14 @@ class SpeechGuard:
         return self.cut_at is not None
 
     def _find_cut(self) -> int | None:
-        hits = [m.start() for m in (_SEAM.search(self.buffer), _MARKERS.search(self.buffer),
+        markers = self.buffer.replace("[laughter]", " " * 10) if self.expressions else self.buffer
+        hits = [m.start() for m in (_SEAM.search(self.buffer), _MARKERS.search(markers),
                                     _INTERNAL_NAMES.search(self.buffer)) if m]
         return min(hits) if hits else None
 
     def feed(self, text: str) -> str:
         """New model text in; the part that's safe to speak now out."""
-        text = text.replace("*", "")  # markdown emphasis ("**937-555-0142**") would be read out
+        text = self.markup.feed(text).replace("*", "")  # markdown emphasis ("**937-555-0142**") would be read out
         if self.cut:
             self.buffer += text  # kept only for the log
             return ""
@@ -63,6 +67,7 @@ class SpeechGuard:
         return out
 
     def flush(self) -> str:
+        self.buffer += self.markup.flush()
         if self.cut:
             return ""
         out = self.buffer[self.sent:]
@@ -74,15 +79,15 @@ class SpeechGuard:
         return self.buffer[self.cut_at:] if self.cut else ""
 
 
-def clean(text: str) -> str:
+def clean(text: str, *, expressions: bool = False) -> str:
     """Whole-text version (for checks and tests)."""
-    g = SpeechGuard()
+    g = SpeechGuard(expressions)
     return (g.feed(text) + g.flush()).strip()
 
 
-async def guarded(stream, on_cut=None):
+async def guarded(stream, on_cut=None, *, expressions: bool = False):
     """Wrap an LLM node stream (str or ChatChunk items): speak only the clean part, keep tool calls."""
-    guard = SpeechGuard()
+    guard = SpeechGuard(expressions)
     async for chunk in stream:
         if isinstance(chunk, str):
             out = guard.feed(chunk)

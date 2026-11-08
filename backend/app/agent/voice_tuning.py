@@ -36,9 +36,10 @@ def voice_tuning(raw: dict | None) -> dict:
         (str(p.get("word", "")).strip(), str(p.get("say", "")).strip())
         for p in (raw.get("pronunciations") or []) if isinstance(p, dict)
     ]
+    from app.agent.expressions import default_emotion
     return {
         "volume": round(_clamp(raw.get("volume"), 0.5, 2.0, 1.0), 2),
-        "emotion": TONES.get(str(raw.get("tone") or "").lower()),
+        "emotion": default_emotion(raw) or TONES.get(str(raw.get("tone") or "").lower()),
         "min_delay": round(0.95 - 0.8 * r, 2),           # 0.95 s … 0.15 s
         "max_delay": round(4.0 - 2.0 * r, 2),            # 4.0 s … 2.0 s
         "min_duration": round(1.1 - 0.8 * i, 2),         # 1.1 s … 0.3 s of speech
@@ -67,9 +68,16 @@ def apply_pronunciations(text: str, pairs: list[tuple[str, str]], *, preceding: 
     return text
 
 
-def pronounce(pairs: list[tuple[str, str]]):
+def pronounce(pairs: list[tuple[str, str]], *, preserve_markup: bool = False):
     """Stream immediately; retain only suffixes that could be pronunciation phrases."""
     pairs = [(word, say) for word, say in pairs if word]
+
+    def apply(text, preceding):
+        if not preserve_markup:
+            return apply_pronunciations(text, pairs, preceding=preceding)
+        pieces = re.split(r'(<[^>]*>|\[laughter\])', text)
+        return ''.join(piece if index % 2 else apply_pronunciations(piece, pairs,
+            preceding=preceding if index == 0 else '>') for index, piece in enumerate(pieces))
 
     async def _transform(text: AsyncIterable[str]) -> AsyncIterable[str]:
         buffer = ""
@@ -91,9 +99,9 @@ def pronounce(pairs: list[tuple[str, str]]):
                         break
             if cut:
                 ready, buffer = buffer[:cut], buffer[cut:]
-                yield apply_pronunciations(ready, pairs, preceding=preceding)
+                yield apply(ready, preceding)
                 preceding = ready[-1]
         if buffer:
-            yield apply_pronunciations(buffer, pairs, preceding=preceding)
+            yield apply(buffer, preceding)
 
     return _transform

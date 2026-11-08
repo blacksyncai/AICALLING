@@ -365,6 +365,10 @@ def build_instructions(cfg: dict, variables: dict | None, channel: str = "phone"
     parts = [conversation_rules(cfg), ("# YOUR ROLE AND SCRIPT\n" + script) if script else "", guardrails(cfg),
              _tools_block(cfg, channel)]
 
+    from app.agent.expressions import instructions as expression_instructions
+    if channel in ("phone", "web"):
+        parts.append(expression_instructions(cfg))
+
     if isinstance(cfg.get("callback"), dict):
         parts.append(callback_brief(cfg["callback"]))
 

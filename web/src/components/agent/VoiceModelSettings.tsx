@@ -143,7 +143,8 @@ export function VoiceModelSettings({ draft, set, voices, view = "voice" }: {
               max={draft.voice_id.startsWith("elevenlabs:") ? 1.2 : 1.3} step={0.01} value={draft.voice_speed}
               onChange={(e) => set("voice_speed", Number(e.target.value))} className="w-full accent-brand-600" />
           </Field>
-          <VoiceTuningSettings value={draft.voice_tuning ?? {}} onChange={(v) => set("voice_tuning", v)} />
+          <VoiceTuningSettings value={draft.voice_tuning ?? {}} onChange={(v) => set("voice_tuning", v)}
+            supported={!draft.voice_id.includes(":")} emotions={voices?.expression_emotions ?? ["neutral", "curious", "calm", "happy", "sympathetic"]} />
           <Toggle checked={draft.background_audio} onChange={(v) => set("background_audio", v)}
             label="Office background ambience" description="Plays subtle call-center noise on phone calls so the agent sounds like it's on a sales floor." />
         </div>
@@ -166,7 +167,7 @@ function Slider({ label, hint, value, min, max, step, format, onChange }: {
 }
 
 /** Volume, turn-taking and pronunciations — all applied by the voice worker on the next call. */
-function VoiceTuningSettings({ value, onChange }: { value: VoiceTuning; onChange: (v: VoiceTuning) => void }) {
+function VoiceTuningSettings({ value, onChange, supported, emotions }: { value: VoiceTuning; onChange: (v: VoiceTuning) => void; supported: boolean; emotions: string[] }) {
   const t = { ...TUNING_DEFAULTS, ...value };
   const pron = value.pronunciations ?? [];
   const patch = (p: Partial<VoiceTuning>) => onChange({ ...value, ...p });
@@ -175,6 +176,21 @@ function VoiceTuningSettings({ value, onChange }: { value: VoiceTuning; onChange
   return (
     <div className="space-y-5 rounded-xl border border-zinc-200 p-4">
       <div className="text-sm font-medium text-zinc-800">Voice tuning</div>
+      {supported ? (
+        <div className="space-y-3">
+          <Toggle checked={value.expressions_enabled ?? false} onChange={(v) => patch({ expressions_enabled: v })}
+            label="Cartesia expression controls" description="Let the agent use occasional emotions, short pauses and optional laughter. Voice support and results vary; test in the browser first." />
+          {value.expressions_enabled && <>
+            <Field label="Default emotion" hint="Applies to each utterance. Inline emotion controls can override it.">
+              <Select aria-label="Default emotion" value={value.default_emotion ?? ""} onChange={(e) => patch({ default_emotion: e.target.value })}>
+                <option value="">Use existing tone</option>
+                {emotions.map((emotion) => <option key={emotion} value={emotion}>{emotion.charAt(0).toUpperCase() + emotion.slice(1)}</option>)}
+              </Select>
+            </Field>
+            <p className="text-xs text-zinc-500">In the script, guide delivery with {`<emotion value="curious"/>`}, {`<break time="200ms"/>`} or [laughter]. Keep directions separate from spoken words. An identity question must wait for the recipient’s reply.</p>
+          </>}
+        </div>
+      ) : <p className="text-xs text-zinc-500">Cartesia expression controls apply to direct Cartesia voices. Controls are removed for this provider.</p>}
       <Field label="Tone" hint="How the voice delivers every line. Natural leaves it to the voice.">
         <Select value={value.tone ?? ""} onChange={(e) => patch({ tone: e.target.value })}>
           <option value="">Natural</option>

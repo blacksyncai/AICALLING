@@ -56,6 +56,8 @@ export interface Agent {
 }
 
 export interface VoiceTuning {
+  expressions_enabled?: boolean;
+  default_emotion?: string;
   voicemail_min_connected_seconds?: number;
   volume?: number;
   /** Delivery preset: "" (natural) | warm | upbeat | calm | friendly | empathetic. */
@@ -307,6 +309,7 @@ export interface VoiceCategory {
 }
 
 export interface VoiceCatalog {
+  expression_emotions?: string[];
   source: "cartesia" | "fallback" | string;
   voices: Voice[];
   featured?: Voice[];

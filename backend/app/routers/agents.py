@@ -53,6 +53,17 @@ class VoiceTuning(BaseModel):
     voicemail_min_connected_seconds: float = Field(default=8.0, ge=0, le=60)  # the worker never goes under 8
     volume: float = Field(default=1.0, ge=0.5, le=2)
     tone: str = Field(default="", pattern="^(|warm|upbeat|calm|friendly|empathetic)$")
+    expressions_enabled: bool = False
+    default_emotion: str = ""
+
+    @field_validator("default_emotion")
+    @classmethod
+    def _emotion(cls, value: str) -> str:
+        from app.agent.expressions import EMOTIONS
+        if value and value not in EMOTIONS:
+            raise ValueError("Choose a supported Cartesia emotion")
+        return value
+
     # 0–1. Defaults reproduce the worker's standard turn-taking.
     responsiveness: float = Field(default=0.75, ge=0, le=1)
     interruption: float = Field(default=0.75, ge=0, le=1)

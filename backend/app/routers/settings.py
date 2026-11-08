@@ -12,7 +12,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.agent.models import LANGUAGES, RUNTIME_DEFAULT_MODEL, model_catalog, model_groups
 from app.agent import inference_tts
@@ -198,8 +198,10 @@ def _categories(voices: list[dict]) -> list[dict]:
 
 
 def _voices_response(source: str, voices: list[dict], message: str | None = None) -> dict:
+    from app.agent.expressions import EMOTIONS
     by_id = {v["id"]: v for v in voices}
     return {
+        "expression_emotions": list(EMOTIONS),
         "source": source,
         "voices": voices,
         "featured": [by_id[f["id"]] for f in FEATURED_VOICES if f["id"] in by_id],
@@ -292,6 +294,17 @@ class VoicePreview(BaseModel):
     text: str = Field(default="Hi, this is your AI agent. How does this voice sound?", max_length=300)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     language: str = "en"
+    expressions_enabled: bool = False
+    default_emotion: str = ""
+
+    @field_validator("default_emotion")
+    @classmethod
+    def _emotion(cls, value):
+        from app.agent.expressions import EMOTIONS
+        if value and value not in EMOTIONS:
+            raise ValueError("Choose a supported Cartesia emotion")
+        return value
+
     tone: str = ""  # warm | upbeat | calm | friendly | empathetic (see voice_tuning.TONES)
 
 
@@ -332,6 +345,9 @@ async def _preview_mistral(voice_id: str, text: str) -> Response:
 async def preview_voice(body: VoicePreview):
     """Speak a short line in the chosen voice (WAV) so it can be auditioned in the editor."""
     voice_id = body.voice_id.strip()
+    from app.agent.expressions import clean_markup, enabled_for
+    enabled = enabled_for({"voice_id": voice_id, "voice_tuning": body.model_dump()})
+    body = body.model_copy(update={"text": clean_markup(body.text, enabled)})
     if elevenlabs_tts.is_elevenlabs_voice(voice_id):
         if not settings.elevenlabs_api_key:
             raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
@@ -372,7 +388,10 @@ async def preview_voice(body: VoicePreview):
     lang = body.language if body.language not in ("multi", "") else "en"
     from app.agent.voice_tuning import TONES
 
-    emotion = TONES.get(body.tone.lower()) if body.tone else None
+    emotion = (body.default_emotion if enabled and body.default_emotion else
+               TONES.get(body.tone.lower()) if body.tone else None)
+    if enabled and emotion:
+        emotion = emotion.lower()
     key = (voice_id, round(body.speed, 2), lang, body.text, emotion)
     if key in _preview_cache:
         _preview_cache.move_to_end(key)
