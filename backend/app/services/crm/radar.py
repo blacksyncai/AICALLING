@@ -156,6 +156,6 @@ def merge(previous: dict, batch: dict) -> dict:
         before = (old.get(pl["key"]) or {}).get("items") or []
         seen = {i["external_id"] for i in before}
         items = before + [i for i in pl["items"] if i["external_id"] not in seen]
-        items.sort(key=lambda x: x["last_touch"], reverse=(pl["key"] == "hot"))
+        items.sort(key=lambda x: x.get("last_touch") or "", reverse=(pl["key"] == "hot"))
         out["plays"].append({**pl, "items": items, "count": len(items)})
     return out

@@ -80,8 +80,9 @@ def test_radar_lists_all_crms_and_loads_real_contacts(client, future_connection)
     assert response.status_code == 200, response.text
     result = response.json()
     assert result["discovery_mode"] == "contacts" and result["next"] is None
-    assert [r["external_id"] for r in result["plays"][0]["items"]] == ["a"]
-    assert result["plays"][0]["items"][0]["calls"] is None
-    assert result["plays"][0]["items"][0]["last_touch"] is None
+    items = [item for play in result["plays"] for item in play["items"]]
+    assert [r["external_id"] for r in items] == ["a"]
+    assert next(p for p in result["plays"] if p["key"] == "unknown")["count"] == 1
+    assert items[0]["calls"] is None and items[0]["last_touch"] is None
     assert client.post("/api/radar/realgeeks/scan").status_code == 400
     assert client.post(f"/api/radar/{future_connection.key}/scan?continue_from={result['id']}").status_code == 400

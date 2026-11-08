@@ -142,13 +142,14 @@ interface Play {
   count: number;
   items: Item[];
 }
-type Depth = "quick" | "recent" | "old" | "segment";
+type Depth = "quick" | "recent" | "old" | "segment" | "contacts";
 interface Scan {
   id: string;
   quick?: boolean;
   depth?: Depth;
   next?: unknown;
   batches?: number;
+  warnings?: string[];
   segment?: { kind: string; value: string; label: string };
   provider: string;
   created_at: string;
@@ -165,6 +166,7 @@ interface Crm {
 }
 
 const DEPTH_LABEL: Record<Depth, string> = {
+  contacts: "contact activity scan",
   quick: "quick scan",
   recent: "full scan",
   old: "old-lead dig",
@@ -192,6 +194,8 @@ const TONE: Record<string, string> = {
   past_client: "from-emerald-500/15 text-emerald-600",
   revive: "from-zinc-500/15 text-zinc-600",
   segment: "from-indigo-500/15 text-indigo-600",
+  contacted: "from-blue-500/15 text-blue-600",
+  unknown: "from-zinc-500/15 text-zinc-600",
 };
 
 export default function RadarPage() {
@@ -313,9 +317,12 @@ export default function RadarPage() {
               <RefreshCw className="h-4 w-4" /> Full scan
             </Button>
             </> : discoveryMode === "contacts" ? (
-              <Button variant="primary" loading={scanning} onClick={() => void runScan("recent")}>
-                <RefreshCw className="h-4 w-4" /> Load contacts
-              </Button>
+              <>
+                <Button disabled={scanning} onClick={() => setListOpen(v => !v)}><Layers className="h-4 w-4" /> Open a list</Button>
+                <Button variant="primary" loading={scanning} onClick={() => void runScan("recent")}>
+                  <RefreshCw className="h-4 w-4" /> Scan contacts
+                </Button>
+              </>
             ) : (
               <Link href={`/integrations/${crm.provider}`}><Button>Manage connection</Button></Link>
             )}
@@ -416,7 +423,7 @@ export default function RadarPage() {
       {radarNavigation}
       <div className="space-y-6">
         {discoveryMode === "unavailable" && <Notice tone="amber">{crm?.capabilities?.reason}</Notice>}
-        {discoveryMode === "contacts" && <Notice tone="blue">Load up to 500 contacts from {crm?.name}, select who to call, then create a campaign or add to an existing one. Activity history is not available in this view, so these contacts are not ranked as hot or never called.</Notice>}
+        {discoveryMode === "contacts" && <Notice tone="blue">Scan up to 500 contacts using available CRM details and saved BlackSync phone activity. Contacts without verified history stay under “Needs activity data,” not “Never contacted.”</Notice>}
         <div className="flex flex-wrap items-center gap-3">
           {data.crms.length > 1 && (
             <Select
@@ -438,6 +445,8 @@ export default function RadarPage() {
               {SEG_LABEL[scan.segment.kind as SegKind]?.toLowerCase() ?? "list"} “{scan.segment.label}” · opened{" "}
               {timeAgo(scan.created_at)}
             </p>
+          ) : scan && discoveryMode === "contacts" ? (
+            <p className="text-sm text-zinc-600">{scan.scanned.toLocaleString()} contacts scanned · grouped by available activity · {timeAgo(scan.created_at)}</p>
           ) : scan ? (
             <p className="text-sm text-zinc-600">
               <span className="font-semibold text-zinc-900">
@@ -465,7 +474,7 @@ export default function RadarPage() {
             </Button>
           ) : null}
         </div>
-        {listOpen && discoveryMode === "activity" && (
+        {listOpen && discoveryMode !== "unavailable" && (
           <Card className="flex flex-wrap items-end gap-3 p-4">
             <div className="min-w-[150px]">
               <div className="mb-1 text-xs font-medium text-zinc-600">List type</div>
@@ -490,10 +499,11 @@ export default function RadarPage() {
             {segErr && <p className="w-full text-xs text-red-600">{(segErr as Error).message}</p>}
           </Card>
         )}
+        {scan?.warnings?.map((warning, index) => <Notice key={index} tone="amber">{warning}</Notice>)}
         {scanErr && <Notice tone="red">{scanErr}</Notice>}
         {scanning && !scan && (
           <Card className="flex items-center gap-3 p-6 text-sm text-zinc-600">
-            <Spinner /> Reading leads, deals, calls, emails and texts…
+            <Spinner /> Reading available CRM details and call activity…
           </Card>
         )}
         {scan && crm && (
@@ -507,12 +517,12 @@ export default function RadarPage() {
                   scanId={scan.id}
                   crm={crm}
                   agents={agents ?? []}
-                  showAll={scan.segment?.kind === "deal"}
+                  showAll={!scan.segment || scan.segment.kind === "deal"}
                 />
               ))}
             {total === 0 && (
               <Notice tone="green">
-                {scan.segment ? "Nobody in this list has a phone number to call." : "Nothing urgent — everyone has been worked recently."}
+                {scan.segment || discoveryMode === "contacts" ? "No eligible contacts with phone numbers were found." : "Nothing urgent — everyone has been worked recently."}
               </Notice>
             )}
           </div>

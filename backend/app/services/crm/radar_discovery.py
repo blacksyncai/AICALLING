@@ -6,14 +6,18 @@ from app.services.contacts import normalize_phone
 CONTACT_LIMIT = 500
 
 
+def can_read_contacts(provider: Provider) -> bool:
+    return bool(provider.can_import and type(provider).list_contacts is not Provider.list_contacts)
+
+
 def capabilities(provider: Provider) -> dict:
     activity = bool(provider.can_scan)
-    contacts = bool(provider.can_import and type(provider).list_contacts is not Provider.list_contacts)
+    contacts = can_read_contacts(provider)
     mode = "activity" if activity else "contacts" if contacts else "unavailable"
     return {
         "mode": mode,
         "can_scan": activity or contacts,
-        "can_segment": bool(getattr(provider, "can_segment", False)),
+        "can_segment": bool(getattr(provider, "can_segment", False) or contacts),
         "can_install": bool(provider.can_install),
         "can_map_fields": bool(provider.can_map_fields),
         "reason": "" if activity or contacts else (
@@ -23,9 +27,9 @@ def capabilities(provider: Provider) -> dict:
     }
 
 
-async def contact_signals(provider: Provider, http, config: dict) -> list[Signals]:
+async def contact_signals(provider: Provider, http, config: dict, *, filters=None) -> list[Signals]:
     """Use the real adapter read API, without inventing activity or call-history signals."""
-    contacts = await provider.list_contacts(http, config, limit=CONTACT_LIMIT)
+    contacts = await provider.list_contacts(http, config, limit=CONTACT_LIMIT, filters=filters)
     out, seen = [], set()
     for c in contacts[:CONTACT_LIMIT]:
         phone = normalize_phone(c.phone)

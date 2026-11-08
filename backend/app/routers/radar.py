@@ -17,7 +17,7 @@ from app.models.lead import Lead
 from app.services import entitlements
 from app.services.auth import DbDep, ManagerDep
 from app.services.contacts import normalize_phone
-from app.services.crm import radar, sync, radar_discovery
+from app.services.crm import radar, sync, radar_discovery, radar_lists, radar_history
 
 log = structlog.get_logger(__name__)
 from app.services.crm.http import CrmError
@@ -160,26 +160,21 @@ async def scan(key: str, ctx: ManagerDep, db: DbDep, quick: bool = False, depth:
     for s in signals:
         if normalize_phone(s.phone) in dnc:
             s.dnc = True
-    batch = (radar.build_segment(signals, f"{p.name} contacts",
-             "Contacts loaded from your CRM. Activity and call history were not read; review who to call.")
-             if contacts_only else radar.build_plays(signals))
     if contacts_only:
-        for play in batch["plays"]:
-            for item in play["items"]:
-                item["last_touch"] = None  # Contact creation is not an observed CRM activity.
+        await radar_history.enrich(db, ctx.org.id, key, signals)
+    batch = radar_history.build(signals)
     result = radar.merge(previous.result, batch) if previous else batch
     result.update(quick=depth == "quick", depth=depth, next=state.get("next"),
-                  batches=(previous.result.get("batches", 1) + 1) if previous else 1)
+                  batches=(previous.result.get("batches", 1) + 1) if previous else 1, warnings=state.get("warnings", []))
     if contacts_only:
-        result.update(depth="contacts", segment={"kind": "list", "value": "contacts", "label": f"{p.name} contacts"},
-                      discovery_mode="contacts", contact_limit=radar_discovery.CONTACT_LIMIT, next=None)
+        result.update(depth="contacts", discovery_mode="contacts", contact_limit=radar_discovery.CONTACT_LIMIT, next=None)
     row = CrmScan(org_id=ctx.org.id, connection_id=conn.id, result=result)
     db.add(row)
     found = sum(pl["count"] for pl in batch["plays"])
     log.info("radar_scan", provider=key, depth=depth, quick=depth == "quick", scanned=batch["scanned"],
-             worth_calling=found, signals=len(signals), batches=(previous.result.get("batches", 1) + 1) if previous else 1)
+             worth_calling=found, signals=len(signals), batches=(previous.result.get("batches", 1) + 1) if previous else 1, warnings=state.get("warnings", []))
     message = (f"Radar loaded {batch['scanned']} contacts for review; {found} available after suppression checks."
-               if contacts_only else f"Radar {depth} scan: {batch['scanned']} contacts scanned, {found} worth calling now.")
+               if contacts_only else f"Radar {depth} scan: {batch['scanned']} contacts scanned, {found} grouped contacts.")
     await sync.add_log(db, conn, "import", "ok", message)
     await db.commit()
     await db.refresh(row)
@@ -192,11 +187,10 @@ async def segments(key: str, ctx: ManagerDep, db: DbDep):
     await _require_radar(ctx, db)
     conn = await _conn(db, ctx.org.id, key)
     p = PROVIDERS[key]
-    if not getattr(p, "can_segment", False):
-        return {"pond": [], "source": [], "stage": [], "deal": [], "list": []}
     _, http = sync.http_for(conn)
     try:
-        return await p.segment_options(http, conn.config or {})
+        options, _ = await radar_lists.catalog(p, http, conn.config or {})
+        return options
     except CrmError as exc:
         raise HTTPException(status_code=400, detail=f"Couldn't read {p.name}: {exc}") from exc
 
@@ -213,11 +207,9 @@ async def open_segment(key: str, body: SegmentIn, ctx: ManagerDep, db: DbDep):
     await _require_radar(ctx, db)
     conn = await _conn(db, ctx.org.id, key)
     p = PROVIDERS[key]
-    if not getattr(p, "can_segment", False):
-        raise HTTPException(status_code=400, detail=f"Opening lists isn't supported for {p.name} yet.")
     try:
         _, http = sync.http_for(conn)
-        signals = await p.segment_signals(http, conn.config or {}, body.kind, body.value)
+        signals = await radar_lists.read(p, http, conn.config or {}, body.kind, body.value)
     except CrmError as exc:
         raise HTTPException(status_code=400, detail=f"Couldn't read {p.name}: {exc}") from exc
     dnc = {normalize_phone(x) for x in (await db.execute(select(Lead.phone).where(

@@ -3549,6 +3549,21 @@ class TotalExpert(Provider):
 
 
 class BlackSyncCloud(Provider):
+    can_scan = True
+    can_segment = True
+
+    async def scan_signals(self, http, config, limit=500, quick=False, depth="", cursor=None, state=None):
+        from app.services.crm import cloud_radar
+        return await cloud_radar.scan(self, http, config, limit=limit, state=state, depth=depth or ("quick" if quick else "recent"), cursor=cursor)
+
+    async def segment_options(self, http, config):
+        from app.services.crm import cloud_radar
+        return await cloud_radar.options(self, http, config)
+
+    async def segment_signals(self, http, config, kind, value, cap=500):
+        from app.services.crm import cloud_radar
+        return await cloud_radar.segment(self, http, config, kind, value)
+
     key, name = "blacksync_cloud", "BlackSync Cloud"
     description = "Sync completed calls, summaries and transcripts to your BlackSync Cloud CRM contacts."
     can_new_leads = False
