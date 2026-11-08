@@ -179,7 +179,7 @@ function VoiceTuningSettings({ value, onChange, supported, emotions }: { value: 
       {supported ? (
         <div className="space-y-3">
           <Toggle checked={value.expressions_enabled ?? false} onChange={(v) => patch({ expressions_enabled: v })}
-            label="Cartesia expression controls" description="Let the agent use occasional emotions, short pauses and optional laughter. Voice support and results vary; test in the browser first." />
+            label="Voice expressions" description="Let the agent use occasional emotions, short pauses and optional laughter. Voice support and results vary; test in the browser first." />
           {value.expressions_enabled && <>
             <Field label="Default emotion" hint="Applies to each utterance. Inline emotion controls can override it.">
               <Select aria-label="Default emotion" value={value.default_emotion ?? ""} onChange={(e) => patch({ default_emotion: e.target.value })}>
@@ -190,7 +190,7 @@ function VoiceTuningSettings({ value, onChange, supported, emotions }: { value: 
             <p className="text-xs text-zinc-500">In the script, guide delivery with {`<emotion value="curious"/>`}, {`<break time="200ms"/>`} or [laughter]. Keep directions separate from spoken words. An identity question must wait for the recipient’s reply.</p>
           </>}
         </div>
-      ) : <p className="text-xs text-zinc-500">Cartesia expression controls apply to direct Cartesia voices. Controls are removed for this provider.</p>}
+      ) : <p className="text-xs text-zinc-500">Voice expressions aren’t available for this voice. Expression tags are removed automatically.</p>}
       <Field label="Tone" hint="How the voice delivers every line. Natural leaves it to the voice.">
         <Select value={value.tone ?? ""} onChange={(e) => patch({ tone: e.target.value })}>
           <option value="">Natural</option>

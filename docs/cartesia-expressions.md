@@ -1,6 +1,6 @@
 # Opt-in Cartesia expressions
 
-Agent → Voice → Voice settings → Cartesia expression controls. Disabled by default. Default emotion applies to every generation; leaving it empty retains the existing Tone setting. A line's leading emotion tag can override delivery. Use a neutral tag to explicitly return to neutral delivery within the same reply. Test the selected voice before relying on a particular emotion.
+Agent → Voice → Voice settings → Voice expressions. Disabled by default. Default emotion applies to every generation; leaving it empty retains the existing Tone setting. A line's leading emotion tag can override delivery. Use a neutral tag to explicitly return to neutral delivery within the same reply. Test the selected voice before relying on a particular emotion.
 
 ```text
 Opening:
