@@ -6,6 +6,7 @@ import { post } from "@/lib/api";
 import type { ChatTurn, ToolEvent } from "@/lib/types";
 import { cn, humanize, toolLabel, outcomeLabel } from "@/lib/utils";
 import { Button, Notice } from "../ui";
+import { parseExpressions } from "@/lib/prompt-expressions";
 import { AiOrb } from "../ui/ai-orb";
 
 type Item = ChatTurn | { role: "tool"; event: ToolEvent };
@@ -105,7 +106,7 @@ export function ChatPanel({
                   m.role === "user" ? "rounded-br-sm bg-brand-600 text-white" : "rounded-bl-sm border border-zinc-200 bg-white text-zinc-800",
                 )}
               >
-                {m.content}
+                {m.role === "assistant" ? parseExpressions(m.content).text : m.content}
               </div>
             </div>
           ),

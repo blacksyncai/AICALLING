@@ -47,7 +47,7 @@ export const ExpressionTextarea = forwardRef<HTMLTextAreaElement, Props>(functio
   let cursor = 0;
   for (const range of ranges.filter((r) => r.kind === "emotion")) {
     if (range.start > cursor) pieces.push(text.slice(cursor, range.start));
-    pieces.push(<mark key={range.marker} className={supported && enabled ? "rounded-sm bg-orange-100 text-inherit" : "rounded-sm bg-zinc-100 text-inherit"}>{text.slice(range.start, range.end)}</mark>);
+    pieces.push(<mark key={range.marker} className={supported && enabled ? "rounded-sm bg-orange-100 text-zinc-900!" : "rounded-sm bg-zinc-100 text-zinc-900!"}>{text.slice(range.start, range.end)}</mark>);
     cursor = range.end;
   }
   pieces.push(text.slice(cursor));
@@ -70,9 +70,9 @@ export const ExpressionTextarea = forwardRef<HTMLTextAreaElement, Props>(functio
           {EXPRESSION_CHOICES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </Select>
       </div>
-      <div className="relative">
+      <div className="relative rounded-lg bg-white">
         <div aria-hidden="true" ref={overlay} className="pointer-events-none absolute inset-px overflow-hidden rounded-lg">
-          <pre ref={content} className="m-0 whitespace-pre-wrap break-words p-3 font-mono text-[13px] leading-6 text-zinc-900">{pieces}{"\u200b"}</pre>
+          <pre ref={content} className="m-0 whitespace-pre-wrap break-words p-3 font-mono text-[13px] leading-6 text-zinc-900!">{pieces}{"\u200b"}</pre>
         </div>
         <textarea {...rest} ref={setRef} value={text} spellCheck={false}
           className={cn("relative block w-full resize-y rounded-lg border border-zinc-200 bg-transparent p-3 font-mono text-[13px] leading-6 text-transparent caret-zinc-900 shadow-xs selection:bg-brand-200/60 placeholder:text-zinc-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10", className)}
