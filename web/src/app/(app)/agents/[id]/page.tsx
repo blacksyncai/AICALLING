@@ -19,6 +19,8 @@ import { assemblePrompt, humanizeKey } from "@/components/agent-editor/prompt";
 import { CheckList, ReadinessCard, type Readiness } from "@/components/agent-editor/ReadinessCard";
 import { VariableWizard } from "@/components/crm/VariableWizard";
 import { QualityPanel } from "@/components/agent-editor/QualityPanel";
+import { ExpressionTextarea } from "@/components/agent-editor/ExpressionTextarea";
+import { editExpressionText, parseExpressions } from "@/lib/prompt-expressions";
 import { SectionsEditor } from "@/components/agent-editor/SectionsEditor";
 import { VersionHistory } from "@/components/agent-editor/VersionHistory";
 import { sectionOrder } from "@/lib/builder";
@@ -200,7 +202,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
     const token = `{{${v}}}`;
     if (!el || !draft) return set("system_prompt", `${draft?.system_prompt ?? ""}${token}`);
     const { selectionStart: s, selectionEnd: e } = el;
-    set("system_prompt", draft.system_prompt.slice(0, s) + token + draft.system_prompt.slice(e));
+    const visible = parseExpressions(draft.system_prompt).text;
+    set("system_prompt", editExpressionText(draft.system_prompt, visible.slice(0, s) + token + visible.slice(e)));
     requestAnimationFrame(() => {
       el.focus();
       el.setSelectionRange(s + token.length, s + token.length);
@@ -212,6 +215,13 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
     const text = await file.text();
     set("knowledge_base", `${draft!.knowledge_base ? `${draft!.knowledge_base}\n\n` : ""}## ${file.name}\n${text}`);
     toast(`Added ${file.name} to knowledge`);
+  }
+
+  const expressionSupported = voices?.voices.find((v) => v.id === draft.voice_id)?.voice_expressions_supported ??
+    (!draft.voice_id.includes(":") || /^lkcartesia:[A-Za-z0-9_-]{4,64}$/.test(draft.voice_id));
+  function enablePromptExpressions() {
+    setDraft((current) => current ? { ...current, voice_tuning: { ...current.voice_tuning, expressions_enabled: true,
+      expression_mode: current.voice_tuning?.expressions_enabled ? (current.voice_tuning.expression_mode ?? "script") : "script" } } : current);
   }
 
   const caps = status?.capabilities;
@@ -384,7 +394,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               </div>
               <Field label="First message" hint="Spoken word-for-word, all in one go, as soon as the call connects — so if it asks a question, put the question last. Leave empty to let the agent improvise.">
                 <p className="mb-2 text-sm font-semibold text-[#ff3333]">We suggest leaving the First message section blank for outbound agents.</p>
-                <Textarea rows={2} value={draft.first_message} onChange={(e) => set("first_message", e.target.value)} />
+                <ExpressionTextarea rows={2} aria-label="First message" value={draft.first_message}
+                  onTextChange={(value) => set("first_message", value)} supported={expressionSupported} enabled={!!draft.voice_tuning?.expressions_enabled} onExpressionAdded={enablePromptExpressions} />
               </Field>
               {crmProvider && /\{\{/.test(draft.first_message) && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-brand-50 px-4 py-3 text-sm">
@@ -434,7 +445,8 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
               {useSections && builderSections ? (
                 <div>
                   {builder?.quality && <QualityPanel quality={builder.quality} />}
-                  <SectionsEditor agentId={id} sections={builderSections} order={order} onChange={setSectionText} />
+                  <SectionsEditor agentId={id} sections={builderSections} order={order} onChange={setSectionText}
+                    expressionSupported={expressionSupported} expressionsEnabled={!!draft.voice_tuning?.expressions_enabled} onExpressionAdded={enablePromptExpressions} />
                   <p className="mt-1.5 text-xs text-zinc-500">
                     Use lead variables like <code>{"{{name}}"}</code> or <code>{"{{company}}"}</code> anywhere — they&apos;re filled from each lead.{" "}
                     {draft.system_prompt.length.toLocaleString()} chars
@@ -465,12 +477,10 @@ export default function AgentEditorPage({ params }: { params: Promise<{ id: stri
                     ))}
                   </div>
                 </div>
-                <Textarea
-                  ref={promptRef}
-                  rows={22}
-                  value={draft.system_prompt}
-                  onChange={(e) => set("system_prompt", e.target.value)}
-                  className="font-mono text-[13px]"
+                <ExpressionTextarea
+                  ref={promptRef} rows={22} aria-label="System prompt"
+                  value={draft.system_prompt} onTextChange={(value) => set("system_prompt", value)}
+                  supported={expressionSupported} enabled={!!draft.voice_tuning?.expressions_enabled} onExpressionAdded={enablePromptExpressions}
                 />
                 <p className="mt-1 text-xs text-zinc-500">
                   Variables are filled from each lead (any extra CSV column works too, e.g. <code>{"{{city}}"}</code>). {draft.system_prompt.length.toLocaleString()} chars

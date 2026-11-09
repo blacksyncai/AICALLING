@@ -1,10 +1,11 @@
 "use client";
 
 import { Check, ChevronRight, RotateCcw, Sparkles, X } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { useState } from "react";
 import { Button, Textarea } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { post } from "@/lib/api";
+import { ExpressionTextarea } from "./ExpressionTextarea";
 import { cn } from "@/lib/utils";
 import { DiffView } from "./DiffView";
 import { countWords, type SectionOrder } from "./prompt";
@@ -13,18 +14,6 @@ import { VoiceInput } from "@/components/MicButton";
 type RegenState = { asking: boolean; instruction: string; loading: boolean; proposal: string | null };
 const IDLE: RegenState = { asking: false, instruction: "", loading: false, proposal: null };
 
-/** Textarea that grows with its content (capped at most of the viewport, then scrolls). */
-function AutoTextarea(props: ComponentProps<typeof Textarea>) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + 2}px`;
-  }, [props.value]);
-  return <Textarea ref={ref} {...props} className={cn("max-h-[70vh] min-h-28 resize-y", props.className)} />;
-}
-
 /** The AI-built script as labelled, collapsible sections (in the agent's order), each with "Regenerate". */
 export function SectionsEditor({
   agentId,
@@ -32,12 +21,18 @@ export function SectionsEditor({
   order,
   onChange,
   beforeRegenerate,
+  expressionSupported = false,
+  expressionsEnabled = false,
+  onExpressionAdded,
 }: {
   agentId: string;
   sections: Record<string, string>;
   order: SectionOrder;
   onChange: (key: string, text: string) => void;
   beforeRegenerate?: () => Promise<boolean>;
+  expressionSupported?: boolean;
+  expressionsEnabled?: boolean;
+  onExpressionAdded?: () => void;
 }) {
   const toast = useToast();
   const [open, setOpen] = useState<Record<string, boolean>>({ identity: true });
@@ -163,7 +158,8 @@ export function SectionsEditor({
                       </div>
                     </div>
                   ) : (
-                    <AutoTextarea value={text} onChange={(e) => onChange(key, e.target.value)} rows={6} className="text-[13px]" aria-label={label} />
+                    <ExpressionTextarea value={text} onTextChange={(value) => onChange(key, value)} supported={expressionSupported} enabled={expressionsEnabled}
+                      onExpressionAdded={onExpressionAdded} autoGrow rows={6} className="max-h-[70vh] min-h-28" aria-label={label} />
                   )}
                 </div>
               )}

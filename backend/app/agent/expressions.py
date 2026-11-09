@@ -236,13 +236,18 @@ def instructions(cfg):
                     + ('\nNever generate [laughter]. Laughter is disabled. ' if not allows_laughter(cfg) else
                        '\nLaughter is optional only when the caller’s lighthearted response makes it appropriate, at most once. '))
     return guidance + ('# OPTIONAL VOCAL DELIVERY (controls, never spoken instructions)\n'
-            'Speak naturally. Occasionally prefix an utterance with <emotion value="curious"/> or '
-            '<emotion value="calm"/> to guide delivery. Supported emotions: ' + ', '.join(EMOTIONS) + '. '
-            'Place emotion controls at utterance starts; avoid mid-sentence changes. '
-            'Use <break time="200ms"/> for an occasional brief pause (max 2000ms each, 3000ms total). '
-            + ('Only use [laughter] if the conversation genuinely calls for laughter, at most once per turn; '
-               'never add it by default. ' if allows_laughter(cfg) else 'Never generate [laughter]; laughter is disabled. ')
+            + ('Speak naturally. Choose occasional expression controls where appropriate. ' if automatic else
+               'Speak naturally. Only use delivery controls explicitly marked in the script; do not add emotions or pauses elsewhere. ')
+            + 'Emotion syntax includes <emotion value="curious"/> or <emotion value="calm"/>. '
+            'Supported emotions: ' + ', '.join(EMOTIONS) + '. '
+            'Place automatic emotion controls at utterance starts; keep explicitly marked passages scoped as written. '
+            'Pause syntax is <break time="200ms"/> (max 2000ms each, 3000ms total per reply). '
+            + (('Only use [laughter] if the conversation genuinely calls for laughter, at most once per turn; '
+                'never add it by default. ' if automatic else 'Only use [laughter] where explicitly marked in the script, at most once. ')
+               if allows_laughter(cfg) else 'Never generate [laughter]; laughter is disabled. ')
             + 'Do not repeatedly insert fillers such as umm. '
+            'Explicit delivery controls in the script override automatic choices for the marked passage. '
+            'When speaking that passage, preserve its chosen controls and return to the indicated baseline afterward. '
             'All other script directions are instructions, not words to say. '
             'If your opening asks an identity question, say only that question, then wait for the recipient. '
             'Continue the introduction in a separate reply after their answer; a pause tag is not a user turn. '
