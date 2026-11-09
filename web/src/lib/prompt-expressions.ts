@@ -2,13 +2,16 @@
 export type ExpressionMarker = { offset: number; kind: "emotion" | "break"; value: string; raw: string };
 export type ExpressionRange = { marker: number; start: number; end: number; label: string; kind: "emotion" | "break" };
 
-const EMOTIONS = new Set(("neutral happy excited enthusiastic elated euphoric triumphant amazed surprised flirtatious curious content peaceful serene calm grateful affectionate trust sympathetic anticipation mysterious angry mad outraged frustrated agitated threatened disgusted contempt envious sarcastic ironic sad dejected melancholic disappointed hurt guilty bored tired rejected nostalgic wistful apologetic hesitant insecure confused resigned anxious panicked alarmed scared proud confident distant skeptical contemplative determined").split(" "));
+export const EXPRESSION_EMOTIONS = ("neutral happy excited enthusiastic elated euphoric triumphant amazed surprised flirtatious curious content peaceful serene calm grateful affectionate trust sympathetic anticipation mysterious angry mad outraged frustrated agitated threatened disgusted contempt envious sarcastic ironic sad dejected melancholic disappointed hurt guilty bored tired rejected nostalgic wistful apologetic hesitant insecure confused resigned anxious panicked alarmed scared proud confident distant skeptical contemplative determined").split(" ");
+const EMOTIONS = new Set(EXPRESSION_EMOTIONS);
 const LABELS: Record<string, string> = { content: "Warm", sympathetic: "Reassuring" };
-export const EXPRESSION_CHOICES = [
-  ["curious", "Curious"], ["calm", "Calm"], ["content", "Warm"], ["confident", "Confident"],
-  ["sympathetic", "Reassuring"], ["happy", "Happy"], ["neutral", "Neutral"],
+const COMMON_EMOTIONS = ["curious", "calm", "content", "confident", "sympathetic", "happy", "neutral"];
+export const EXPRESSION_CHOICES: ReadonlyArray<readonly [string, string]> = [
+  ...COMMON_EMOTIONS.map((value) => [value, expressionLabel(value)] as const),
+  ...EXPRESSION_EMOTIONS.filter((value) => !COMMON_EMOTIONS.includes(value))
+    .sort((a, b) => a.localeCompare(b)).map((value) => [value, expressionLabel(value)] as const),
   ["pause:200", "Short pause after · 200 ms"], ["pause:500", "Longer pause after · 500 ms"],
-] as const;
+];
 export function expressionLabel(value: string) { return LABELS[value] ?? value.charAt(0).toUpperCase() + value.slice(1); }
 
 export function parseExpressions(raw: string) {
