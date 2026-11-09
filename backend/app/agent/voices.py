@@ -26,11 +26,11 @@ FEATURED_VOICES: list[dict] = [
      "gender": "feminine", "description": "Live voice clone.", "clone": True},
     {"id": "fishaudio:v_SriZAPqzgffq", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
-    {"id": "67076421-33a2-4dc5-b8b3-49dfdea3ae69", "name": "Hamza · Version 1", "family": "Hamza", "tone": "Version 1",
+    {"id": "67076421-33a2-4dc5-b8b3-49dfdea3ae69", "name": "Zane · Version 1", "family": "Zane", "tone": "Version 1",
      "description": "Live voice clone.", "clone": True},
-    {"id": "124e4ac6-34ae-44da-9bf8-cb023cdfccc9", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
+    {"id": "124e4ac6-34ae-44da-9bf8-cb023cdfccc9", "name": "Zane · Version 2", "family": "Zane", "tone": "Version 2",
      "description": "Live voice clone.", "clone": True},
-    {"id": "8f6dc3f0-946b-4b34-a253-62ab2837ca02", "name": "Hamza · Version 3", "family": "Hamza", "tone": "Version 3",
+    {"id": "8f6dc3f0-946b-4b34-a253-62ab2837ca02", "name": "Zane · Version 3", "family": "Zane", "tone": "Version 3",
      "description": "Live voice clone.", "clone": True},
     {"id": "inworld:v_PmKa7bajvjhe", "name": "Kate · Version 1", "family": "Kate", "tone": "Version 1",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "inworld", "language": "en"},
@@ -128,7 +128,7 @@ FEATURED_VOICES: list[dict] = [
 
 # Voices in the Cartesia account that the picker should NOT list (owned voices are listed automatically).
 HIDDEN_VOICE_IDS = {
-    "fishaudio:v_goYxyDbAUbfP",  # Zain replaced in picker by Hamza
+    "fishaudio:v_goYxyDbAUbfP",  # Zain replaced in picker by Zane
     "95280ca0-610a-41c9-8457-1dcec809da61",  # Zain Cartesia clone
     "b77472c7-ed40-40ae-b022-2a264719d520",  # "Giovanna" (was briefly listed as Lina by mistake)
     "e26d5a55-fe5a-4f79-a8e9-ef5580e134cc",  # "lina" (Cartesia) — Leena uses the Mistral clones instead
