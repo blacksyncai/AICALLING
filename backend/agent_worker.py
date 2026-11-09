@@ -1296,9 +1296,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             log.warning("turn_detector_unavailable", error=type(exc).__name__, reason=str(exc)[:240])
             turn_detector = None
 
-    from app.agent.expressions import enabled_for, speech_text, synthesize_expressions, allows_laughter, opening_delivery
+    from app.agent.expressions import enabled_for, speech_text, synthesize_configured_expressions, ConfiguredExpressionAudio, allows_laughter, opening_delivery
     expressions_enabled = enabled_for(cfg)
     laughter_allowed = allows_laughter(cfg)
+    trace.mark("tts_expression_config", enabled=expressions_enabled,
+               mode=(cfg.get("voice_tuning") or {}).get("expression_mode") or "script")
     language = cfg.get("language") or "en"
     tuning = voice_tuning(cfg.get("voice_tuning"))
     model = cfg.get("llm_model") or "gpt-4.1-nano"
@@ -1311,17 +1313,11 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         llm_kwargs["reasoning_effort"] = reasoning_effort_for(model)
     if sends_temperature:
         llm_kwargs["temperature"] = float(cfg.get("temperature", 0.5))
-    session_kwargs = dict(
-        stt=cartesia.STT(model="ink-whisper", language=language, api_key=settings.cartesia_api_key)
-        if language in CARTESIA_STT_LANGUAGES else deepgram.STT(
-            model="nova-3", language=language if language != "multi" else "multi",
-            api_key=settings.deepgram_api_key,
-        ),
-        llm=openai.LLM(**llm_kwargs),
-        tts=make_elevenlabs_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
+    def expression_tts(emotion):
+        return (make_elevenlabs_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language)
         if is_elevenlabs_voice(voice_id) else
         make_inference_tts(voice_id, speed=float(cfg.get("voice_speed") or 1.0), language=language,
-                           emotion=tuning.get("emotion") if expressions_enabled else None,
+                           emotion=emotion if expressions_enabled else None,
                            volume=tuning["volume"] if expressions_enabled else None)
         if is_inference_voice(voice_id) else
         make_livekit_tts(voice_id) if is_mistral_voice(voice_id) and settings.mistral_api_key else cartesia_tts(
@@ -1329,10 +1325,19 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             language=language,
             speed=float(cfg.get("voice_speed") or 1.0),
             volume=tuning["volume"] if tuning["volume"] != 1.0 else None,
-            emotion=tuning.get("emotion"),
+            emotion=emotion,
             tokenizer=short_sentence_tokenizer(settings.voice_short_sentence_streaming),
             expressions_enabled=expressions_enabled,
+        ))
+
+    session_kwargs = dict(
+        stt=cartesia.STT(model="ink-whisper", language=language, api_key=settings.cartesia_api_key)
+        if language in CARTESIA_STT_LANGUAGES else deepgram.STT(
+            model="nova-3", language=language if language != "multi" else "multi",
+            api_key=settings.deepgram_api_key,
         ),
+        llm=openai.LLM(**llm_kwargs),
+        tts=expression_tts(tuning.get("emotion")),
         vad=_job_vad(ctx),
         turn_handling={
             "interruption": {
@@ -1354,6 +1359,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session_kwargs["tts_text_transforms"].append(pronounce(tuning["pronunciations"] + BUILT_IN_PRONUNCIATIONS, preserve_markup=expressions_enabled))
 
     session = AgentSession(**session_kwargs)
+    expression_audio = ConfiguredExpressionAudio(
+        session_kwargs["tts"], expression_tts, baseline=tuning.get("emotion"),
+        conn_options=lambda: session.conn_options.tts_conn_options,
+        on_generation=lambda emotion: trace.mark("tts_expression", speech=owning_speech(),
+                                                 emotion=emotion or "natural"),
+    ) if expressions_enabled else None
+    if expression_audio:
+        ctx.add_shutdown_callback(expression_audio.aclose)
     session_ref: dict = {"session": session, "dial": metadata.get("dial") or {}}
 
     # Per-turn latency: end-of-turn delay + LLM first token + TTS first audio.
@@ -1455,7 +1468,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             speech = owning_speech()
             observed_text = trace.stream(text, "tts_input", speech=speech)
             synthesize = lambda chunks: Agent.default.tts_node(self, chunks, model_settings)
-            audio = (synthesize_expressions(observed_text, synthesize, allow_laughter=laughter_allowed) if expressions_enabled else
+            audio = (synthesize_configured_expressions(observed_text, expression_audio.synthesize, baseline=tuning.get("emotion"), allow_laughter=laughter_allowed) if expression_audio else
                      synthesize(speech_text(observed_text, False)))
             async for frame in trace.stream(audio,
                                             "tts_audio", speech=speech, audio=True):

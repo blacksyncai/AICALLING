@@ -26,10 +26,12 @@ FEATURED_VOICES: list[dict] = [
      "gender": "feminine", "description": "Live voice clone.", "clone": True},
     {"id": "fishaudio:v_SriZAPqzgffq", "name": "Marissa M · Version 2", "family": "Marissa M", "tone": "Version 2",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
-    {"id": "fishaudio:v_goYxyDbAUbfP", "name": "Zain · Version 1", "family": "Zain", "tone": "Version 1",
-     "gender": "masculine", "description": "Live voice clone.", "clone": True, "provider": "fishaudio", "language": "en"},
-    {"id": "95280ca0-610a-41c9-8457-1dcec809da61", "name": "Zain · Version 2", "family": "Zain", "tone": "Version 2",
-     "gender": "masculine", "description": "Live voice clone.", "clone": True},
+    {"id": "67076421-33a2-4dc5-b8b3-49dfdea3ae69", "name": "Hamza · Version 1", "family": "Hamza", "tone": "Version 1",
+     "description": "Live voice clone.", "clone": True},
+    {"id": "124e4ac6-34ae-44da-9bf8-cb023cdfccc9", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
+     "description": "Live voice clone.", "clone": True},
+    {"id": "8f6dc3f0-946b-4b34-a253-62ab2837ca02", "name": "Hamza · Version 3", "family": "Hamza", "tone": "Version 3",
+     "description": "Live voice clone.", "clone": True},
     {"id": "inworld:v_PmKa7bajvjhe", "name": "Kate · Version 1", "family": "Kate", "tone": "Version 1",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "inworld", "language": "en"},
     {"id": "fishaudio:v_PmKa7bajvjhe", "name": "Kate · Version 2", "family": "Kate", "tone": "Version 2",
@@ -59,12 +61,6 @@ FEATURED_VOICES: list[dict] = [
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
     {"id": "mistral:01a13477-ce35-7031-84e8-71a1f7a51cbd", "name": "Leena · Version 2", "family": "Leena", "tone": "Version 2",
      "gender": "feminine", "description": "Live voice clone.", "clone": True, "provider": "mistral", "language": "en"},
-    {"id": "67076421-33a2-4dc5-b8b3-49dfdea3ae69", "name": "Hamza · Version 1", "family": "Hamza", "tone": "Version 1",
-     "description": "Live voice clone.", "clone": True},
-    {"id": "124e4ac6-34ae-44da-9bf8-cb023cdfccc9", "name": "Hamza · Version 2", "family": "Hamza", "tone": "Version 2",
-     "description": "Live voice clone.", "clone": True},
-    {"id": "8f6dc3f0-946b-4b34-a253-62ab2837ca02", "name": "Hamza · Version 3", "family": "Hamza", "tone": "Version 3",
-     "description": "Live voice clone.", "clone": True},
     {"id": "a7b6afa8-fa7f-4b0d-ba37-6cb8d8014919", "name": "Don"},
     {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "name": "Jena"},
     {"id": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", "name": "Sarah"},
@@ -132,6 +128,8 @@ FEATURED_VOICES: list[dict] = [
 
 # Voices in the Cartesia account that the picker should NOT list (owned voices are listed automatically).
 HIDDEN_VOICE_IDS = {
+    "fishaudio:v_goYxyDbAUbfP",  # Zain replaced in picker by Hamza
+    "95280ca0-610a-41c9-8457-1dcec809da61",  # Zain Cartesia clone
     "b77472c7-ed40-40ae-b022-2a264719d520",  # "Giovanna" (was briefly listed as Lina by mistake)
     "e26d5a55-fe5a-4f79-a8e9-ef5580e134cc",  # "lina" (Cartesia) — Leena uses the Mistral clones instead
     "3a5cc58b-260a-4da6-9840-4966242e109e",  # "Leena" (Cartesia) — Leena uses the Mistral clones instead

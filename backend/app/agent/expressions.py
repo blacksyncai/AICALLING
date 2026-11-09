@@ -1,6 +1,7 @@
 """Opt-in Sonic expression syntax; bounded parsing and a fresh generation per emotion change."""
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from collections.abc import AsyncIterable
@@ -187,6 +188,99 @@ async def synthesize_expressions(text, synthesize, *, allow_laughter=True):
                 await frames.aclose()
     finally:
         await source.aclose()
+
+
+async def synthesize_configured_expressions(text, synthesize, *, baseline=None, allow_laughter=True):
+    """Resolve emotion markers into per-generation configuration, never provider transcript text.
+
+    Prefetch only the first ready text chunk to select the configuration. Each generation streams
+    immediately and stops at the next complete marker; cancellation closes both iterators.
+    """
+    source = speech_text(text, True, allow_laughter=allow_laughter).__aiter__()
+    pending = ''
+    finished = False
+    emotion = baseline
+    try:
+        while not finished:
+            if not pending:
+                try:
+                    pending = await anext(source)
+                except StopAsyncIteration:
+                    return
+            leading = _EMOTION.match(pending.lstrip())
+            if leading:
+                stripped = pending.lstrip()
+                emotion = leading[2].lower()
+                pending = stripped[leading.end():]
+                continue
+            if not pending.strip():
+                pending = ''
+                continue
+
+            async def generation():
+                nonlocal pending, finished
+                while True:
+                    chunk, pending = pending, ''
+                    if not chunk:
+                        try:
+                            chunk = await anext(source)
+                        except StopAsyncIteration:
+                            finished = True
+                            return
+                    change = _EMOTION.search(chunk)
+                    if change:
+                        pending = chunk[change.start():]
+                        if before := chunk[:change.start()]:
+                            yield before
+                        return
+                    yield chunk
+
+            frames = synthesize(generation(), emotion)
+            try:
+                async for frame in frames:
+                    yield frame
+            finally:
+                await frames.aclose()
+    finally:
+        await source.aclose()
+
+
+class ConfiguredExpressionAudio:
+    """Independent SDK clients per emotion; never mutate a client's options during other speech."""
+    def __init__(self, base, factory, *, baseline=None, conn_options, on_generation=None):
+        self.base, self.factory = base, factory
+        self.clients = {baseline: base}
+        self.conn_options, self.on_generation = conn_options, on_generation
+
+    async def synthesize(self, text, emotion):
+        if emotion not in self.clients:
+            client = self.factory(emotion)
+            self.clients[emotion] = client
+            # The session observes its base client. Preserve expression-client metrics/errors too.
+            for event in ('metrics_collected', 'error'):
+                client.on(event, lambda value, name=event: self.base.emit(name, value))
+        client = self.clients[emotion]
+        if self.on_generation:
+            self.on_generation(emotion)
+        async with client.stream(conn_options=self.conn_options()) as stream:
+            async def forward():
+                try:
+                    async for chunk in text:
+                        stream.push_text(chunk)
+                finally:
+                    stream.end_input()
+            task = asyncio.create_task(forward())
+            try:
+                async for event in stream:
+                    yield event.frame
+                await task
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def aclose(self):
+        await asyncio.gather(*(client.aclose() for client in self.clients.values()
+                               if client is not self.base), return_exceptions=True)
 
 
 _IDENTITY_QUESTION = re.compile(

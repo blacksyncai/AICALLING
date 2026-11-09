@@ -174,8 +174,8 @@ def test_preview_sends_real_config_and_cleans_other_provider_markup(client, monk
         'default_emotion':'calm','text':'<emotion value="curious"/>Hey James?<break time="200ms"/>'})
     assert result.status_code == 200
     assert sent[0]['model_id']=='sonic-3.5'
-    assert sent[0]['generation_config']['emotion']=='calm'
-    assert sent[0]['transcript']=='<emotion value="curious"/>Hey James?<break time="200ms"/>'
+    assert sent[0]['generation_config']['emotion']=='curious'
+    assert sent[0]['transcript']=='Hey James?<break time="200ms"/>'
     async def eleven(voice,text,**kwargs):
         assert text == 'Hello there'
         return b'RIFF-other'

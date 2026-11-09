@@ -91,12 +91,12 @@ def test_hosted_preview_passes_emotion_and_cache_separates_it(client,monkeypatch
     body={'voice_id':MACCO,'text':'<emotion value="curious"/>Hey James?', 'expressions_enabled':True,
           'expression_mode':'script','default_emotion':'calm'}
     assert client.post('/api/settings/voices/preview',json=body).status_code==200
-    assert sent[-1][1]==body['text'] and sent[-1][2]['emotion']=='calm'
+    assert sent[-1][1]=='Hey James?' and sent[-1][2]['emotion']=='curious'
     assert client.post('/api/settings/voices/preview',json=body).status_code==200 and len(sent)==1
     assert client.post('/api/settings/voices/preview',json={**body,'default_emotion':'curious'}).status_code==200
-    assert sent[-1][2]['emotion']=='curious' and len(sent)==2
+    assert sent[-1][2]['emotion']=='curious' and len(sent)==1
     assert client.post('/api/settings/voices/preview',json={**body,'expression_mode':'automatic'}).status_code==200
-    assert sent[-1][2]['emotion'] is None
+    assert sent[-1][2]['emotion']=='curious'
     assert client.post('/api/settings/voices/preview',json={**body,'expressions_enabled':False}).status_code==200
     assert sent[-1][1]=='Hey James?' and 'emotion' not in sent[-1][2]
 

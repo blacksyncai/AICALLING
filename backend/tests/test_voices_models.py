@@ -239,9 +239,11 @@ def test_mistral_voice_listed_as_premium_and_audio_converts(client, cartesia):
 
     voices = _by_id(client.get("/api/settings/voices").json())
     assert "mistral:01a133e4-93c6-7540-98b5-a917a4da562e" not in voices  # Zain's Mistral version was retired
-    z1, z2 = voices["fishaudio:v_goYxyDbAUbfP"], voices["95280ca0-610a-41c9-8457-1dcec809da61"]
-    assert (z1["name"], z1["provider"]) == ("Zain · Version 1", "fishaudio")
-    assert (z2["name"], z2["provider"]) == ("Zain · Version 2", "cartesia")
+    assert "fishaudio:v_goYxyDbAUbfP" not in voices
+    assert "95280ca0-610a-41c9-8457-1dcec809da61" not in voices
+    hamza = [v for v in voices.values() if v.get("family") == "Hamza"]
+    assert [v["tone"] for v in hamza] == ["Version 1", "Version 2", "Version 3"]
+    assert all(v["provider"] == "cartesia" and v["is_clone"] for v in hamza)
     assert "mistral:01a1340c-90cb-7714-8ee0-02732154b0dd" not in voices  # Marissa M's Mistral version was retired
     m1, m2 = voices["fishaudio:v_SriZAPqzgffq"], voices["97f03c16-fab2-4747-b655-9caefbd68fcf"]
     assert (m1["name"], m1["provider"]) == ("Marissa M · Version 2", "fishaudio")
@@ -283,7 +285,7 @@ def test_new_agents_default_to_marissa(client):
 def test_sandra_is_first_premium_family_and_mia_is_not_a_clone(client, cartesia):
     voices = client.get("/api/settings/voices").json()["voices"]
     rows = list(dict.fromkeys(v.get("family") or v["name"] for v in voices if v["category"] == "premium"))
-    assert rows[:7] == ["Sandra", "Marissa M", "Zain", "Kate", "Mia", "Macco", "Lauren"]
+    assert rows[:7] == ["Sandra", "Marissa M", "Hamza", "Kate", "Mia", "Macco", "Lauren"]
     sandra = [v for v in voices if v.get("family") == "Sandra"]
     assert [v["id"] for v in sandra] == [
         "7c31c8f2-d694-4841-85ed-9dc23f319698",

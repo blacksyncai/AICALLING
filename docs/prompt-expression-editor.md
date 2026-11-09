@@ -7,3 +7,10 @@ Select a spoken phrase, then choose Curious, Calm, Warm, Confident, Reassuring, 
 The editor displays readable text and labeled highlights while storing existing supported speech tags. Lead variables are never split. Unsupported voices cannot add controls; existing annotations remain editable and runtime provider fallback strips unsupported markup.
 
 Verification: production frontend build; 9 range/editing tests; 40 backend expression/streaming/provider tests; Chromium at 390 and 1440 px verifies selection, save/reload, removal, and both first-message and prompt editing. Provider-generated audio was not auditioned because Cartesia API access is unavailable in this environment.
+
+
+## Generation configuration correction
+
+Highlighted emotions now become generation configuration for each marked passage, instead of depending on inline emotion tags in the provider transcript. Each emotion uses a separate, cached SDK client within the call, so speculative or interrupted speech cannot mutate the settings for another generation. Browser/phone speech and annotated previews use this path; pauses/laughter remain validated provider controls. Trace events record enabled/mode and the applied emotion without retaining speech text. New request-level tests use the installed LiveKit SDK with a simulated WebSocket and synthetic PCM, not provider-generated audio. Authenticated audio attempts from this environment failed to connect, so audible emotion strength remains unverified.
+
+Hamza Versions 1–3 replace Zain in the third premium family position. Existing saved Zain voice IDs remain playable; only their picker entries are hidden.

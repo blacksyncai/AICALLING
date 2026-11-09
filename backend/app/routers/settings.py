@@ -4,6 +4,8 @@ Settings router — which integrations are configured, and the voice catalog.
 
 from __future__ import annotations
 
+import io
+import wave
 import re
 import time
 from collections import OrderedDict
@@ -357,6 +359,35 @@ async def preview_voice(body: VoicePreview):
     enabled = enabled_for({"voice_id": voice_id, "voice_tuning": body.model_dump()})
     body = body.model_copy(update={"text": clean_markup(body.text, enabled,
         allow_laughter=allows_laughter({"voice_tuning": body.model_dump()}))})
+    if enabled and '<emotion value="' in body.text:
+        from app.agent.expressions import synthesize_configured_expressions
+        from app.agent.voice_tuning import voice_tuning
+        async def source():
+            yield body.text
+        async def render(chunks, emotion):
+            text = ''.join([part async for part in chunks])
+            response = await preview_voice(body.model_copy(update={
+                "text": text, "default_emotion": emotion or "", "expression_mode": "script"}))
+            yield response.body
+        parts = [part async for part in synthesize_configured_expressions(
+            source(), render, baseline=voice_tuning(body.model_dump()).get("emotion"))]
+        if not parts:
+            raise HTTPException(status_code=422, detail="Add some spoken text to preview.")
+        if len(parts) == 1:
+            return Response(content=parts[0], media_type="audio/wav")
+        merged = io.BytesIO()
+        with wave.open(merged, 'wb') as output:
+            expected = None
+            for part in parts:
+                with wave.open(io.BytesIO(part), 'rb') as audio:
+                    parameters = (audio.getnchannels(), audio.getsampwidth(), audio.getframerate())
+                    if expected is None:
+                        expected = parameters
+                        output.setnchannels(parameters[0]); output.setsampwidth(parameters[1]); output.setframerate(parameters[2])
+                    elif expected != parameters:
+                        raise HTTPException(status_code=502, detail="Couldn't combine this voice preview. Try again.")
+                    output.writeframes(audio.readframes(audio.getnframes()))
+        return Response(content=merged.getvalue(), media_type="audio/wav")
     if elevenlabs_tts.is_elevenlabs_voice(voice_id):
         if not settings.elevenlabs_api_key:
             raise HTTPException(status_code=400, detail="Voice previews aren't available yet.")
