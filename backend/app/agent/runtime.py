@@ -582,6 +582,36 @@ def number_greeting_match(text: str) -> str | None:
     return None
 
 
+_UNAVAILABLE = re.compile(r"\b(?:is|are|'s)(?: not|n't) available\b|\bisn't available\b|\bnot available\b|\bunavailable\b"
+                          r"|\bcan(?:'t|not) (?:take|answer) (?:your|the|this) call\b|\bis not in service\b"
+                          r"|\bnot accepting calls\b|\btry (?:your call )?again later\b")
+MONOLOGUE_WORDS = 25
+
+
+def _digits_read(t: str) -> int:
+    return sum(w in _DIGIT_WORDS or w.isdigit() for w in re.findall(r"[a-z]+|\d", t))
+
+
+def opening_machine_match(text: str, *, first_words: int, opening: bool = True) -> str | None:
+    """Recordings that don't use any stock voicemail phrase, judged only on what the line says by itself right at
+    pickup (`opening`: before our agent has said anything it could be replying to; `first_words`: the length of
+    the first thing heard, because a person opens with a short "Hello?").
+
+    - "Seven three four ... is not available": a number read out plus "not available".
+    - "<Name> is not available" / "unavailable" as the opening words: a person who just picked up doesn't know who
+      we're asking for yet.
+    - A long uninterrupted speech with no question in it: nobody answers the phone with 25 words.
+    """
+    t = (text or "").lower().replace("’", "'")
+    if not opening or first_words < 4 or "?" in t:
+        return None
+    if _UNAVAILABLE.search(t):
+        return "number unavailable" if _digits_read(t) >= 3 else "unavailable at pickup"
+    if len(t.split()) >= MONOLOGUE_WORDS:
+        return "monologue at pickup"
+    return None
+
+
 def voicemail_greeting_match(text: str) -> str | None:
     t = (text or "").lower().replace("’", "'")
     return next((h for h in _VOICEMAIL_STRICT if h in t), None)
@@ -670,7 +700,12 @@ def _live_contact_turns(transcript: list[dict] | None) -> list[str]:
     machine = False
     greeting = ""
     screened = False
+    agent_spoke = False  # the contact's opening is only what they said before our agent said anything
+    first_words = 0
     for turn in transcript or []:
+        if turn.get("role") == "assistant" and (turn.get("text") or "").strip():
+            agent_spoke = True
+            continue
         if turn.get("role") == "tool":
             args = turn.get("args") or {}
             if turn.get("tool") == "call_screener":
@@ -698,8 +733,11 @@ def _live_contact_turns(transcript: list[dict] | None) -> list[str]:
             continue
         # Only the opening can be a personal recorded greeting. A busy person
         # responding after screening or a live hello is still a person.
+        if not first_words:
+            first_words = len(text.split())
         if not live and not machine and not screened and (
-                looks_like_personal_greeting(greeting + " " + text) or number_greeting_match(greeting + " " + text)):
+                looks_like_personal_greeting(greeting + " " + text) or number_greeting_match(greeting + " " + text)
+                or opening_machine_match(greeting + " " + text, first_words=first_words, opening=not agent_spoke)):
             machine = True
             greeting += " " + text
             continue
@@ -737,7 +775,17 @@ def voicemail_answered(transcript: list[dict] | None) -> bool:
     ) for t in transcript or []):
         return True
     text = " ".join(contact_turns(transcript))
-    return is_voicemail_greeting(text) or looks_like_personal_greeting(text) or bool(number_greeting_match(text))
+    if is_voicemail_greeting(text) or looks_like_personal_greeting(text) or number_greeting_match(text):
+        return True
+    # No stock phrase: everything the line said came before our agent spoke, and it reads like a recording.
+    opening, first_words = [], 0
+    for t in transcript or []:
+        if t.get("role") == "assistant" and (t.get("text") or "").strip():
+            break
+        if t.get("role") in ("user", "caller") and (t.get("text") or "").strip():
+            first_words = first_words or len(t["text"].split())
+            opening.append(t["text"].strip())
+    return bool(opening) and bool(opening_machine_match(" ".join(opening), first_words=first_words))
 
 
 def callback_requested(transcript: list[dict] | None, quote: str | None = None) -> bool:

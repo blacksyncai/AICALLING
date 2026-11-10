@@ -397,6 +397,60 @@ async def grant_credits(org_id: uuid.UUID, body: CreditGrant, admin: AdminDep, d
     return {"balance": org.credits_balance, "transaction": credit_tx_to_dict(tx) if tx else None}
 
 
+class SummaryEmail(BaseModel):
+    period: str = "7d"  # today | 7d | 30d
+    recipients: list[str] = Field(default_factory=list, max_length=10)
+    note: str = Field(default="", max_length=600)
+
+
+async def _summary_recipients(db, org_id: uuid.UUID) -> list[str]:
+    rows = (await db.execute(select(User.email).join(Membership, Membership.user_id == User.id)
+                             .where(Membership.org_id == org_id, Membership.role.in_(("owner", "admin")))
+                             .order_by(Membership.created_at))).scalars().all()
+    return [e for e in rows if e]
+
+
+@router.get("/orgs/{org_id}/summary-email")
+async def preview_summary_email(org_id: uuid.UUID, admin: AdminDep, db: DbDep, period: str = "7d", note: str = ""):
+    """What the account's summary email would say for this period, and who it would go to. Sends nothing."""
+    from app.services import account_summary
+
+    if period not in account_summary.PERIODS:
+        raise HTTPException(status_code=400, detail="Pick today, 7 days or 30 days.")
+    org = await _org_or_404(db, org_id)
+    s = await account_summary.stats(db, org.id, period)
+    mail = account_summary.render(org.name or "Your account", s, note)
+    return {"stats": s, "subject": mail["subject"], "html": mail["html"],
+            "default_recipients": await _summary_recipients(db, org.id)}
+
+
+@router.post("/orgs/{org_id}/summary-email")
+async def send_summary_email(org_id: uuid.UUID, body: SummaryEmail, admin: AdminDep, db: DbDep):
+    """Send the account its calling summary now. Only ever sent when an admin asks."""
+    import re
+
+    from app.services import account_summary
+    from app.services.email import email_enabled
+
+    if body.period not in account_summary.PERIODS:
+        raise HTTPException(status_code=400, detail="Pick today, 7 days or 30 days.")
+    org = await _org_or_404(db, org_id)
+    to = [r.strip().lower() for r in body.recipients if r.strip()] or await _summary_recipients(db, org.id)
+    to = list(dict.fromkeys(to))
+    bad = [r for r in to if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", r)]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Not an email address: {bad[0]}")
+    if not to:
+        raise HTTPException(status_code=400, detail="Add at least one email address.")
+    if not email_enabled():
+        raise HTTPException(status_code=503, detail="Email sending isn't set up on the platform.")
+    out = await account_summary.send(db, org, body.period, to, body.note)
+    log.info("admin_summary_email", org_id=str(org.id), period=body.period, sent=len(out["sent"]), by=str(admin.id))
+    if not out["sent"]:
+        raise HTTPException(status_code=502, detail="The email provider didn't accept the message. Try again.")
+    return {"sent": out["sent"], "failed": out["failed"], "subject": out["subject"]}
+
+
 class CallRefund(BaseModel):
     credits: float | None = Field(default=None, gt=0, le=100000)  # None: the rest of what the call cost
     note: str = Field(default="", max_length=300)

@@ -1421,7 +1421,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     channel = "web" if call_type == "web" else "phone"
 
     # ── Voicemail: spot an answering machine early, then hang up or leave the agent's message ──
-    from app.agent.runtime import number_greeting_match, personal_greeting_match, voicemail_greeting_match
+    from app.agent.runtime import (number_greeting_match, opening_machine_match, personal_greeting_match,
+                                   voicemail_greeting_match)
 
     vm = {"detected": False, "heard": "", "speaking": False, "changed": _time.monotonic()}
     vm_action = (cfg.get("voicemail_action") or "hang_up")
@@ -1655,9 +1656,16 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         elapsed = _time.monotonic() - run.t0 if run.t0 else 0
         if first:
             vm["live_hello"] = len(text.split()) <= 3 and "?" in text
+            vm["first_words"] = len(text.split())
         match = voicemail_greeting_match(vm["heard"])
         if not match and run.t0 and elapsed < 20 and not vm.get("live_hello") and not screen["seen"]:
             match = personal_greeting_match(vm["heard"]) or number_greeting_match(vm["heard"])
+        if not match and run.t0 and elapsed < 15 and not vm.get("live_hello") and not screen["seen"]:
+            # No stock phrase: the line started talking right at pickup (before our opening could be heard and
+            # answered) and either says it's unavailable or just keeps going.
+            began = vm.get("first_speech")
+            match = opening_machine_match(vm["heard"], first_words=vm.get("first_words", 0),
+                                          opening=began is not None and began - run.t0 <= 2.5)
         if match:
             vm["detected"] = True
             # The matched phrase (not what was said) — enough to spot a false positive in the logs.
@@ -1668,6 +1676,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     def _on_user_state(ev) -> None:
         vm["speaking"] = getattr(ev, "new_state", "") == "speaking"
         vm["changed"] = _time.monotonic()
+        if vm["speaking"] and "first_speech" not in vm:
+            vm["first_speech"] = vm["changed"]  # when the line first made a sound
 
     if call_type == "outbound" and vm_action != "ignore":
         session.on("user_input_transcribed", _on_transcribed)

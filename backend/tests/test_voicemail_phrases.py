@@ -127,3 +127,31 @@ def test_a_live_person_saying_they_will_call_back_is_still_a_person():
         {"role": "user", "text": "I'm driving, I will return your call later."},
     ]
     assert person_answered(transcript)
+
+
+def test_recordings_without_a_stock_phrase():
+    """A number read out plus "not available", "<name> is not available" at pickup, and a long speech at pickup
+    are recordings; the same words from a person replying to our agent are not."""
+    from app.agent.runtime import opening_machine_match as m, reconcile_outcome as r
+
+    def T(*turns):
+        return [{"role": a, "text": b} for a, b in turns]
+
+    assert m("7 3 4 5 5 5 0 1 2 3 isn't available", first_words=11) == "number unavailable"
+    assert m("Seven three four is not available right now", first_words=8) == "number unavailable"
+    assert m("John Smith is not available", first_words=5) == "unavailable at pickup"
+    assert m("Hello?", first_words=1) is None and m("He's not available", first_words=3) is None
+    assert m("John is not available", first_words=4, opening=False) is None
+    speech = ("Hi this is Dana with Coastal Dental our office is closed for the day we are open Monday through "
+              "Friday nine to five and will respond then")
+    assert m(speech, first_words=27) == "monologue at pickup"
+    assert m(speech + " can you hold?", first_words=27) is None  # a question means a person
+
+    assert r("completed", T(("user", "7 3 4 isn't available"), ("assistant", "Hey Sam, this is Sofia."))) == "voicemail"
+    assert r("completed", T(("user", speech), ("assistant", "Hey, this is Sofia."))) == "voicemail"
+    # A person who said hello, then gave a long answer or said someone isn't available, stays a conversation.
+    long_answer = ("Yeah I am still looking I want three bedrooms and three bathrooms and about twenty six hundred "
+                   "square feet somewhere in the bay area near good schools")
+    assert r("interested", T(("user", "Hello?"), ("assistant", "Are you still looking?"), ("user", long_answer))) == "interested"
+    assert r("completed", T(("user", "Hello"), ("assistant", "Is this John?"),
+                            ("user", "John is not available right now"))) == "completed"

@@ -10,6 +10,7 @@ import { CreditsCard, LedgerCard, SettingsCard, TeamCard } from "@/components/ad
 import { BillingCard } from "@/components/admin/BillingCard";
 import { ManagePlanCard } from "@/components/admin/ManagePlan";
 import { PlanAdminCard } from "@/components/admin/PlanAdminCard";
+import { SummaryEmailCard } from "@/components/admin/SummaryEmailCard";
 import { DeleteAccountCard } from "@/components/admin/DeleteAccountCard";
 import { LeadFinderCard } from "@/components/admin/LeadFinderCard";
 import { ChildAccountsCard } from "@/components/admin/ChildAccountsCard";
@@ -116,6 +117,7 @@ function AccountDetail() {
           <CreditsCard org={org} refresh={refresh} />
           <BillingCard orgId={org.id} />
           <PlanAdminCard orgId={org.id} />
+          <SummaryEmailCard orgId={org.id} />
           <LedgerCard org={org} />
         </div>
         <div className="flex min-w-0 flex-col gap-6">
