@@ -95,6 +95,17 @@ class InboundCallIn(BaseModel):
     room: str = ""
 
 
+@router.post("/quiesce")
+async def quiesce():
+    """A deploy is replacing this instance (start.sh calls this on SIGTERM): stop dialing here so only the new
+    instance places calls, while calls already in progress finish and report normally."""
+    from app.routers.campaigns import quiesce_dialers
+
+    stopped = quiesce_dialers()
+    log.info("instance_quiesced", dialers_stopped=stopped)
+    return {"dialers_stopped": stopped}
+
+
 @router.post("/inbound-call")
 async def inbound_call(body: InboundCallIn, db: Annotated[AsyncSession, Depends(get_db)]):
     """The worker asks who answers a call to this number; we log the call and hand back the agent config."""

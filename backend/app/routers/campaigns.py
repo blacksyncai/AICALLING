@@ -1024,8 +1024,24 @@ def _pacing_blocked(campaign_id: str) -> tuple[frozenset, float | None]:
     return frozenset(resting), (min(resting.values()) if resting else None)
 
 
+# Set while this instance is being replaced by a deploy: it places no new calls (the new instance dials),
+# and only lets its calls in progress finish.
+_QUIESCED = {"on": False}
+
+
+def quiesce_dialers() -> int:
+    """Stop every dialer in this process without touching the campaigns themselves. Returns how many stopped."""
+    _QUIESCED["on"] = True
+    tasks = [t for t in _QUEUES.values() if not t.done()]
+    for t in tasks:
+        t.cancel()
+    return len(tasks)
+
+
 def ensure_queue(campaign_id: str) -> bool:
     """Start the campaign's dialer unless one is already running. Returns True if it started one."""
+    if _QUIESCED["on"]:
+        return False
     task = _QUEUES.get(campaign_id)
     if task is not None and not task.done():
         return False

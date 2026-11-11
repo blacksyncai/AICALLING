@@ -295,3 +295,14 @@ def test_trim_ogg_cuts_on_a_page_and_ends_the_stream():
     stored = struct.unpack("<I", last[22:26])[0]
     zeroed = last[:22] + b"\0\0\0\0" + last[26:]
     assert stored == _ogg_crc(zeroed)
+
+
+def test_quiesce_stops_dialers_for_a_deploy(client):
+    from app.routers import campaigns
+
+    r = client.post("/internal/quiesce")
+    assert r.status_code == 200 and "dialers_stopped" in r.json()
+    try:
+        assert campaigns.ensure_queue("00000000-0000-0000-0000-000000000000") is False  # no new dialers here
+    finally:
+        campaigns._QUIESCED["on"] = False
