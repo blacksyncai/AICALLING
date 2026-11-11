@@ -213,3 +213,10 @@ h2,
 .agent-glass .bs-model-row { background-image: linear-gradient(90deg, rgba(167, 139, 250, 0.14), transparent 70%); }
 .agent-glass .bs-desc { color: #ede9fe; }
 .agent-glass .text-violet-500 { color: #c4b5fd; }
+
+/* Sign-in, sign-up and account menus carry BlackSync's own branding only: the sign-in provider's
+   "Secured by" badge is hidden everywhere it appears (form footers, invite pop-ups, the account menu). */
+.cl-footer > .cl-footerItem,
+.cl-footerItem:has(a[href*="clerk.com"]),
+.cl-userButtonPopoverFooter:has(a[href*="clerk.com"]),
+.cl-navbar .cl-footerItem { display: none !important; }
