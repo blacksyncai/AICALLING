@@ -1502,7 +1502,28 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
             first_text = True
             heard = getattr(user, "text_content", "") or "" if user else ""
-            async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat, heard), _cut, expressions=expressions_enabled, allow_laughter=laughter_allowed):
+            def _claimed_booking(spoken: str) -> None:
+                # The model said "you're booked" without booking. That line was dropped; if it left the caller
+                # with nothing (no question asked first), have the agent actually book, once per call.
+                log.warning("booking_claim_cut", room=ctx.room.name, model=model, spoken_before=len(spoken.strip()))
+                if spoken.strip().endswith("?") or session_ref.get("booking_nudged"):
+                    return
+                session_ref["booking_nudged"] = True
+
+                async def _nudge() -> None:
+                    await asyncio.sleep(0.4)
+                    try:
+                        session.generate_reply(instructions=(
+                            "You have NOT booked anything yet. Do not say it is booked. If they picked a time and "
+                            "confirmed their email, call book_appointment now and only confirm once it succeeds. "
+                            "If the email isn't confirmed yet, read it back and ask if it's right."))
+                    except RuntimeError:
+                        pass
+                _keep(asyncio.create_task(_nudge()))
+
+            unbooked = bool(cfg.get("enable_booking")) and not run.meeting_time
+            async for chunk in guarded(no_repeats(_attempt, said_lines(chat_ctx), _repeat, heard), _cut, expressions=expressions_enabled, allow_laughter=laughter_allowed,
+                                       no_booking_yet=unbooked, on_claim=_claimed_booking):
                 text = chunk if isinstance(chunk, str) else getattr(getattr(chunk, "delta", None), "content", None)
                 if text and first_text:
                     trace.mark("usable_text_first", speech=speech, turn_key=turn_key)
@@ -1732,6 +1753,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 trace.mark("sdk_item_metrics", speech=owning_speech(), role=role,
                            item_id=getattr(item, "id", None), **timings)
             text = (getattr(item, "text_content", None) or "").strip()
+            if role == "assistant":  # voice-direction tags are for the speech engine, not the call record
+                text = re.sub(r"<emotion[^>]*>?", "", text).strip()
             if role not in ("user", "assistant") or not text or text == CALL_CONNECTED_CUE:
                 return
             run.transcript.append({"role": role, "text": text, "ts": round(_time.monotonic() - run.t0, 2)})

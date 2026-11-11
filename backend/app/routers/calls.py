@@ -65,6 +65,21 @@ def _credits_used(c: CallLog) -> float | None:
     return round(round(seconds * c.credit_rate * 1000 / 60) / 1000, 3)
 
 
+def _without_voice_tags(transcript: list) -> list:
+    """Older calls stored the agent's voice-direction tags (<emotion value="happy"/>) in its lines: hide them."""
+    import re
+
+    out = []
+    for t in transcript:
+        if isinstance(t, dict) and t.get("role") == "assistant" and "<emotion" in str(t.get("text") or ""):
+            text = re.sub(r"<emotion[^>]*>?", "", t["text"]).strip()
+            if not text:
+                continue
+            t = {**t, "text": text}
+        out.append(t)
+    return out
+
+
 def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: Campaign | None,
                  full: bool = False) -> dict:
     d = {
@@ -104,7 +119,7 @@ def call_to_dict(c: CallLog, lead: Lead | None, agent: Agent | None, campaign: C
         "has_recording": bool(c.recording_key),
     }
     if full:
-        d["transcript"] = c.transcript or []
+        d["transcript"] = _without_voice_tags(c.transcript or [])
         d["extracted_data"] = c.extracted_data or {}
         d["metrics"] = c.metrics or None
         d["prospect_email"] = c.prospect_email

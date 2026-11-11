@@ -306,3 +306,30 @@ def test_quiesce_stops_dialers_for_a_deploy(client):
         assert campaigns.ensure_queue("00000000-0000-0000-0000-000000000000") is False  # no new dialers here
     finally:
         campaigns._QUIESCED["on"] = False
+
+
+def test_agent_cannot_claim_a_booking_it_did_not_make():
+    from app.agent.speech_guard import SpeechGuard
+
+    def say(text, **kw):
+        g = SpeechGuard(True, **kw)
+        return (g.feed(text) + g.flush()).strip(), g.claim_cut
+
+    # Asking, then answering for the caller and "booking" in the same breath: only the question is spoken.
+    glued = ('<emotion value="curious"/>Just to confirm, it is tim@gmail.com, right?<emotion value="happy"/>Great, '
+             "I’ve got you booked for Wednesday at 2:45 PM. I’ll send the invite.")
+    assert say(glued)[0].endswith("right?")
+    # No booking made yet: "you're booked" is never said.
+    assert say("Great, I’ve got you booked for Wednesday at 2:45 PM.", no_booking_yet=True) == ("", True)
+    assert say("Thanks Tim. You're all set for Wednesday at 2:45 PM.", no_booking_yet=True) == ("Thanks Tim.", True)
+    # Asking for the email, and confirming after a real booking, are fine.
+    assert say("Perfect, what's the best email for the invite?", no_booking_yet=True)[1] is False
+    assert say("You're all set for Wednesday at 2:45 PM. I'll send the invite now.")[0].startswith("You're all set")
+
+
+def test_voice_tags_are_hidden_in_call_transcripts():
+    from app.routers.calls import _without_voice_tags
+
+    out = _without_voice_tags([{"role": "assistant", "text": '<emotion value="happy"/>Great, thanks.'},
+                               {"role": "assistant", "text": "<emotion"}, {"role": "user", "text": "Okay."}])
+    assert out == [{"role": "assistant", "text": "Great, thanks."}, {"role": "user", "text": "Okay."}]

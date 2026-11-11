@@ -13,7 +13,17 @@ from __future__ import annotations
 
 import re
 
-_SEAM = re.compile(r"(?<=[a-z0-9][.?!])(?=[A-Z])")  # "invite?We" — two messages glued together
+_SEAM = re.compile(r"(?<=[a-z0-9][.?!])(?=[A-Z])"  # "invite?We" — two messages glued together
+                   # The same seam hidden behind an expression tag: 'right?<emotion value="happy"/>Great, you're
+                   # booked' is the model asking, then answering for the caller and carrying on.
+                   r"|(?<=[a-z0-9]\?)(?=<emotion[^>]*>\s*[A-Z])")
+# Saying the meeting is booked (or the invite is coming). Only true once the booking tool has confirmed it.
+BOOKING_CLAIM = re.compile(
+    r"\b(?:you(?:['’]re| are) (?:all )?(?:booked|set for|confirmed for|scheduled)"
+    r"|(?:i['’]ve|i have|we['’]ve|we have)(?: got you)? (?:booked|scheduled)|got you (?:booked|scheduled|down for)"
+    r"|booked you|(?:it['’]s|that['’]s|you['’]re) (?:all )?booked"
+    r"|(?:i['’]ll|i will|we['’]ll) send (?:you |over )?(?:the|an|a|your)(?: calendar)? invite"
+    r"|invite is on (?:its|the) way|(?:i['’]ve |just )sent (?:you )?(?:the|an|a)(?: calendar)? invite)\b", re.IGNORECASE)
 _MARKERS = re.compile(r"[{}\[\]→]|\((?:Note|wait|waiting|pause|stop)|\bNote:|<\||\b(?:assistant|user|system)\s*:|\bThe (?:assistant|user) (?:should|is|wants|said)",
                       re.IGNORECASE)
 # Internal names that must never be read out (tool calls / outcome codes written as text).
@@ -23,7 +33,10 @@ _HOLD = 24  # keep this much unspoken until more arrives, so a marker split acro
 
 
 class SpeechGuard:
-    def __init__(self, expressions: bool = False, *, allow_laughter: bool = True) -> None:
+    def __init__(self, expressions: bool = False, *, allow_laughter: bool = True, no_booking_yet: bool = False) -> None:
+        # True while a booking agent hasn't booked anything on this call: it may not say that it has.
+        self.no_booking_yet = no_booking_yet
+        self.claim_cut = False
         from app.agent.expressions import MarkupParser
         self.markup = MarkupParser(expressions, stage_directions=True, allow_laughter=allow_laughter)
         self.expressions = expressions
@@ -39,6 +52,14 @@ class SpeechGuard:
         markers = self.buffer.replace("[laughter]", " " * 10) if self.expressions else self.buffer
         hits = [m.start() for m in (_SEAM.search(self.buffer), _MARKERS.search(markers),
                                     _INTERNAL_NAMES.search(self.buffer)) if m]
+        claim = BOOKING_CLAIM.search(self.buffer) if self.no_booking_yet else None
+        if claim:
+            # Drop the whole sentence that makes the claim (and everything after it).
+            ends = [m.end() for m in re.finditer(r"[.!?][\"']?\s*(?:<emotion[^>]*>\s*)?", self.buffer[:claim.start()])]
+            start = ends[-1] if ends else 0
+            if not hits or start <= min(hits):
+                self.claim_cut = True
+            hits.append(start)
         return min(hits) if hits else None
 
     def feed(self, text: str) -> str:
@@ -85,9 +106,12 @@ def clean(text: str, *, expressions: bool = False, allow_laughter: bool = True) 
     return (g.feed(text) + g.flush()).strip()
 
 
-async def guarded(stream, on_cut=None, *, expressions: bool = False, allow_laughter: bool = True):
-    """Wrap an LLM node stream (str or ChatChunk items): speak only the clean part, keep tool calls."""
-    guard = SpeechGuard(expressions, allow_laughter=allow_laughter)
+async def guarded(stream, on_cut=None, *, expressions: bool = False, allow_laughter: bool = True,
+                  no_booking_yet: bool = False, on_claim=None):
+    """Wrap an LLM node stream (str or ChatChunk items): speak only the clean part, keep tool calls.
+    `no_booking_yet`: also drop "you're booked" style claims; `on_claim(spoken)` is told what was said before it."""
+    guard = SpeechGuard(expressions, allow_laughter=allow_laughter, no_booking_yet=no_booking_yet)
+    tool_called = False
     async for chunk in stream:
         if isinstance(chunk, str):
             out = guard.feed(chunk)
@@ -100,9 +124,13 @@ async def guarded(stream, on_cut=None, *, expressions: bool = False, allow_laugh
             chunk = chunk.model_copy(update={"delta": delta.model_copy(update={"content": out or None})})
             if not out and not delta.tool_calls and not getattr(chunk, "usage", None):
                 continue
+        if delta is not None and delta.tool_calls:
+            tool_called = True
         yield chunk
     tail = guard.flush()
     if tail:
         yield tail
     if guard.cut and on_cut:
         on_cut(guard.dropped)
+    if guard.claim_cut and on_claim and not tool_called:
+        on_claim(guard.buffer[:guard.cut_at])
