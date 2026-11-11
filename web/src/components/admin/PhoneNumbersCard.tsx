@@ -1,9 +1,9 @@
 "use client";
 
-import { Phone, Search, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Phone, Search, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import useSWR, { mutate as refreshSWR } from "swr";
-import { Badge, Button, Card, CardHeader, Field, Input, Notice, Spinner, Tabs } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Field, Input, Modal, Notice, Select, Spinner, Tabs } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, del, fetcher, post } from "@/lib/api";
 import type { PhoneNumberItem, PhoneNumberRequestItem } from "@/lib/types";
@@ -51,6 +51,26 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
   const { data: telephony } = useSWR<{ owned: Owned[]; owned_error: string; owned_warnings?: string[] }>(mode === "import" ? "/api/admin/telephony" : null, fetcher);
 
   const openRequest = data?.requests[0];
+  // Move a number that was put on the wrong account.
+  const [moving, setMoving] = useState<PhoneNumberItem | null>(null);
+  const [moveTo, setMoveTo] = useState("");
+  const { data: accounts } = useSWR<{ orgs: { id: string; name: string }[] }>(moving ? "/api/admin/orgs" : null, fetcher);
+
+  async function move() {
+    if (!moving || !moveTo) return;
+    setBusy(moving.id);
+    try {
+      const r = await post<{ to_account: string }>(`/api/admin/phone-numbers/${moving.id}/move`, { org_id: moveTo });
+      await mutate();
+      toast(`${moving.number} moved to ${r.to_account}`, "success");
+      setMoving(null);
+      setMoveTo("");
+    } catch (err) {
+      toast((err as Error).message, "error");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -128,9 +148,18 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
                   <Badge tone="gray">{n.source}</Badge>
                   <button
                     type="button"
+                    onClick={() => { setMoving(n); setMoveTo(""); }}
+                    disabled={busy === n.id}
+                    className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                    title="Move this number to another account"
+                  >
+                    <ArrowRightLeft className="h-3.5 w-3.5" /> Move
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void release(n)}
                     disabled={busy === n.id}
-                    className="ml-auto rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600"
+                    className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600"
                     aria-label={`Remove ${n.number}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -227,6 +256,26 @@ export function PhoneNumbersCard({ orgId }: { orgId: string }) {
           )}
         </div>
       )}
+      <Modal open={!!moving} onClose={() => setMoving(null)} title={moving ? `Move ${moving.number}` : ""}>
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-600">
+            The number keeps working and moves to the account you pick. Here it comes out of campaigns, rotations, agent caller IDs
+            and inbound routing.
+          </p>
+          <Field label="Move to">
+            <Select value={moveTo} onChange={(e) => setMoveTo(e.target.value)}>
+              <option value="">Choose an account</option>
+              {(accounts?.orgs ?? []).filter((o) => o.id !== orgId).map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </Select>
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setMoving(null)}>Cancel</Button>
+            <Button variant="primary" disabled={!moveTo} loading={!!moving && busy === moving.id} onClick={() => void move()}>Move number</Button>
+          </div>
+        </div>
+      </Modal>
     </Card>
   );
 }

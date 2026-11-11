@@ -541,6 +541,47 @@ async def carrier_of(db: AsyncSession, org_id: uuid.UUID, number: str) -> str:
     return row.carrier if row is not None and row.carrier in ("bandwidth", "signalwire", "plivo") else "twilio"
 
 
+async def move_number(db: AsyncSession, row: PhoneNumber, to_org_id: uuid.UUID) -> PhoneNumber:
+    """Move a number to another account (it was assigned to the wrong one). Nothing changes at the carrier: the
+    number keeps working, it just belongs to the other account. In the old account it comes out of every campaign
+    rotation, campaign, agent caller ID and inbound route; nothing in the new account uses it until it's picked
+    there (it becomes that account's default if it's its first number). Caller commits."""
+    from app.models.campaign import Campaign
+
+    if row.status != "active":
+        raise TelephonyError("That number isn't active.")
+    if row.org_id == to_org_id:
+        raise TelephonyError("That number is already on this account.")
+    if row.stripe_subscription_id:
+        raise TelephonyError("This number is billed on the old account's own subscription. Release it there and "
+                             "buy or assign a number on the right account instead.")
+    old_org = row.org_id
+    was_default = bool(row.is_default)
+    for c in (await db.execute(select(Campaign).where(Campaign.org_id == old_org))).scalars().all():
+        if row.number in (c.caller_number_pool or []):
+            c.caller_number_pool = [n for n in c.caller_number_pool if n != row.number]
+            c.caller_rotation_cursor = 0
+        if c.phone_number_id == row.id:
+            c.phone_number_id = None
+            if (c.direction or "outbound") == "inbound" and c.status == "running":
+                c.status = "paused"  # its number moved away: nothing left to answer
+    await db.execute(update(Agent).where(Agent.org_id == old_org, Agent.caller_number == row.number)
+                     .values(caller_number=None))
+    row.org_id, row.is_default = to_org_id, None
+    row.inbound_agent_id = row.inbound_campaign_id = None
+    row.pack_refresh_at = row.pack_area_code = None      # a Fresh Number Pack belongs to the old account's plan
+    row.rest_until = row.rest_reason = None
+    await db.flush()
+    if was_default:
+        rest = await active_numbers(db, old_org)
+        if rest and not any(n.is_default for n in rest):
+            rest[0].is_default = True
+    await _make_default_if_first(db, row)
+    await db.flush()
+    log.info("phone_number_moved", number=row.number, from_org=str(old_org), to_org=str(to_org_id))
+    return row
+
+
 def number_to_dict(n: PhoneNumber) -> dict:
     return {
         "id": str(n.id), "number": n.number, "label": n.label, "source": n.source or "assigned",

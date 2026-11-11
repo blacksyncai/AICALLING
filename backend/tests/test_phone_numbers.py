@@ -335,3 +335,26 @@ def test_livekit_egress_records_by_default(client, make_client, twilio, monkeypa
         time.sleep(0.05)
     assert started and started[0].endswith(f"{call_id}.ogg")  # recorded by LiveKit once answered, no Twilio copy
     time.sleep(0.3)  # let the background task save the recording key before the next test uses the database
+
+
+def test_admin_moves_a_number_to_the_right_account(client, make_client, twilio):
+    wrong, wrong_user = _account(client, make_client, "Wrong Account Co")
+    right, right_user = _account(client, make_client, "Right Account Co")
+    n = _num()
+    client.post(f"/api/admin/orgs/{wrong['id']}/phone-numbers", json={"number": n, "mode": "purchase"})
+    row = wrong_user.get("/api/phone-numbers").json()["numbers"][0]
+    agent = wrong_user.get("/api/agents/").json()[0]
+    assert wrong_user.patch(f"/api/agents/{agent['id']}", json={"caller_number": n}).status_code == 200
+
+    # Only platform admins can move numbers.
+    assert wrong_user.post(f"/api/admin/phone-numbers/{row['id']}/move", json={"org_id": right["id"]}).status_code in (401, 403)
+    r = client.post(f"/api/admin/phone-numbers/{row['id']}/move", json={"org_id": right["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["to_account"] == "Right Account Co" and r.json()["is_default"] is True
+
+    assert wrong_user.get("/api/phone-numbers").json()["numbers"] == []
+    assert wrong_user.get(f"/api/agents/{agent['id']}").json()["caller_number"] in (None, "")
+    mine = right_user.get("/api/phone-numbers").json()["numbers"]
+    assert [x["number"] for x in mine] == [n] and mine[0]["source"] == "purchased"
+    # Moving it to where it already is does nothing.
+    assert client.post(f"/api/admin/phone-numbers/{row['id']}/move", json={"org_id": right["id"]}).status_code == 400

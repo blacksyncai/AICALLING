@@ -356,6 +356,36 @@ async def admin_assign(org_id: uuid.UUID, body: AdminAssign, admin: AdminDep, db
     return telephony.number_to_dict(row)
 
 
+class MoveNumberIn(BaseModel):
+    org_id: uuid.UUID
+
+
+@admin_router.post("/phone-numbers/{number_id}/move")
+async def admin_move_number(number_id: uuid.UUID, body: MoveNumberIn, admin: AdminDep, db: DbDep):
+    """Move a number that was put on the wrong account to the right one. Audited."""
+    from app.models.account import Organization
+    from app.models.billing import BillingAudit
+
+    row = await db.get(PhoneNumber, number_id)
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="Number not found")
+    target = await db.get(Organization, body.org_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Account not found")
+    source = await db.get(Organization, row.org_id) if row.org_id else None
+    try:
+        await telephony.move_number(db, row, target.id)
+    except telephony.TelephonyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.add(BillingAudit(admin_id=admin.id, org_id=target.id, target="phone_number",
+                        previous=(source.name if source else "none")[:64], adjustment="moved", new=target.name[:64],
+                        reason=f"{row.number} moved from {source.name if source else 'no account'} to {target.name}"))
+    await db.commit()
+    for org_id in filter(None, {source.id if source else None, target.id}):
+        await _sync_billing(db, org_id)  # extra-number charges follow the number
+    return {**telephony.number_to_dict(row), "from_account": source.name if source else None, "to_account": target.name}
+
+
 @admin_router.delete("/phone-numbers/{number_id}")
 async def admin_release(number_id: uuid.UUID, admin: AdminDep, db: DbDep, return_to_twilio: bool = False):
     row = await db.get(PhoneNumber, number_id)

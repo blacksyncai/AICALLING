@@ -127,6 +127,70 @@ async def admin_add_credits(s: Session, args: dict) -> dict:
     return {"account": org.name, "balance": out["balance"]}
 
 
+@admin_tool("admin_find_phone_number", "Find which account has a phone number",
+            "Looks a phone number up across every account: which account it's on, its carrier and whether it's the "
+            "default there. Use this before moving a number.",
+            {"number": {"type": "string", "description": "The phone number, e.g. +14155550123."}}, ["number"])
+async def admin_find_phone_number(s: Session, args: dict) -> dict:
+    from app.models.billing import PhoneNumber
+    from app.services.contacts import normalize_phone
+
+    number = normalize_phone(str(args.get("number") or ""))
+    rows = (await s.db.execute(select(PhoneNumber).where(PhoneNumber.number == number))).scalars().all()
+    if not rows:
+        raise ToolError(f"{number or 'That number'} isn't on BlackSync.")
+    out = []
+    for r in rows:
+        org = await s.db.get(Organization, r.org_id) if r.org_id else None
+        out.append({"number_id": str(r.id), "number": r.number, "status": r.status, "carrier": r.carrier or "twilio",
+                    "is_default": bool(r.is_default), "account_id": str(org.id) if org else None,
+                    "account": org.name if org else None})
+    return {"numbers": out}
+
+
+@admin_tool("admin_move_phone_number", "Move a phone number to another account",
+            """Moves a phone number that's on the wrong account to the right one. The number keeps working (nothing
+changes at the carrier). In the old account it's removed from campaigns, rotations, agent caller IDs and inbound
+routing; in the new account it's added to the numbers list (and becomes the default if it's that account's first).
+Without confirmed=true it only shows what would change: tell the user and repeat with confirmed=true once they agree.""",
+            {"number": {"type": "string", "description": "The phone number to move, e.g. +14155550123."},
+             "to_account_id": {**ACCOUNT_ID, "description": "The account that should have the number."},
+             "confirmed": {"type": "boolean"}},
+            ["number", "to_account_id"], read_only=False, destructive=True)
+async def admin_move_phone_number(s: Session, args: dict) -> dict:
+    from app.models.billing import BillingAudit, PhoneNumber
+    from app.services import telephony
+    from app.services.contacts import normalize_phone
+
+    number = normalize_phone(str(args.get("number") or ""))
+    row = (await s.db.execute(select(PhoneNumber).where(PhoneNumber.number == number,
+                                                        PhoneNumber.status == "active"))).scalar_one_or_none()
+    if row is None:
+        raise ToolError(f"{number or 'That number'} isn't an active number on any account.")
+    target = await _org(s, args, "to_account_id")
+    source = await s.db.get(Organization, row.org_id) if row.org_id else None
+    if source is not None and source.id == target.id:
+        raise ToolError(f"{number} is already on {target.name}.")
+    if not args.get("confirmed"):
+        return {"needs_confirmation": True, "number": number, "from_account": source.name if source else None,
+                "to_account": target.name, "was_default_on_old_account": bool(row.is_default),
+                "note": "Confirm with the user, then repeat with confirmed=true."}
+    try:
+        await telephony.move_number(s.db, row, target.id)
+    except telephony.TelephonyError as exc:
+        raise ToolError(str(exc))
+    s.db.add(BillingAudit(admin_id=s.user.id, org_id=target.id, target="phone_number",
+                          previous=(source.name if source else "none")[:64], adjustment="moved", new=target.name[:64],
+                          reason=f"{number} moved from {source.name if source else 'no account'} to {target.name}"))
+    await s.db.commit()
+    from app.routers.phone_numbers import _sync_billing
+
+    for org_id in filter(None, {source.id if source else None, target.id}):
+        await _sync_billing(s.db, org_id)  # extra-number charges follow the number
+    return {"number": number, "from_account": source.name if source else None, "to_account": target.name,
+            "is_default_on_new_account": bool(row.is_default)}
+
+
 @admin_tool("admin_activity", "Admin action log",
             "The latest tool calls made in admin mode (any connection), newest first. Optionally one account only.",
             {"account_id": {**ACCOUNT_ID, "description": "Only this account (optional)."}, "limit": LIMIT})
