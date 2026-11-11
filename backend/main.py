@@ -11,6 +11,7 @@ Agent worker is a SEPARATE process:
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 import structlog
@@ -28,6 +29,7 @@ from app.routers import (
 )
 
 log = structlog.get_logger(__name__)
+_STARTED_AT = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds")
 
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
@@ -260,6 +262,9 @@ async def health():
     return {
         "status": "ok",
         "service": "blacksync-api",
+        # Which build is answering (Railway sets the commit) and since when: confirms a deploy went live.
+        "version": (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "")[:7] or None,
+        "started_at": _STARTED_AT,
         "environment": settings.environment,
         "demo_mode": settings.demo_mode,
         "voice_ready": settings.voice_ready,
