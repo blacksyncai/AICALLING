@@ -161,7 +161,10 @@ def parse_contacts_csv(text: str, phone_cols: list[str] | None = None,
 # and a vague "we talked" never replaces a clear one. A clear answer on a later call (yes, no, call me back)
 # always becomes the new status.
 NO_CONVERSATION = ("no_answer", "voicemail", "screened", "failed")
-_OPEN = (None, "", "new", "calling", *NO_CONVERSATION)
+# "wrong_number" is open too: with several numbers on a contact, a wrong number on one is followed by a call to
+# the next, and a conversation there must become the contact's status (it used to stay "wrong number", so the
+# campaign kept redialing someone it had already talked to).
+_OPEN = (None, "", "new", "calling", "wrong_number", *NO_CONVERSATION)
 _VAGUE = ("completed", "hung_up", "language_barrier", "no_decision", "insufficient_conversation", "busy", "declined_conversation")
 _RANK = {"interested": 1, "information_requested": 1, "callback": 1, "potential_follow_up": 1, "qualified": 2, "transferred": 3, "meeting_booked": 3}
 

@@ -212,3 +212,33 @@ def test_on_pause_is_a_potential_follow_up_not_a_refusal():
         "evidence_quote": "Not right now. Take me off your list.", "response_scope": "offer", "certainty": "clear",
         "next_action": "none_agreed"}}, t2)
     assert r2["outcome"] == "not_interested"
+
+
+def test_conversation_on_another_number_after_a_wrong_number_stops_the_redials():
+    """Wrong number on number 1, then a conversation on number 2: the contact is done, not stuck at 'wrong number'
+    (which the dialer keeps working through)."""
+    from types import SimpleNamespace
+
+    from app.routers.campaigns import dial_eligibility
+    from app.services.contacts import next_status
+
+    status = "new"
+    for outcome in ("voicemail", "wrong_number", "no_decision"):
+        status = next_status(status, outcome) or status
+    assert status == "no_decision"
+    campaign = _campaign()
+    phones = [{"number": "+16285550001", "status": "wrong_number", "round": 1},
+              {"number": "+16285550002", "status": "reached", "round": 1},
+              {"number": "+16285550003", "status": "untried", "round": 0}]
+    now = datetime.now(timezone.utc)
+    talked = SimpleNamespace(status="no_decision", do_not_call=False, attempts=1, next_attempt_at=None,
+                             phone="+16285550001", phones=phones)
+    assert dial_eligibility(talked, campaign, now) is None
+    # A contact left at "wrong number" by the old rule isn't dialed either once a number reached them.
+    stuck = SimpleNamespace(status="wrong_number", do_not_call=False, attempts=1, next_attempt_at=None,
+                            phone="+16285550001", phones=phones)
+    assert dial_eligibility(stuck, campaign, now) is None
+    # A wrong number with nobody reached yet still moves on to the next number.
+    fresh = SimpleNamespace(status="wrong_number", do_not_call=False, attempts=1, next_attempt_at=None,
+                            phone="+16285550001", phones=[phones[0], {**phones[2]}])
+    assert dial_eligibility(fresh, campaign, now) == "now"

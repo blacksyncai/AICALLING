@@ -276,6 +276,8 @@ def dial_eligibility(lead, campaign, now_utc: datetime) -> str | None:
         return None  # every number on file is ruled out (wrong, disconnected, do-not-call)
     if lead.status == "new":
         return "now"
+    if lead.status == "wrong_number" and any(p.get("status") == "reached" for p in lead_phones.numbers(lead)):
+        return None  # one of their other numbers already reached them: never dial on
     # A wrong number on one of several numbers moves on to the next one when the campaign tries other numbers.
     if lead.status in RETRY_STATUSES or (lead.status == "wrong_number" and lead_phones.sequencing(campaign)
                                          and getattr(lead, "phone", None)):

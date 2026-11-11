@@ -845,7 +845,7 @@ async def repair_contact_statuses() -> int:
     decision", or a later voicemail that wiped out an earlier "call me back"). Replays each contact's calls
     through the same rule live calls use. Contacts already moved to a real stage (by hand or a call) are left alone."""
     from app.database import AsyncSessionLocal
-    from app.services.contacts import _OPEN, _VAGUE, next_status
+    from app.services.contacts import NO_CONVERSATION, _OPEN, _VAGUE, next_status
 
     movable = [x for x in (*_OPEN, *_VAGUE) if x]
     fixed = 0
@@ -862,7 +862,9 @@ async def repair_contact_statuses() -> int:
             current[lead_id] = status
             derived[lead_id] = next_status(derived.get(lead_id, "new"), outcome) or derived.get(lead_id, "new")
         for lead_id, status in derived.items():
-            if status not in movable and status != current[lead_id]:
+            # Also: left at "wrong number" although a later call (to another of their numbers) reached them.
+            stuck_wrong = current[lead_id] == "wrong_number" and status not in ("wrong_number", "new", *NO_CONVERSATION)
+            if (status not in movable or stuck_wrong) and status != current[lead_id]:
                 same = Lead.status.is_(None) if current[lead_id] is None else Lead.status == current[lead_id]
                 await db.execute(update(Lead).where(Lead.id == lead_id, same).values(status=status))
                 fixed += 1
