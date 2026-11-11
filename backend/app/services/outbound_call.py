@@ -840,6 +840,32 @@ async def fix_missed_voicemails(days: int = 14, limit: int = 1000) -> int:
     return len(ids)
 
 
+async def backfill_missing_summaries(days: int = 6, limit: int = 600) -> int:
+    """Repair: recent conversations that never got their AI summary (the analysis provider was failing), analyzed
+    again now. Stops early if analysis still isn't working."""
+    from app.database import AsyncSessionLocal
+    from app.services import llm
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        ids = (await db.execute(
+            select(CallLog.id).where(CallLog.started_at >= since, CallLog.summary.is_(None),
+                                     CallLog.transcript.isnot(None), CallLog.ended_at.isnot(None),
+                                     CallLog.duration_seconds >= 15,
+                                     CallLog.outcome.notin_(("no_answer", "voicemail", "failed", "screened")))
+            .order_by(CallLog.started_at.desc()).limit(limit))).scalars().all()
+    done = 0
+    for call_id in ids:
+        await _analyze(str(call_id))
+        if llm.ANALYSIS_STATUS.get("ok") is False:
+            log.warning("summary_backfill_stopped", reason=llm.ANALYSIS_STATUS.get("error"), done=done)
+            break
+        done += 1
+    if done:
+        log.info("summaries_backfilled", count=done)
+    return done
+
+
 async def repair_contact_statuses() -> int:
     """Repair: contacts whose calls say more than their status (a reviewed "Follow-up" left at "Talked, no
     decision", or a later voicemail that wiped out an earlier "call me back"). Replays each contact's calls

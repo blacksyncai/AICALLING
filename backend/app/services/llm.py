@@ -240,6 +240,54 @@ def _transcript_text(transcript: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# How the last call analysis went, per provider: shown (without secrets) on /health so a dead key or an
+# exhausted quota is visible instead of silently leaving calls without a summary.
+ANALYSIS_STATUS: dict = {"ok": None, "model": None, "error": None, "at": None}
+# Tried in order when the main analysis model fails; only the ones whose provider has a key are used.
+ANALYSIS_BACKUPS = ("gpt-oss-120b", "mistral-small-latest", "qwen/qwen3.8-27b")
+
+
+def _short_error(exc: Exception) -> str:
+    """'LLM error 429 insufficient_quota': status and the provider's error code, never the message body."""
+    import re as _re
+
+    text = str(exc)
+    status = _re.search(r"LLM error (\d{3})", text)
+    code = _re.search(r'"(?:code|type)"\s*:\s*"([a-z_]{3,40})"', text)
+    if status:
+        return f"LLM error {status.group(1)}" + (f" {code.group(1)}" if code else "")
+    return type(exc).__name__
+
+
+async def _analysis_json(prompt: str) -> dict | None:
+    """The analysis as JSON from the main model, or the first backup provider that answers."""
+    from datetime import datetime, timezone
+
+    from app.agent.models import llm_endpoint
+
+    first_error = None
+    for model in dict.fromkeys((settings.analysis_model, *ANALYSIS_BACKUPS)):
+        if not llm_endpoint(model)[0]:
+            continue
+        try:
+            data = await _chat({"model": model, "temperature": 0, "response_format": {"type": "json_object"},
+                                "messages": [{"role": "user", "content": prompt}]}, timeout=60.0)
+            content = data["choices"][0]["message"]["content"] or ""
+            start, end = content.find("{"), content.rfind("}")
+            result = json.loads(content[start:end + 1])
+            if not isinstance(result, dict):
+                raise ValueError("analysis wasn't a JSON object")
+            ANALYSIS_STATUS.update(ok=True, model=model, at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                   error=first_error)  # the main model's error stays visible while a backup covers
+            return result
+        except Exception as exc:
+            first_error = first_error or f"{model}: {_short_error(exc)}"
+            log.warning("call_analysis_failed", model=model, error=str(exc)[:300])
+    ANALYSIS_STATUS.update(ok=False, model=None, error=first_error or "no provider key configured",
+                           at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    return None
+
+
 async def analyze_call(transcript: list[dict], extraction_fields: list[dict] | None,
                        success_criteria: str = "") -> dict | None:
     """Summarize a finished call. Returns None when there's nothing to analyze or no key."""
@@ -342,13 +390,9 @@ Return JSON with keys:
 TRANSCRIPT:
 {text}"""
     try:
-        data = await _chat({
-            "model": settings.analysis_model,
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "user", "content": prompt}],
-        }, timeout=60.0)
-        result = json.loads(data["choices"][0]["message"]["content"])
+        result = await _analysis_json(prompt)
+        if result is None:
+            return None
         if result.get("outcome") not in CALL_OUTCOMES:
             result["outcome"] = "completed"
         result["outcome"] = reconcile_outcome(result["outcome"], transcript,

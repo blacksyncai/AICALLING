@@ -89,6 +89,12 @@ async def lifespan(app: FastAPI):
         from app.services.outbound_call import backfill_call_reasons
         await backfill_call_reasons()
         await repair_contact_statuses()
+        try:
+            from app.services.outbound_call import backfill_missing_summaries
+            await backfill_missing_summaries()
+            await repair_contact_statuses()  # sharper outcomes can move contacts on
+        except Exception as exc:
+            log.warning("summary_backfill_failed", error=str(exc)[:200])
         from app.agent.voices import move_retired_voices
         log.info("retired_voices_moved", agents=await move_retired_voices())
 
@@ -265,6 +271,8 @@ async def health():
         # Which build is answering (Railway sets the commit) and since when: confirms a deploy went live.
         "version": (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "")[:7] or None,
         "started_at": _STARTED_AT,
+        # After-call analysis: whether the last one worked, on which model, and the main model's error if any.
+        "analysis": __import__("app.services.llm", fromlist=["ANALYSIS_STATUS"]).ANALYSIS_STATUS,
         "environment": settings.environment,
         "demo_mode": settings.demo_mode,
         "voice_ready": settings.voice_ready,
