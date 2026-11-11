@@ -91,59 +91,64 @@ async def lifespan(app: FastAPI):
         log.info("retired_voices_moved", agents=await move_retired_voices())
 
     repair_task = asyncio.create_task(_repairs() if settings.run_startup_jobs else asyncio.sleep(0))
-    if settings.run_startup_jobs:
-        from app.agent.templates import refresh_welcome_agents
-        try:
-            log.info("welcome_agents_refreshed", count=await refresh_welcome_agents())
-        except Exception as exc:
-            log.warning("welcome_agents_refresh_failed", error=str(exc))
-    if settings.run_startup_jobs and settings.livekit_ready:
-        from app.services.telephony import ensure_callback_routing
-        try:  # every number can take calls: inbound campaigns and callbacks to outbound numbers
-            log.info("inbound_numbers_synced", count=await ensure_callback_routing())
-        except Exception as exc:
-            log.warning("inbound_numbers_sync_failed", error=str(exc))
-    if settings.run_startup_jobs and settings.livekit_ready and settings.bandwidth_ready:
-        # Bandwidth hands answered calls to LiveKit: keep its inbound trunk + routing in place.
-        try:
-            from sqlalchemy import select as _select
+    async def _after_start():
+        """Slow start-up work (carrier and LiveKit syncs, resuming campaigns) runs once the API is already
+        answering: doing it first kept the API closed for ~20 s on every deploy."""
+        if settings.run_startup_jobs:
+            from app.agent.templates import refresh_welcome_agents
+            try:
+                log.info("welcome_agents_refreshed", count=await refresh_welcome_agents())
+            except Exception as exc:
+                log.warning("welcome_agents_refresh_failed", error=str(exc))
+        if settings.run_startup_jobs and settings.livekit_ready:
+            from app.services.telephony import ensure_callback_routing
+            try:  # every number can take calls: inbound campaigns and callbacks to outbound numbers
+                log.info("inbound_numbers_synced", count=await ensure_callback_routing())
+            except Exception as exc:
+                log.warning("inbound_numbers_sync_failed", error=str(exc))
+        if settings.run_startup_jobs and settings.livekit_ready and settings.bandwidth_ready:
+            # Bandwidth hands answered calls to LiveKit: keep its inbound trunk + routing in place.
+            try:
+                from sqlalchemy import select as _select
 
-            from app.database import AsyncSessionLocal
-            from app.models.billing import PhoneNumber
-            from app.services import bandwidth
+                from app.database import AsyncSessionLocal
+                from app.models.billing import PhoneNumber
+                from app.services import bandwidth
 
-            async with AsyncSessionLocal() as db:
-                bw = (await db.execute(_select(PhoneNumber.number).where(
-                    PhoneNumber.status == "active", PhoneNumber.carrier == "bandwidth"))).scalars().all()
-            await bandwidth.ensure_bridge_trunk(list(bw) or await bandwidth.list_numbers())
-            log.info("bandwidth_bridge_ready", numbers=len(bw))
-        except Exception as exc:
-            log.warning("bandwidth_bridge_failed", error=str(exc)[:200])
-    if settings.run_startup_jobs:
-        # Older Lead Finder contacts named the data vendor in their note; customers shouldn't see it.
-        try:
-            from sqlalchemy import update as _update
+                async with AsyncSessionLocal() as db:
+                    bw = (await db.execute(_select(PhoneNumber.number).where(
+                        PhoneNumber.status == "active", PhoneNumber.carrier == "bandwidth"))).scalars().all()
+                await bandwidth.ensure_bridge_trunk(list(bw) or await bandwidth.list_numbers())
+                log.info("bandwidth_bridge_ready", numbers=len(bw))
+            except Exception as exc:
+                log.warning("bandwidth_bridge_failed", error=str(exc)[:200])
+        if settings.run_startup_jobs:
+            # Older Lead Finder contacts named the data vendor in their note; customers shouldn't see it.
+            try:
+                from sqlalchemy import update as _update
 
-            from app.database import AsyncSessionLocal
-            from app.models.lead import Lead
-            async with AsyncSessionLocal() as db:
-                await db.execute(_update(Lead).where(Lead.notes == "Saved from Lead Finder (DataSkip).")
-                                 .values(notes="Saved from Lead Finder."))
-                await db.commit()
-        except Exception as exc:
-            log.warning("lead_note_cleanup_failed", error=str(exc)[:200])
+                from app.database import AsyncSessionLocal
+                from app.models.lead import Lead
+                async with AsyncSessionLocal() as db:
+                    await db.execute(_update(Lead).where(Lead.notes == "Saved from Lead Finder (DataSkip).")
+                                     .values(notes="Saved from Lead Finder."))
+                    await db.commit()
+            except Exception as exc:
+                log.warning("lead_note_cleanup_failed", error=str(exc)[:200])
+        if settings.run_startup_jobs:
+            from app.routers.campaigns import resume_running_campaigns
+            try:
+                await resume_running_campaigns()
+            except Exception as exc:
+                log.warning("campaign_resume_failed", error=str(exc)[:200])
+
+    after_start_task = asyncio.create_task(_after_start())
     from app.services.outbound_call import start_orphan_sweeper
     sweeper_task = start_orphan_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.entitlements import start_expiry_sweeper
     expiry_task = start_expiry_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.onboarding_emails import start_sweeper as start_followup_sweeper
     followup_task = start_followup_sweeper() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
-    if settings.run_startup_jobs:
-        from app.routers.campaigns import resume_running_campaigns
-        try:
-            await resume_running_campaigns()
-        except Exception as exc:
-            log.warning("campaign_resume_failed", error=str(exc)[:200])
     from app.services import twilio_recordings
     rec_task =(twilio_recordings.start_sweeper() if settings.run_startup_jobs and settings.twilio_ready
                 else asyncio.create_task(asyncio.sleep(0)))
@@ -169,6 +174,7 @@ async def lifespan(app: FastAPI):
     radar_task.cancel()
     pack_task.cancel()
     manual_plan_task.cancel()
+    after_start_task.cancel()
     alert_task.cancel()
     repair_task.cancel()
     log.info("pounce_shutting_down")
