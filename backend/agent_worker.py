@@ -1910,9 +1910,6 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         return _on
 
     CHECK_IN_AFTER, HANG_UP_AFTER = 7.0, 8.0  # quiet seconds: check in once, then hang up
-    # The line picked up but not one word came back after our opening: a mailbox recording silently, a dead
-    # line or one-way audio. A person answers an opening within a few seconds; don't sit there for ~30 s.
-    MUTE_CHECK_IN_AFTER, MUTE_HANG_UP_AFTER = 4.0, 4.0
 
     def _contact_said_anything() -> bool:
         return bool(screen["passed"] or vm["heard"].strip() or any(
@@ -1945,9 +1942,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             if not quiet:
                 continue
             idle = _time.monotonic() - silence["since"]
-            mute = call_type == "outbound" and not opening.get("pending") and not _contact_said_anything()
-            check_in_after, hang_up_after = (MUTE_CHECK_IN_AFTER, MUTE_HANG_UP_AFTER) if mute else (CHECK_IN_AFTER, HANG_UP_AFTER)
-            if not silence["checked_in"] and idle > check_in_after:
+            if not silence["checked_in"] and idle > CHECK_IN_AFTER:
                 silence["checked_in"] = True
                 log.info("silence_check_in", room=ctx.room.name, seconds=round(idle, 1))
                 try:
@@ -1955,7 +1950,8 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 except Exception as exc:
                     log.warning("silence_check_in_failed", error=str(exc)[:120])
                 continue
-            if silence["checked_in"] and idle > hang_up_after:
+            if silence["checked_in"] and idle > HANG_UP_AFTER:
+                mute = call_type == "outbound" and not _contact_said_anything()
                 log.info("silence_hangup", room=ctx.room.name, seconds=round(idle, 1), mute=mute)
                 if mute and not run.outcome:
                     # Nobody ever spoke. Sound on the line (a greeting our speech-to-text missed, a beep, a

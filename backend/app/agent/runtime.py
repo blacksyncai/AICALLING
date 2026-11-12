@@ -558,6 +558,32 @@ _VOICEMAIL_STRICT = (
     # Call screeners giving up ("I'm sorry. This person is not available. If you would like to leave an
     # additional message, please reply after the tone.").
     "this person is not available", "leave an additional message",
+    # Carrier mailboxes and their menus ("Your call has been forwarded to an automatic voice message system. The
+    # mailbox belonging to ... is full"; "When you are finished recording, you may hang up or press pound";
+    # "If you're satisfied with the message, press one").
+    "voice message system", "automatic voice message", "automated voice message", "will not receive your message",
+    "cannot receive your message", "can't receive your message", "mailbox belonging to", "finished recording",
+    "done recording", "satisfied with the message", "satisfied with your message", "to erase and re",
+    "to listen to your message", "press pound", "press the pound", "for more options", "your important message",
+    "leave me your important", "like to leave a", "messages left here", "message left here", "checked periodically",
+    # Carrier intercepts: the call never reached anyone.
+    "the number you have dialed", "the number you dialed", "number you have reached is", "not configured correctly",
+    "cannot receive calls", "can't receive calls", "is not in service", "no longer in service", "has been disconnected",
+    "call cannot be completed", "call could not be completed", "call can not be completed",
+    "the person you're calling is busy", "the person you are calling is busy",
+    "the party you are calling", "the party you're calling", "the subscriber you",
+    # Phone trees and closed offices.
+    "please press one", "press one now", "press 1", "para espanol", "para español", "oprima", "continue in english",
+    "call in english", "we're currently closed", "we are currently closed", "office is currently closed",
+    "we're closed right now", "we're currently close right now", "normal business hours", "regular business hours", "our office is closed",
+    "our offices are closed", "office hours are",
+)
+# Same kind of thing where the wording varies: menu prompts ("to replay, press two"), the end of "...you may hang
+# up", a recording that tells you who to call instead.
+_MACHINE_PATTERNS = re.compile(
+    r"press (?:one|two|three|four|five|six|seven|eight|nine|zero|star|\d)\b.*\bpress\b"
+    r"|\brecording\b.{0,30}\bhang up\b|\bhang up or press\b"
+    r"|\bif (?:this is|you(?:'re| are) calling) (?:a|an|about|regarding|for)\b.{0,80}\bplease (?:call|text|email|contact|visit)\b"
 )
 
 
@@ -579,10 +605,12 @@ def number_greeting_match(text: str) -> str | None:
     t = (text or "").lower().replace("’", "'")
     if re.search(r"\b(?:your )?message for\b", t) or _reads_out_number(t):
         return "number read out"
+    if re.fullmatch(r"(?:four|for)[.,]?\s+[a-z'-]+(?:\s+[a-z'-]+){0,2}[.!]?", t.strip()):
+        return "voicemail for <name>"  # the tail of "you've reached the voicemail for Caroline Dixon"
     return None
 
 
-_UNAVAILABLE = re.compile(r"\b(?:is|are|'s)(?: not|n't) available\b|\bisn't available\b|\bnot available\b|\bunavailable\b"
+_UNAVAILABLE = re.compile(r"\b(?:is|are|'s)(?: not|n't) available\b|\bisn't available\b|\bnot (?:a |an )?available\b|\bunavailable\b"
                           r"|\bcan(?:'t|not) (?:take|answer) (?:your|the|this) call\b|\bis not in service\b"
                           r"|\bnot accepting calls\b|\btry (?:your call )?again later\b")
 MONOLOGUE_WORDS = 25
@@ -614,7 +642,11 @@ def opening_machine_match(text: str, *, first_words: int, opening: bool = True) 
 
 def voicemail_greeting_match(text: str) -> str | None:
     t = (text or "").lower().replace("’", "'")
-    return next((h for h in _VOICEMAIL_STRICT if h in t), None)
+    hit = next((h for h in _VOICEMAIL_STRICT if h in t), None)
+    if hit:
+        return hit
+    m = _MACHINE_PATTERNS.search(t)
+    return m.group(0)[:40] if m else None
 
 
 def is_voicemail_greeting(text: str) -> bool:

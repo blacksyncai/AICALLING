@@ -155,3 +155,48 @@ def test_recordings_without_a_stock_phrase():
     assert r("interested", T(("user", "Hello?"), ("assistant", "Are you still looking?"), ("user", long_answer))) == "interested"
     assert r("completed", T(("user", "Hello"), ("assistant", "Is this John?"),
                             ("user", "John is not available right now"))) == "completed"
+
+
+# Real recordings our agents talked to as if they were people (Nov 2026 call logs).
+MISSED_RECORDINGS = [
+    "If you're satisfied with the message, press one. To listen to your message, press two. To erase and rerecord, press three.",
+    "When you are finished recording, you may hang up or press pound for more options.",
+    "Your call has been forwarded to an automatic voice message system. Sorry. The mailbox belonging to four one five "
+    "two three nine two five four one is full and will not receive your message. Please hang up.",
+    "Please leave me your important message.",
+    "To continue your call in English, please press one now.",
+    "Like to leave a",
+    "whave finage recording y me hang up.",
+    "The person you're calling is busy now. I'll let them know you called. Thank you.",
+    "The Roan Sisters. If this is a repair or maintenance issue, please call or text Theo at five one zero two three "
+    "zero seven zero six two. Messages left here will be checked periodically. Thanks.",
+    "The number you have dialed is not configured correctly and cannot receive calls.",
+    "We're currently close right now. Please give us a callback during normal business hours.",
+    "Your call cannot be completed at this time. Please try again later.",
+]
+
+
+def test_obvious_recordings_are_caught():
+    from app.agent.runtime import voicemail_answered, voicemail_greeting_match
+
+    for text in MISSED_RECORDINGS:
+        assert voicemail_greeting_match(text), text
+        assert voicemail_answered([{"role": "assistant", "text": "Hi, is this Pat?"}, {"role": "user", "text": text}]), text
+
+
+def test_tail_of_voicemail_for_name_at_pickup():
+    from app.agent.runtime import number_greeting_match
+
+    assert number_greeting_match("Four Caroline Dixon.")
+    assert number_greeting_match("Four. Tina Tindle.")
+    assert not number_greeting_match("For sure, go ahead.")  # three words, but a live reply
+    assert not number_greeting_match("For what property?")
+
+
+def test_live_people_are_not_recordings():
+    from app.agent.runtime import voicemail_greeting_match
+
+    for text in ("Hello? Who's this?", "Yeah, I'm closed on Sundays but go ahead.", "Which number did you dial?",
+                 "I'd rather you text me the details.", "Press me on price and I'll tell you.",
+                 "Sorry, can you call me back in an hour?", "The office is open, what's this about?"):
+        assert voicemail_greeting_match(text) is None, text
