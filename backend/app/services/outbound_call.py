@@ -625,6 +625,49 @@ async def analyze_and_store(call_log_id: str, force: bool = False) -> None:
         await emit_call_events(uuid.UUID(call_log_id))
 
 
+_SILENT_VAGUE = ("insufficient_conversation", "completed", "no_decision", "hung_up")
+
+
+def silent_pickup_outcome(call_log, previous: str | None) -> str | None:
+    """An outbound call where the contact never said a live word isn't a conversation, whatever the analysis
+    makes of the agent's own lines ("insufficient conversation"). It keeps the no-conversation result the agent
+    recorded (voicemail / screened / no answer) so the contact gets its retry. None: not such a call."""
+    from app.agent.runtime import NO_CONVERSATION_OUTCOMES, contact_turns, person_answered
+
+    if call_log.call_type != "outbound" or call_log.outcome not in _SILENT_VAGUE:
+        return None
+    if person_answered(call_log.transcript):
+        return None
+    if previous in NO_CONVERSATION_OUTCOMES:
+        return previous
+    if any(t.get("role") == "tool" and t.get("tool") == "call_screener" for t in call_log.transcript or []):
+        return "screened"
+    return "voicemail" if contact_turns(call_log.transcript) else "no_answer"
+
+
+async def fix_silent_pickups(days: int = 14, limit: int = 1000) -> int:
+    """Repair: recent outbound calls scored "insufficient conversation" although the contact never said a word
+    (a mailbox, a screener that never put anyone through, a dead line)."""
+    from app.agent.runtime import person_answered
+    from app.database import AsyncSessionLocal
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CallLog.id, CallLog.transcript).where(
+            CallLog.started_at >= since, CallLog.transcript.isnot(None), CallLog.call_type == "outbound",
+            CallLog.outcome.in_(_SILENT_VAGUE),
+        ).order_by(CallLog.started_at.desc()).limit(limit))).all()
+    ids = [str(r.id) for r in rows if not person_answered(r.transcript)]
+    for cid in ids:
+        try:
+            await _analyze(cid)
+        except Exception as exc:
+            log.warning("silent_pickup_repair_failed", call_log_id=cid, error=str(exc))
+    if ids:
+        log.info("silent_pickups_repaired", count=len(ids))
+    return len(ids)
+
+
 async def _analyze(call_log_id: str, force: bool = False) -> None:
     from app.database import AsyncSessionLocal
     from app.services.llm import analyze_call
@@ -640,6 +683,7 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         new_review = force or review_meta.get("_review_schema") == 1
         call_log.outcome = reconcile_outcome(previous, call_log.transcript,
                                              callback_request=(call_log.extracted_data or {}).get("_callback_request"))
+        call_log.outcome = silent_pickup_outcome(call_log, previous) or call_log.outcome
         if call_log.outcome != previous:
             call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                "failed": "failed"}.get(call_log.outcome, "completed")
@@ -680,6 +724,9 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
                                                      callback_request=result.get("callback_request"))
                 call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                    "failed": "failed"}.get(call_log.outcome, "completed")
+        if (silent := silent_pickup_outcome(call_log, previous)) and silent != call_log.outcome:
+            call_log.outcome = silent
+            call_log.status = "completed" if silent == "screened" else "no_answer"
         if review_meta.get("_manual_outcome"):  # someone corrected this call by hand: that result stays
             call_log.outcome = review_meta["_manual_outcome"]
             call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",

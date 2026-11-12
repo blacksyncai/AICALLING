@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # Mistral (OpenAI-compatible API) — the "BlackSync Flash" models.
     mistral_api_key: str = ""
     groq_api_key: str = ""  # "BlackSync Ultra Fast"
+    amd_model: str = ""  # answering-machine detection model; empty = first provider with a key
     # Nango (OAuth for CRMs like Salesforce, HubSpot, Close); integrations configured in Nango show up in the app.
     nango_secret_key: str = ""
     # One-off repair jobs at startup (off in tests).

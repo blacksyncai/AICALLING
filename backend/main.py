@@ -86,6 +86,8 @@ async def lifespan(app: FastAPI):
         await fix_mislabeled_outcomes()
         from app.services.outbound_call import fix_missed_voicemails
         await fix_missed_voicemails()
+        from app.services.outbound_call import fix_silent_pickups
+        await fix_silent_pickups()
         from app.services.outbound_call import backfill_call_reasons
         await backfill_call_reasons()
         await repair_contact_statuses()

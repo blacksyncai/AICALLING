@@ -1819,13 +1819,14 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     # Answering-machine detection: LiveKit's AMD classifies the first seconds after pickup (human / voicemail /
     # IVR / mailbox full) and holds the agent's opening line until it decides. Phrase matching stays as backup.
-    if call_type == "outbound" and vm_action != "ignore" and settings.openai_api_key:
+    amd_llm = _amd_llm() if call_type == "outbound" and vm_action != "ignore" else None
+    if amd_llm is not None:
         try:
             from livekit.agents.voice.amd import AMD
 
             detector = AMD(
                 session,
-                llm=openai.LLM(model="gpt-4.1-mini", api_key=settings.openai_api_key, base_url=settings.openai_base_url),
+                llm=amd_llm,
                 stt=deepgram.STT(model="nova-3", language="en", api_key=settings.deepgram_api_key),
                 interrupt_on_machine=True, ivr_detection=False, suppress_compatibility_warning=True,
                 wait_until_finished=(vm_action == "leave_message"),
@@ -1909,6 +1910,13 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         return _on
 
     CHECK_IN_AFTER, HANG_UP_AFTER = 7.0, 8.0  # quiet seconds: check in once, then hang up
+    # The line picked up but not one word came back after our opening: a mailbox recording silently, a dead
+    # line or one-way audio. A person answers an opening within a few seconds; don't sit there for ~30 s.
+    MUTE_CHECK_IN_AFTER, MUTE_HANG_UP_AFTER = 4.0, 4.0
+
+    def _contact_said_anything() -> bool:
+        return bool(screen["passed"] or vm["heard"].strip() or any(
+            t.get("role") in ("user", "caller") and (t.get("text") or "").strip() for t in run.transcript))
     # How long to hold for a screened person. Real people come on within seconds of hearing who's calling;
     # waiting longer only bills the line until the screener says "not available, leave a message" (~40 s).
     SCREENER_WAIT = 25.0
@@ -1937,7 +1945,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             if not quiet:
                 continue
             idle = _time.monotonic() - silence["since"]
-            if not silence["checked_in"] and idle > CHECK_IN_AFTER:
+            mute = call_type == "outbound" and not opening.get("pending") and not _contact_said_anything()
+            check_in_after, hang_up_after = (MUTE_CHECK_IN_AFTER, MUTE_HANG_UP_AFTER) if mute else (CHECK_IN_AFTER, HANG_UP_AFTER)
+            if not silence["checked_in"] and idle > check_in_after:
                 silence["checked_in"] = True
                 log.info("silence_check_in", room=ctx.room.name, seconds=round(idle, 1))
                 try:
@@ -1945,8 +1955,12 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 except Exception as exc:
                     log.warning("silence_check_in_failed", error=str(exc)[:120])
                 continue
-            if silence["checked_in"] and idle > HANG_UP_AFTER:
-                log.info("silence_hangup", room=ctx.room.name, seconds=round(idle, 1))
+            if silence["checked_in"] and idle > hang_up_after:
+                log.info("silence_hangup", room=ctx.room.name, seconds=round(idle, 1), mute=mute)
+                if mute and not run.outcome:
+                    # Nobody ever spoke. Sound on the line (a greeting our speech-to-text missed, a beep, a
+                    # recording) is a voicemail; total silence is no answer. Both put the contact back in line.
+                    run.outcome = "voicemail" if vm.get("first_speech") else "no_answer"
                 run.transcript.append({"role": "tool", "tool": "end_call", "args": {"reason": "silence"},
                                        "result": {"success": True}, "ts": round(_time.monotonic() - run.t0, 2)})
                 _mark_ended()
@@ -2119,6 +2133,18 @@ async def _run_inbound(ctx: JobContext) -> None:
         return
     log.info("inbound_call", to=to_number, room=ctx.room.name, agent=(routed.get("agent") or {}).get("name"))
     await _run_configurable(ctx, routed)
+
+
+def _amd_llm():
+    """The model behind answering-machine detection: the first provider with a key. Cerebras first: it answers
+    in a few hundred ms, and OpenAI has run out of quota before, which silently switched detection off."""
+    from app.agent.models import llm_endpoint
+
+    for model in dict.fromkeys(m for m in (settings.amd_model, "gpt-oss-120b", "gpt-4.1-mini") if m):
+        key, base_url, _ = llm_endpoint(model)
+        if key:
+            return openai.LLM(model=model, api_key=key, base_url=base_url)
+    return None
 
 
 async def entrypoint(ctx: JobContext) -> None:
