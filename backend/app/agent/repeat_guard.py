@@ -133,18 +133,36 @@ async def no_repeats(make_stream, said: list[str], on_repeat=None, heard: str = 
         return
     dropped: list[str] = []
     spoke = acted = False
+    # Once a repeat has been cut, what's left is held until it amounts to something: cutting "I've got Monday at
+    # 9, 12:30 or 4:30." out of "...What works best?" left only "What works best?", said again and again to a
+    # contact asking for other times. A leftover that short is dropped too, and the model asked again.
+    held: list[str] = []
+    held_words = 0
     stream = make_stream(False)
     try:
         async for piece in _filtered(stream, RepeatGuard(said), dropped):
-            if isinstance(piece, str):
-                spoke = spoke or bool(piece.strip())
-            else:
+            if not isinstance(piece, str):
                 acted = acted or _text(piece)[1]
+                if held and acted:
+                    for h in held:
+                        yield h
+                    held, spoke = [], True
+                yield piece
+                continue
+            if dropped and not spoke:
+                held.append(piece)
+                held_words += len(words(piece))
+                if held_words >= MIN_WORDS:
+                    for h in held:
+                        yield h
+                    held, spoke = [], True
+                continue
+            spoke = spoke or bool(piece.strip())
             yield piece
     finally:
         await _close(stream)
     if dropped and on_repeat:
-        on_repeat(" ".join(dropped))
+        on_repeat(" ".join(dropped + held))
     if spoke or acted or not dropped:
         return
     async for chunk in make_stream(True):

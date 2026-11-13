@@ -90,3 +90,20 @@ def test_asked_to_repeat_the_times_says_them_again():
     for ask in ("Say the times again.", "What times again?", "Sorry, I didn't catch that", "What times do you have?"):
         out, calls, cut = _run({False: TIMES, True: "x"}, [TIMES], ask)
         assert out == TIMES and calls == [False] and not cut, ask
+
+
+def test_a_cut_repeat_never_leaves_just_the_closing_question():
+    """Call 10e32db1: asked for other times, the agent re-read its three times; the cut left only "What works
+    best?", said over and over. Now that leftover is dropped too and the model answers the contact instead."""
+    offer = "I've got Monday at 9, twelve thirty or four thirty. What works best?"
+    out, calls, cut = _run({False: offer, True: "Those are the only times Monday. I've also got Tuesday at 10 or 2."},
+                           [offer], heard="Is there any other times?")
+    assert out == "Those are the only times Monday. I've also got Tuesday at 10 or 2."
+    assert calls == [False, True] and "What works best?" in cut[0]
+
+
+def test_a_real_new_line_after_a_cut_still_goes_out():
+    offer = "I've got Monday at 9, twelve thirty or four thirty. What works best?"
+    out, calls, _ = _run({False: offer.split(". ")[0] + ". Tuesday is open at ten or two if that's easier for you.",
+                          True: "x"}, [offer])
+    assert out == "Tuesday is open at ten or two if that's easier for you." and calls == [False]

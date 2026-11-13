@@ -855,6 +855,31 @@ def callback_requested(transcript: list[dict] | None, quote: str | None = None) 
     return False
 
 
+_CALENDAR_TOOLS = ("check_availability", "book_appointment")
+
+
+def booking_state(transcript: list[dict] | None) -> str | None:
+    """What the calendar says about this call: "confirmed" (a booking came back with a receipt), "failed" (a
+    booking was tried and not confirmed), "tentative" (times were looked up or offered but nothing was booked), or
+    None (the call never touched a calendar)."""
+    used = False
+    failed = False
+    for t in transcript or []:
+        if t.get("role") != "tool" or t.get("tool") not in _CALENDAR_TOOLS:
+            continue
+        used = True
+        if t.get("tool") != "book_appointment":
+            continue
+        result = t.get("result") or {}
+        out = result.get("output") if isinstance(result.get("output"), dict) else {}
+        if result.get("success") is not False and (out.get("link") or out.get("booked")):
+            return "confirmed"
+        failed = True
+    if failed:
+        return "failed"
+    return "tentative" if used else None
+
+
 def reconcile_outcome(outcome: str | None, transcript: list[dict] | None,
                       *, callback_request: str | None = None) -> str | None:
     """Apply contact and machine evidence before outcomes reach routing consumers."""
@@ -870,6 +895,9 @@ def reconcile_outcome(outcome: str | None, transcript: list[dict] | None,
         return "completed"
     if outcome == "callback" and not callback_requested(transcript, callback_request):
         return "completed"  # no positive evidence of a live request; do not invent voicemail
+    if outcome == "meeting_booked" and booking_state(transcript) in ("failed", "tentative"):
+        # The calendar was in play and never confirmed a booking: agreeing to a time is not a booked meeting.
+        return "interested"
     return outcome
 
 

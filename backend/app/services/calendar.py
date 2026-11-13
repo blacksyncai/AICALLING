@@ -14,7 +14,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 import structlog
 
-from app.config import settings
 
 log = structlog.get_logger(__name__)
 
@@ -22,13 +21,77 @@ log = structlog.get_logger(__name__)
 class CalendarUnavailable(RuntimeError):
     """No authoritative availability/booking result; distinct from zero openings."""
 
+
+class BookingRejected(CalendarUnavailable):
+    """The calendar answered and refused the booking (nothing was created). `slot_taken`: the time is no longer
+    open; otherwise `reason` is the calendar's own message (e.g. a required field)."""
+
+    def __init__(self, reason: str, *, slot_taken: bool = False, status: int | None = None):
+        super().__init__(reason)
+        self.reason, self.slot_taken, self.status = reason, slot_taken, status
+
+
 def _event_type(event_type_id: str | None) -> str:
-    return (event_type_id or settings.calcom_event_type_id or "").strip()
+    return (event_type_id or "").strip()
 
 
 def _key(api_key: str | None) -> str:
-    """The agent's own Cal.com key, else the server-wide one."""
-    return (api_key or settings.calcom_api_key or "").strip()
+    """The agent's own key only. There is no server-wide fallback: an agent without its own key must never read
+    or book another calendar (it used to fall back to the platform's Cal.com account)."""
+    return (api_key or "").strip()
+
+
+def local_date(start: str, tz: str | None) -> str:
+    """The slot's day in the calendar's zone, YYYY-MM-DD."""
+    try:
+        d = dt.datetime.fromisoformat(start.replace("Z", "+00:00"))
+    except ValueError:
+        return start[:10]
+    return (d.astimezone(_zone(tz)) if d.tzinfo else d).date().isoformat()
+
+
+def _utc_start(start: str) -> str:
+    """Cal.com's booking API takes the start in UTC ("2026-11-13T21:30:00Z"); slots come back in the calendar's
+    zone ("2026-11-13T16:30:00.000-05:00")."""
+    try:
+        d = dt.datetime.fromisoformat(start.replace("Z", "+00:00"))
+    except ValueError:
+        return start
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return d.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_TAKEN = ("no available users", "not available", "already booked", "already has booking", "booking limit",
+          "slot", "busy", "unavailable", "is in the past", "outside", "minimum booking notice", "conflict")
+
+
+def calcom_error(resp) -> str:
+    """Cal.com's own explanation from an error response (no secrets in it), trimmed for logs and the agent."""
+    try:
+        body = resp.json()
+    except Exception:
+        return (getattr(resp, "text", "") or "")[:300]
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        msg = err.get("message") or err.get("code") or ""
+        details = err.get("details")
+        if isinstance(details, dict) and isinstance(details.get("message"), (str, list)):
+            msg = f"{msg}: {details['message']}"
+        return str(msg)[:300]
+    return str((body or {}).get("message") or body)[:300] if isinstance(body, dict) else str(body)[:300]
+
+
+def _rejection(resp) -> BookingRejected:
+    reason = calcom_error(resp)
+    low = reason.lower()
+    taken = resp.status_code == 409 or any(k in low for k in _TAKEN)
+    return BookingRejected(reason or f"HTTP {resp.status_code}", slot_taken=taken, status=resp.status_code)
+
+
+def _e164(phone: str) -> str:
+    p = "".join(c for c in (phone or "") if c.isdigit() or c == "+")
+    return p if p.startswith("+") and 8 <= len(p) <= 16 else ""
 
 
 def _zone(tz: str | None) -> ZoneInfo:
@@ -357,27 +420,90 @@ async def create_booking(start: str, email: str, name: str, event_type_id: str |
             if allow_mock:
                 return ""
             raise CalendarUnavailable("Booking result unavailable; do not retry automatically") from exc
+    attendee = {"name": name or "Guest", "email": email, "timeZone": _zone(tz).key, "language": "en"}
+    if _e164(phone):
+        attendee["phoneNumber"] = _e164(phone)
+    try:
+        etype_id = int(etype)
+    except ValueError as exc:
+        raise BookingRejected(f"The Cal.com event type id isn't a number: {etype!r}") from exc
+    body = {"start": _utc_start(start), "eventTypeId": etype_id, "attendee": attendee,
+            "metadata": {"source": "blacksync"}}
     try:
         async with asyncio.timeout(10.0), httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 "https://api.cal.com/v2/bookings",
                 headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-08-13"},
-                json={
-                    "start": start,
-                    "eventTypeId": int(etype),
-                    "attendee": {"name": name or "Guest", "email": email, "timeZone": _zone(tz).key, "language": "en"},
-                    "metadata": {"source": "closer"},
-                },
+                json=body,
             )
-            resp.raise_for_status()
-            data = (resp.json() or {}).get("data") or {}
-        uid = data.get("uid") or data.get("id")
-        return f"https://cal.com/booking/{uid}" if uid else ""
     except Exception as exc:
+        # No answer at all (timeout, network): a booking may or may not exist. Never retry blindly.
         log.warning("calcom_booking_failed", error=type(exc).__name__)
         if allow_mock:
             return ""
         raise CalendarUnavailable("Booking result unavailable; do not retry automatically") from exc
+    if 400 <= resp.status_code < 500:
+        rejected = _rejection(resp)
+        # Cal.com refused it, so nothing was created: safe to tell the contact and offer another time.
+        log.warning("calcom_booking_rejected", status=resp.status_code, reason=rejected.reason,
+                    slot_taken=rejected.slot_taken, event_type=etype_id)
+        if allow_mock:
+            return ""
+        raise rejected
+    if resp.status_code >= 300:
+        log.warning("calcom_booking_failed", status=resp.status_code, reason=calcom_error(resp))
+        if allow_mock:
+            return ""
+        raise CalendarUnavailable("Booking result unavailable; do not retry automatically")
+    try:
+        data = (resp.json() or {}).get("data") or {}
+    except Exception:
+        data = {}
+    if isinstance(data, list):  # recurring events answer with one booking per occurrence
+        data = data[0] if data else {}
+    uid = data.get("uid") or data.get("id")
+    if not uid:
+        log.warning("calcom_booking_no_receipt", status=resp.status_code)
+        if allow_mock:
+            return ""
+        raise CalendarUnavailable("Booking result unavailable; do not retry automatically")
+    return f"https://cal.com/booking/{uid}"
+
+
+async def event_type_check(api_key: str | None, event_type_id: str | None) -> dict:
+    """What an agent's Cal.com event type needs to be booked (read only, nothing is created): whether the key
+    works, the event's title and length, its locations, and the booking questions an attendee must answer."""
+    key, etype = _key(api_key), _event_type(event_type_id)
+    if not key or not etype:
+        return {"ok": False, "problem": "No Cal.com API key or event type id is saved on this agent."}
+    try:
+        async with asyncio.timeout(10.0), httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"https://api.cal.com/v2/event-types/{etype}",
+                                    headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-06-14"})
+    except Exception as exc:
+        return {"ok": False, "problem": f"Couldn't reach Cal.com ({type(exc).__name__})."}
+    if resp.status_code >= 400:
+        return {"ok": False, "status": resp.status_code, "problem": calcom_error(resp)}
+    data = (resp.json() or {}).get("data") or {}
+    fields = []
+    for f in data.get("bookingFields") or []:
+        if not isinstance(f, dict):
+            continue
+        name = f.get("slug") or f.get("name") or f.get("type")
+        fields.append({"name": name, "type": f.get("type"), "required": bool(f.get("required")),
+                       "hidden": bool(f.get("hidden"))})
+    standard = {"name", "email", "rescheduleReason", "guests", "notes", "title", "attendeePhoneNumber"}
+    extra_required = [f["name"] for f in fields if f["required"] and not f["hidden"] and f["name"] not in standard]
+    locations = [(x.get("type") if isinstance(x, dict) else x) for x in data.get("locations") or []]
+    return {
+        "ok": True, "title": data.get("title"), "length_minutes": data.get("lengthInMinutes") or data.get("length"),
+        "requires_confirmation": bool((data.get("confirmationPolicy") or {}).get("disabled") is False
+                                      or data.get("requiresConfirmation")),
+        "locations": locations, "booking_fields": fields,
+        "required_questions_agent_cannot_answer": extra_required,
+        "needs_attendee_phone": any(f["name"] == "attendeePhoneNumber" and f["required"] for f in fields)
+        or "attendeePhone" in locations or "phone" in locations,
+    }
 
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]

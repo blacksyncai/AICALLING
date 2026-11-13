@@ -625,6 +625,53 @@ async def analyze_and_store(call_log_id: str, force: bool = False) -> None:
         await emit_call_events(uuid.UUID(call_log_id))
 
 
+def calendar_connected(agent) -> bool:
+    """The agent books through a calendar of its own (booking on, with a key and an event type saved)."""
+    return bool(agent is not None and getattr(agent, "enable_booking", False)
+                and getattr(agent, "calcom_api_key_enc", None) and getattr(agent, "calcom_event_type_id", None))
+
+
+def booking_status(call_log, agent) -> str | None:
+    """confirmed (the calendar returned a booking), failed, tentative (times offered, nothing booked) or None."""
+    from app.agent.runtime import booking_state
+
+    if call_log.meeting_link:
+        return "confirmed"
+    state = booking_state(call_log.transcript)
+    if state is None and call_log.outcome == "meeting_booked" and calendar_connected(agent):
+        return "tentative"
+    return state
+
+
+def unconfirmed_booking(call_log, agent) -> bool:
+    """A call scored "meeting booked" with no calendar booking behind it, on an agent that books through a
+    calendar. Agreeing to a time on the call is not a meeting on the calendar."""
+    if call_log.outcome != "meeting_booked" or call_log.meeting_link:
+        return False
+    return booking_status(call_log, agent) in ("failed", "tentative")
+
+
+async def fix_unconfirmed_bookings(days: int = 30, limit: int = 2000) -> int:
+    """Repair: recent calls counted as booked meetings that the calendar never confirmed."""
+    from app.database import AsyncSessionLocal
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CallLog, Agent).outerjoin(Agent, Agent.id == CallLog.agent_id).where(
+            CallLog.started_at >= since, CallLog.outcome == "meeting_booked", CallLog.meeting_link.is_(None),
+        ).order_by(CallLog.started_at.desc()).limit(limit))).all()
+        ids = [str(c.id) for c, a in rows if unconfirmed_booking(c, a)
+               and not (c.response_analysis or {}).get("_manual_outcome")]
+    for cid in ids:
+        try:
+            await _analyze(cid)
+        except Exception as exc:
+            log.warning("unconfirmed_booking_repair_failed", call_log_id=cid, error=str(exc))
+    if ids:
+        log.info("unconfirmed_bookings_repaired", count=len(ids))
+    return len(ids)
+
+
 _SILENT_VAGUE = ("insufficient_conversation", "completed", "no_decision", "hung_up")
 
 
@@ -724,6 +771,11 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
                                                      callback_request=result.get("callback_request"))
                 call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                    "failed": "failed"}.get(call_log.outcome, "completed")
+        booked_state = booking_status(call_log, agent)
+        if unconfirmed_booking(call_log, agent):
+            call_log.outcome, call_log.status = "interested", "completed"
+        if booked_state:
+            call_log.extracted_data = {**(call_log.extracted_data or {}), "_booking_status": booked_state}
         if (silent := silent_pickup_outcome(call_log, previous)) and silent != call_log.outcome:
             call_log.outcome = silent
             call_log.status = "completed" if silent == "screened" else "no_answer"
@@ -737,6 +789,9 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
                 call_log.response_analysis.update(next_action="none_agreed", next_action_quote=None, channel=None)
             if call_log.outcome == "meeting_booked":
                 call_log.response_analysis["next_action"] = "meeting_booked"
+            elif call_log.response_analysis.get("next_action") == "meeting_booked":
+                # They agreed to a time but the calendar never confirmed it: a person has to lock it in.
+                call_log.response_analysis["next_action"] = "human_review"
             if call_log.campaign_id and "_counted_outcome" in review_meta:
                 def counts(value):
                     return (int(value in ("meeting_booked", "qualified", "interested")), int(value == "meeting_booked"))

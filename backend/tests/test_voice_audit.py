@@ -23,8 +23,10 @@ def tools(cfg=None, variables=None):
 
 @pytest.mark.asyncio
 async def test_calendar_without_credentials_never_invents_availability_or_receipt(monkeypatch):
-    monkeypatch.setattr(calendar.settings, 'calcom_api_key', '')
-    monkeypatch.setattr(calendar.settings, 'calcom_event_type_id', '')
+    from app.config import settings
+    # A server-wide key must never stand in for an agent's own (it would book another account's calendar).
+    monkeypatch.setattr(settings, 'calcom_api_key', 'platform-key')
+    monkeypatch.setattr(settings, 'calcom_event_type_id', '123')
     with pytest.raises(calendar.CalendarUnavailable):
         await calendar.fetch_slots()
     with pytest.raises(calendar.CalendarUnavailable):

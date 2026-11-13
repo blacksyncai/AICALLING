@@ -945,10 +945,41 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                 run.last_found = found
             _record("check_availability", {"preferred_date": preferred_date, "time_of_day": time_of_day, "time": time},
                     {"slots": [s["label"] for s in found]})
+            if not found and (preferred_date or time_of_day or time or run.slots):
+                # Nothing new for what they asked ("any other times?" on a full day): look further ahead so the
+                # agent has real alternatives instead of re-reading the same three times.
+                from datetime import date as _date, timedelta as _td
+                try:
+                    after = (_date.fromisoformat(preferred_date[:10]) + _td(days=1)).isoformat() if preferred_date else ""
+                except ValueError:
+                    after = ""
+                try:
+                    found = await _cal.fetch_slots(after, cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"),
+                                                   cfg.get("calendar_timezone"), exclude={s["start"] for s in run.slots},
+                                                   count=3, provider=cfg.get("calendar_provider"))
+                except _cal.CalendarUnavailable:
+                    found = []
+                if found:
+                    run.slots = _cal.remember_slots(run.slots, found)
+                    run.last_found = found
+                    _record("check_availability", {"preferred_date": after, "widened": True},
+                            {"slots": [s["label"] for s in found]})
+                    offer = _cal.spoken_offer(found, cfg.get("calendar_timezone"))
+                    return ("Nothing else open for what they asked beyond the times already offered. Say that plainly, "
+                            "then offer these instead: " + offer + " (\"That's all I have then, but I've got " + offer
+                            + ". Would any of those work?\"). To book, pass one of these labels: "
+                            + "; ".join(s["label"] for s in found) + ".")
             if not found:
-                return ("No new openings for that. Offer a different day or time of day"
-                        + (", or one of the times already offered." if run.slots else "."))
-            return ("Open: " + _cal.spoken_offer(found, cfg.get("calendar_timezone"))
+                return ("No other openings. Say plainly that the times already offered are all that's open"
+                        + (" (" + "; ".join(s["label"] for s in run.slots) + ")" if run.slots else "")
+                        + ", and ask which works or whether another week is better. Don't just repeat your question.")
+            other_day = ""
+            if preferred_date and not any(_cal.local_date(x["start"], cfg.get("calendar_timezone")) == preferred_date[:10]
+                                          for x in found):
+                # Their day is full (or has nothing new): say so instead of offering another day as if it were it.
+                other_day = ("Nothing else open on the day they asked for" + (" beyond the times already offered"
+                             if run.slots and len(run.slots) > len(found) else "") + ". Say that plainly first. ")
+            return (other_day + "Open: " + _cal.spoken_offer(found, cfg.get("calendar_timezone"))
                     + ". Offer them exactly like that, in one short sentence (\"I've got " + _cal.spoken_offer(
                         found, cfg.get("calendar_timezone")) + ". What works best?\"). Say only the day and time: no "
                     "month, no date number, no time zone unless they ask. If they ask for the times again, say them "
@@ -999,10 +1030,26 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     if run.trace:
                         run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="stale")
                     raise NoAction("Not booked: that slot is no longer available. Check availability again.")
-                link = await _cal.create_booking(chosen["start"], email,
-                    (cfg_vars or {}).get("full_name") or (cfg_vars or {}).get("name") or "",
-                    cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
-                    provider=cfg.get("calendar_provider"), phone=(cfg_vars or {}).get("phone") or "")
+                try:
+                    link = await _cal.create_booking(chosen["start"], email,
+                        (cfg_vars or {}).get("full_name") or (cfg_vars or {}).get("name") or "",
+                        cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
+                        provider=cfg.get("calendar_provider"), phone=(cfg_vars or {}).get("phone") or "")
+                except _cal.BookingRejected as exc:
+                    # The calendar said no, so nothing was created: say so, and offer other times when it's taken.
+                    _record("book_appointment", {"slot": slot, "email": email},
+                            {"error": exc.reason, "status": exc.status, "slot_taken": exc.slot_taken}, success=False)
+                    log.warning("booking_rejected", room=ctx.room.name, reason=exc.reason[:200],
+                                slot_taken=exc.slot_taken)
+                    if run.trace:
+                        run.trace.mark("tool_result", speech=context.speech_handle, tool="book_appointment", status="rejected")
+                    if exc.slot_taken:
+                        run.slots = [s for s in run.slots if s["start"] != chosen["start"]]
+                        raise NoAction("Not booked: that time was just taken. Tell them briefly, call check_availability "
+                                       "for the same day, and offer the new times.") from exc
+                    raise NoAction("Not booked: the calendar didn't accept the booking. Do not say it's booked. Tell "
+                                   "them you couldn't lock it in on the call and that the team will confirm the time "
+                                   "by email.") from exc
                 if not link:
                     raise ActionUncertain("No booking receipt")
                 # Persist the authoritative result inside the shielded operation,

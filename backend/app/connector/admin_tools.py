@@ -272,3 +272,43 @@ async def admin_correct_call(s: Session, args: dict) -> dict:
     return {"account": org.name, "call_id": str(call.id), "outcome": call.outcome, "summary": call.summary,
             "extracted": {k: v for k, v in (call.extracted_data or {}).items() if not k.startswith("_")},
             "recording_trimmed_to": keep}
+
+
+@admin_tool("admin_check_calendar", "Check an agent's calendar booking setup",
+            "Read-only check of an agent's Cal.com connection: whether its key and event type work, what the event "
+            "type requires to book (booking questions, attendee phone, location), and the calendar's own error "
+            "messages from the agent's recent booking attempts. Never creates a booking.",
+            {"agent_id": {"type": "string", "description": "The agent's id."}}, ["agent_id"])
+async def admin_check_calendar(s: Session, args: dict) -> dict:
+    import uuid as _uuid
+
+    from app.models.agent import Agent
+    from app.models.call_log import CallLog
+    from app.services import calendar
+    from app.services.secret_store import decrypt_value
+
+    try:
+        agent = await s.db.get(Agent, _uuid.UUID(str(args.get("agent_id") or "")))
+    except ValueError:
+        agent = None
+    if agent is None:
+        raise ToolError("No agent with that id.")
+    provider = agent.calendar_provider or "calcom"
+    out: dict = {"agent": agent.name, "account_id": str(agent.org_id), "booking_enabled": bool(agent.enable_booking),
+                 "provider": provider, "event_type_id": agent.calcom_event_type_id or None,
+                 "key_saved": bool(agent.calcom_api_key_enc), "calendar_timezone": agent.calendar_timezone or None}
+    if provider == "calcom":
+        out["event_type"] = await calendar.event_type_check(decrypt_value(agent.calcom_api_key_enc),
+                                                            agent.calcom_event_type_id)
+    rows = (await s.db.execute(select(CallLog.id, CallLog.started_at, CallLog.outcome, CallLog.transcript)
+                               .where(CallLog.agent_id == agent.id).order_by(CallLog.started_at.desc()).limit(40))).all()
+    attempts = []
+    for cid, started, outcome, transcript in rows:
+        for t in transcript or []:
+            if t.get("role") == "tool" and t.get("tool") == "book_appointment":
+                result = t.get("result") or {}
+                attempts.append({"call_id": str(cid), "at": started.isoformat() if started else None,
+                                 "call_outcome": outcome, "success": result.get("success") is not False,
+                                 "result": result.get("output")})
+    out["recent_booking_attempts"] = attempts[:15]
+    return out
