@@ -21,7 +21,7 @@ export const LANGUAGES: [string, string][] = [
   ["es", "Spanish"],
   ["fr", "French"],
   ["de", "German"],
-  ["pt", "Portuguese"],
+  ["pt", "Portuguese (Brazil)"],
   ["multi", "Multilingual"],
 ];
 

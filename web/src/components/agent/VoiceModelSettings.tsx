@@ -22,7 +22,7 @@ const FALLBACK_LANGUAGES = [
   { code: "es", label: "Spanish" },
   { code: "fr", label: "French" },
   { code: "de", label: "German" },
-  { code: "pt", label: "Portuguese" },
+  { code: "pt", label: "Portuguese (Brazil)" },
   { code: "it", label: "Italian" },
   { code: "nl", label: "Dutch" },
   { code: "hi", label: "Hindi" },
