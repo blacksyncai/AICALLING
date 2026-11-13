@@ -206,7 +206,6 @@ def test_analysis_never_stores_an_unconfirmed_booking(client, agent_id, monkeypa
                 "outcome": "meeting_booked", "successful": True,
                 "response_analysis": {"next_action": "meeting_booked", "meeting_response": "accepted"}}
     monkeypatch.setattr(llm, "analyze_call", fake_analyze)
-    monkeypatch.setattr(outbound_call, "review_response", lambda r, t: r, raising=False)
     org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
     transcript = [{"role": "user", "text": "Let's do four thirty."},
                   _tool("check_availability", output={"slots": ["Mon 4:30 PM"]}),

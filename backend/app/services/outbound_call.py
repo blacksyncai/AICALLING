@@ -658,10 +658,18 @@ async def fix_unconfirmed_bookings(days: int = 30, limit: int = 2000) -> int:
     since = datetime.now(timezone.utc) - timedelta(days=days)
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(select(CallLog, Agent).outerjoin(Agent, Agent.id == CallLog.agent_id).where(
-            CallLog.started_at >= since, CallLog.outcome == "meeting_booked", CallLog.meeting_link.is_(None),
+            CallLog.started_at >= since, CallLog.meeting_link.is_(None),
+            CallLog.outcome.in_(("meeting_booked", "no_decision", "completed", "insufficient_conversation", "callback")),
         ).order_by(CallLog.started_at.desc()).limit(limit))).all()
-        ids = [str(c.id) for c, a in rows if unconfirmed_booking(c, a)
-               and not (c.response_analysis or {}).get("_manual_outcome")]
+
+        def needs(c, a) -> bool:
+            ra = c.response_analysis or {}
+            if ra.get("_manual_outcome"):
+                return False
+            return unconfirmed_booking(c, a) or (
+                ra.get("meeting_response") == "accepted" and booking_status(c, a) in ("failed", "tentative"))
+
+        ids = [str(c.id) for c, a in rows if needs(c, a)]
     for cid in ids:
         try:
             await _analyze(cid)
@@ -772,7 +780,11 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
                 call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                    "failed": "failed"}.get(call_log.outcome, "completed")
         booked_state = booking_status(call_log, agent)
-        if unconfirmed_booking(call_log, agent):
+        accepted = ((result.get("response_analysis") or {}).get("meeting_response") == "accepted")
+        if unconfirmed_booking(call_log, agent) or (
+                booked_state in ("failed", "tentative") and accepted
+                and call_log.outcome in ("no_decision", "completed", "insufficient_conversation", "callback")):
+            # They took a time, but the calendar never confirmed it: interested, and a person locks it in.
             call_log.outcome, call_log.status = "interested", "completed"
         if booked_state:
             call_log.extracted_data = {**(call_log.extracted_data or {}), "_booking_status": booked_state}
