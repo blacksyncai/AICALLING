@@ -171,10 +171,32 @@ _SIP_HINTS = {
 }
 
 
-async def _mark_call_failed(call_id: uuid.UUID, lead_id: uuid.UUID | None, outcome: str, reason: str) -> None:
+# SIP answers meaning the dialed number itself doesn't exist (not a trunk or network problem).
+_DEAD_NUMBER_CODES = {404, 410, 484, 604}
+
+
+async def _mark_call_failed(call_id: uuid.UUID, lead_id: uuid.UUID | None, outcome: str, reason: str,
+                            number: str | None = None, sip_code: int | None = None) -> None:
     from app.database import AsyncSessionLocal
 
     now = datetime.now(timezone.utc)
+    if lead_id and number and sip_code in _DEAD_NUMBER_CODES:
+        # "Number not found" twice on the same number: it's dead. Rule it out so "try other numbers" stops
+        # redialing it every round (two strikes, so one carrier hiccup never rules out a good number).
+        from app.services import lead_phones
+
+        async with AsyncSessionLocal() as db:
+            lead = await db.get(Lead, lead_id)
+            if lead is not None:
+                rows = lead_phones.numbers(lead)
+                for p in rows:
+                    if p["number"] in (number, lead_phones.normalize_phone(str(number).replace("sip:", "").split("@")[0])):
+                        p["not_found"] = (p.get("not_found") or 0) + 1
+                        if p["not_found"] >= 2 and p.get("status") not in ("reached",):
+                            p["status"] = "disconnected"
+                            log.info("number_ruled_out", lead_id=str(lead_id), code=sip_code)
+                lead.phones = rows
+                await db.commit()
     async with AsyncSessionLocal() as db:
         await db.execute(update(CallLog).where(CallLog.id == call_id).values(
             status="no_answer" if outcome == "no_answer" else "failed",
@@ -228,7 +250,7 @@ async def _dial_and_watch(req, call_id: uuid.UUID, lead_id: uuid.UUID | None, ro
         log.error("livekit_sip_failed", room=room_name, to=req.sip_call_to, trunk=req.sip_trunk_id,
                   sip_code=code, sip_status=status, error=str(exc),
                   metadata=dict(exc.metadata) if exc.metadata else {})
-        await _mark_call_failed(call_id, lead_id, outcome, reason)
+        await _mark_call_failed(call_id, lead_id, outcome, reason, number=req.sip_call_to, sip_code=code)
         try:
             await lk.room.delete_room(api.DeleteRoomRequest(room=room_name))
         except Exception:

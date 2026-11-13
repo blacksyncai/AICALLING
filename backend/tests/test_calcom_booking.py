@@ -26,6 +26,7 @@ class FakeCal:
         self.booking = booking or (lambda body: httpx.Response(201, json={"status": "success", "data": {
             "uid": "bk_123", "start": body["start"], "status": "accepted"}}))
         self.posts: list[dict] = []
+        self.locations: list[dict] = [{"type": "integrations:google:meet"}]
         self.keys: set[str] = set()
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -34,6 +35,9 @@ class FakeCal:
             start = request.url.params["start"]
             data = {d: [{"start": x} for x in xs] for d, xs in self.days.items() if d >= start}
             return httpx.Response(200, json={"status": "success", "data": data})
+        if request.method == "GET" and request.url.path.startswith("/v2/event-types/"):
+            return httpx.Response(200, json={"status": "success", "data": {
+                "id": int(ETYPE), "title": "15 min meeting", "locations": self.locations}})
         if request.method == "POST" and request.url.path == "/v2/bookings":
             body = json.loads(request.content)
             self.posts.append(body)
@@ -239,3 +243,38 @@ def test_analysis_never_stores_an_unconfirmed_booking(client, agent_id, monkeypa
     failed_id, ok_id = asyncio.run(run())
     listed = {m["call_id"] for m in client.get("/api/meetings").json()["items"]}
     assert str(ok_id) in listed and str(failed_id) not in listed  # only the confirmed one is a meeting  # only the confirmed one is a meeting
+
+
+def _needs_location(body):
+    if "location" not in body:
+        return httpx.Response(400, json={"status": "error", "error": {
+            "code": "BadRequestException", "message": "Missing attendee location"}})
+    return httpx.Response(201, json={"status": "success", "data": {"uid": "bk_home", "start": body["start"]}})
+
+
+@pytest.mark.asyncio
+async def test_in_person_event_is_booked_at_the_property_address(cal):
+    """Vivian's event type meets "at the attendee's address": Cal.com refuses a booking without one."""
+    cal.locations = [{"type": "attendeeAddress"}]
+    cal.booking = _needs_location
+    run, ts = tools(CFG, {"property_address": "12 Oak St, Stamford, CT"})
+    await ts["check_availability"](context(), preferred_date="2030-01-07")
+    _contact(run, "Nine.", "a@b.co")
+    out = await ts["book_appointment"]("Monday at 9:00", "a@b.co", context())
+    assert out.startswith("Booked for") and run.meeting_link == "https://cal.com/booking/bk_home"
+    assert len(cal.posts) == 2 and cal.posts[-1]["location"] == {"type": "attendeeAddress",
+                                                                 "address": "12 Oak St, Stamford, CT"}
+
+
+@pytest.mark.asyncio
+async def test_in_person_event_without_an_address_asks_for_it(cal):
+    cal.locations = [{"type": "attendeeAddress"}]
+    cal.booking = _needs_location
+    run, ts = tools(CFG)
+    await ts["check_availability"](context(), preferred_date="2030-01-07")
+    _contact(run, "Nine.", "a@b.co")
+    out = await ts["book_appointment"]("Monday at 9:00", "a@b.co", context())
+    assert "Ask for the address" in out and not run.meeting_time
+    _contact(run, "It's 4 Elm Road, Greenwich.")
+    out = await ts["book_appointment"]("Monday at 9:00", "a@b.co", context(), address="4 Elm Road, Greenwich")
+    assert out.startswith("Booked for") and cal.posts[-1]["location"]["address"] == "4 Elm Road, Greenwich"

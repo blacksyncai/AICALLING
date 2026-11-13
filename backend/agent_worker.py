@@ -985,12 +985,13 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     "month, no date number, no time zone unless they ask. If they ask for the times again, say them "
                     "again. To book, pass one of these labels: " + "; ".join(s["label"] for s in found) + ".")
 
-        async def book_appointment(slot: str, email: str, context: RunContext) -> str:
+        async def book_appointment(slot: str, email: str, context: RunContext, address: str = "") -> str:
             """Book one of the slots from check_availability. Confirm the email spelling first.
 
             Args:
                 slot: The exact label of the slot they chose, as returned by check_availability.
                 email: The contact's email exactly as they said it. Never guess it.
+                address: Where to meet, only if the calendar asked for an address and the contact gave one.
             """
             if run.meeting_time:
                 return f"Already booked for {run.meeting_time}. Do not create a second booking; changes need a teammate."
@@ -1034,8 +1035,14 @@ def _build_tools(cfg: dict, run: _CallRun, ctx: JobContext, session_ref: dict,
                     link = await _cal.create_booking(chosen["start"], email,
                         (cfg_vars or {}).get("full_name") or (cfg_vars or {}).get("name") or "",
                         cfg.get("calcom_event_type_id"), cfg.get("calcom_api_key"), cfg.get("calendar_timezone"),
-                        provider=cfg.get("calendar_provider"), phone=(cfg_vars or {}).get("phone") or "")
+                        provider=cfg.get("calendar_provider"), phone=(cfg_vars or {}).get("phone") or "",
+                        address=(address or (cfg_vars or {}).get("property_address") or (cfg_vars or {}).get("address")
+                                 or "").strip())
                 except _cal.BookingRejected as exc:
+                    if exc.reason.startswith("needs_address"):
+                        _record("book_appointment", {"slot": slot, "email": email}, {"error": exc.reason}, success=False)
+                        raise NoAction("Not booked yet: this meeting is held at their address. Ask for the address "
+                                       "to meet at, then call book_appointment again with it.") from exc
                     # The calendar said no, so nothing was created: say so, and offer other times when it's taken.
                     _record("book_appointment", {"slot": slot, "email": email},
                             {"error": exc.reason, "status": exc.status, "slot_taken": exc.slot_taken}, success=False)

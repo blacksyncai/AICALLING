@@ -359,6 +359,55 @@ def test_a_pass_over_other_numbers_finishes_before_new_contacts(client, agent_id
     asyncio.run(run())
 
 
+def test_unfinished_retry_passes_never_starve_new_contacts(client, agent_id):
+    """River Crossing, Nov 13: contacts with 3-4 numbers each, mid-way through a retry pass, came due every 10
+    minutes and took all 53 of the morning's dials. A retry pass waits behind never-dialed contacts."""
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.models.campaign import Campaign
+    from app.models.lead import Lead
+    from app.routers.campaigns import _next_lead
+
+    camp = client.post("/api/campaigns/", json={"name": "Starve", "agent_id": agent_id,
+                                                "retry_schedule": [1440, 1440, 60, 1440]}).json()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    cid = uuid.UUID(camp["id"])
+    now = datetime.now(UTC)
+
+    def phones(*rounds):
+        return [{"number": "+1415555%04d" % (900 + i), "status": "no_answer", "attempts": r, "round": r}
+                for i, r in enumerate(rounds)]
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            campaign = await db.get(Campaign, cid)
+            campaign.try_other_numbers, campaign.rounds_per_number, campaign.number_gap_minutes = True, 2, 10
+            retry_mid = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="retry mid-pass",
+                             phone="+14155550900", phones=phones(2, 1, 0, 0), status="no_answer", attempts=3,
+                             last_called_at=now - timedelta(minutes=15), next_attempt_at=now - timedelta(minutes=5),
+                             created_at=now - timedelta(days=4))
+            first_mid = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="first pass", phone="+14155550950",
+                             phones=[{"number": "+14155550950", "status": "no_answer", "attempts": 1, "round": 1},
+                                     {"number": "+14155550951", "status": "untried", "attempts": 0, "round": 0}],
+                             status="no_answer", attempts=1, last_called_at=now - timedelta(minutes=12),
+                             next_attempt_at=now - timedelta(minutes=2), created_at=now - timedelta(days=1))
+            new = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="new", phone="+14155550960",
+                       status="new", created_at=now - timedelta(hours=1))
+            db.add_all([retry_mid, first_mid, new])
+            await db.commit()
+            order = []
+            for _ in range(3):
+                lead, _, _ = await _next_lead(db, campaign, now)
+                order.append(lead.name)
+                lead.status, lead.attempts = "calling", (lead.attempts or 0) + 1
+                lead.last_called_at = now  # on a call now: not picked again
+                await db.commit()
+            assert order == ["first pass", "new", "retry mid-pass"]
+
+    asyncio.run(run())
+
+
 def test_stuck_calling_contacts_get_their_retry(client, agent_id):
     """A contact left "calling" by a restart (its call never reported back) is redialed, not skipped forever."""
     import asyncio

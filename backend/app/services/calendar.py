@@ -394,9 +394,32 @@ async def fetch_slots(preferred_date: str = "", event_type_id: str | None = None
     return [{"start": x, "label": _label(x, tz)} for x in picks]
 
 
+async def _event_locations(key: str, etype: str) -> list[str]:
+    """The location types an event type offers (e.g. attendeeAddress, attendeePhone, integrations:google:meet)."""
+    try:
+        async with asyncio.timeout(8.0), httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(f"https://api.cal.com/v2/event-types/{etype}",
+                                    headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-06-14"})
+        if resp.status_code >= 400:
+            return []
+        data = (resp.json() or {}).get("data") or {}
+        return [(x.get("type") if isinstance(x, dict) else str(x)) for x in data.get("locations") or []]
+    except Exception:
+        return []
+
+
+def _attendee_location(types: list[str], address: str, phone: str) -> dict | None:
+    """The location to send when the event type asks the attendee for one, from what we know about them."""
+    if "attendeeAddress" in types and address:
+        return {"type": "attendeeAddress", "address": address}
+    if any(t in ("attendeePhone", "phone") for t in types) and _e164(phone):
+        return {"type": "attendeePhone", "phone": _e164(phone)}
+    return None
+
+
 async def create_booking(start: str, email: str, name: str, event_type_id: str | None = None,
                          api_key: str | None = None, tz: str | None = None, *, allow_mock: bool = False,
-                         provider: str | None = None, phone: str = "") -> str:
+                         provider: str | None = None, phone: str = "", address: str = "") -> str:
     """Return a provider booking receipt; raise on unverified real results.
 
     The playground may explicitly request simulated receipts and legacy empty
@@ -429,13 +452,28 @@ async def create_booking(start: str, email: str, name: str, event_type_id: str |
         raise BookingRejected(f"The Cal.com event type id isn't a number: {etype!r}") from exc
     body = {"start": _utc_start(start), "eventTypeId": etype_id, "attendee": attendee,
             "metadata": {"source": "blacksync"}}
-    try:
+
+    async def post(payload):
         async with asyncio.timeout(10.0), httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
+            return await client.post(
                 "https://api.cal.com/v2/bookings",
                 headers={"Authorization": f"Bearer {key}", "cal-api-version": "2024-08-13"},
-                json=body,
+                json=payload,
             )
+
+    try:
+        resp = await post(body)
+        if 400 <= resp.status_code < 500 and not _rejection(resp).slot_taken:
+            # Refused, so nothing exists yet. An event held "at the attendee's address" (or by phone) needs that
+            # from us: send it and try once more.
+            types = await _event_locations(key, str(etype_id))
+            location = _attendee_location(types, address, phone)
+            if location:
+                resp = await post({**body, "location": location})
+            elif "attendeeAddress" in types:
+                raise BookingRejected("needs_address: the calendar holds this meeting at the contact's address")
+    except BookingRejected:
+        raise
     except Exception as exc:
         # No answer at all (timeout, network): a booking may or may not exist. Never retry blindly.
         log.warning("calcom_booking_failed", error=type(exc).__name__)

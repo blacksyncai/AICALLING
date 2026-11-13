@@ -242,3 +242,41 @@ def test_conversation_on_another_number_after_a_wrong_number_stops_the_redials()
     fresh = SimpleNamespace(status="wrong_number", do_not_call=False, attempts=1, next_attempt_at=None,
                             phone="+16285550001", phones=[phones[0], {**phones[2]}])
     assert dial_eligibility(fresh, campaign, now) == "now"
+
+
+def test_number_not_found_twice_is_ruled_out(client):
+    """A number the carrier says doesn't exist (SIP 404) twice is skipped from then on; once is not enough."""
+    import asyncio
+    import uuid as _uuid
+
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.models.lead import Lead
+    from app.services import lead_phones
+    from app.services.outbound_call import _mark_call_failed
+
+    org_id = _uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            lead = Lead(id=_uuid.uuid4(), org_id=org_id, name="Dead", phone="+14155550701",
+                        phones=[{"number": "+14155550701", "status": "untried", "attempts": 1, "round": 1},
+                                {"number": "+14155550702", "status": "untried", "attempts": 0, "round": 0}])
+            db.add(lead)
+            calls = [CallLog(id=_uuid.uuid4(), org_id=org_id, lead_id=lead.id, call_type="outbound",
+                             to_phone="+14155550701", livekit_room_name=f"dead-{i}", status="initiated")
+                     for i in range(3)]
+            db.add_all(calls)
+            await db.commit()
+        await _mark_call_failed(calls[0].id, lead.id, "failed", "not found", "+14155550701", 404)
+        async with AsyncSessionLocal() as db:
+            assert lead_phones.numbers(await db.get(Lead, lead.id))[0]["status"] == "untried"
+        await _mark_call_failed(calls[1].id, lead.id, "failed", "busy trunk", "+14155550701", 503)  # not a dead number
+        await _mark_call_failed(calls[2].id, lead.id, "failed", "not found", "+14155550701", 404)
+        async with AsyncSessionLocal() as db:
+            fresh = await db.get(Lead, lead.id)
+            rows = lead_phones.numbers(fresh)
+            assert rows[0]["status"] == "disconnected" and rows[1]["status"] == "untried"
+            assert [p["number"] for p in lead_phones.dialable(fresh)] == ["+14155550702"]
+
+    asyncio.run(run())

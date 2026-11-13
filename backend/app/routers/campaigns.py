@@ -937,8 +937,8 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
     number of contacts still waiting on a retry, earliest retry time).
 
     Of the contacts that may be dialed now, in this order:
-      1. one partway through a pass over its numbers ("try other numbers": the next number is due minutes
-         after the last) — that pass is a single try, and finishing it keeps its spacing;
+      1. one partway through its first pass over its numbers ("try other numbers": the next number is due
+         minutes after the last) — that pass is a single try, and finishing it keeps its spacing;
       2. one never dialed;
       3. a scheduled retry.
     Oldest first within each. Retries used to go in import order alongside new contacts, so a day's due
@@ -1004,10 +1004,14 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
 
 
 def _dial_rank(lead, campaign) -> int:
-    """0: mid-pass over its numbers, 1: never dialed, 2: a scheduled retry (see _next_lead)."""
+    """0: partway through its first pass over its numbers, 1: never dialed, 2: a retry (see _next_lead).
+
+    Only the first pass goes ahead of new contacts. A retry pass left unfinished (each of a contact's numbers,
+    twice, 10 minutes apart) is due again every few minutes; with dozens of those, they took every dial and new
+    contacts never came up (River Crossing, Nov 13: 53 dials, all to contacts called before)."""
     from app.services import lead_phones
 
-    if getattr(lead, "phone", None) and lead_phones.mid_pass(lead, campaign):
+    if getattr(lead, "phone", None) and (lead.attempts or 0) <= 1 and lead_phones.mid_pass(lead, campaign):
         return 0
     if lead.status == "new" and not (lead.attempts or 0) and lead.last_called_at is None:
         return 1
