@@ -935,6 +935,15 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
     """
     Pick the next contact to dial. Returns (lead to dial now or None,
     number of contacts still waiting on a retry, earliest retry time).
+
+    Of the contacts that may be dialed now, in this order:
+      1. one partway through a pass over its numbers ("try other numbers": the next number is due minutes
+         after the last) — that pass is a single try, and finishing it keeps its spacing;
+      2. one never dialed;
+      3. a scheduled retry.
+    Oldest first within each. Retries used to go in import order alongside new contacts, so a day's due
+    retries (each a fresh pass over every number) used up the numbers' daily caps and new contacts never came
+    up: 680 dials reached only 104 of 550 contacts.
     """
     candidates = (await db.execute(
         select(Lead)
@@ -948,6 +957,7 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
     from app.services import lead_phones
 
     waiting, earliest = 0, None
+    best: tuple[int, Lead] | None = None
     max_attempts = calling_rules(campaign)["max_attempts"]
     recent = now - timedelta(minutes=20)
     for lead in candidates:
@@ -978,12 +988,30 @@ async def _next_lead(db, campaign: Campaign, now: datetime) -> tuple[Lead | None
             earliest = due if earliest is None else min(earliest, due)
             continue
         if state == "now":
-            return lead, waiting, earliest
+            rank = _dial_rank(lead, campaign)
+            if rank == 0:
+                return lead, waiting, earliest
+            if best is None or rank < best[0]:
+                best = (rank, lead)
+            continue
         if state == "later":
             waiting += 1
             due = _aware(lead.next_attempt_at)
             earliest = due if earliest is None else min(earliest, due)
+    if best is not None:
+        return best[1], waiting, earliest
     return None, waiting, earliest
+
+
+def _dial_rank(lead, campaign) -> int:
+    """0: mid-pass over its numbers, 1: never dialed, 2: a scheduled retry (see _next_lead)."""
+    from app.services import lead_phones
+
+    if getattr(lead, "phone", None) and lead_phones.mid_pass(lead, campaign):
+        return 0
+    if lead.status == "new" and not (lead.attempts or 0) and lead.last_called_at is None:
+        return 1
+    return 2
 
 
 # One dialer per campaign in this process. Starting a campaign twice (or waking it from an import)

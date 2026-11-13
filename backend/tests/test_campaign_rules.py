@@ -257,6 +257,108 @@ def test_queue_picks_due_retries_and_skips_dnc(client, agent_id):
     assert client.get(f"/api/campaigns/{camp['id']}").json()["pending_retries"] == 2
 
 
+def test_new_contacts_go_before_due_retries(client, agent_id):
+    """River Crossing (Nov 2026): due retries were picked in import order ahead of new contacts, so each day's
+    retries used up the numbers' daily caps and 446 of 550 contacts were never dialed."""
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.models.campaign import Campaign
+    from app.models.lead import Lead
+    from app.routers.campaigns import _next_lead, _record_attempt
+
+    camp = client.post("/api/campaigns/", json={"name": "Mixed", "agent_id": agent_id,
+                                                "retry_schedule": [1440, 1440, 60, 1440]}).json()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    cid = uuid.UUID(camp["id"])
+    now = datetime.now(UTC)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            def add(name, minutes_ago, **kw):
+                lead = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name=name, phone="+1415555%04d" % minutes_ago,
+                            created_at=now - timedelta(minutes=minutes_ago), **kw)
+                db.add(lead)
+                return lead
+            # Imported first and due for a retry: these used to win.
+            old_due = [add(f"retry{i}", 500 - i, status="no_answer", attempts=1, last_called_at=now - timedelta(days=1),
+                           next_attempt_at=now - timedelta(minutes=5)) for i in range(3)]
+            waiting = add("waiting", 400, status="voicemail", attempts=2, last_called_at=now - timedelta(hours=2),
+                          next_attempt_at=now + timedelta(hours=20))
+            fresh = [add(f"new{i}", 100 - i, status="new") for i in range(2)]
+            await db.commit()
+            campaign = await db.get(Campaign, cid)
+
+            # Every never-dialed contact goes first, oldest first; a retry waiting for later blocks nothing.
+            seen = []
+            for _ in fresh:
+                lead, pending, _ = await _next_lead(db, campaign, now)
+                assert lead.status == "new" and pending >= 1, (lead.name, pending)
+                seen.append(lead.id)
+                _record_attempt(lead, campaign, now)
+                lead.status = "no_answer"
+                await db.commit()
+            assert seen == [f.id for f in fresh]
+            # Then the due retries, oldest first; the one not due yet still waits.
+            lead, pending, _ = await _next_lead(db, campaign, now)
+            assert lead.id == old_due[0].id and pending == 3  # "waiting" plus the two just dialed
+            assert waiting.status == "voicemail"
+
+    asyncio.run(run())
+
+
+def test_a_pass_over_other_numbers_finishes_before_new_contacts(client, agent_id):
+    """With "try other numbers", the next number in a contact's pass (minutes after the last dial) is part of the
+    same try, so it keeps its spacing; new contacts still go before that contact's next day's retry."""
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.models.campaign import Campaign
+    from app.models.lead import Lead
+    from app.routers.campaigns import _next_lead, _record_attempt
+
+    camp = client.post("/api/campaigns/", json={"name": "Pass", "agent_id": agent_id,
+                                                "retry_schedule": [1440, 1440]}).json()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    cid = uuid.UUID(camp["id"])
+    now = datetime.now(UTC)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            campaign = await db.get(Campaign, cid)
+            campaign.try_other_numbers, campaign.rounds_per_number, campaign.number_gap_minutes = True, 1, 10
+            two = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="two numbers", phone="+14155550301",
+                       phones=[{"number": "+14155550301", "status": "untried", "attempts": 0, "round": 0},
+                               {"number": "+14155550302", "status": "untried", "attempts": 0, "round": 0}],
+                       status="new", created_at=now - timedelta(hours=3))
+            later = Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name="new", phone="+14155550303",
+                         status="new", created_at=now - timedelta(hours=1))
+            db.add_all([two, later])
+            await db.commit()
+
+            lead, _, _ = await _next_lead(db, campaign, now)
+            assert lead.id == two.id
+            _record_attempt(lead, campaign, now, "+14155550301")
+            lead.status = "no_answer"
+            await db.commit()
+            # Its second number isn't due for 10 minutes: the new contact goes meanwhile.
+            lead, pending, _ = await _next_lead(db, campaign, now)
+            assert lead.id == later.id and pending == 1
+            _record_attempt(lead, campaign, now)
+            lead.status = "no_answer"
+            await db.commit()
+            # Ten minutes on, the pass picks up its second number.
+            at = now + timedelta(minutes=11)
+            lead, _, _ = await _next_lead(db, campaign, at)
+            assert lead.id == two.id
+            _record_attempt(lead, campaign, at, "+14155550302")
+            await db.commit()
+            # The pass is done: its next try waits for the 1440-minute retry.
+            assert abs((two.next_attempt_at.replace(tzinfo=UTC) - at - timedelta(minutes=1440)).total_seconds()) < 2
+
+    asyncio.run(run())
+
+
 def test_stuck_calling_contacts_get_their_retry(client, agent_id):
     """A contact left "calling" by a restart (its call never reported back) is redialed, not skipped forever."""
     import asyncio
