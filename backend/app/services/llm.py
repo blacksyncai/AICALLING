@@ -243,8 +243,11 @@ def _transcript_text(transcript: list[dict]) -> str:
 # How the last call analysis went, per provider: shown (without secrets) on /health so a dead key or an
 # exhausted quota is visible instead of silently leaving calls without a summary.
 ANALYSIS_STATUS: dict = {"ok": None, "model": None, "error": None, "at": None}
-# Tried in order when the main analysis model fails; only the ones whose provider has a key are used.
-ANALYSIS_BACKUPS = ("gpt-oss-120b", "mistral-small-latest", "qwen/qwen3.8-27b")
+# After-call review runs on the cheapest model that does it well (Mistral Small); the account's analysis model and
+# the others are only tried if it fails. Only models whose provider has a key are used. Cerebras stays the live-call
+# brain but is the last resort here: reviewing every call on it cost far more than the job needs.
+ANALYSIS_PRIMARY = "mistral-small-latest"
+ANALYSIS_BACKUPS = ("qwen/qwen3.8-27b", "gpt-oss-120b")
 
 
 def _short_error(exc: Exception) -> str:
@@ -266,7 +269,7 @@ async def _analysis_json(prompt: str) -> dict | None:
     from app.agent.models import llm_endpoint
 
     first_error = None
-    for model in dict.fromkeys((settings.analysis_model, *ANALYSIS_BACKUPS)):
+    for model in dict.fromkeys((ANALYSIS_PRIMARY, settings.analysis_model, *ANALYSIS_BACKUPS)):
         if not llm_endpoint(model)[0]:
             continue
         try:
