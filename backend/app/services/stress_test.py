@@ -17,7 +17,26 @@ from app.services.llm import _chat, playground_reply
 
 log = structlog.get_logger(__name__)
 
-SIM_MODEL = "gpt-4.1-mini"  # plays the caller and grades the call
+# Plays the caller and grades the call: the cheapest model that does it well, then fallbacks. It used to be only
+# gpt-4.1-mini, so when that OpenAI account ran out of quota every scenario failed before it started.
+SIM_MODELS = ("mistral-small-latest", "gpt-4.1-mini", "gpt-oss-120b")
+_SIM_OK: dict = {"model": None}  # the last model that answered, tried first next time
+
+
+async def _sim_chat(payload: dict) -> dict:
+    from app.agent.models import llm_endpoint
+
+    order = [m for m in dict.fromkeys((_SIM_OK["model"], *SIM_MODELS)) if m and llm_endpoint(m)[0]]
+    last: Exception | None = None
+    for model in order:
+        try:
+            data = await _chat({**payload, "model": model}, timeout=40.0)
+            _SIM_OK["model"] = model
+            return data
+        except Exception as exc:
+            last = exc
+            log.warning("stress_sim_model_failed", model=model, error=str(exc)[:160])
+    raise last or RuntimeError("No model is configured for the stress test")
 MAX_TURNS = 12
 HANG_UP = "[HANG UP]"
 
@@ -78,7 +97,7 @@ async def _caller_says(persona: str, history: list[dict]) -> str:
     """The simulated caller's next line. history roles are from the agent's side (assistant = agent)."""
     flipped = [{"role": "user" if m["role"] == "assistant" else "assistant", "content": m["content"]}
                for m in history if m.get("content")]
-    data = await _chat({"model": SIM_MODEL, "temperature": 0.7, "messages": [
+    data = await _sim_chat({"temperature": 0.7, "messages": [
         {"role": "system", "content": (
             "You are role-playing the person who just answered a phone call from a business's AI agent. Stay in "
             f"character: {persona}\nReply with only the words you say out loud: one or two short, casual spoken "
@@ -95,7 +114,7 @@ async def _review(scenario: dict, transcript: list[dict]) -> dict:
         else:
             lines.append(f"{'AGENT' if t['role'] == 'assistant' else 'CALLER'}: {t['content']}")
     checks = scenario["checks"] + ALWAYS
-    data = await _chat({"model": SIM_MODEL, "temperature": 0, "response_format": {"type": "json_object"}, "messages": [
+    data = await _sim_chat({"temperature": 0, "response_format": {"type": "json_object"}, "messages": [
         {"role": "system", "content": (
             "You review a test phone call between a business's AI agent and a simulated caller. Grade the AGENT "
             "only. For each check, decide pass or fail from the transcript, with a short quote as evidence. Be "
