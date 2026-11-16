@@ -790,3 +790,79 @@ async def disconnect_ai_access(connection_id: uuid.UUID, admin: AdminDep, db: Db
     await db.commit()
     log.warning("admin_mcp_disconnected", connection=str(t.id), by=str(admin.id))
     return Response(status_code=204)
+
+
+# ── Hot calls across every account ───────────────────────────────────────────
+
+# What a call's intent means for follow-up, best first.
+HOT_GROUPS = {
+    "booked": ("meeting_booked",),
+    "hot": ("interested", "qualified", "information_requested", "transferred"),
+    "callback": ("callback", "potential_follow_up"),
+}
+_HOT_LABELS = {
+    "meeting_booked": "Meeting booked", "interested": "Interested", "qualified": "Qualified",
+    "information_requested": "Wants info", "transferred": "Transferred", "callback": "Call back",
+    "potential_follow_up": "Follow up later",
+}
+def _contact_company(lead: Lead | None) -> str:
+    """Where the person is from: their company, else a business or property on file."""
+    if lead is None:
+        return ""
+    if (lead.company or "").strip():
+        return lead.company.strip()
+    fields = lead.custom_fields or {}
+    for key in ("company", "business", "business_name", "brokerage", "property_address", "address", "property"):
+        if str(fields.get(key) or "").strip():
+            return str(fields[key]).strip()
+    return ""
+
+
+@router.get("/hot-calls")
+async def hot_calls(_: AdminDep, db: DbDep, days: int = 7, group: str = "all", org_id: str = "",
+                    include_tests: bool = False, limit: int = 200):
+    """Calls across every account where the transcript shows real intent (a meeting, interest, a callback or a
+    follow-up), with who it was, where they're from and the words that show it. Newest first."""
+    days = max(1, min(days, 90))
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    outcomes = HOT_GROUPS.get(group) or tuple(o for g in HOT_GROUPS.values() for o in g)
+    stmt = (select(CallLog, Lead, Organization, Agent)
+            .join(Organization, Organization.id == CallLog.org_id)
+            .outerjoin(Lead, Lead.id == CallLog.lead_id)
+            .outerjoin(Agent, Agent.id == CallLog.agent_id)
+            .where(CallLog.started_at >= since, CallLog.outcome.in_(outcomes))
+            .order_by(CallLog.started_at.desc()).limit(max(1, min(limit, 500))))
+    if not include_tests:
+        stmt = stmt.where(CallLog.call_type != "web")
+    if org_id:
+        try:
+            stmt = stmt.where(CallLog.org_id == uuid.UUID(org_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Bad account id")
+    rows = (await db.execute(stmt)).all()
+    items = []
+    for call, lead, org, agent in rows:
+        ra = call.response_analysis or {}
+        data = call.extracted_data or {}
+        quote = ra.get("next_action_quote") or ra.get("evidence_quote") or ""
+        items.append({
+            "id": str(call.id),
+            "account": {"id": str(org.id), "name": org.name},
+            "name": (lead.name if lead else None) or "Unknown caller",
+            "company": _contact_company(lead),
+            "phone": call.to_phone or (lead.phone if lead else None),
+            "outcome": call.outcome,
+            "label": _HOT_LABELS.get(call.outcome, call.outcome),
+            "quote": quote[:300],
+            "summary": (call.summary or "")[:500],
+            "next_action": ra.get("next_action"),
+            "timeline": ra.get("timeline"),
+            "meeting_time": call.agreed_meeting_time,
+            "booking_status": data.get("_booking_status"),
+            "agent": agent.name if agent else None,
+            "call_type": call.call_type,
+            "duration_seconds": call.duration_seconds or 0,
+            "started_at": call.started_at.isoformat() if call.started_at else None,
+        })
+    counts = {g: sum(1 for i in items if i["outcome"] in outs) for g, outs in HOT_GROUPS.items()}
+    return {"items": items, "counts": counts, "days": days}

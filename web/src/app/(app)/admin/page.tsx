@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, BookOpen, Building2, CreditCard, Hash, LifeBuoy, Lock, Mail, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
+import { Bot, BookOpen, Building2, CreditCard, Flame, Hash, LifeBuoy, Lock, Mail, Plus, Search, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
@@ -11,6 +11,7 @@ import { BillingAdminTab } from "@/components/admin/BillingAdminTab";
 import { TelephonyTab } from "@/components/admin/TelephonyTab";
 import { EmailsTab } from "@/components/admin/EmailsTab";
 import { AiAccessTab } from "@/components/admin/AiAccessTab";
+import { HotCallsTab } from "@/components/admin/HotCallsTab";
 import { AdminGuard, Avatar, StatTile, fmt } from "@/components/admin/shared";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Spinner, Tabs } from "@/components/ui";
 import { fetcher, post } from "@/lib/api";
@@ -29,7 +30,7 @@ type AdminUser = {
   accounts: { org_id: string; org_name: string; role: string }[];
 };
 
-type Tab = "accounts" | "users" | "playbooks" | "numbers" | "billing" | "emails" | "ai";
+type Tab = "accounts" | "hot" | "users" | "playbooks" | "numbers" | "billing" | "emails" | "ai";
 
 export default function AdminPage() {
   return (
@@ -43,7 +44,7 @@ function AdminPortal() {
   const [tab, setTab] = useState<Tab>("accounts");
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    if (t === "playbooks" || t === "emails" || t === "ai") setTab(t);
+    if (t === "playbooks" || t === "emails" || t === "ai" || t === "hot") setTab(t);
   }, []);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
@@ -123,6 +124,7 @@ function AdminPortal() {
             onChange={setTab}
             tabs={[
               { value: "accounts", label: "Clients", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { value: "hot", label: "Hot calls", icon: <Flame className="h-3.5 w-3.5" /> },
               { value: "users", label: "Users", icon: <Users className="h-3.5 w-3.5" /> },
               { value: "playbooks", label: "Playbooks", icon: <BookOpen className="h-3.5 w-3.5" /> },
               { value: "numbers", label: "Numbers", icon: <Hash className="h-3.5 w-3.5" /> },
@@ -168,6 +170,8 @@ function AdminPortal() {
         ) : (
           <ClientsTable orgs={orgs.orgs} onChanged={() => { void mutateOrgs(); void mutateOverview(); }} />
         )
+      ) : tab === "hot" ? (
+        <HotCallsTab />
       ) : tab === "users" ? (
         <UsersTable />
       ) : tab === "numbers" ? (
