@@ -784,10 +784,12 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
         elif result.get("outcome") in RESPONSE_OUTCOMES:
             result = {**result, "outcome": call_log.outcome}
         reviewed = new_review and isinstance(result.get("response_analysis"), dict)
-        call_log.summary = result.get("summary")
+        manual_summary = (call_log.extracted_data or {}).get("_manual_summary")
+        call_log.summary = manual_summary or result.get("summary")  # a summary written by hand stays
         call_log.sentiment = result.get("sentiment")
         call_log.extracted_data = {**(result.get("extracted") or {}), "_successful": result.get("successful"),
-                                   "_callback_request": result.get("callback_request")}
+                                   "_callback_request": result.get("callback_request"),
+                                   **({"_manual_summary": manual_summary} if manual_summary else {})}
         # The analyzer's outcome only fills in when the agent didn't pick a specific one — or, when
         # re-analyzing on request, replaces anything but a hard result the agent confirmed.
         replaceable = call_log.outcome in (None, "completed", "failed") or (
@@ -819,6 +821,13 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
                                "failed": "failed"}.get(call_log.outcome, "completed")
         if reviewed:
             call_log.response_analysis = {**review_meta, **result["response_analysis"], "response": call_log.outcome}
+            if review_meta.get("_manual_outcome"):
+                # A result set by hand keeps its own meeting details, without the analysis's reason for another one.
+                for key in ("reason", "reason_quote"):
+                    call_log.response_analysis.pop(key, None)
+                for key in ("timeline", "next_action", "meeting_response"):
+                    if key in review_meta:
+                        call_log.response_analysis[key] = review_meta[key]
             if call_log.outcome == "do_not_call":
                 call_log.response_analysis.update(next_action="none_agreed", next_action_quote=None, channel=None)
             if call_log.outcome == "meeting_booked":

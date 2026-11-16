@@ -333,3 +333,44 @@ def test_create_agent_from_a_written_script(client, make_client):
     # An assistant with an old tool list is told how to refresh instead of failing silently.
     old = _rpc(anon, token, "tools/call", {"name": "build_agent", "arguments": {}})["result"]
     assert old["isError"] and "create_agent" in old["structuredContent"]["error"]
+
+
+def test_admin_sets_a_call_result_by_hand_and_it_sticks(client, make_client, monkeypatch):
+    """Morales Jose: picked noon for a callback. Set as a booked phone call with a written summary, the
+    "bad timing" reason dropped, and none of it undone when the call is analyzed again."""
+    import asyncio
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    from app.connector import admin_tools
+    from app.database import AsyncSessionLocal
+    from app.models.call_log import CallLog
+    from app.services import llm, outbound_call
+
+    org_id = _uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    summary = "Vivian shared about the property and pushed for an in-person visit; he needed to consult first, so a call back was scheduled for tomorrow at 12."
+
+    async def fake(*a, **kw):
+        return {"summary": "Callback requested.", "sentiment": "neutral", "extracted": {}, "outcome": "callback",
+                "response_analysis": {"next_action": "callback_requested", "reason": "timing",
+                                      "reason_quote": "consult that first", "meeting_response": "not_discussed"}}
+    monkeypatch.setattr(llm, "analyze_call", fake)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            call = CallLog(id=_uuid.uuid4(), org_id=org_id, call_type="outbound", to_phone="+12057711681",
+                           livekit_room_name=f"m-{_uuid.uuid4().hex[:8]}", status="completed", outcome="callback",
+                           transcript=[{"role": "user", "text": "12"}], started_at=datetime.now(timezone.utc),
+                           response_analysis={"_review_schema": 1, "reason": "timing", "next_action": "callback_requested"})
+            db.add(call)
+            await db.commit()
+            await admin_tools._set_call_result(db, call, "meeting_booked", summary, "Tuesday, November 17 at 12:00 PM")
+            cid = call.id
+        await outbound_call._analyze(str(cid))
+        async with AsyncSessionLocal() as db:
+            c = await db.get(CallLog, cid)
+            assert c.outcome == "meeting_booked" and c.summary == summary
+            assert c.agreed_meeting_time == "Tuesday, November 17 at 12:00 PM"
+            assert "reason" not in c.response_analysis and c.response_analysis["next_action"] == "meeting_booked"
+
+    asyncio.run(run())

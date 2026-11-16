@@ -226,16 +226,53 @@ def parse_account_id(raw) -> uuid.UUID | None:
         raise ToolError(f"account_id isn't a valid id: {raw}")
 
 
+async def _set_call_result(db, call, outcome: str | None, summary: str | None, meeting_time: str | None) -> None:
+    """A result set by hand: it sticks through re-analysis, and the contact's status follows it."""
+    from app.models.lead import Lead
+    from app.services.contacts import next_status
+
+    ra = dict(call.response_analysis or {})
+    if outcome:
+        call.outcome = outcome
+        call.status = {"no_answer": "no_answer", "voicemail": "no_answer", "failed": "failed"}.get(outcome, "completed")
+        ra["_manual_outcome"] = outcome
+        ra["response"] = outcome
+        # A reason the analysis gave for the old result ("bad timing") no longer fits a hand-set one.
+        ra.pop("reason", None)
+        ra.pop("reason_quote", None)
+        if outcome == "meeting_booked":
+            ra["next_action"], ra["meeting_response"] = "meeting_booked", "accepted"
+        if call.lead_id:
+            lead = await db.get(Lead, call.lead_id)
+            if lead is not None and lead.org_id == call.org_id:
+                lead.status = next_status(None, outcome) or lead.status
+    if meeting_time:
+        call.agreed_meeting_time = meeting_time
+        ra["timeline"] = meeting_time
+    call.response_analysis = ra
+    if summary:
+        call.summary = summary
+        data = dict(call.extracted_data or {})
+        data["_manual_summary"] = summary
+        call.extracted_data = data
+    await db.commit()
+
+
 @admin_tool("admin_correct_call", "Correct a call's transcript or recording",
             """Fix a call whose transcript was lost or garbled (for example a call cut off by a restart): replace
 its transcript with what was actually said, optionally trim the recording to the first keep_seconds (the untouched
 original is kept next to it), then re-run the AI analysis so the summary, result and extracted details update.
+Or set the result by hand: outcome (sticks through later re-analysis), summary, meeting_time and next step.
 The original transcript is saved on the call. Without confirmed=true it only shows what would change.""",
             {"account_id": ACCOUNT_ID, "call_id": {"type": "string"},
              "transcript": {"type": "array", "items": {"type": "object", "properties": {
                  "role": {"type": "string", "enum": ["assistant", "user"]}, "text": {"type": "string"}},
                  "required": ["role", "text"]}, "description": "assistant = the agent, user = the contact."},
              "keep_seconds": {"type": "number", "description": "Trim the recording to this many seconds (optional)."},
+             "outcome": {"type": "string", "description": "Set the call's result by hand, e.g. meeting_booked, callback."},
+             "summary": {"type": "string", "description": "Replace the call summary."},
+             "meeting_time": {"type": "string", "description": "The agreed meeting or call time, e.g. "
+                                                                 "\"Tuesday, November 17 at 12:00 PM\"."},
              "confirmed": {"type": "boolean"}},
             ["account_id", "call_id"], read_only=False, destructive=True)
 async def admin_correct_call(s: Session, args: dict) -> dict:
@@ -259,16 +296,27 @@ async def admin_correct_call(s: Session, args: dict) -> dict:
             raise ToolError("keep_seconds must be a number.")
         if not call.recording_key:
             raise ToolError("This call has no stored recording to trim.")
-    if not turns and keep is None:
-        raise ToolError("Give a transcript, keep_seconds, or both.")
+    from app.models.call_log import CALL_OUTCOMES
+
+    outcome = (args.get("outcome") or "").strip() or None
+    summary = " ".join(str(args.get("summary") or "").split()) or None
+    meeting_time = " ".join(str(args.get("meeting_time") or "").split()) or None
+    if outcome and outcome not in CALL_OUTCOMES:
+        raise ToolError(f"Unknown outcome {outcome!r}. One of: {', '.join(CALL_OUTCOMES)}.")
+    if not turns and keep is None and not (outcome or summary or meeting_time):
+        raise ToolError("Give a transcript, keep_seconds, an outcome, a summary or a meeting_time.")
     if not args.get("confirmed"):
         return {"needs_confirmation": True, "account": org.name, "call_id": str(call.id),
                 "transcript_turns_now": len(call.transcript or []), "transcript_turns_after": len(turns) or None,
-                "trim_recording_to_seconds": keep,
+                "trim_recording_to_seconds": keep, "outcome_now": call.outcome, "outcome_after": outcome,
+                "summary_after": summary, "meeting_time_after": meeting_time,
                 "note": "Confirm with the user, then repeat with confirmed=true."}
-    from app.services.call_corrections import apply_correction
+    if turns or keep is not None:
+        from app.services.call_corrections import apply_correction
 
-    await apply_correction(s.db, call, turns, keep, by=getattr(s.user, "email", None))
+        await apply_correction(s.db, call, turns, keep, by=getattr(s.user, "email", None))
+    if outcome or summary or meeting_time:
+        await _set_call_result(s.db, call, outcome, summary, meeting_time)
     return {"account": org.name, "call_id": str(call.id), "outcome": call.outcome, "summary": call.summary,
             "extracted": {k: v for k, v in (call.extracted_data or {}).items() if not k.startswith("_")},
             "recording_trimmed_to": keep}
