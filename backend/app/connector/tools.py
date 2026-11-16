@@ -616,7 +616,7 @@ async def call_with_agent(s: Session, args: dict) -> dict:
 def _call_brief(c: dict) -> dict:
     keep = ("id", "call_type", "status", "outcome", "sentiment", "summary", "duration_seconds", "to_phone",
             "contact_name", "contact_company", "agent_name", "campaign_name", "agreed_meeting_time", "started_at", "response_analysis")
-    return {**{k: c.get(k) for k in keep}, "url": link(f"/calls?call={c['id']}")}
+    return {**{k: c.get(k) for k in keep}, "url": link(f"/calls/{c['id']}")}
 
 
 @tool("list_calls", "List calls",
@@ -1492,7 +1492,7 @@ async def search(s: Session, args: dict) -> dict:
         .order_by(CallLog.started_at.desc()).limit(10))).scalars().all()
     for c in calls:
         results.append({"id": f"call:{c.id}", "title": f"Call {c.started_at:%b %d}" if c.started_at else "Call",
-                        "url": link(f"/calls?call={c.id}")})
+                        "url": link(f"/calls/{c.id}")})
     return {"results": results}
 
 

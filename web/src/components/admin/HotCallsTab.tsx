@@ -171,7 +171,7 @@ function HotCallRow({ call: c }: { call: HotCall }) {
         disabled={opening}
         onClick={async () => {
           setOpening(true);
-          await switchOrg(c.account.id, `/calls?call=${c.id}`);
+          await switchOrg(c.account.id, `/calls/${c.id}`);
         }}
       >
         Open call <ArrowUpRight className="h-3.5 w-3.5" />
