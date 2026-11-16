@@ -1,4 +1,8 @@
 """Radar's custom rules and CRM resources. Drafts/preview never write to a CRM."""
+import asyncio
+import traceback
+import httpx
+import structlog
 import json
 import re
 from datetime import timedelta
@@ -23,6 +27,61 @@ from app.models.crm_command import CrmCommand, RadarConversation
 from app.services.crm.providers import PROVIDERS
 
 router = APIRouter(prefix="/api/radar/automations", tags=["radar automations"])
+
+
+log = structlog.get_logger(__name__)
+
+
+def _assistant_failure(exc, model):
+    from app.services.llm import LLMNotConfigured
+    reference = uuid.uuid4().hex[:12]
+    status = getattr(exc, "status_code", None)
+    code = getattr(exc, "error_code", None)
+    if isinstance(exc, RuntimeError):
+        match = re.match(r"LLM error (\d{3}):", str(exc))
+        status = status or (int(match[1]) if match else None)
+        match = re.search(r'"code"\s*:\s*"([a-z_]{1,80})"', str(exc))
+        if match and match[1] in {"insufficient_quota", "rate_limit_exceeded", "invalid_api_key", "model_not_found", "context_length_exceeded", "billing_hard_limit_reached"}:
+            code = match[1]
+    # Deliberately exclude exception text: upstream messages can contain keys or CRM content.
+    log.error("radar_assistant_failed", reference=reference, model=model,
+              error_type=type(exc).__name__, provider_status=status, provider_code=code,
+              locations=[{"file": frame.filename.rsplit('/', 1)[-1], "line": frame.lineno, "function": frame.name}
+                         for frame in traceback.extract_tb(exc.__traceback__)[-6:]])
+    response_status = 503
+    if isinstance(exc, LLMNotConfigured) or status in (401, 403):
+        message = "The automation assistant's AI connection needs administrator attention. Your draft was not applied."
+    elif code in {"insufficient_quota", "billing_hard_limit_reached"}:
+        message = "The automation assistant's AI provider has reached its usage or billing limit. Ask your administrator to check the AI account."
+    elif status == 429:
+        response_status = 429
+        message = "The automation assistant's AI provider is busy or rate-limited. Wait a moment, then try again."
+    elif isinstance(exc, httpx.TimeoutException):
+        message = "The automation assistant's AI request timed out. Try again; no CRM changes were applied."
+    elif isinstance(exc, httpx.TransportError):
+        message = "The automation assistant couldn't connect to its AI provider. Try again; no CRM changes were applied."
+    elif status and status >= 500:
+        message = "The automation assistant's AI provider is temporarily unavailable. Try again shortly."
+    elif status:
+        message = "The AI provider rejected the automation request. Your administrator can investigate using the reference below."
+    else:
+        message = "The automation assistant couldn't finish this draft. Try again or share the reference below with your administrator."
+    return HTTPException(response_status, f"{message} Reference: {reference}", headers={"X-Request-ID": reference})
+
+
+async def _assistant_chat(payload):
+    from app.services.llm import _chat, LLMNotConfigured
+    for attempt in range(2):
+        try:
+            return await _chat(payload)
+        except (httpx.TransportError, RuntimeError) as exc:
+            match = re.match(r"LLM error (\d{3}):", str(exc)) if isinstance(exc, RuntimeError) else None
+            status = getattr(exc, "status_code", None) or (int(match[1]) if match else None)
+            transient = isinstance(exc, httpx.ConnectError) or (status and status >= 500)
+            if attempt == 0 and transient and not isinstance(exc, LLMNotConfigured):
+                await asyncio.sleep(.25)
+                continue
+            raise _assistant_failure(exc, payload.get("model")) from exc
 
 
 async def require(ctx, db):
@@ -374,7 +433,6 @@ Outcome conditions use the application's supported call outcomes; field conditio
 For Follow Up Boss deal routing, action kind crm_deal_stage selects an open stage in resources.deal_pipelines. It links the contact to one deal on that board; it never changes a person stage. This creates a deal if none exists, updates a single active matching deal, and stops for review on ambiguous/closed deals. Describe this distinction before proposing it. FUB list_sources reads existing source labels; set_contact_source assigns a source label to a single explicitly selected contact only if no original attribution exists. It does not create a standalone source resource or configure native Lead Flow. Source.blacksync_pond_id selects a BlackSync pond from resources.blacksync_ponds and works across CRM providers. Source.lead_source filters by the linked FUB person’s existing source label. Source selection comes first: ask which agent/campaign/pond if no source was specified; do not silently select all calls. To modify an existing saved rule, set existing_rule_id on its draft to the exact saved_rules ID and explain that the user must review/save the updated draft; never claim a change is already active.
 Default to drafting verification/name_confirmed if the customer explicitly asks to verify names. Do not propose calls or scheduling. Preserve the user's intended source and don't invent billing entitlements.
 """
-    from app.services.llm import _chat
     from app.config import settings
     recent = (await db.scalars(select(CrmCommand).where(CrmCommand.org_id == ctx.org.id,
         CrmCommand.connection_id == conn.id, CrmCommand.connection_fingerprint == assistant.fingerprint(conn),
@@ -385,7 +443,7 @@ Default to drafting verification/name_confirmed if the customer explicitly asks 
                "recent_tool_results": [{"action": r.spec["action"], "result": json.dumps(r.result)[:10000]} for r in recent],
                "resources": catalog, "agents": agents[:80], "campaigns": campaigns[:80], "conversation": [{"role": "user", "text": x[:4000]} if isinstance(x, str) else x.model_dump() for x in body.history]}
     try:
-        response = await _chat({"model": settings.analysis_model, "temperature": 0,
+        response = await _assistant_chat({"model": settings.analysis_model, "temperature": 0,
             "response_format": {"type": "json_object"}, "max_tokens": 1800,
             "messages": [{"role": "system", "content": prompt},
                          {"role": "user", "content": json.dumps(context)}, {"role": "user", "content": body.message}]})
@@ -434,7 +492,7 @@ Default to drafting verification/name_confirmed if the customer explicitly asks 
                 await assistant.execute(db, row, conn, ctx.org)
                 results.append({"action": row.spec["action"], "status": row.status, "error": row.error,
                                 "result": json.dumps(row.result)[:12000] if row.result else None})
-            answer = await _chat({"model": settings.analysis_model, "temperature": 0,
+            answer = await _assistant_chat({"model": settings.analysis_model, "temperature": 0,
                 "response_format": {"type": "json_object"}, "max_tokens": 900,
                 "messages": [{"role": "system", "content": "You are BlackSync's CRM assistant. Answer the user's question in a short, plain message using only these CRM read results. Name people and counts exactly as returned; if a read failed, say so. Return JSON {\"message\": \"...\"}."},
                              {"role": "user", "content": json.dumps({"question": body.message, "results": results})}]})
@@ -452,8 +510,10 @@ Default to drafting verification/name_confirmed if the customer explicitly asks 
                 "drafts": drafts, "resource_requests": requests, "needs_source": bool(generated.get("needs_source")) and body.selected_source is None, "writes_performed": False}
     except (ValueError, KeyError, TypeError, CrmError) as exc:
         raise HTTPException(422, f"Couldn't produce a valid automation draft: {str(exc)[:300]}") from exc
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(503, "The automation assistant is unavailable. Use the manual rule builder instead.") from exc
+        raise _assistant_failure(exc, settings.analysis_model) from exc
 
 
 @router.post("/draft")

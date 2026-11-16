@@ -336,3 +336,62 @@ def test_statement_style_name_check_counts_as_confirmed():
     assert ask("No.") == "unverified"
     assert ask("Hello? No. This is John.") == "wrong_number" or ask("Hello? No. This is John.") == "unverified"
     assert ask("Yes.", opener="Hey, this is Olivia from Compass, right?") == "unverified"  # the agent's own name
+
+
+@pytest.mark.parametrize('status, code, expected_status, message, attempts', [
+    (401, 'invalid_api_key', 503, 'AI connection', 1),
+    (429, 'insufficient_quota', 503, 'billing limit', 1),
+    (429, 'rate_limit_exceeded', 429, 'rate-limited', 1),
+    (503, None, 503, 'temporarily unavailable', 2),
+])
+def test_assistant_provider_failures_are_specific_logged_and_never_write(client, crm, monkeypatch, status, code, expected_status, message, attempts):
+    from types import SimpleNamespace
+    from app.services import llm
+    from app.routers import radar_automations as router
+    events, calls = [], []
+    monkeypatch.setattr(router, 'log', SimpleNamespace(error=lambda name, **fields: events.append((name, fields))))
+    async def failed(payload, **kwargs):
+        calls.append(payload)
+        raise llm.LLMRequestError(status, code)
+    monkeypatch.setattr(llm, '_chat', failed)
+    before = len(crm['calls'])
+    result = client.post('/api/radar/automations/draft', json={
+        'provider': 'followupboss', 'message': 'Make a BlackSync pipeline with Talked, Follow Up, Appointment Booked stages'})
+    assert result.status_code == expected_status
+    assert message in result.json()['detail']
+    assert len(calls) == attempts
+    assert events[-1][1]['provider_status'] == status
+    assert events[-1][1]['provider_code'] == code
+    reference = events[-1][1]['reference']
+    assert reference in result.json()['detail'] and result.headers['x-request-id'] == reference
+    assert not any(method in ('POST', 'PUT', 'PATCH', 'DELETE') for method, _, _ in crm['calls'][before:])
+
+
+def test_assistant_connection_retry_recovers_without_disabling_ai(client, crm, monkeypatch):
+    from app.services import llm
+    calls = []
+    async def recover(payload, **kwargs):
+        calls.append(payload)
+        if len(calls) == 1:
+            raise httpx.ConnectError('connection interrupted')
+        return {'choices': [{'message': {'content': json.dumps({'message': 'Ready to help.', 'drafts': []})}}]}
+    monkeypatch.setattr(llm, '_chat', recover)
+    result = client.post('/api/radar/automations/draft', json={'provider': 'followupboss', 'message': 'Help me draft a rule'})
+    assert result.status_code == 200 and result.json()['message'] == 'Ready to help.'
+    assert len(calls) == 2 and result.json()['writes_performed'] is False
+
+
+def test_assistant_unexpected_error_is_correlated_without_leaking_details(client, crm, monkeypatch):
+    from types import SimpleNamespace
+    from app.services import llm
+    from app.routers import radar_automations as router
+    events = []
+    monkeypatch.setattr(router, 'log', SimpleNamespace(error=lambda name, **fields: events.append(fields)))
+    async def broken(payload, **kwargs):
+        raise RuntimeError('private-provider-key-and-client-data')
+    monkeypatch.setattr(llm, '_chat', broken)
+    result = client.post('/api/radar/automations/draft', json={'provider': 'followupboss', 'message': 'Draft a rule'})
+    assert result.status_code == 503
+    assert 'Reference:' in result.json()['detail']
+    assert 'private-provider-key-and-client-data' not in result.text
+    assert 'private-provider-key-and-client-data' not in json.dumps(events)

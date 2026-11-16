@@ -32,6 +32,14 @@ class LLMNotConfigured(RuntimeError):
     pass
 
 
+class LLMRequestError(RuntimeError):
+    """Structured provider failure without retaining its potentially sensitive response text."""
+    def __init__(self, status_code: int, error_code: str | None = None):
+        self.status_code = status_code
+        self.error_code = error_code if isinstance(error_code, str) and error_code.isascii() and error_code.replace('_', '').isalnum() and len(error_code) <= 80 else None
+        super().__init__(f"LLM error {status_code}" + (f": {self.error_code}" if self.error_code else ""))
+
+
 # Optional token meter: set it (a dict) around a block of calls to add up what they used, per model.
 usage_meter: ContextVar[dict | None] = ContextVar("usage_meter", default=None)
 
@@ -66,7 +74,12 @@ async def _chat(payload: dict, timeout: float = 45.0) -> dict:
             json=payload,
         )
         if resp.status_code >= 400:
-            raise RuntimeError(f"LLM error {resp.status_code}: {resp.text[:300]}")
+            try:
+                error = resp.json().get("error") or {}
+                code = (error.get("code") or error.get("type")) if isinstance(error, dict) else None
+            except (ValueError, AttributeError):
+                code = None
+            raise LLMRequestError(resp.status_code, code)
         data = resp.json()
         _meter(payload.get("model"), data)
         return data
