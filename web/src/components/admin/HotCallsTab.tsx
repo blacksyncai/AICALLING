@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Flame, PhoneCall } from "lucide-react";
+import { ArrowUpRight, Clock, Flame, PhoneCall } from "lucide-react";
 import { useState } from "react";
 import useSWR from "swr";
 import { Badge, Button, Card, EmptyState, Select, Spinner } from "@/components/ui";
@@ -52,6 +52,13 @@ const GROUPS: { value: Group; label: string }[] = [
   { value: "hot", label: "Interested" },
   { value: "callback", label: "Call back / follow up" },
 ];
+
+/** "1m 05s", "48s": how long the call lasted. */
+function callLength(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds || 0));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
 
 /** Admin → Hot calls: every account's calls where the transcript shows real intent, newest first. */
 export function HotCallsTab() {
@@ -152,6 +159,10 @@ function HotCallRow({ call: c }: { call: HotCall }) {
               {c.phone}
             </span>
           )}
+          <span className="inline-flex items-center gap-1 font-medium text-zinc-700">
+            <Clock className="h-3 w-3" />
+            {callLength(c.duration_seconds)}
+          </span>
           {c.started_at && <span>{timeAgo(c.started_at)}</span>}
         </div>
       </div>
