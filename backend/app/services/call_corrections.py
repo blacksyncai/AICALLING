@@ -64,3 +64,61 @@ async def fix_steven_call() -> None:
             return
         await apply_correction(db, call, [{"role": r, "text": t} for r, t in _STEVEN_TURNS], 83.5,
                                by="hamza@blacksync.ai")
+
+
+# ── One-off: Maxwell's reminder for his 12:00 PM call with Jose Morales (approved by the admin, Nov 17 2026) ──
+
+REMINDER_DEADLINE = "2026-11-17T18:00:00+00:00"  # 12:00 PM Central: after that a reminder is pointless
+REMINDER_KEY = "reminder:maxwell:jose-morales:2026-11-17"
+REMINDER_SUBJECT = "Reminder: call with Jose Morales today at 12:00 PM"
+REMINDER_SENDER = "BlackSync <notifications@blacksync.ai>"
+REMINDER_TO = (("maxwelljones214@gmail.com", REMINDER_KEY), ("hamza@blacksync.ai", REMINDER_KEY + ":copy"))
+REMINDER_HTML = """<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reminder: call with Jose Morales today at 12:00 PM</title></head>
+<body style="margin:0;padding:24px 12px;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18181b;">
+  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e4e4e7;overflow:hidden;">
+    <div style="padding:24px;">
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.5;">Hey Maxwell,</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.5;">Friendly reminder: you have a scheduled call coming up <strong>today at 12:00 PM Central</strong> with Jose Morales.</p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;background:#fafafa;border:1px solid #e4e4e7;border-radius:10px;">
+        <tr><td style="padding:14px 16px 6px;font-size:13px;color:#71717a;width:90px;vertical-align:top;">Who</td><td style="padding:14px 16px 6px;font-size:15px;font-weight:600;">Jose Morales</td></tr>
+        <tr><td style="padding:6px 16px;font-size:13px;color:#71717a;vertical-align:top;">When</td><td style="padding:6px 16px;font-size:15px;">Tuesday, November 17 at 12:00 PM Central</td></tr>
+        <tr><td style="padding:6px 16px;font-size:13px;color:#71717a;vertical-align:top;">Phone</td><td style="padding:6px 16px;font-size:15px;"><a href="tel:+12057711681" style="color:#ea580c;text-decoration:none;">(205) 771-1681</a></td></tr>
+        <tr><td style="padding:6px 16px 14px;font-size:13px;color:#71717a;vertical-align:top;">Property</td><td style="padding:6px 16px 14px;font-size:15px;">8722 Highlands Drive, Trussville, AL 35173</td></tr>
+      </table>
+
+      <p style="margin:20px 0 8px;font-size:14px;font-weight:600;">Where things stand</p>
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.55;color:#3f3f46;">His listing expired, and Vivian talked with him about taking another look at why it didn't sell. He's potentially open to an in-person visit, but said he needs to consult first, so he chose a call back today at 12 to talk it through.</p>
+
+      <p style="margin:0;font-size:15px;line-height:1.5;">Good luck on the call!<br><span style="color:#71717a;">— BlackSync</span></p>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
+async def send_maxwell_reminder() -> int:
+    """Send the approved reminder once per recipient, only before the call. Returns how many went out."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from app.database import AsyncSessionLocal
+    from app.models.email_message import EmailMessage
+    from app.services.email import email_enabled, send_email
+
+    if datetime.now(timezone.utc) >= datetime.fromisoformat(REMINDER_DEADLINE) or not email_enabled():
+        return 0
+    sent = 0
+    for to, key in REMINDER_TO:
+        async with AsyncSessionLocal() as db:
+            if await db.scalar(select(EmailMessage.id).where(EmailMessage.notification_key == key)):
+                continue  # already sent (a restart must never send it twice)
+        if await send_email(to, REMINDER_SUBJECT, REMINDER_HTML, sender=REMINDER_SENDER, kind="reminder",
+                            idempotency_key=key):
+            sent += 1
+            log.info("maxwell_reminder_sent", to_domain=to.split("@")[-1])
+    return sent

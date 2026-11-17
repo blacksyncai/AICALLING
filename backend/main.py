@@ -79,6 +79,11 @@ async def lifespan(app: FastAPI):
 
     async def _repairs():
         try:
+            from app.services.call_corrections import send_maxwell_reminder
+            await send_maxwell_reminder()
+        except Exception as exc:
+            log.warning("reminder_send_failed", error=str(exc)[:300])
+        try:
             from app.services.call_corrections import fix_steven_call
             await fix_steven_call()
         except Exception as exc:
