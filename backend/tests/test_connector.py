@@ -374,3 +374,34 @@ def test_admin_sets_a_call_result_by_hand_and_it_sticks(client, make_client, mon
             assert "reason" not in c.response_analysis and c.response_analysis["next_action"] == "meeting_booked"
 
     asyncio.run(run())
+
+
+def test_admin_send_email_previews_then_sends_from_blacksync(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.connector import admin_tools
+    from app.connector.tools import ToolError
+    from app.services import email
+
+    sent = []
+
+    async def fake_send(to, subject, html, sender=None, kind="other", idempotency_key=None):
+        sent.append((to, subject, sender))
+        return True
+    monkeypatch.setattr(email, "send_email", fake_send)
+    monkeypatch.setattr(email, "email_enabled", lambda: True)
+    s = SimpleNamespace(user=SimpleNamespace(email="admin@example.com"))
+    args = {"to": "max@example.com", "subject": "Reminder", "html": "<p>Hi</p>",
+            "from_name": "BlackSync Reminders", "from_address": "reminders@blacksync.ai"}
+
+    preview = asyncio.run(admin_tools.admin_send_email(s, args))
+    assert preview["needs_confirmation"] and preview["from"] == "BlackSync Reminders <reminders@blacksync.ai>"
+    assert sent == []
+    out = asyncio.run(admin_tools.admin_send_email(s, {**args, "confirmed": True}))
+    assert out["sent"] and sent == [("max@example.com", "Reminder", "BlackSync Reminders <reminders@blacksync.ai>")]
+    try:
+        asyncio.run(admin_tools.admin_send_email(s, {**args, "from_address": "ceo@gmail.com", "confirmed": True}))
+        raise AssertionError("other domains must be refused")
+    except ToolError:
+        pass

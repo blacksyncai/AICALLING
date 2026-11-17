@@ -360,3 +360,45 @@ async def admin_check_calendar(s: Session, args: dict) -> dict:
                                  "result": result.get("output")})
     out["recent_booking_attempts"] = attempts[:15]
     return out
+
+
+@admin_tool("admin_send_email", "Send an email from a BlackSync address",
+            """Send one email from an @blacksync.ai address (e.g. a reminder to a customer). Without confirmed=true it
+only shows the email that would go out: show it to the user and send only once they approve it.""",
+            {"to": {"type": "string", "description": "The recipient's email address."},
+             "subject": {"type": "string"},
+             "html": {"type": "string", "description": "The email body as HTML."},
+             "from_name": {"type": "string", "description": "Sender name, e.g. \"BlackSync Reminders\"."},
+             "from_address": {"type": "string", "description": "Sender mailbox on blacksync.ai, e.g. reminders@blacksync.ai."},
+             "confirmed": {"type": "boolean"}},
+            ["to", "subject", "html"], read_only=False)
+async def admin_send_email(s: Session, args: dict) -> dict:
+    import re as _re
+
+    from app.services.email import email_enabled, send_email
+
+    to = str(args.get("to") or "").strip()
+    subject = " ".join(str(args.get("subject") or "").split())[:200]
+    html = str(args.get("html") or "")
+    address = str(args.get("from_address") or "notifications@blacksync.ai").strip().lower()
+    name = " ".join(str(args.get("from_name") or "BlackSync").split())[:60].replace("<", "").replace(">", "")
+    if not _re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", to, _re.I):
+        raise ToolError("That isn't a valid recipient address.")
+    if not _re.fullmatch(r"[a-z0-9._-]+@blacksync\.ai", address):
+        raise ToolError("Send only from a blacksync.ai address (the domain verified for sending).")
+    if not subject or not html.strip():
+        raise ToolError("Give a subject and a body.")
+    sender = f"{name} <{address}>"
+    if not args.get("confirmed"):
+        return {"needs_confirmation": True, "from": sender, "to": to, "subject": subject, "html": html,
+                "note": "Show the user this email, then repeat with confirmed=true once they approve."}
+    if not email_enabled():
+        raise ToolError("Email sending isn't set up on the server (no Resend key).")
+    ok = await send_email(to, subject, html, sender=sender, kind="admin")
+    if not ok:
+        raise ToolError("The email provider didn't accept it. Nothing was sent.")
+    import structlog
+
+    structlog.get_logger(__name__).info("admin_email_sent", to_domain=to.split("@")[-1],
+                                        by=getattr(s.user, "email", None))
+    return {"sent": True, "from": sender, "to": to, "subject": subject}
