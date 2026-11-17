@@ -305,7 +305,7 @@ async def _analysis_json(prompt: str) -> dict | None:
 
 
 async def analyze_call(transcript: list[dict], extraction_fields: list[dict] | None,
-                       success_criteria: str = "") -> dict | None:
+                       success_criteria: str = "", language: str | None = None) -> dict | None:
     """Summarize a finished call. Returns None when there's nothing to analyze or no key."""
     if not settings.openai_api_key or not transcript:
         return None
@@ -327,6 +327,14 @@ async def analyze_call(transcript: list[dict], extraction_fields: list[dict] | N
     facts = (f"FACTS: the contact spoke {len(contact_turns(transcript))} time(s); "
              + ("a live person answered, so the outcome can NOT be no_answer or voicemail."
                 if answered else "no live conversation was detected."))
+    from app.agent.models import LANGUAGES
+
+    lang = (language or "en").split("-")[0]
+    if lang not in ("en", "multi"):
+        name = next((x["label"] for x in LANGUAGES if x["code"] == lang), lang)
+        facts += (f" The agent calls in {name}: the contact answering in {name} (or a dialect of it) is the expected"
+                  f" language, never a language barrier. Transcripts in {name} can be rough; judge intent from what"
+                  " is clear.")
     prompt = f"""Analyze this phone call transcript between an AI agent and a contact.
 
 {facts}

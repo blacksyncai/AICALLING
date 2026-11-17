@@ -578,6 +578,16 @@ _VOICEMAIL_STRICT = (
     "we're closed right now", "we're currently close right now", "normal business hours", "regular business hours", "our office is closed",
     "our offices are closed", "office hours are",
 )
+# Chinese mailboxes and carrier messages (Mandarin, simplified and traditional), as Chinese speech-to-text writes
+# them: "请在嘀声后留言", "您拨打的用户暂时无法接通". A greeting cut short comes through as just "請留" / "请留".
+_VOICEMAIL_ZH = (
+    "请留言", "請留言", "请留", "請留", "留言", "嘀声", "嘀聲", "哔声", "嗶聲", "滴声", "提示音后", "提示音後",
+    "语音信箱", "語音信箱", "无法接听", "無法接聽", "无法接通", "無法接通", "暂时无法", "暫時無法", "不在服务区",
+    "不在服務區", "您拨打的", "您撥打的", "您所拨打", "您所撥打", "已关机", "已關機", "正在通话中", "正在通話中",
+    "稍后再拨", "稍後再撥", "空号", "空號",
+)
+_VOICEMAIL_STRICT = _VOICEMAIL_STRICT + _VOICEMAIL_ZH
+
 # Same kind of thing where the wording varies: menu prompts ("to replay, press two"), the end of "...you may hang
 # up", a recording that tells you who to call instead.
 _MACHINE_PATTERNS = re.compile(
@@ -942,3 +952,29 @@ def should_hold_hangup(outcome: str, last_contact: str) -> bool:
         return True  # they just asked something
     words = set(re.findall(r"[a-z']+", t))
     return not any((c in words) if " " not in c else (c in t) for c in _ENDING_CUES)
+
+
+# The quiet-line check-in, in the agent's language (it was English on every call, even a Mandarin agent's).
+CHECK_IN_LINES = {
+    "en": "Hello? Can you hear me okay?",
+    "zh": "喂，您好，听得到吗？",
+    "es": "¿Hola? ¿Me escucha bien?",
+    "pt": "Alô? Está me ouvindo bem?",
+    "fr": "Allô ? Vous m'entendez bien ?",
+    "de": "Hallo? Hören Sie mich gut?",
+    "it": "Pronto? Mi sente bene?",
+    "ar": "ألو؟ هل تسمعني جيداً؟",
+    "hi": "हैलो? क्या आप मुझे ठीक से सुन पा रहे हैं?",
+    "tl": "Hello po? Naririnig n'yo po ba ako?",
+    "vi": "Alô? Anh chị có nghe rõ không ạ?",
+    "ko": "여보세요? 제 말 잘 들리세요?",
+    "ja": "もしもし？聞こえますか？",
+    "ru": "Алло? Вы меня хорошо слышите?",
+    "tr": "Alo? Beni iyi duyabiliyor musunuz?",
+    "pl": "Halo? Czy dobrze mnie Pan słyszy?",
+    "nl": "Hallo? Hoort u mij goed?",
+}
+
+
+def check_in_line(language: str | None) -> str:
+    return CHECK_IN_LINES.get((language or "en").split("-")[0], CHECK_IN_LINES["en"])

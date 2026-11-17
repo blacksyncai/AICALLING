@@ -249,11 +249,29 @@ def brief(match: Match, org_name: str, cfg: dict) -> dict:
     return out
 
 
-def greeting(info: dict) -> str:
-    """Opening line for a recognized callback (the agent's own first message is written for outbound calls)."""
+# Callback openings in the agent's language: (recognized, with a first name), (unknown caller).
+_GREETINGS = {
+    "en": ("Hi, thanks for calling back! Is this {name}?", "Hi, thanks for calling back! Who do I have the pleasure of speaking with?"),
+    "zh": ("您好，谢谢您回电！请问是{name}吗？", "您好，谢谢您回电！请问怎么称呼您？"),
+    "es": ("¡Hola, gracias por devolver la llamada! ¿Hablo con {name}?", "¡Hola, gracias por devolver la llamada! ¿Con quién tengo el gusto de hablar?"),
+    "pt": ("Olá, obrigado por retornar a ligação! Estou falando com {name}?", "Olá, obrigado por retornar a ligação! Com quem eu falo?"),
+    "fr": ("Bonjour, merci de nous rappeler ! Je parle bien à {name} ?", "Bonjour, merci de nous rappeler ! À qui ai-je le plaisir de parler ?"),
+    "de": ("Hallo, danke für Ihren Rückruf! Spreche ich mit {name}?", "Hallo, danke für Ihren Rückruf! Mit wem spreche ich?"),
+    "it": ("Salve, grazie per aver richiamato! Parlo con {name}?", "Salve, grazie per aver richiamato! Con chi ho il piacere di parlare?"),
+    "ar": ("مرحباً، شكراً لمعاودة الاتصال! هل أتحدث مع {name}؟", "مرحباً، شكراً لمعاودة الاتصال! مع من أتحدث؟"),
+    "vi": ("Xin chào, cảm ơn anh chị đã gọi lại! Có phải {name} không ạ?", "Xin chào, cảm ơn anh chị đã gọi lại! Cho em hỏi ai đang gọi ạ?"),
+    "ko": ("안녕하세요, 다시 전화 주셔서 감사합니다! {name}님 맞으신가요?", "안녕하세요, 다시 전화 주셔서 감사합니다! 성함이 어떻게 되세요?"),
+    "tl": ("Hello po, salamat sa pagtawag pabalik! Si {name} po ba ito?", "Hello po, salamat sa pagtawag pabalik! Sino po ang kausap ko?"),
+}
+
+
+def greeting(info: dict, language: str | None = None) -> str:
+    """Opening line for a recognized callback (the agent's own first message is written for outbound calls), in the
+    agent's language: a Mandarin agent opened callbacks in English."""
+    known, unknown = _GREETINGS.get((language or "en").split("-")[0], _GREETINGS["en"])
     if info.get("recognized") and info.get("first_name"):
-        return f"Hi, thanks for calling back! Is this {info['first_name']}?"
-    return "Hi, thanks for calling back! Who do I have the pleasure of speaking with?"
+        return known.format(name=info["first_name"])
+    return unknown
 
 
 async def original_agent(db: AsyncSession, org_id: uuid.UUID, match: Match | None, cfg: dict) -> Agent | None:

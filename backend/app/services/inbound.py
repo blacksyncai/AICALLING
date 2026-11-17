@@ -278,7 +278,7 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
         cfg["callback"] = info
         if not via_campaign or not (cfg.get("first_message") or "").strip():
             # The agent's own opening is written for calls it places ("Hi, this is Sofia calling about...").
-            cfg["first_message"] = callbacks.greeting(info)
+            cfg["first_message"] = callbacks.greeting(info, cfg.get("language"))
     from app.services import telephony
     from app.services.outbound_call import outbound_trunk
 

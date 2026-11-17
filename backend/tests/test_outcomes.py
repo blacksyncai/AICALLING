@@ -29,7 +29,7 @@ def test_reconcile_never_no_answer_when_they_talked():
 def test_repair_existing_mislabeled_calls(client, monkeypatch):
     from app.services import llm, outbound_call
 
-    async def fake_analyze(transcript, fields, criteria):
+    async def fake_analyze(transcript, fields, criteria, **kw):
         return {"summary": "They asked to repeat.", "outcome": "no_answer", "sentiment": "neutral", "extracted": {}}
 
     monkeypatch.setattr(llm, "analyze_call", fake_analyze)
@@ -79,7 +79,7 @@ def test_personal_greeting_is_voicemail_not_callback():
 def test_reanalyze_can_fix_an_analyzer_outcome(client, monkeypatch):
     from app.services import llm, outbound_call
 
-    async def fake(transcript, fields, criteria):
+    async def fake(transcript, fields, criteria, **kw):
         return {"summary": "Voicemail greeting.", "outcome": "voicemail", "sentiment": "neutral", "extracted": {}}
 
     monkeypatch.setattr(llm, "analyze_call", fake)

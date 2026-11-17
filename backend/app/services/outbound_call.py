@@ -673,6 +673,39 @@ def unconfirmed_booking(call_log, agent) -> bool:
     return booking_status(call_log, agent) in ("failed", "tentative")
 
 
+# Scripts that show a contact answered in the agent's (non-Latin) language.
+_SCRIPT = {"zh": r"[\u4e00-\u9fff]", "ja": r"[\u3040-\u30ff\u4e00-\u9fff]", "ko": r"[\uac00-\ud7af]",
+           "ar": r"[\u0600-\u06ff]", "hi": r"[\u0900-\u097f]", "ru": r"[\u0400-\u04ff]"}
+
+
+async def fix_false_language_barriers(days: int = 14, limit: int = 1000) -> int:
+    """Repair: calls on a non-English agent scored "language barrier" although the contact answered in the agent's
+    own language (a Mandarin agent's calls answered in Mandarin). Re-analyzed now that the review knows the agent's
+    language."""
+    import re as _re
+
+    from app.agent.runtime import contact_turns
+    from app.database import AsyncSessionLocal
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CallLog.id, CallLog.transcript, Agent.language)
+                                 .join(Agent, Agent.id == CallLog.agent_id).where(
+            CallLog.started_at >= since, CallLog.outcome == "language_barrier",
+            Agent.language.in_(tuple(_SCRIPT)),
+        ).limit(limit))).all()
+    ids = [str(cid) for cid, transcript, lang in rows
+           if any(_re.search(_SCRIPT[lang], t) for t in contact_turns(transcript))]
+    for cid in ids:
+        try:
+            await _analyze(cid, force=True)
+        except Exception as exc:
+            log.warning("language_barrier_repair_failed", call_log_id=cid, error=str(exc))
+    if ids:
+        log.info("false_language_barriers_repaired", count=len(ids))
+    return len(ids)
+
+
 async def fix_unconfirmed_bookings(days: int = 30, limit: int = 2000) -> int:
     """Repair: recent calls counted as booked meetings that the calendar never confirmed."""
     from app.database import AsyncSessionLocal
@@ -765,10 +798,13 @@ async def _analyze(call_log_id: str, force: bool = False) -> None:
             call_log.status = {"no_answer": "no_answer", "voicemail": "no_answer",
                                "failed": "failed"}.get(call_log.outcome, "completed")
         agent = await db.get(Agent, call_log.agent_id) if call_log.agent_id else None
+        language = getattr(agent, "language", None) if agent else None
         result = await analyze_call(
             call_log.transcript,
             agent.extraction_fields if agent else None,
             agent.success_criteria if agent else "",
+            # Only non-English agents: the review is told which language the calls are in.
+            **({"language": language} if language and language not in ("en", "multi") else {}),
         )
         if not result:
             if review_meta.get("_review_schema") == 1:

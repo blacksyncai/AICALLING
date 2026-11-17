@@ -191,7 +191,7 @@ def test_postcall_correction_and_counters_are_idempotent(
     async def no_charge(*args):
         pass
 
-    async def analyze(*args):
+    async def analyze(*args, **kwargs):
         return (
             result("no_decision", "Is this a solicitation?", "unknown")
             if available
@@ -258,7 +258,7 @@ def test_legacy_calls_are_not_automatically_given_new_outcomes(client, monkeypat
     from app.models.call_log import CallLog
     from app.services import llm, outbound_call
 
-    async def analyze(*args):
+    async def analyze(*args, **kwargs):
         return result("no_decision", "Is this a solicitation?", "unknown")
 
     monkeypatch.setattr(llm, "analyze_call", analyze)

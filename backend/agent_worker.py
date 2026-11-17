@@ -1961,9 +1961,24 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                 silence["since"] = _time.monotonic()
                 if kind == "user" and state == "speaking":
                     silence["checked_in"] = False
+            if kind == "agent" and state in ("speaking", "thinking"):
+                owed.update(text="", nudged=False)  # the agent is answering
         return _on
 
+    # What the contact last said that the agent hasn't answered yet. If a turn never gets its reply (the turn
+    # detector holds it, a reply is dropped), the quiet timer used to say "Hello? Can you hear me okay?" to
+    # someone who had just spoken (a Mandarin caller heard it five times running).
+    owed: dict = {"text": "", "at": 0.0, "nudged": False}
+
+    def _heard(ev) -> None:
+        if silence.get("agent") == "speaking":
+            return  # said over the agent: a backchannel or an interruption, which the session handles itself
+        if getattr(ev, "is_final", False) and (getattr(ev, "transcript", "") or "").strip():
+            owed.update(text=ev.transcript.strip(), at=_time.monotonic(), nudged=False)
+
     CHECK_IN_AFTER, HANG_UP_AFTER = 7.0, 8.0  # quiet seconds: check in once, then hang up
+    OWED_REPLY_AFTER = 3.5  # the contact spoke and the agent has said nothing back for this long
+    from app.agent.runtime import check_in_line
 
     def _contact_said_anything() -> bool:
         return bool(screen["passed"] or vm["heard"].strip() or any(
@@ -1996,11 +2011,24 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             if not quiet:
                 continue
             idle = _time.monotonic() - silence["since"]
+            if (owed["text"] and not owed["nudged"] and not opening.get("pending")
+                    and _time.monotonic() - owed["at"] > OWED_REPLY_AFTER):
+                # They spoke and got nothing back: answer them, don't ask whether they can hear us.
+                owed["nudged"] = True
+                silence["since"] = _time.monotonic()
+                log.info("owed_reply", room=ctx.room.name, waited=round(_time.monotonic() - owed["at"], 1))
+                try:
+                    session.generate_reply(instructions=(
+                        "The contact just said something and you haven't answered yet. Reply to it now, briefly, "
+                        "in the language of the call."))
+                except Exception as exc:
+                    log.warning("owed_reply_failed", error=str(exc)[:120])
+                continue
             if not silence["checked_in"] and idle > CHECK_IN_AFTER:
                 silence["checked_in"] = True
                 log.info("silence_check_in", room=ctx.room.name, seconds=round(idle, 1))
                 try:
-                    session.say("Hello? Can you hear me okay?", allow_interruptions=True)
+                    session.say(check_in_line(language), allow_interruptions=True)
                 except Exception as exc:
                     log.warning("silence_check_in_failed", error=str(exc)[:120])
                 continue
@@ -2022,6 +2050,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     if call_type in ("outbound", "inbound"):
         session.on("agent_state_changed", _activity("agent"))
         session.on("user_state_changed", _activity("user"))
+        session.on("user_input_transcribed", _heard)
         silence_task = asyncio.create_task(_hang_up_on_silence())
 
     finished: dict = {"task": None}

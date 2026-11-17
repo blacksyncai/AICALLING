@@ -95,6 +95,8 @@ async def lifespan(app: FastAPI):
         await fix_silent_pickups()
         from app.services.outbound_call import fix_unconfirmed_bookings
         await fix_unconfirmed_bookings()
+        from app.services.outbound_call import fix_false_language_barriers
+        await fix_false_language_barriers()
         from app.services.outbound_call import backfill_call_reasons
         await backfill_call_reasons()
         await repair_contact_statuses()
