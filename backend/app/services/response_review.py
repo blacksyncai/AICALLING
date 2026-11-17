@@ -92,7 +92,16 @@ _LATER = re.compile(
     r"\b(?:on (?:pause|hold)|paused|put (?:it )?on hold|not (?:right )?now|not (?:at )?this time|not yet|"
     r"maybe (?:later|next (?:year|month|spring|summer|fall))|next (?:year|spring|summer|fall)|"
     r"in a (?:few|couple(?: of)?) (?:months|weeks)|after the (?:holidays|new year)|down the road|"
-    r"waiting (?:a (?:few|couple)|until|till)|(?:later|early) (?:this|next) year|not ready yet)\b")
+    r"waiting (?:a (?:few|couple)|until|till)|(?:later|early) (?:this|next) year|not ready yet|"
+    # "We're not considering selling yet", "still thinking", "I need to consult my wife": undecided, not a no.
+    r"(?:selling|buying|moving|ready|decided|considering|considered|thinking|looking)\b.{0,20}\byet|"
+    r"still (?:thinking|deciding|considering)|(?:need|have|got) to (?:consult|think|talk (?:it over|to|with)|discuss)|"
+    r"let me (?:think|talk to|discuss)|haven't decided)\b")
+# Words that show someone answered the phone or asked who's calling, not that they want the offer.
+_NOT_INTEREST = re.compile(
+    r"^(?:(?:hello|hi|hey|yes|yeah|yep|sure|okay|ok|speaking|go ahead|uh|um|mhm+)[\s,.!?]*)*"
+    r"(?:(?:what|who|how)\b.{0,40}\b(?:can i do for you|help you|is this|this is about|calling about|you want|you"
+    r" wanna talk about|are you)|who(?:'s| is) (?:this|calling))?[\s,.!?]*$")
 # A call that never got going but where the person signalled a need or interest ("I kinda need help",
 # "yeah I'm looking", "I'm interested"): worth a follow-up, not "no decision".
 _INTEREST = re.compile(
@@ -195,7 +204,11 @@ def review_response(result, transcript):
             or _normalized(quote)
             in ("thank you", "thanks", "hello", "hi", "sure", "okay")
         )
-        invalid_interest = outcome in ("interested", "qualified") and scope != "offer"
+        invalid_interest = outcome in ("interested", "qualified") and (
+            scope != "offer"
+            # The only evidence is a greeting or "who is this?", or the contact's own refusal.
+            or bool(quote) and (_NOT_INTEREST.match(_normalized(quote)) is not None
+                                or _NOT_INTERESTED.search(_normalized(quote)) is not None))
         if invalid_refusal and quote and certainty == "clear" and scope == "timing":
             outcome = "busy"
         elif (
@@ -278,7 +291,9 @@ def review_response(result, transcript):
         in ("accepted", "declined", "not_discussed", "unclear")
         else "not_discussed",
     }
-    if outcome not in technical and outcome not in ("meeting_booked", "transferred"):
+    from app.services.call_reasons import applies
+
+    if applies(outcome):
         from app.services.call_reasons import decide
 
         reason, reason_quote = decide(raw.get("reason"), raw.get("reason_quote"), _live_contact_turns(transcript))

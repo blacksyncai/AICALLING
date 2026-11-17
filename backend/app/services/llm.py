@@ -388,10 +388,12 @@ Return JSON with keys:
   "next_action_quote": exact LIVE CONTACT words requesting or agreeing to that action, null if none;
   "channel": phone | email | text | null; "timeline": their words, or null;
   "meeting_response": accepted | declined | not_discussed | unclear;
-  "reason": why they said no or not now, one of already_sold | already_bought | working_with_agent | not_owner |
-    renting_out | not_selling | not_looking | has_provider | cost | price_value | timing | no_need | privacy | other,
-    or null when they gave no reason (e.g. "My house already sold" = already_sold; "I have a realtor" =
-    working_with_agent);
+  "reason": ONLY when the outcome is not_interested, declined_conversation, not_qualified or do_not_call: why they
+    said no, one of already_sold | already_bought | working_with_agent | not_owner | renting_out | not_selling |
+    not_looking | has_provider | cost | price_value | timing | no_need | privacy | other (e.g. "My house already
+    sold" = already_sold; "I have a realtor" = working_with_agent). null for every other outcome, and null when
+    their words leave the door open ("I'm still thinking", "not sure", "maybe later", "I need to consult"): those
+    are no_decision or potential_follow_up, never not_looking or not_selling;
   "reason_quote": the exact LIVE CONTACT words giving that reason, null if none.
   Evidence must not come from the agent, a recorded greeting, a screener, or an invented suggestion.
 - "summary": 2-3 sentence summary of what happened.

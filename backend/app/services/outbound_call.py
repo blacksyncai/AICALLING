@@ -933,31 +933,49 @@ async def fix_mislabeled_outcomes(limit: int = 500) -> int:
 
 
 async def backfill_call_reasons(days: int = 60, limit: int = 5000) -> int:
-    """Tag recent analyzed calls with the reason the contact gave (e.g. "My house already sold" = already_sold),
-    using the same rules new calls use. Only adds a missing reason; never changes outcomes."""
-    from app.agent.runtime import NO_CONVERSATION_OUTCOMES, _live_contact_turns
+    """Keep recent calls' reasons right: a refusal ("not interested") gets the reason the contact gave (e.g. "My house
+    already sold" = already_sold) by the same rules new calls use; any other result loses a reason it was given (a
+    follow-up labeled "Not looking anymore" read as a no). Never changes outcomes."""
+    from app.agent.runtime import _live_contact_turns
     from app.database import AsyncSessionLocal
-    from app.services.call_reasons import from_rules
+    from app.services.call_reasons import applies, decide, from_rules
 
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    tagged = 0
+    tagged = cleared = 0
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(select(CallLog).where(
             CallLog.started_at >= since, CallLog.transcript.isnot(None), CallLog.response_analysis.isnot(None),
-            CallLog.outcome.notin_((*NO_CONVERSATION_OUTCOMES, "failed", "meeting_booked", "transferred")),
         ).order_by(CallLog.started_at.desc()).limit(limit))).scalars().all()
         for call in rows:
             ra = dict(call.response_analysis or {})
-            if ra.get("version") != 1 or ra.get("reason"):
+            if ra.get("version") != 1:
                 continue
-            hit = from_rules(_live_contact_turns(call.transcript))
+            if not applies(call.outcome):
+                if ra.get("reason") or ra.get("reason_quote"):
+                    ra.pop("reason", None)
+                    ra.pop("reason_quote", None)
+                    call.response_analysis = ra
+                    cleared += 1
+                continue
+            turns = _live_contact_turns(call.transcript)
+            if ra.get("reason"):
+                kept = decide(ra.get("reason"), ra.get("reason_quote"), turns)
+                if kept[0] != ra.get("reason"):  # a model pick its own quote doesn't support
+                    ra["reason"], ra["reason_quote"] = kept
+                    if not kept[0]:
+                        ra.pop("reason", None)
+                        ra.pop("reason_quote", None)
+                    call.response_analysis = ra
+                    cleared += 1
+                continue
+            hit = from_rules(turns)
             if hit:
                 ra["reason"], ra["reason_quote"] = hit
                 call.response_analysis = ra
                 tagged += 1
         await db.commit()
-    if tagged:
-        log.info("call_reasons_backfilled", count=tagged)
+    if tagged or cleared:
+        log.info("call_reasons_backfilled", tagged=tagged, cleared=cleared)
     return tagged
 
 

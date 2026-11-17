@@ -49,6 +49,24 @@ _RULES: list[tuple[str, re.Pattern]] = [(k, re.compile(p)) for k, p in (
 _NEGATED = re.compile(r"\b(?:didn't|did not|never|hasn't|has not|not|wasn't|won't) (?:get )?sold|didn't sell|never sold|couldn't sell\b")
 
 
+# Outcomes a reason explains. A reason ("Not looking anymore", "Bad timing") says why someone said no; on a callback,
+# a follow-up or an undecided call it read as the result and hid the real one.
+REASON_OUTCOMES = ("not_interested", "declined_conversation", "not_qualified", "do_not_call")
+
+# Words that keep the door open. They are never a reason for a "no".
+_HEDGE = re.compile(r"\b(?:still thinking|thinking about it|think about it|not sure|unsure|maybe|consult|talk to my|"
+                    r"let me (?:think|check|talk)|need to (?:think|check|talk|discuss)|not (?:right )?now|later|"
+                    r"not yet|haven't decided|undecided|we'll see|depends)\b")
+
+
+_FILLER = re.compile(r"\b(?:no+|nope|nah|not|thanks?|thank you|you|so|much|sir|ma'?am|bye|okay|ok|sorry|please|"
+                     r"no thanks|appreciate it|i'm good|we're good|good)\b|[^\w\s']")
+
+
+def applies(outcome: str | None) -> bool:
+    return outcome in REASON_OUTCOMES
+
+
 def label(reason: str | None) -> str | None:
     return REASONS.get(reason or "")
 
@@ -70,6 +88,10 @@ def decide(raw_reason, raw_quote, turns: list[str]) -> tuple[str | None, str | N
         return hit
     if raw_reason in REASONS and isinstance(raw_quote, str) and raw_quote.strip():
         needle = " ".join(raw_quote.casefold().split()).strip(" .!?")
+        if raw_reason != "timing" and _HEDGE.search(needle.replace("’", "'")):
+            return None, None  # "I'm still thinking" is not "Not looking anymore"
+        if len(_FILLER.sub(" ", needle).split()) < 2:
+            return None, None  # a bare "No." or "No, thank you" says no, not why
         if needle and any(needle in " ".join(t.casefold().split()) for t in turns):
             return raw_reason, raw_quote.strip()[:600]
     return None, None

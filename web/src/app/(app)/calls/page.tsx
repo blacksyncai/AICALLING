@@ -17,7 +17,7 @@ import { formatDay, timeZoneLabel } from "@/components/dashboard/activity-model"
 import { fetcher } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import type { Agent, Call } from "@/lib/types";
-import { NEXT_ACTION_LABELS, REASON_LABELS, cn, formatDateTime, formatDuration, formatPhone, humanize, outcomeLabel, timeAgo } from "@/lib/utils";
+import { NEXT_ACTION_LABELS, REASON_LABELS, cn, formatDateTime, formatDuration, formatPhone, humanize, outcomeLabel, resultLabel, timeAgo } from "@/lib/utils";
 
 const OUTCOMES = ["no_decision", "insufficient_conversation", "busy", "information_requested", "potential_follow_up", "declined_conversation", "wrong_number", "meeting_booked", "qualified", "interested", "not_interested", "not_qualified", "callback", "transferred", "voicemail", "screened", "no_answer", "language_barrier", "hung_up", "completed", "failed"];
 const OUTCOME_CHIP: Record<string, string> = { meeting_booked: "Meetings booked", transferred: "Transferred" };
@@ -383,7 +383,7 @@ function CallAvatar({ call: c }: { call: Call }) {
 
 function CallOutcome({ call: c }: { call: Call }) {
   if (!c.outcome) return <OutcomeBadge outcome={null} status={c.status} />;
-  return <span className="inline-flex flex-col items-start gap-1"><StatusPill status={c.outcome} label={(c.response_analysis?.reason && REASON_LABELS[c.response_analysis.reason]) || outcomeLabel(c.outcome)} />
+  return <span className="inline-flex flex-col items-start gap-1"><StatusPill status={c.outcome} label={resultLabel(c.outcome, c.response_analysis?.reason)} />
     {c.response_analysis?.version === 1 && <span className="text-[10px] text-zinc-400">{NEXT_ACTION_LABELS[c.response_analysis.next_action] ?? humanize(c.response_analysis.next_action)}</span>}</span>;
 }
 

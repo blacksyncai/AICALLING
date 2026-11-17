@@ -413,3 +413,44 @@ def test_busy_person_can_accept_an_actual_callback_offer():
         turns,
     )
     assert reviewed["response_analysis"]["next_action"] == "callback_requested"
+
+
+def test_a_reason_only_explains_a_no():
+    """PorchLight, Nov 16: "I'm still thinking" was scored potential_follow_up (right) but given the reason
+    not_looking, which the call list showed instead, as "Not looking anymore"."""
+    from app.services.call_reasons import decide
+    from app.services.response_review import review_response
+
+    transcript = [{"role": "assistant", "text": "Have you thought about selling in the next six to twelve months?"},
+                  {"role": "user", "text": "I'm still thinking"}]
+    base = {"summary": "s", "outcome": "potential_follow_up", "response_analysis": {
+        "evidence_quote": "I'm still thinking", "response_scope": "timing", "certainty": "clear",
+        "next_action": "none_agreed", "reason": "not_looking", "reason_quote": "I'm still thinking"}}
+    out = review_response(base, transcript)
+    assert out["outcome"] == "potential_follow_up" and "reason" not in out["response_analysis"]
+    # Even on a refusal, a hedge is not a reason.
+    assert decide("not_looking", "I'm still thinking", ["I'm still thinking"]) == (None, None)
+    assert decide(None, None, ["No thanks, we already sold the house."])[0] == "already_sold"
+
+
+def test_real_mislabels_from_nov_2026():
+    """Labels seen on real calls: a greeting scored interested, "not yet" scored a permanent no, a bare "No."
+    given a specific reason."""
+    from app.services.response_review import review_response
+
+    def run(outcome, quote, scope="offer", reason=None, reason_quote=None):
+        t = [{"role": "assistant", "text": "Are you thinking of selling in the next six to twelve months?"},
+             {"role": "user", "text": quote}]
+        ra = {"evidence_quote": quote, "response_scope": scope, "certainty": "clear", "next_action": "none_agreed",
+              "reason": reason, "reason_quote": reason_quote}
+        return review_response({"summary": "s", "outcome": outcome, "response_analysis": ra}, t)
+
+    assert run("interested", "What what can I do for you?")["outcome"] != "interested"
+    assert run("interested", "If this is about listing with a realtor, I'm not interested.")["outcome"] != "interested"
+    assert run("interested", "How much does it cost?")["outcome"] == "interested"
+    assert run("not_interested", "No, sir. We're not considered selling yet.")["outcome"] == "potential_follow_up"
+    no = run("not_interested", "No.", reason="not_selling", reason_quote="No.")
+    assert no["outcome"] == "not_interested" and "reason" not in no["response_analysis"]
+    sold = run("not_interested", "No, we already sold the house.", reason="already_sold",
+               reason_quote="we already sold the house")
+    assert sold["response_analysis"]["reason"] == "already_sold"

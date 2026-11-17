@@ -56,6 +56,15 @@ const OUTCOME_LABEL: Record<string, string> = {
   do_not_call: "Do not call",
 };
 
+/** Results a reason explains. Any other result (a follow-up, a callback, undecided) is shown as itself. */
+export const REFUSAL_OUTCOMES = ["not_interested", "declined_conversation", "not_qualified", "do_not_call"];
+
+/** The label for a call's result: the contact's reason for a "no" ("Already sold"), else the result. */
+export function resultLabel(outcome: string | null | undefined, reason?: string | null): string {
+  const why = reason && outcome && REFUSAL_OUTCOMES.includes(outcome) ? REASON_LABELS[reason] : undefined;
+  return why ?? outcomeLabel(outcome ?? "");
+}
+
 /** Why a contact said no or not now (response_analysis.reason). */
 export const REASON_LABELS: Record<string, string> = {
   already_sold: "Already sold", already_bought: "Already bought", working_with_agent: "Working with an agent",
