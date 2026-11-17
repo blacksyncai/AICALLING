@@ -978,3 +978,22 @@ CHECK_IN_LINES = {
 
 def check_in_line(language: str | None) -> str:
     return CHECK_IN_LINES.get((language or "en").split("-")[0], CHECK_IN_LINES["en"])
+
+
+# What the agent says to a call screener: like someone they know who trailed off, in the call's language.
+SCREENER_LINES = {
+    "en": ("Hey {name}, it's just...", "Hey, it's just..."),
+    "zh": ("喂，{name}，是我……", "喂，是我……"),
+    "es": ("Hola {name}, soy yo...", "Hola, soy yo..."),
+    "pt": ("Oi {name}, sou eu...", "Oi, sou eu..."),
+    "fr": ("Allô {name}, c'est moi...", "Allô, c'est moi..."),
+    "ar": ("ألو {name}، أنا...", "ألو، أنا..."),
+    "vi": ("Alô {name}, em đây...", "Alô, em đây..."),
+    "ko": ("여보세요 {name}님, 저예요...", "여보세요, 저예요..."),
+    "tl": ("Hello {name}, ako 'to...", "Hello, ako 'to..."),
+}
+
+
+def screener_line(language: str | None, name: str = "") -> str:
+    named, plain = SCREENER_LINES.get((language or "en").split("-")[0], SCREENER_LINES["en"])
+    return named.format(name=name) if name else plain

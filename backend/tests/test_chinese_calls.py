@@ -41,3 +41,10 @@ def test_review_is_told_the_agent_speaks_chinese(monkeypatch):
     assert "never a language barrier" in seen["prompt"] and "Chinese" in seen["prompt"]
     asyncio.run(llm.analyze_call(t, None, "", language="en"))
     assert "never a language barrier" not in seen["prompt"]
+
+
+def test_screener_line_follows_the_agent_language():
+    from app.agent.runtime import screener_line
+
+    assert screener_line("zh", "Shu") == "喂，Shu，是我……"
+    assert screener_line(None, "Sam") == "Hey Sam, it's just..." and screener_line("en") == "Hey, it's just..."

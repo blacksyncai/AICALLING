@@ -1647,7 +1647,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         first = (variables.get("first_name") or "").strip() or \
             (variables.get("name") or variables.get("full_name") or "").strip().split(" ")[0]
         try:
-            session.say(f"Hey {first}, it's just..." if first and first.lower() != "there" else "Hey, it's just...",
+            from app.agent.runtime import screener_line
+
+            session.say(screener_line(language, first if first and first.lower() != "there" else ""),
                         allow_interruptions=False)
         except Exception as exc:
             log.warning("screener_reply_failed", error=str(exc)[:200])
