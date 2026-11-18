@@ -522,6 +522,7 @@ _PERSONAL_WEAK = (
     # "For a quicker response, text me. Looking forward to connecting soon. Have a great day."
     "looking forward to connecting", "forward to speaking with you", "quicker response", "faster response",
     "quickest response", "quicker reply", "faster reply", "best way to reach me", "text is best",
+    "fastest way to reach me", "the fastest way", "best time to give you a call",
     "have a great day", "have a blessed day", "have a wonderful day",
 )
 _PERSONAL_GREETING = _PERSONAL_STRONG + _PERSONAL_WEAK
@@ -594,6 +595,11 @@ _MACHINE_PATTERNS = re.compile(
     r"press (?:one|two|three|four|five|six|seven|eight|nine|zero|star|\d)\b.*\bpress\b"
     r"|\brecording\b.{0,30}\bhang up\b|\bhang up or press\b"
     r"|\bif (?:this is|you(?:'re| are) calling) (?:a|an|about|regarding|for)\b.{0,80}\bplease (?:call|text|email|contact|visit)\b"
+    # A mailbox asking for "your message / your number" and promising to call back: "...your message. I'll call you
+    # back just as soon as I can", "Your number and I'll return it as soon as possible".
+    r"|\b(?:message|number)\b.{0,80}\b(?:call (?:you )?back|get back to you|return (?:your|the) call|return it"
+    r"|returning your call)\b"
+    r"|\b(?:return(?:ing)? your call|call you back|get back to you)\b.{0,30}\bas soon as (?:i|we) (?:can|possibly can|am able)\b"
 )
 
 

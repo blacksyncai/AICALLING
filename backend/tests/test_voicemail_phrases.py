@@ -200,3 +200,20 @@ def test_live_people_are_not_recordings():
                  "I'd rather you text me the details.", "Press me on price and I'll tell you.",
                  "Sorry, can you call me back in an hour?", "The office is open, what's this about?"):
         assert voicemail_greeting_match(text) is None, text
+
+
+def test_mailboxes_promising_a_call_back_are_voicemail_not_callbacks():
+    """Nov 2026: these greetings were scored "callback requested" and sent callback alerts."""
+    from app.agent.runtime import voicemail_answered
+
+    agent = {"role": "assistant", "text": "Hey, is this Marcia?"}
+    for text in ("Your message. I'll call you back just as soon as I can.",
+                 "Your number and all return it as soon as possible. Thank you.",
+                 "Would you please remain message, phone number, and I'll get back to you as soon as possible. Okay?",
+                 "This is Jose Quinones. Leave me your message, and I look forward to returning your call.",
+                 "If you wanna talk to me right now, you can text me. It's the fastest way to reach me. Let me know "
+                 "when's the best time to give you a callback."):
+        assert voicemail_answered([agent, {"role": "user", "text": text}]), text
+    for text in ("I'm driving right now, can you call me back in an hour?", "Sorry, I'm busy, I'll call you back.",
+                 "Yeah send me your number and I'll think about it", "I can't talk, call me tomorrow"):
+        assert not voicemail_answered([agent, {"role": "user", "text": text}]), text
