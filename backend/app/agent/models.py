@@ -240,7 +240,7 @@ GROUPS: list[tuple[str, str]] = [
     ("request", "On request"),
 ]
 
-# Languages the editor offers. Filipino and Chinese use Cartesia ink-whisper STT;
+# Languages the editor offers. Filipino uses Cartesia ink-whisper STT, Chinese Deepgram nova-3 multilingual;
 # other languages retain the existing Deepgram path. "multi" = auto code-switching.
 LANGUAGES: list[dict] = [
     {"code": "en", "label": "English"},
@@ -263,7 +263,17 @@ LANGUAGES: list[dict] = [
     {"code": "vi", "label": "Vietnamese"},
 ]
 # Languages Deepgram nova-3 can't transcribe on calls: these use Cartesia ink-whisper instead.
-CARTESIA_STT_LANGUAGES = {"tl", "zh"}
+CARTESIA_STT_LANGUAGES = {"tl"}
+# Deepgram language to transcribe each agent language with, where it isn't the language itself. Chinese runs on
+# nova-3's multilingual model: it hears Mandarin, Cantonese and English, and callers switch between them (Whisper
+# locked to Mandarin wrote English and Cantonese replies as Chinese gibberish, and missed English voicemails).
+DEEPGRAM_STT_LANGUAGE = {"zh": "multi"}
+
+
+def stt_language(language: str | None) -> str:
+    """The Deepgram nova-3 language code for an agent's language."""
+    lang = language or "en"
+    return DEEPGRAM_STT_LANGUAGE.get(lang, lang)
 for _lang in LANGUAGES:
     _lang.update(stt=True, tts=True)
 

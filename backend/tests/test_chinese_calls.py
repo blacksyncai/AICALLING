@@ -48,3 +48,13 @@ def test_screener_line_follows_the_agent_language():
 
     assert screener_line("zh", "Shu") == "喂，Shu，是我……"
     assert screener_line(None, "Sam") == "Hey Sam, it's just..." and screener_line("en") == "Hey, it's just..."
+
+
+def test_chinese_is_transcribed_by_the_multilingual_model():
+    """Mandarin, Cantonese and English answers to a Mandarin agent: nova-3 multilingual, not Whisper locked to
+    Mandarin (which wrote English voicemails as "請留" and English replies as Chinese gibberish)."""
+    from app.agent.models import CARTESIA_STT_LANGUAGES, stt_language
+
+    assert "zh" not in CARTESIA_STT_LANGUAGES and stt_language("zh") == "multi"
+    assert stt_language("es") == "es" and stt_language(None) == "en" and stt_language("multi") == "multi"
+    assert "tl" in CARTESIA_STT_LANGUAGES

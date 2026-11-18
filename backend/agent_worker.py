@@ -43,7 +43,7 @@ from app.agent.prompt import build_system_prompt
 from app.agent.mistral_tts import is_mistral_voice, make_livekit_tts
 from app.agent.elevenlabs_tts import is_elevenlabs_voice, make_livekit_tts as make_elevenlabs_tts
 from app.agent.inference_tts import is_inference_voice, make_livekit_tts as make_inference_tts, provider_of as inference_provider
-from app.agent.models import CARTESIA_STT_LANGUAGES, MISTRAL_MODELS, NEEDS_USER_TURN
+from app.agent.models import CARTESIA_STT_LANGUAGES, MISTRAL_MODELS, NEEDS_USER_TURN, stt_language
 from app.agent.runtime import contact_turns, should_hold_hangup
 
 CALL_CONNECTED_CUE = "[The call just connected.]"
@@ -1387,7 +1387,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
     session_kwargs = dict(
         stt=cartesia.STT(model="ink-whisper", language=language, api_key=settings.cartesia_api_key)
         if language in CARTESIA_STT_LANGUAGES else deepgram.STT(
-            model="nova-3", language=language if language != "multi" else "multi",
+            model="nova-3", language=stt_language(language),
             api_key=settings.deepgram_api_key,
         ),
         llm=openai.LLM(**llm_kwargs),
@@ -1883,7 +1883,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             detector = AMD(
                 session,
                 llm=amd_llm,
-                stt=deepgram.STT(model="nova-3", language="en", api_key=settings.deepgram_api_key),
+                # English for English agents; a non-English agent's mailboxes greet in its language (or English).
+                stt=deepgram.STT(model="nova-3", language="en" if language in ("en", None) else "multi",
+                                 api_key=settings.deepgram_api_key),
                 interrupt_on_machine=True, ivr_detection=False, suppress_compatibility_warning=True,
                 wait_until_finished=(vm_action == "leave_message"),
                 # People often answer without speaking; don't hold the opening line longer than ~3 s.
