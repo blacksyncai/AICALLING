@@ -893,3 +893,16 @@ def test_script_variables_filled_from_follow_up_boss(client, monkeypatch):
     v = aio.run(go())
     assert v["home_type"] == "Condo" and "city" not in v
     client.delete("/api/integrations/crm/followupboss")
+
+
+def test_hubspot_missing_deal_scopes_get_a_plain_fix():
+    from types import SimpleNamespace
+
+    from app.routers.crm import _missing_scopes
+
+    hub = SimpleNamespace(key="hubspot")
+    msg = _missing_scopes(hub, Exception("The CRM rejected the credentials (403): This app hasn't been granted all "
+                                         "required scopes to make this call."))
+    assert msg and "crm.schemas.deals.write" in msg and "Private apps" in msg
+    assert _missing_scopes(hub, Exception("CRM error 500: boom")) is None
+    assert _missing_scopes(SimpleNamespace(key="pipedrive"), Exception("required scopes")) is None

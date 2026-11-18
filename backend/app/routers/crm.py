@@ -103,6 +103,17 @@ async def _require_conn(db, org_id, key: str) -> CrmConnection:
     return conn
 
 
+
+def _missing_scopes(p, exc) -> str | None:
+    """A plain fix for a HubSpot private app that lacks the deal permissions pipelines need, else None."""
+    text = str(exc)
+    if getattr(p, "key", "") != "hubspot" or "scope" not in text.lower():
+        return None
+    return ("Your HubSpot private app doesn't have permission to read deal pipelines. In HubSpot, open Settings > "
+            "Integrations > Private apps > your BlackSync app > Scopes, add crm.objects.deals.read, "
+            "crm.objects.deals.write, crm.schemas.deals.read and crm.schemas.deals.write, then commit the change. "
+            "If HubSpot shows a new access token, paste it into the HubSpot connection here.")
+
 @router.get("")
 async def overview(ctx: ManagerDep, db: DbDep):
     conns = (await db.execute(select(CrmConnection).where(CrmConnection.org_id == ctx.org.id))).scalars().all()
@@ -286,7 +297,7 @@ async def pipelines(key: str, ctx: ManagerDep, db: DbDep):
         _, http = sync.http_for(conn)
         pipes = await p.pipelines(http, conn.config or {})
     except CrmError as exc:
-        raise HTTPException(status_code=400, detail=f"Couldn't read {p.name} pipelines: {exc}") from exc
+        raise HTTPException(status_code=400, detail=_missing_scopes(p, exc) or f"Couldn't read {p.name} pipelines: {exc}") from exc
     saved = (conn.settings or {}).get("pipeline") or {}
     return {"supported": True, "noun": p.pipeline_noun, "pipelines": pipes,
             "suggested": {pl["id"]: suggest_mapping(pl) for pl in pipes},
@@ -317,7 +328,7 @@ async def save_pipeline_sync(key: str, body: PipelineSyncIn, ctx: ManagerDep, db
             _, http = sync.http_for(conn)
             pipes = await p.pipelines(http, conn.config or {})
         except CrmError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=_missing_scopes(p, exc) or str(exc)) from exc
         pipe = next((pl for pl in pipes if pl["id"] == body.pipeline_id), None)
         if not pipe:
             raise HTTPException(status_code=404, detail="That pipeline wasn't found.")
@@ -373,7 +384,8 @@ async def install(key: str, body: InstallIn, ctx: ManagerDep, db: DbDep):
                                     retry_hours=body.retry_hours, retry_voicemail=body.retry_voicemail)
     except CrmError as exc:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Couldn't create the pipeline: {exc}") from exc
+        raise HTTPException(status_code=400, detail=_missing_scopes(_provider(key), exc)
+                            or f"Couldn't create the pipeline: {exc}") from exc
     await db.commit()
     await db.refresh(conn)
     return conn_to_dict(conn)

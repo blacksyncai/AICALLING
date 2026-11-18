@@ -1192,7 +1192,8 @@ class HubSpot(Provider):
     description = "Log AI calls on the contact's timeline, create contacts and import contacts to call."
     auth_fields = [AuthField("api_key", "Private app access token", placeholder="pat-na1-…",
                              help="HubSpot → Settings → Integrations → Private apps. Scopes: crm.objects.contacts.read/write "
-                                  "(and crm.objects.deals.read/write to move deal stages).")]
+                                  "(and crm.objects.deals.read/write plus crm.schemas.deals.read/write for the AI "
+                                  "calling pipeline and deal stages).")]
     nango_providers = ("hubspot",)
     docs_url = "https://developers.hubspot.com/docs/api/crm/calls"
 
