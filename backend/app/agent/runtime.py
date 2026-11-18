@@ -1030,3 +1030,13 @@ _PROMISE_ONLY = re.compile(
 def promise_only(text: str) -> bool:
     t = " ".join((text or "").lower().replace("’", "'").split())
     return bool(t) and _PROMISE_ONLY.fullmatch(t) is not None
+
+
+def held_short_answer(text: str, heard_at: float, agent_stopped: float, min_words: int) -> bool:
+    """A final transcript heard while the agent spoke that the session will never answer on its own.
+
+    Too short to interrupt (under min_words) and heard at the end of the agent's line (an answer to its question,
+    not a "yeah" backchannel from the middle of it). Longer speech interrupts the agent and is answered normally.
+    """
+    words = len((text or "").split())
+    return 0 < words < max(min_words, 1) + 1 and words <= 3 and agent_stopped - heard_at <= 2.5

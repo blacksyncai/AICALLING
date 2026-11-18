@@ -1971,7 +1971,37 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
                     silence["checked_in"] = False
             if kind == "agent" and state in ("speaking", "thinking"):
                 owed.update(text="", nudged=False)  # the agent is answering
+            if kind == "agent" and prev == "speaking" and state == "listening" and held["text"]:
+                asyncio.create_task(_answer_held(_time.monotonic()))
         return _on
+
+    # A short answer ("Yes.", "No.", "Go ahead.") said as the agent finishes its sentence is too short to count
+    # as an interruption, so the session holds it and never replies: the contact gets silence, then "Hello? Can
+    # you hear me okay?", and their answer never reaches the transcript. Once the agent stops, answer it.
+    held: dict = {"text": "", "at": 0.0}
+    min_words = tuning["min_words"]
+
+    def _held_item(ev) -> None:
+        if getattr(getattr(ev, "item", None), "role", "") == "user":
+            held.update(text="", at=0.0)  # the session took the turn itself
+
+    async def _answer_held(stopped: float) -> None:
+        await asyncio.sleep(0.6)  # let the session commit it on its own first
+        text, at = held["text"].strip(), held["at"]
+        if not text or silence.get("agent") != "listening" or silence.get("user") == "speaking":
+            return
+        if vm["detected"] or screen["holding"] or run.transferring or run.handed_off or opening.get("pending"):
+            return
+        from app.agent.runtime import held_short_answer
+
+        if held_short_answer(text, at, stopped, min_words):
+            held.update(text="", at=0.0)
+            log.info("held_answer_committed", room=ctx.room.name, words=len(text.split()),
+                     before_stop=round(stopped - at, 2))
+            try:
+                session.commit_user_turn(transcript_timeout=1.0, stt_flush_duration=0.5)
+            except Exception as exc:
+                log.warning("held_answer_failed", error=str(exc)[:120])
 
     # What the contact last said that the agent hasn't answered yet. If a turn never gets its reply (the turn
     # detector holds it, a reply is dropped), the quiet timer used to say "Hello? Can you hear me okay?" to
@@ -1980,6 +2010,9 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
 
     def _heard(ev) -> None:
         if silence.get("agent") == "speaking":
+            text = (getattr(ev, "transcript", "") or "").strip()
+            if getattr(ev, "is_final", False) and text:
+                held.update(text=(held["text"] + " " + text).strip(), at=_time.monotonic())
             return  # said over the agent: a backchannel or an interruption, which the session handles itself
         if getattr(ev, "is_final", False) and (getattr(ev, "transcript", "") or "").strip():
             owed.update(text=ev.transcript.strip(), at=_time.monotonic(), nudged=False)
@@ -2059,6 +2092,7 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
         session.on("agent_state_changed", _activity("agent"))
         session.on("user_state_changed", _activity("user"))
         session.on("user_input_transcribed", _heard)
+        session.on("conversation_item_added", _held_item)
         silence_task = asyncio.create_task(_hang_up_on_silence())
 
     finished: dict = {"task": None}
