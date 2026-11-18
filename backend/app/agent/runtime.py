@@ -599,7 +599,12 @@ _MACHINE_PATTERNS = re.compile(
     # back just as soon as I can", "Your number and I'll return it as soon as possible".
     r"|\b(?:message|number)\b.{0,80}\b(?:call (?:you )?back|get back to you|return (?:your|the) call|return it"
     r"|returning your call)\b"
-    r"|\b(?:return(?:ing)? your call|call you back|get back to you)\b.{0,30}\bas soon as (?:i|we) (?:can|possibly can|am able)\b"
+    r"|\b(?:return(?:ing)? your call|call you back|get back to you|give you a (?:call|call back|callback)|callback)\b"
+    r".{0,30}\bas soon as (?:i|we) (?:can|possibly can|am able)\b"
+    # "Apologize for not being able to answer the call right now" / "unable to take your call".
+    r"|\b(?:not (?:being )?able|unable) to (?:answer|take|get to|pick up) (?:the|your|my|this) (?:call|phone)\b"
+    # A whole greeting in one breath: thanks you for calling and signs off ("...Have a terrific day. Bye.").
+    r"|\bthank you (?:so much )?for calling\b.{0,400}\b(?:have a (?:\w+ )?(?:day|one|evening|weekend)|bye)\b"
 )
 
 

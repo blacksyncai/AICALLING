@@ -212,8 +212,14 @@ def test_mailboxes_promising_a_call_back_are_voicemail_not_callbacks():
                  "Would you please remain message, phone number, and I'll get back to you as soon as possible. Okay?",
                  "This is Jose Quinones. Leave me your message, and I look forward to returning your call.",
                  "If you wanna talk to me right now, you can text me. It's the fastest way to reach me. Let me know "
-                 "when's the best time to give you a callback."):
+                 "when's the best time to give you a callback.",
+                 "The Apologize for not being able to answer the call right now. If you leave a name and number, I'll "
+                 "give you a callback as soon as I can. Thank you so much.",
+                 "Thank you so much for calling. Please let me know how can I help you, what your dreams are? Let me "
+                 "know when's the best time to give you a callback. Have a terrific day. Bye."):
         assert voicemail_answered([agent, {"role": "user", "text": text}]), text
     for text in ("I'm driving right now, can you call me back in an hour?", "Sorry, I'm busy, I'll call you back.",
-                 "Yeah send me your number and I'll think about it", "I can't talk, call me tomorrow"):
+                 "Yeah send me your number and I'll think about it", "I can't talk, call me tomorrow",
+                 "Thank you for calling Lange Real Estate, this is Rachel, how can I help you?",
+                 "Sorry I'm not able to talk right now, can you call me later?", "I'll give you a call back later today."):
         assert not voicemail_answered([agent, {"role": "user", "text": text}]), text
