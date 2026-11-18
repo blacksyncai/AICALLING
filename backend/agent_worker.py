@@ -1735,6 +1735,10 @@ async def _run_configurable(ctx: JobContext, metadata: dict) -> None:
             vm["live_hello"] = len(text.split()) <= 3 and "?" in text
             vm["first_words"] = len(text.split())
         match = voicemail_greeting_match(vm["heard"])
+        if not match and run.t0 and elapsed < 20 and not screen["seen"]:
+            from app.agent.runtime import promise_only
+
+            match = "promise to call back" if promise_only(vm["heard"]) else None
         if not match and run.t0 and elapsed < 20 and not vm.get("live_hello") and not screen["seen"]:
             match = personal_greeting_match(vm["heard"]) or number_greeting_match(vm["heard"])
         if not match and run.t0 and elapsed < 15 and not vm.get("live_hello") and not screen["seen"]:

@@ -789,7 +789,8 @@ def _live_contact_turns(transcript: list[dict] | None) -> list[str]:
         if not first_words:
             first_words = len(text.split())
         if not live and not machine and not screened and (
-                looks_like_personal_greeting(greeting + " " + text) or number_greeting_match(greeting + " " + text)
+                promise_only(greeting + " " + text)
+                or looks_like_personal_greeting(greeting + " " + text) or number_greeting_match(greeting + " " + text)
                 or opening_machine_match(greeting + " " + text, first_words=first_words, opening=not agent_spoke)):
             machine = True
             greeting += " " + text
@@ -830,6 +831,9 @@ def voicemail_answered(transcript: list[dict] | None) -> bool:
     text = " ".join(contact_turns(transcript))
     if is_voicemail_greeting(text) or looks_like_personal_greeting(text) or number_greeting_match(text):
         return True
+    turns = contact_turns(transcript)
+    if turns and promise_only(turns[0]):
+        return True  # the tail of a greeting: "And I'll call you back."
     # No stock phrase: everything the line said came before our agent spoke, and it reads like a recording.
     opening, first_words = [], 0
     for t in transcript or []:
@@ -1008,3 +1012,21 @@ SCREENER_LINES = {
 def screener_line(language: str | None, name: str = "") -> str:
     named, plain = SCREENER_LINES.get((language or "en").split("-")[0], SCREENER_LINES["en"])
     return named.format(name=name) if name else plain
+
+
+# The other side's first words being only a promise to call US back ("And I'll call you back.", "We'll return your
+# call shortly, thank you") is the tail of a mailbox greeting: speech-to-text often catches only its last words. A
+# live person who wants a call asks for one ("call me tomorrow"); one who says it at the end of a talk isn't affected
+# (only the first thing heard is judged).
+_PROMISE_ONLY = re.compile(
+    r"(?:(?:and|so|okay|ok|um|uh|yeah|then|we|i)[,.]?\s+)*"
+    r"(?:i'll|i will|we'll|we will|i'd|someone will|we're gonna|we are going to|i'm gonna)\s+"
+    r"(?:(?:be sure to|try to|get to|definitely)\s+)?"
+    r"(?:call you back|call you|get back to you|give you a (?:call|call back|callback)|return (?:your|the) call|return it)"
+    r"(?:\s+(?:just\s+)?(?:as soon as (?:i|we) (?:can|possibly can)|as soon as possible|shortly|soon|right away|asap))?"
+    r"[\s,.!]*(?:(?:thank you|thanks|bye|goodbye|have a (?:\w+ )?day)[\s,.!]*)*")
+
+
+def promise_only(text: str) -> bool:
+    t = " ".join((text or "").lower().replace("’", "'").split())
+    return bool(t) and _PROMISE_ONLY.fullmatch(t) is not None

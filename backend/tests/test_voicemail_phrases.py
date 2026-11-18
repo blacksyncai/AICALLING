@@ -223,3 +223,18 @@ def test_mailboxes_promising_a_call_back_are_voicemail_not_callbacks():
                  "Thank you for calling Lange Real Estate, this is Rachel, how can I help you?",
                  "Sorry I'm not able to talk right now, can you call me later?", "I'll give you a call back later today."):
         assert not voicemail_answered([agent, {"role": "user", "text": text}]), text
+
+
+def test_a_lone_promise_to_call_back_is_the_tail_of_a_greeting():
+    """Haley Starks, Nov 18: a 6 s call whose only words were "And I'll call you back." sent a callback alert."""
+    from app.agent.runtime import promise_only, voicemail_answered
+
+    agent = {"role": "assistant", "text": "Hey Haley this is Zane with BlackSync how's it going?"}
+    for text in ("And I'll call you back.", "We'll return your call shortly, thank you.",
+                 "I'll get back to you as soon as possible. Bye."):
+        assert promise_only(text) and voicemail_answered([agent, {"role": "user", "text": text}]), text
+    for text in ("Can you call me back tomorrow?", "I'm busy, call me later", "Sorry, I'm driving. I'll call you back."):
+        assert not voicemail_answered([agent, {"role": "user", "text": text}]), text
+    talk = [agent, {"role": "user", "text": "Yeah what's up?"}, {"role": "assistant", "text": "Quick question."},
+            {"role": "user", "text": "I'll call you back."}]
+    assert not voicemail_answered(talk)  # said at the end of a real conversation
