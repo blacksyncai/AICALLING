@@ -23,7 +23,7 @@ from app.routers import white_label
 from app.routers import account_tree
 from app.database import create_all_tables
 from app.routers import (
-    number_registration, account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, radar_automations, internal, lead_finder, meetings, phone_numbers, speech,
+    number_registration, account, activity, admin, agent_builder, agents, analytics, auth, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, crm, integrations, radar, radar_automations, internal, lead_finder, track_desk, meetings, phone_numbers, speech,
     public_api, search, support, voice_samples,
     settings as settings_router,
 )
@@ -72,6 +72,8 @@ async def lifespan(app: FastAPI):
     pack_task = phone_pack.start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.billing import manual_plans
     manual_plan_task = manual_plans.start_worker() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
+    from app.services.track_desk import start_worker as start_track_desk
+    track_desk_task = start_track_desk() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.call_alerts import start_worker as start_alerts
     alert_task = start_alerts() if settings.run_startup_jobs else asyncio.create_task(asyncio.sleep(0))
     from app.services.outbound_call import fix_mislabeled_outcomes
@@ -195,6 +197,7 @@ async def lifespan(app: FastAPI):
     manual_plan_task.cancel()
     after_start_task.cancel()
     alert_task.cancel()
+    track_desk_task.cancel()
     repair_task.cancel()
     log.info("pounce_shutting_down")
 
@@ -249,7 +252,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 for r in (number_registration, auth, account, activity, admin, agents, agent_builder, billing, business_profile, calendar, calls, onboarding, campaigns, contacts, lead_finder, meetings, phone_numbers, speech, analytics, crm, radar, radar_automations, integrations, public_api, search, support, voice_samples,
-          settings_router, internal):
+          settings_router, internal, track_desk):
     app.include_router(r.router)
 app.include_router(phone_numbers.admin_router)
 app.include_router(white_label.router)

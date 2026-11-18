@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  ArrowRight, ArrowUp, BarChart3, BookOpen, Bot, CalendarCheck, ChevronLeft, ChevronsUpDown, Coins, Contact, CreditCard, Hash, LayoutDashboard, LogOut, Megaphone, Menu,
-  Lock, PhoneCall, Plug, Radar, Search, UserRound, UserSearch, X,
-} from "lucide-react";
+import { ArrowRight, ArrowUp, BarChart3, BookOpen, Bot, CalendarCheck, ChevronLeft, ChevronsUpDown, Coins, Contact, CreditCard, Hash, LayoutDashboard, LogOut, Megaphone, Menu, Lock, PhoneCall, Plug, Radar, Search, UserRound, UserSearch, X, Truck } from "lucide-react";
 import useSWR from "swr";
 import type { Entitlements } from "@/components/billing/types";
 import { fetcher } from "@/lib/api";
@@ -18,7 +15,7 @@ import { Logo, LogoMark } from "./Logo";
 import { BrandName, useBranding } from "@/lib/branding";
 import { WebsiteLink } from "./WebsiteLink";
 
-type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; badge?: string; badgeTone?: "red";
+type NavItem = { href: string; label: string; icon: typeof Bot; managersOnly?: boolean; leadFinder?: boolean; trackDesk?: boolean; badge?: string; badgeTone?: "red";
   /** A plan feature: shown to everyone, with a lock when the account's plan doesn't include it. */
   feature?: "radar" };
 
@@ -39,6 +36,7 @@ const NAV: { title: string | null; items: NavItem[] }[] = [
       { href: "/radar", label: "Radar", icon: Radar, managersOnly: true, badge: "New", feature: "radar" },
       { href: "/lead-finder", label: "Lead Finder", icon: UserSearch, leadFinder: true },
       { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+      { href: "/track-desk", label: "Track Desk", icon: Truck, badge: "New", trackDesk: true },
     ],
   },
   {
@@ -252,6 +250,8 @@ export function Sidebar() {
   const manager = canManage(session);
   // Same server-side entitlements the API enforces; refreshed when the account changes.
   const { data: ent } = useSWR<Entitlements>(manager && session?.org ? `/api/billing/entitlements?org=${session.org.id}` : null, fetcher);
+  // Track Desk (freight check calls) only for freight accounts and accounts already using it.
+  const { data: trackDesk } = useSWR<{ enabled: boolean }>(session?.org ? `/api/track-desk/enabled?org=${session.org.id}` : null, fetcher);
   const close = () => setOpen(false);
   // The mobile drawer is always full width.
   const collapsed = collapsedPref && !open;
@@ -371,7 +371,8 @@ export function Sidebar() {
         {NAV.map((section, i) => {
           // Lead Finder only where it's on for the account (real estate and home services trials).
           const items = section.items.filter(
-            (n) => (!n.managersOnly || manager) && (!n.leadFinder || session?.org?.lead_finder_enabled !== false || session?.user.is_superadmin),
+            (n) => (!n.managersOnly || manager) && (!n.leadFinder || session?.org?.lead_finder_enabled !== false || session?.user.is_superadmin)
+              && (!n.trackDesk || !!trackDesk?.enabled),
           );
           if (!items.length) return null;
           return (

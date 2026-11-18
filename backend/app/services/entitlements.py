@@ -32,7 +32,7 @@ NUMERIC = ("agents", "seats", "numbers", "crm", "concurrency")
 FLAGS = ("workflows", "advanced_workflows", "roles", "team_reporting", "radar")
 OVERRIDE_KEYS = NUMERIC + FLAGS + ("plan",)
 # The welcome guide every new account starts with never counts against the agent limit.
-EXEMPT_TEMPLATES = ("welcome_demo",)
+EXEMPT_TEMPLATES = ("welcome_demo", "track_desk")  # track_desk: Track Desk is priced on its own (loads per week)
 
 _FEATURE_LABELS = {
     "agents": "active agents", "seats": "team members", "numbers": "included phone numbers",

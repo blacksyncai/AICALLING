@@ -339,11 +339,14 @@ class CallService:
 
     async def dispatch_call(self, lead: Lead | None, db: AsyncSession, *, agent: Agent | None = None,
                             to_phone: str | None = None, campaign_id: uuid.UUID | None = None,
-                            from_number: str | None = None) -> CallLog:
-        """Dial a phone number with the given agent — refusing a contact that's already being called."""
+                            from_number: str | None = None, variables: dict | None = None) -> CallLog:
+        """Dial a phone number with the given agent — refusing a contact that's already being called.
+
+        variables: extra {{template}} values for a call with no contact (e.g. a Track Desk load's details).
+        """
         if lead is None:
             return await self._dispatch(lead, db, agent=agent, to_phone=to_phone, campaign_id=campaign_id,
-                                        from_number=from_number)
+                                        from_number=from_number, variables=variables)
         recent = datetime.now(timezone.utc) - timedelta(minutes=20)
         last = lead.last_called_at
         if last is not None and last.tzinfo is None:
@@ -359,7 +362,7 @@ class CallService:
 
     async def _dispatch(self, lead: Lead | None, db: AsyncSession, *, agent: Agent | None = None,
                         to_phone: str | None = None, campaign_id: uuid.UUID | None = None,
-                        from_number: str | None = None) -> CallLog:
+                        from_number: str | None = None, variables: dict | None = None) -> CallLog:
         """Dial a phone number via LiveKit SIP outbound with the given agent."""
         if not (settings.livekit_sip_outbound_trunk_id or settings.signalwire_sip_outbound_trunk_id):
             raise CallSetupError(
@@ -446,7 +449,7 @@ class CallService:
         db.add(call_log)
         await db.flush()
 
-        variables = {**(lead_variables(lead) if lead else {}), "phone": phone}
+        variables = {**(variables or {}), **(lead_variables(lead) if lead else {}), "phone": phone}
         if lead and agent and (lead.custom_fields or {}).get("crm_fields"):
             # Fill the script's {{variables}} from the CRM contact (Integrations → Script variables).
             from app.models.crm import CrmConnection
