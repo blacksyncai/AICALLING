@@ -403,7 +403,8 @@ def test_unfinished_retry_passes_never_starve_new_contacts(client, agent_id):
                 lead.status, lead.attempts = "calling", (lead.attempts or 0) + 1
                 lead.last_called_at = now  # on a call now: not picked again
                 await db.commit()
-            assert order == ["first pass", "new", "retry mid-pass"]
+            # Everyone is called once first, then the rest of a first pass, then retries (Nov 18).
+            assert order == ["new", "first pass", "retry mid-pass"]
 
     asyncio.run(run())
 
@@ -685,3 +686,45 @@ def test_warmup_pacing_create_update_and_validation(client):
     # Turning it off keeps campaigns dialing exactly as before.
     r = client.patch(f"/api/campaigns/{cid}", json={"warmup_enabled": False})
     assert r.status_code == 200 and r.json()["warmup_enabled"] is False
+
+
+def test_whole_list_is_called_once_before_other_numbers_or_retries(client, agent_id):
+    """River Crossing, Nov 18: 558 of 807 contacts never called while each new contact's other numbers (2 rounds,
+    10 minutes apart) took the next dials. Every never-dialed contact goes first."""
+    import asyncio
+
+    from app.database import AsyncSessionLocal
+    from app.models.campaign import Campaign
+    from app.models.lead import Lead
+    from app.routers.campaigns import _next_lead, _record_attempt
+
+    camp = client.post("/api/campaigns/", json={"name": "Whole list", "agent_id": agent_id,
+                                                "retry_schedule": [1440, 1440]}).json()
+    org_id = uuid.UUID(client.get("/api/auth/me").json()["org"]["id"])
+    cid = uuid.UUID(camp["id"])
+    now = datetime.now(UTC)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            campaign = await db.get(Campaign, cid)
+            campaign.try_other_numbers, campaign.rounds_per_number, campaign.number_gap_minutes = True, 2, 10
+            leads = [Lead(id=uuid.uuid4(), org_id=org_id, campaign_id=cid, name=f"c{i}", phone=f"+1415555{i:04d}",
+                          phones=[{"number": f"+1415555{i:04d}", "status": "untried", "attempts": 0, "round": 0},
+                                  {"number": f"+1415666{i:04d}", "status": "untried", "attempts": 0, "round": 0}],
+                          status="new", created_at=now - timedelta(minutes=100 - i)) for i in range(5)]
+            db.add_all(leads)
+            await db.commit()
+            order = []
+            t = now
+            for _ in range(5):
+                lead, _, _ = await _next_lead(db, campaign, t)
+                order.append(lead.name)
+                _record_attempt(lead, campaign, t)
+                lead.status = "no_answer"
+                await db.commit()
+                t += timedelta(minutes=12)  # each contact's second number is due by the next pick
+            assert order == ["c0", "c1", "c2", "c3", "c4"]  # all five once before anyone's second number
+            lead, _, _ = await _next_lead(db, campaign, t)
+            assert lead.name == "c0"  # then the rest of the first passes, oldest first
+
+    asyncio.run(run())
