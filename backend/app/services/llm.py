@@ -257,10 +257,10 @@ def _transcript_text(transcript: list[dict]) -> str:
 # exhausted quota is visible instead of silently leaving calls without a summary.
 ANALYSIS_STATUS: dict = {"ok": None, "model": None, "error": None, "at": None}
 # After-call review runs on the cheapest model that does it well (Mistral Small); the account's analysis model and
-# the others are only tried if it fails. Only models whose provider has a key are used. Cerebras stays the live-call
-# brain but is the last resort here: reviewing every call on it cost far more than the job needs.
+# the others are only tried if it fails. Only models whose provider has a key are used. Never Cerebras: that key is
+# for the live conversation only (reviewing calls on it cost far more than the job needs).
 ANALYSIS_PRIMARY = "mistral-small-latest"
-ANALYSIS_BACKUPS = ("qwen/qwen3.8-27b", "gpt-oss-120b")
+ANALYSIS_BACKUPS = ("qwen/qwen3.8-27b",)
 
 
 def _short_error(exc: Exception) -> str:
@@ -282,8 +282,10 @@ async def _analysis_json(prompt: str) -> dict | None:
     from app.agent.models import llm_endpoint
 
     first_error = None
+    from app.agent.models import CEREBRAS_MODELS
+
     for model in dict.fromkeys((ANALYSIS_PRIMARY, settings.analysis_model, *ANALYSIS_BACKUPS)):
-        if not llm_endpoint(model)[0]:
+        if model in CEREBRAS_MODELS or not llm_endpoint(model)[0]:
             continue
         try:
             data = await _chat({"model": model, "temperature": 0, "response_format": {"type": "json_object"},

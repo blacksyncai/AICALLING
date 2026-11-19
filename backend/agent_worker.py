@@ -1263,7 +1263,12 @@ async def _draft_opening(cfg: dict, variables: dict) -> str:
     from app.agent.models import llm_endpoint
     from app.agent.runtime import build_instructions
 
+    from app.agent.models import CEREBRAS_MODELS
+
     model = cfg.get("llm_model") or "gpt-4.1-nano"
+    if model in CEREBRAS_MODELS:
+        # Drafted on every dial, answered or not, with the whole script as the prompt: not worth Cerebras.
+        model = next((m for m in ("mistral-small-latest", "gpt-4.1-mini") if llm_endpoint(m)[0]), model)
     try:
         api_key, base_url, sends_temperature = llm_endpoint(model)
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
@@ -2257,11 +2262,12 @@ async def _run_inbound(ctx: JobContext) -> None:
 
 
 def _amd_llm():
-    """The model behind answering-machine detection: the first provider with a key. Cerebras first: it answers
-    in a few hundred ms, and OpenAI has run out of quota before, which silently switched detection off."""
-    from app.agent.models import llm_endpoint
+    """The model behind answering-machine detection: the first fast, cheap provider with a key. It runs on every
+    answered call, so never on Cerebras (that key is for the live conversation only)."""
+    from app.agent.models import CEREBRAS_MODELS, llm_endpoint
 
-    for model in dict.fromkeys(m for m in (settings.amd_model, "gpt-oss-120b", "gpt-4.1-mini") if m):
+    for model in dict.fromkeys(m for m in (settings.amd_model, "qwen/qwen3.8-27b", "mistral-small-latest", "gpt-4.1-mini")
+                               if m and m not in CEREBRAS_MODELS):
         key, base_url, _ = llm_endpoint(model)
         if key:
             return openai.LLM(model=model, api_key=key, base_url=base_url)

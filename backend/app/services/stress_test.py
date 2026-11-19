@@ -19,14 +19,14 @@ log = structlog.get_logger(__name__)
 
 # Plays the caller and grades the call: the cheapest model that does it well, then fallbacks. It used to be only
 # gpt-4.1-mini, so when that OpenAI account ran out of quota every scenario failed before it started.
-SIM_MODELS = ("mistral-small-latest", "gpt-4.1-mini", "gpt-oss-120b")
+SIM_MODELS = ("mistral-small-latest", "gpt-4.1-mini")  # never Cerebras: that key is for live calls only
 _SIM_OK: dict = {"model": None}  # the last model that answered, tried first next time
 
 
 async def _sim_chat(payload: dict) -> dict:
     from app.agent.models import llm_endpoint
 
-    order = [m for m in dict.fromkeys((_SIM_OK["model"], *SIM_MODELS)) if m and llm_endpoint(m)[0]]
+    order = [m for m in dict.fromkeys((_SIM_OK["model"], *SIM_MODELS)) if m in SIM_MODELS and llm_endpoint(m)[0]]
     last: Exception | None = None
     for model in order:
         try:

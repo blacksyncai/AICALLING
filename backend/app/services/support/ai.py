@@ -32,7 +32,8 @@ this to was we what when where which who why will with you your yes no hi hello 
 def model() -> str:
     if settings.support_ai_model:
         return settings.support_ai_model
-    return "gpt-oss-120b" if settings.cerebras_api_key else "gpt-4.1-mini"
+    # Not Cerebras: that key is for live calls only.
+    return "mistral-small-latest" if settings.mistral_api_key else "gpt-4.1-mini"
 
 
 def available() -> bool:

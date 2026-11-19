@@ -212,7 +212,7 @@ class Settings(BaseSettings):
 
     # ── Support (in-app help widget) ──────────────────────────────────────────
     # Model for the support assistant (any model the backend has a key for: OpenAI, Cerebras or Claude).
-    # Empty = gpt-oss-120b on Cerebras when CEREBRAS_API_KEY is set, else gpt-4.1-mini.
+    # Empty = mistral-small-latest when MISTRAL_API_KEY is set, else gpt-4.1-mini (never Cerebras).
     support_ai_model: str = ""
     support_ai_enabled: bool = True
     support_ai_max_tokens: int = 500
