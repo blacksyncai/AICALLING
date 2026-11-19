@@ -122,3 +122,48 @@ async def send_maxwell_reminder() -> int:
             sent += 1
             log.info("maxwell_reminder_sent", to_domain=to.split("@")[-1])
     return sent
+
+
+# ── Brian Melin (PorchLight / RCI, Nov 19): agreed to 4:45 PM, the call ended before the booking was sent ─────────
+BRIAN_CALL = "7211f71f-ae5a-413c-a32e-7b95177e7115"
+BRIAN_START = "2026-11-20T00:45:00Z"  # Thu Nov 19, 4:45 PM Pacific (the slot Maya offered and he picked)
+BRIAN_EMAIL = "brian26267@gmail.com"  # spelled and confirmed twice on the call
+
+
+async def book_brian_melin() -> str | None:
+    """Book the meeting Brian agreed to on Maya's calendar, once. Returns the receipt, or None when skipped."""
+    from app.database import AsyncSessionLocal
+    from app.models.agent import Agent
+    from app.models.call_log import CallLog
+    from app.models.lead import Lead
+    from app.services import calendar as cal
+    from app.services.secret_store import decrypt_value
+
+    if datetime.now(timezone.utc) >= datetime.fromisoformat(BRIAN_START.replace("Z", "+00:00")):
+        return None
+    async with AsyncSessionLocal() as db:
+        call = await db.get(CallLog, uuid.UUID(BRIAN_CALL))
+        if call is None or (call.extracted_data or {}).get("_manual_booking") or call.meeting_link:
+            return None  # already booked: a restart must never book twice
+        agent = await db.get(Agent, call.agent_id)
+        lead = await db.get(Lead, call.lead_id) if call.lead_id else None
+        fields = (lead.custom_fields or {}) if lead else {}
+        receipt = await cal.create_booking(
+            BRIAN_START, BRIAN_EMAIL, (lead.name if lead else "") or "Brian Melin", agent.calcom_event_type_id,
+            decrypt_value(agent.calcom_api_key_enc), agent.calendar_timezone, provider=agent.calendar_provider,
+            phone=call.to_phone or "", address=str(fields.get("property_address") or fields.get("address") or ""))
+        label = "Thursday, November 19 at 4:45 PM"
+        call.transcript = list(call.transcript or []) + [{
+            "role": "tool", "tool": "book_appointment", "args": {"slot": label, "email": BRIAN_EMAIL, "by": "admin"},
+            "result": {"output": {"booked": label, "link": receipt}, "success": True}}]
+        call.meeting_link, call.agreed_meeting_time, call.prospect_email = receipt, label, BRIAN_EMAIL
+        call.outcome, call.status = "meeting_booked", "completed"
+        call.extracted_data = {**(call.extracted_data or {}), "_booking_status": "confirmed", "_manual_booking": receipt}
+        call.response_analysis = {**(call.response_analysis or {}), "_manual_outcome": "meeting_booked",
+                                  "next_action": "meeting_booked"}
+        if lead is not None:
+            lead.status = "meeting_booked"
+            lead.email = lead.email or BRIAN_EMAIL
+        await db.commit()
+        log.info("brian_melin_booked", receipt=receipt[:120])
+        return receipt

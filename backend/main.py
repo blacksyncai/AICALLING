@@ -86,6 +86,11 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             log.warning("reminder_send_failed", error=str(exc)[:300])
         try:
+            from app.services.call_corrections import book_brian_melin
+            await book_brian_melin()
+        except Exception as exc:
+            log.warning("brian_booking_failed", error=str(exc)[:300])
+        try:
             from app.services.call_corrections import fix_steven_call
             await fix_steven_call()
         except Exception as exc:
