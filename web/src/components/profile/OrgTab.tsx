@@ -9,6 +9,7 @@ import { fetcher, patch } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import type { OrgDetail } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
+import { FeaturesCard } from "./FeaturesCard";
 import { CopyButton, ROLE_TONE } from "./shared";
 
 const DEFAULT_TZ = "America/New_York";
@@ -138,6 +139,7 @@ export function OrgTab() {
           )}
         </form>
       </Card>
+      <FeaturesCard canManage={data.can_manage} />
 
       <Card>
         <CardHeader title="Account details" />

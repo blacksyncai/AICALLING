@@ -34,12 +34,36 @@ def _now() -> datetime:
 FREIGHT = ("freight", "logistics", "trucking", "broker", "dispatch", "transport")
 
 
+def _freight(org) -> bool:
+    industry = (org.industry or "").lower()
+    return any(w in industry for w in FREIGHT)
+
+
+async def _enabled_json(db, org) -> dict:
+    choice = await db.scalar(select(TrackDeskSettings.enabled).where(TrackDeskSettings.org_id == org.id))
+    return {"enabled": _freight(org) if choice is None else bool(choice), "freight_account": _freight(org)}
+
+
 @router.get("/enabled")
 async def enabled(ctx: CtxDep, db: DbDep):
-    """Whether the sidebar shows Track Desk: freight accounts, accounts already using it, and platform admins."""
-    used = await db.scalar(select(TrackDeskSettings.id).where(TrackDeskSettings.org_id == ctx.org.id))
-    industry = (ctx.org.industry or "").lower()
-    return {"enabled": bool(used) or any(w in industry for w in FREIGHT) or bool(ctx.user.is_superadmin)}
+    """Whether this account shows Track Desk: on for freight/logistics accounts, else only when turned on in Settings."""
+    return await _enabled_json(db, ctx.org)
+
+
+class EnabledIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/enabled")
+async def set_enabled(body: EnabledIn, ctx: ManagerDep, db: DbDep):
+    cfg = await td.get_settings(db, ctx.org)
+    cfg.enabled = body.enabled
+    if not body.enabled:
+        cfg.paused = True  # hidden means no calls either
+    elif cfg.paused and cfg.enabled:
+        cfg.paused = False
+    await db.commit()
+    return await _enabled_json(db, ctx.org)
 
 
 # ── Board ─────────────────────────────────────────────────────────────────────

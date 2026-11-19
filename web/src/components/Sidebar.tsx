@@ -250,7 +250,7 @@ export function Sidebar() {
   const manager = canManage(session);
   // Same server-side entitlements the API enforces; refreshed when the account changes.
   const { data: ent } = useSWR<Entitlements>(manager && session?.org ? `/api/billing/entitlements?org=${session.org.id}` : null, fetcher);
-  // Track Desk (freight check calls) only for freight accounts and accounts already using it.
+  // Track Desk (freight check calls): only freight/logistics accounts, or ones that turned it on in Settings.
   const { data: trackDesk } = useSWR<{ enabled: boolean }>(session?.org ? `/api/track-desk/enabled?org=${session.org.id}` : null, fetcher);
   const close = () => setOpen(false);
   // The mobile drawer is always full width.

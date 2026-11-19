@@ -397,3 +397,26 @@ def test_worker_tick_picks_up_due_loads_only(broker, wire):
     _run(td.tick(NOON))
     names = [d[0] for d in wire["dialed"][before:]]
     assert "T1" in names and "T2" not in names
+
+
+def test_track_desk_is_hidden_unless_freight_or_turned_on(client, make_client):
+    _, owner = _account(client, make_client, "Realty Team")
+    assert owner.get("/api/track-desk/enabled").json()["enabled"] is False
+    owner.get("/api/track-desk/settings")  # opening the page doesn't turn it on
+    assert owner.get("/api/track-desk/enabled").json()["enabled"] is False
+    assert owner.put("/api/track-desk/enabled", json={"enabled": True}).json()["enabled"] is True
+    assert owner.get("/api/track-desk/settings").json()["paused"] is False
+    assert owner.put("/api/track-desk/enabled", json={"enabled": False}).json()["enabled"] is False
+    assert owner.get("/api/track-desk/settings").json()["paused"] is True
+
+
+def test_freight_signups_get_track_desk_automatically(client, make_client):
+    org, owner = _account(client, make_client, "Haul Co")
+
+    async def set_industry():
+        async with AsyncSessionLocal() as db:
+            o = await db.get(Organization, uuid.UUID(org["id"]))
+            o.industry = "logistics"
+            await db.commit()
+    _run(set_industry())
+    assert owner.get("/api/track-desk/enabled").json() == {"enabled": True, "freight_account": True}

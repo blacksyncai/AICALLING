@@ -47,6 +47,8 @@ class TrackDeskSettings(Base):
     sms_token: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     plan: Mapped[str] = mapped_column(String(32), nullable=False, default="pilot")
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Shown in the app: None follows the account's industry (freight/logistics on), True/False set in Settings.
+    enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
