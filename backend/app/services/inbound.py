@@ -216,12 +216,23 @@ async def route_call(db: AsyncSession, to_number: str, from_number: str, room: s
     from app.services.accounts import InsufficientCredits, ensure_can_call
     from app.services.billing.credits import reserve_for_call
 
-    try:
-        ensure_can_call(org)
-        from app.services.entitlements import check_agent_can_call
+    from app.services.entitlements import PlanLimit, check_agent_can_call
 
+    try:
+        if org.status == "suspended":
+            ensure_can_call(org)  # a suspended account answers nothing
         await check_agent_can_call(db, org, agent)
-        max_seconds, rate, reserved = await reserve_for_call(db, org, agent, agent.max_duration_seconds or 600)
+        try:
+            max_seconds, rate, reserved = await reserve_for_call(db, org, agent, agent.max_duration_seconds or 600)
+        except PlanLimit:
+            raise
+        except InsufficientCredits:
+            # Someone calling in is never turned away for credits: the agent answers, the call is billed as
+            # usual and the balance can go below zero (outbound dialing stays stopped until it's topped up).
+            from app.services.billing.credits import rate_for_agent
+
+            max_seconds, rate, reserved = agent.max_duration_seconds or 600, await rate_for_agent(db, agent), 0
+            log.info("inbound_call_on_overdraft", org_id=str(org.id), to=row.number)
     except InsufficientCredits as exc:
         log.warning("inbound_call_refused", to=row.number, reason=str(exc)[:120])
         if match is not None:

@@ -44,8 +44,10 @@ def _aware(dt: datetime | None) -> datetime | None:
 
 
 def exact_balance_milli(org: Organization) -> int:
-    """The true balance in thousandths of a credit: whole credits minus the fraction already used."""
-    return max(0, (org.credits_balance or 0) * 1000 - (org.credit_carry_milli or 0))
+    """The true balance in thousandths of a credit: whole credits minus the fraction already used. Below zero only
+    when calls coming in were answered on an empty balance (see charge_call)."""
+    balance = (org.credits_balance or 0) * 1000 - (org.credit_carry_milli or 0)
+    return balance if (org.credits_balance or 0) < 0 else max(0, balance)
 
 
 def exact(milli: int | None) -> float:
@@ -359,6 +361,12 @@ async def charge_call(db: AsyncSession, call: CallLog) -> CallUsage | None:
     else:
         note = f"Browser test · {_mins(seconds)}" + (f" ({_mins(free)} free)" if free else "") + f" at {rate:g} credits/min"
     taken, shortfall = await consume(db, org, int(whole), kind="usage", note=note, call_id=call.id, record=False)
+    if shortfall and call.call_type == "inbound":
+        # Calls coming in are answered even on an empty balance: they still pay, and the balance goes below zero.
+        # The next credits bought cover it first (reconcile takes the deficit out of the new lot).
+        await _change_balance(db, org, -shortfall)
+        taken, shortfall = taken + shortfall, 0
+        note += " · balance below zero (call coming in)"
     if shortfall:
         carry = 0  # the balance ran out; what it couldn't cover is recorded as the shortfall
     await db.execute(update(Organization).where(Organization.id == org.id).values(credit_carry_milli=carry))
