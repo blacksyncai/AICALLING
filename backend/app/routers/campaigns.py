@@ -177,12 +177,50 @@ def _aware(d: datetime) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+# Holiday pauses: outbound campaigns of these accounts place no calls from start to end (local time in the
+# campaign's zone) and pick up again on their own afterwards. Calls coming in are never affected.
+HOLIDAY_PAUSES: list[dict] = [{
+    "name": "Thanksgiving 2026",
+    "start": "2026-11-25T10:00", "end": "2026-11-30T10:00",
+    "orgs": {
+        "bf47671e-d227-4677-b156-edb36aec8ea5",  # PorchLight Bay Area (eXp Realty)
+        "c001622a-1c9c-45a2-a9fc-2fedbd0fc921",  # Your Home Sold Guaranteed Realty (Maxwell)
+        "1e8e2946-c77f-4b3b-b52b-7b2f04dd597b",  # William Raveis (Todd Weiss)
+        "0d4066eb-b81a-43b7-a85e-c3d0fe7ff45a",  # Monettes (Marissa)
+        "efb93378-45ce-4386-b316-423a7a21b1b1",  # Next Campus
+        "ad71a442-957f-4dfc-83ce-d34a07570869",  # BlackSync
+    },
+}]
+
+
+def holiday_pause_end(campaign, now_utc: datetime) -> datetime | None:
+    """When the holiday pause covering `now_utc` ends (UTC), or None when the campaign isn't paused for one."""
+    org = str(getattr(campaign, "org_id", "") or "")
+    if not org:
+        return None
+    try:
+        tz = _window(campaign)[3]
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    local = _aware(now_utc).astimezone(tz)
+    for pause in HOLIDAY_PAUSES:
+        if org not in pause["orgs"]:
+            continue
+        start = datetime.fromisoformat(pause["start"]).replace(tzinfo=tz)
+        end = datetime.fromisoformat(pause["end"]).replace(tzinfo=tz)
+        if start <= local < end:
+            return end.astimezone(timezone.utc)
+    return None
+
+
 def within_calling_hours(campaign, now_utc: datetime) -> bool:
     """True if `now_utc` falls inside the campaign's calling window (in its own time zone)."""
     try:
         start, end, days, tz = _window(campaign)
     except (ZoneInfoNotFoundError, ValueError):
         return False  # Invalid saved zones must never silently dial in a different zone.
+    if holiday_pause_end(campaign, now_utc):
+        return False
     local = _aware(now_utc).astimezone(tz)
     return local.weekday() in days and start <= local.time().replace(tzinfo=None) < end
 
@@ -193,6 +231,8 @@ def next_window_start(campaign, now_utc: datetime) -> datetime | None:
     window, otherwise the start of the next allowed window. None if no day is allowed.
     """
     now_utc = _aware(now_utc)
+    if (paused_until := holiday_pause_end(campaign, now_utc)) is not None:
+        return next_window_start(campaign, paused_until)  # resume at the first calling hour after the pause
     if within_calling_hours(campaign, now_utc):
         return now_utc
     try:

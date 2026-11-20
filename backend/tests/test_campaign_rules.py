@@ -728,3 +728,27 @@ def test_whole_list_is_called_once_before_other_numbers_or_retries(client, agent
             assert lead.name == "c0"  # then the rest of the first passes, oldest first
 
     asyncio.run(run())
+
+
+def test_thanksgiving_pause_stops_outbound_for_listed_accounts_and_resumes():
+    import uuid
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from app.routers.campaigns import next_window_start, within_calling_hours
+
+    def camp(org):
+        return SimpleNamespace(org_id=uuid.UUID(org), timezone="America/Chicago", call_window_start="09:00",
+                               call_window_end="17:00", call_days=[0, 1, 2, 3, 4, 5, 6], max_attempts=3,
+                               retry_delay_minutes=60, retry_schedule=None)
+
+    maxwell = camp("c001622a-1c9c-45a2-a9fc-2fedbd0fc921")
+    compass = camp("1c48dce6-d76b-4897-8986-7e996d9ba01c")  # not on the list: keeps calling
+    before = datetime(2026, 11, 25, 15, 59, tzinfo=timezone.utc)   # 9:59 AM Central
+    during = datetime(2026, 11, 27, 18, 0, tzinfo=timezone.utc)    # Friday noon Central
+    after = datetime(2026, 11, 30, 16, 0, tzinfo=timezone.utc)     # Monday 10:00 AM Central
+    assert within_calling_hours(maxwell, before)
+    assert not within_calling_hours(maxwell, datetime(2026, 11, 25, 16, 0, tzinfo=timezone.utc))
+    assert not within_calling_hours(maxwell, during) and within_calling_hours(compass, during)
+    assert next_window_start(maxwell, during) == after
+    assert within_calling_hours(maxwell, after)
